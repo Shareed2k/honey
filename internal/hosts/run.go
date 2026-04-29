@@ -85,13 +85,14 @@ func filterProviders(q Query, provs []Backend) []Backend {
 	return out
 }
 
-// DefaultCacheKey serializes query fields for caching per provider.
+// DefaultCacheKey serializes query fields for caching per provider instance.
 func DefaultCacheKey(p Backend, q Query) ([]byte, error) {
 	type key struct {
 		Provider string `json:"provider"`
+		Identity string `json:"identity,omitempty"`
 		Query    Query  `json:"query"`
 	}
-	return json.Marshal(key{Provider: p.ID(), Query: q})
+	return json.Marshal(key{Provider: p.ID(), Identity: p.CacheIdentity(), Query: q})
 }
 
 // ParseProviders splits comma list; empty means all.

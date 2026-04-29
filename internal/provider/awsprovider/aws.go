@@ -14,27 +14,38 @@ import (
 
 // AWS implements EC2 instance search.
 type AWS struct {
+	Name    string // optional config label (--backends)
 	Profile string
 	Region  string
 }
 
 func (AWS) ID() string { return "aws" }
 
+// BackendName returns the optional YAML backends.aws[].name value.
+func (a *AWS) BackendName() string { return strings.TrimSpace(a.Name) }
+
+// CacheIdentity scopes cache entries per profile/region pair.
+func (a *AWS) CacheIdentity() string {
+	return strings.TrimSpace(a.Name) + "\x1e" + a.Profile + "\x1e" + a.Region
+}
+
 var _ hosts.Backend = (*AWS)(nil)
 
 func (a *AWS) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	opts := []func(*config.LoadOptions) error{}
-	if a.Profile != "" {
-		opts = append(opts, config.WithSharedConfigProfile(a.Profile))
-	}
+	profile := a.Profile
 	if q.AWSProfile != "" {
-		opts = append(opts, config.WithSharedConfigProfile(q.AWSProfile))
+		profile = q.AWSProfile
 	}
-	if a.Region != "" {
-		opts = append(opts, config.WithRegion(a.Region))
+	if profile != "" {
+		opts = append(opts, config.WithSharedConfigProfile(profile))
 	}
+	region := a.Region
 	if q.AWSRegion != "" {
-		opts = append(opts, config.WithRegion(q.AWSRegion))
+		region = q.AWSRegion
+	}
+	if region != "" {
+		opts = append(opts, config.WithRegion(region))
 	}
 
 	cfg, err := config.LoadDefaultConfig(ctx, opts...)

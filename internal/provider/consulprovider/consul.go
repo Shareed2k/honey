@@ -11,22 +11,43 @@ import (
 )
 
 // Consul lists catalog nodes (and basic service metadata).
-type Consul struct{}
+type Consul struct {
+	Name       string // optional config label (--backends)
+	Addr       string
+	Datacenter string
+	Token      string
+}
 
 func (Consul) ID() string { return "consul" }
+
+// BackendName returns the optional YAML backends.consul[].name value.
+func (c *Consul) BackendName() string { return strings.TrimSpace(c.Name) }
+
+// CacheIdentity scopes cache entries per Consul address/datacenter (token excluded).
+func (c *Consul) CacheIdentity() string {
+	return strings.TrimSpace(c.Name) + "\x1e" + c.Addr + "\x1e" + c.Datacenter
+}
 
 var _ hosts.Backend = (*Consul)(nil)
 
 func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	cfg := api.DefaultConfig()
+	addr := c.Addr
 	if q.ConsulAddr != "" {
-		cfg.Address = strings.TrimPrefix(q.ConsulAddr, "http://")
+		addr = q.ConsulAddr
+	}
+	if addr != "" {
+		cfg.Address = strings.TrimPrefix(addr, "http://")
 		cfg.Address = strings.TrimPrefix(cfg.Address, "https://")
 	} else if v := os.Getenv("CONSUL_HTTP_ADDR"); v != "" {
 		cfg.Address = strings.TrimPrefix(strings.TrimPrefix(v, "http://"), "https://")
 	}
+	tok := c.Token
 	if q.ConsulToken != "" {
-		cfg.Token = q.ConsulToken
+		tok = q.ConsulToken
+	}
+	if tok != "" {
+		cfg.Token = tok
 	} else if v := os.Getenv("CONSUL_HTTP_TOKEN"); v != "" {
 		cfg.Token = v
 	}
@@ -37,8 +58,12 @@ func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, err
 	}
 
 	opts := &api.QueryOptions{}
+	dc := c.Datacenter
 	if q.ConsulDatacenter != "" {
-		opts.Datacenter = q.ConsulDatacenter
+		dc = q.ConsulDatacenter
+	}
+	if dc != "" {
+		opts.Datacenter = dc
 	}
 	opts = opts.WithContext(ctx)
 

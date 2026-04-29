@@ -3,6 +3,7 @@ package k8sprovider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,21 +15,42 @@ import (
 
 // K8s resolves node or pod addresses.
 type K8s struct {
+	Name           string // optional config label (--backends)
 	KubeconfigPath string
+	Context        string
+	// Mode is the default k8s mode (nodes|pods) when q.K8sMode is empty.
+	Mode string
 }
 
 func (K8s) ID() string { return "k8s" }
+
+// BackendName returns the optional YAML backends.kubernetes[].name value.
+func (k *K8s) BackendName() string { return strings.TrimSpace(k.Name) }
+
+// CacheIdentity scopes cache entries per kubeconfig/context/mode.
+func (k *K8s) CacheIdentity() string {
+	mode := k.Mode
+	if mode == "" {
+		mode = "nodes"
+	}
+	return strings.TrimSpace(k.Name) + "\x1e" + k.KubeconfigPath + "\x1e" + k.Context + "\x1e" + mode
+}
 
 var _ hosts.Backend = (*K8s)(nil)
 
 func (k *K8s) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if k.KubeconfigPath != "" {
-		loadingRules.ExplicitPath = k.KubeconfigPath
+	kubePath := k.KubeconfigPath
+	if kubePath != "" {
+		loadingRules.ExplicitPath = kubePath
 	}
 	overrides := &clientcmd.ConfigOverrides{}
+	ctxName := k.Context
 	if q.KubeContext != "" {
-		overrides.CurrentContext = q.KubeContext
+		ctxName = q.KubeContext
+	}
+	if ctxName != "" {
+		overrides.CurrentContext = ctxName
 	}
 	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
 	cfg, err := cc.ClientConfig()
@@ -41,6 +63,9 @@ func (k *K8s) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	}
 
 	mode := q.K8sMode
+	if mode == "" {
+		mode = k.Mode
+	}
 	if mode == "" {
 		mode = "nodes"
 	}

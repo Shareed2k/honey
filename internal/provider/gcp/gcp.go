@@ -16,16 +16,28 @@ import (
 
 // GCP implements provider.Provider for Compute Engine instances.
 type GCP struct {
+	Name    string // optional config label (--backends)
 	Project string
 	Zone    string // empty = aggregated all zones
 }
 
 func (GCP) ID() string { return "gcp" }
 
+// BackendName returns the optional YAML backends.gcp[].name value.
+func (g *GCP) BackendName() string { return strings.TrimSpace(g.Name) }
+
+// CacheIdentity scopes cache entries per configured project/zone.
+func (g *GCP) CacheIdentity() string {
+	return strings.TrimSpace(g.Name) + "\x1e" + g.Project + "\x1e" + g.Zone
+}
+
 var _ hosts.Backend = (*GCP)(nil)
 
 func (g *GCP) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	project := g.Project
+	if q.GCPProject != "" {
+		project = q.GCPProject
+	}
 	if project == "" {
 		project = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	}
@@ -45,9 +57,6 @@ func (g *GCP) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	zone := g.Zone
 	if q.GCPZone != "" {
 		zone = q.GCPZone
-	}
-	if q.GCPProject != "" {
-		project = q.GCPProject
 	}
 
 	var out []hosts.Record

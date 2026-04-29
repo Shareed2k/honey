@@ -3,17 +3,16 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"hostctl/internal/config"
 	"hostctl/internal/hosts"
-	"hostctl/internal/provider/awsprovider"
-	"hostctl/internal/provider/consulprovider"
-	"hostctl/internal/provider/gcp"
-	"hostctl/internal/provider/k8sprovider"
 	"hostctl/internal/ui"
 )
 
@@ -38,6 +37,8 @@ var (
 	flagConsulDC    string
 	flagConsulToken string
 	flagKubeconfig  string
+	flagConfig      string
+	flagBackends    string
 )
 
 var searchCmd = &cobra.Command{
@@ -48,9 +49,11 @@ var searchCmd = &cobra.Command{
 }
 
 func init() {
+	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to hostctl YAML (optional; also HOSTCTL_CONFIG or default paths in README)")
 	searchCmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
 	searchCmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
 	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul (default: all)")
+	searchCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	searchCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Skip interactive UI")
 	searchCmd.Flags().BoolVar(&flagJSON, "json", false, "Print results as JSON (implies --no-ui)")
 	searchCmd.Flags().StringVar(&flagSSHUser, "ssh-user", os.Getenv("USER"), "Default SSH user for connect actions")
@@ -89,25 +92,70 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		ConsulDatacenter: flagConsulDC,
 		ConsulToken:      flagConsulToken,
 	}
+
+	cfgPath, err := config.ResolvePath(flagConfig)
+	if err != nil {
+		return err
+	}
+	var cfg *config.File
+	if cfgPath != "" {
+		cfg, err = config.Load(cfgPath)
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+	}
+
+	cacheTTL := flagCacheTTL
+	cacheDir := flagCacheDir
+	sshUser := flagSSHUser
+	if cfg != nil {
+		if d, ok, perr := cfg.Defaults.DefaultsCacheTTL(); perr != nil {
+			return fmt.Errorf("defaults.cache_ttl: %w", perr)
+		} else if ok && !cmd.Flags().Changed("cache-ttl") {
+			cacheTTL = d
+		}
+		if s := strings.TrimSpace(cfg.Defaults.CacheDir); s != "" && !cmd.Flags().Changed("cache-dir") {
+			cacheDir = s
+		}
+		if s := strings.TrimSpace(cfg.Defaults.SSHUser); s != "" && !cmd.Flags().Changed("ssh-user") {
+			sshUser = s
+		}
+		if s := strings.TrimSpace(cfg.Defaults.K8sMode); s != "" && !cmd.Flags().Changed("k8s-mode") {
+			q.K8sMode = s
+		}
+		if s := strings.TrimSpace(cfg.Defaults.Name); s != "" && !cmd.Flags().Changed("name") && q.NameSubstring == "" {
+			q.NameSubstring = s
+		}
+		if s := strings.TrimSpace(cfg.Defaults.NameRegex); s != "" && !cmd.Flags().Changed("name-regex") && q.NameRegex == "" {
+			q.NameRegex = s
+		}
+	}
+
 	if len(args) == 1 && q.NameSubstring == "" && q.NameRegex == "" {
 		q.NameSubstring = args[0]
 	}
 
-	provs := buildProviders()
+	provs := buildProviders(cfg)
+	wantBackends := hosts.ParseBackendNames(flagBackends)
+	if len(wantBackends) > 0 {
+		provs = hosts.FilterBackendsByNames(provs, wantBackends)
+		if len(provs) == 0 {
+			return fmt.Errorf("no backends match --backends %q: set name on each backends.* list entry in config (unnamed backends are ignored by this filter)", flagBackends)
+		}
+	}
 	ctx := context.Background()
 
-	cacheDir := flagCacheDir
 	if cacheDir == "" {
-		d, err := hosts.DefaultCacheDir()
-		if err != nil {
-			return err
+		d, derr := hosts.DefaultCacheDir()
+		if derr != nil {
+			return derr
 		}
 		cacheDir = d
 	}
 	cachePath := filepath.Join(cacheDir, "cache.json")
 	var fc *hosts.FileCache
 	if !flagNoCache {
-		fc = hosts.NewFileCache(cachePath, flagCacheTTL)
+		fc = hosts.NewFileCache(cachePath, cacheTTL)
 	}
 
 	records, err := hosts.RunParallel(ctx, q, provs, fc, flagNoCache, flagRefresh, hosts.DefaultCacheKey)
@@ -124,14 +172,5 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return enc.Encode(records)
 	}
 
-	return ui.RunTable(records, flagSSHUser)
-}
-
-func buildProviders() []hosts.Backend {
-	return []hosts.Backend{
-		&gcp.GCP{Project: flagGCPProject, Zone: flagGCPZone},
-		&awsprovider.AWS{Profile: flagAWSProfile, Region: flagAWSRegion},
-		&k8sprovider.K8s{KubeconfigPath: flagKubeconfig},
-		&consulprovider.Consul{},
-	}
+	return ui.RunTable(records, sshUser)
 }
