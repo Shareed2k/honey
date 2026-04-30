@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 // RunSearch executes hosts.RunParallel with an on-disk cache under cacheDir.

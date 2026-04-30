@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 func TestValidateRemoteRecipe_ok(t *testing.T) {

@@ -7,8 +7,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "hostctl",
-	Short: "Search hosts across GCP, AWS, Kubernetes, and Consul",
+	Use:   "honey",
+	Short: Tagline,
+	Long:  "Search and operate on instances across GCP, AWS, Kubernetes, and Consul.",
 }
 
 // Execute runs the root command.
@@ -17,6 +18,10 @@ func Execute() error {
 }
 
 func init() {
+	// Prepend banner to usage (and to --help via UsageString inside default help template).
+	defaultUsage := (&cobra.Command{}).UsageTemplate()
+	rootCmd.SetUsageTemplate(BannerText() + "\n\n" + defaultUsage)
+
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.SilenceUsage = true
 	rootCmd.SetOut(os.Stdout)

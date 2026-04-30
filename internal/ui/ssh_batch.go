@@ -3,16 +3,13 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
-	"github.com/melbahja/goph"
 	"golang.org/x/crypto/ssh"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 const (
@@ -31,40 +28,9 @@ type HostExecResult struct {
 	ErrMsg   string // transport / spawn failure (not remote stderr)
 }
 
-// buildGophAuth mirrors common OpenSSH behavior: try the agent (if present), then
-// default private keys under ~/.ssh.
-func buildGophAuth() (goph.Auth, error) {
-	var methods []ssh.AuthMethod
-	if goph.HasAgent() {
-		if ag, err := goph.UseAgent(); err == nil {
-			methods = append(methods, ag...)
-		}
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("user home: %w", err)
-	}
-	for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa"} {
-		p := filepath.Join(home, ".ssh", name)
-		st, statErr := os.Stat(p)
-		if statErr != nil || st.IsDir() {
-			continue
-		}
-		k, keyErr := goph.Key(p, "")
-		if keyErr != nil {
-			continue
-		}
-		methods = append(methods, k...)
-	}
-	if len(methods) == 0 {
-		return nil, fmt.Errorf("no SSH auth (start ssh-agent or add ~/.ssh/id_ed25519, id_rsa, or id_ecdsa)")
-	}
-	return methods, nil
-}
-
 // ExecuteSSHParallel runs the same remote shell command on every record that has
 // PrimaryIP set. Failures on individual hosts do not cancel others.
-// It uses the goph client (golang.org/x/crypto/ssh) with known_hosts verification.
+// It uses DialHoneyClient (golang.org/x/crypto/ssh + ~/.ssh/config) with known_hosts verification.
 func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxConc int) ([]HostExecResult, error) {
 	remoteCmd = strings.TrimSpace(remoteCmd)
 	if remoteCmd == "" {
@@ -84,11 +50,6 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxC
 		return []HostExecResult{}, nil
 	}
 
-	auth, err := buildGophAuth()
-	if err != nil {
-		return nil, err
-	}
-
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	out := make([]HostExecResult, len(jobs))
@@ -98,20 +59,20 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxC
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out[i] = runOneRemoteSSH(user, r, remoteCmd, auth)
+			out[i] = runOneRemoteSSH(user, r, remoteCmd)
 		}(i, jobs[i])
 	}
 	wg.Wait()
 	return out, nil
 }
 
-func runOneRemoteSSH(user string, r hosts.Record, remoteCmd string, auth goph.Auth) HostExecResult {
+func runOneRemoteSSH(user string, r hosts.Record, remoteCmd string) HostExecResult {
 	res := HostExecResult{
 		Name:     r.Name,
 		IP:       r.PrimaryIP,
 		Provider: r.Provider,
 	}
-	client, err := goph.New(user, r.PrimaryIP, auth)
+	client, err := DialHoneyClient(user, r.PrimaryIP)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
@@ -153,7 +114,7 @@ type SFTPDownloadJob struct {
 }
 
 // ExecuteSFTPUploadParallel uploads the same local file to remotePath on each
-// record (goph SFTP). Failures on one host do not cancel others.
+// record (SFTP over DialHoneyClient). Failures on one host do not cancel others.
 func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remotePath string, maxConc int) ([]HostExecResult, error) {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
@@ -172,10 +133,6 @@ func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remot
 	if len(jobs) == 0 {
 		return []HostExecResult{}, nil
 	}
-	auth, err := buildGophAuth()
-	if err != nil {
-		return nil, err
-	}
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	out := make([]HostExecResult, len(jobs))
@@ -185,7 +142,7 @@ func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remot
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out[i] = runOneSFTPUpload(user, r, localAbs, remotePath, auth)
+			out[i] = runOneSFTPUpload(user, r, localAbs, remotePath)
 		}(i, jobs[i])
 	}
 	wg.Wait()
@@ -201,10 +158,6 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 	if len(jobs) == 0 {
 		return []HostExecResult{}, nil
 	}
-	auth, err := buildGophAuth()
-	if err != nil {
-		return nil, err
-	}
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	out := make([]HostExecResult, len(jobs))
@@ -218,16 +171,16 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 				out[i] = HostExecResult{Name: j.Record.Name, Provider: j.Record.Provider, Success: false, ErrMsg: "missing PrimaryIP"}
 				return
 			}
-			out[i] = runOneSFTPDownload(user, j, auth)
+			out[i] = runOneSFTPDownload(user, j)
 		}(i, jobs[i])
 	}
 	wg.Wait()
 	return out, nil
 }
 
-func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string, auth goph.Auth) HostExecResult {
+func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := goph.New(user, r.PrimaryIP, auth)
+	client, err := DialHoneyClient(user, r.PrimaryIP)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
@@ -266,10 +219,6 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 	if len(jobs) == 0 {
 		return []HostExecResult{}, nil
 	}
-	auth, err := buildGophAuth()
-	if err != nil {
-		return nil, err
-	}
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	out := make([]HostExecResult, len(jobs))
@@ -279,16 +228,16 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out[i] = runOneScriptUploadRun(user, r, localAbs, remotePath, remoteCmd, auth)
+			out[i] = runOneScriptUploadRun(user, r, localAbs, remotePath, remoteCmd)
 		}(i, jobs[i])
 	}
 	wg.Wait()
 	return out, nil
 }
 
-func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, remoteCmd string, auth goph.Auth) HostExecResult {
+func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, remoteCmd string) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := goph.New(user, r.PrimaryIP, auth)
+	client, err := DialHoneyClient(user, r.PrimaryIP)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
@@ -328,10 +277,10 @@ func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, re
 	return res
 }
 
-func runOneSFTPDownload(user string, j SFTPDownloadJob, auth goph.Auth) HostExecResult {
+func runOneSFTPDownload(user string, j SFTPDownloadJob) HostExecResult {
 	r := j.Record
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := goph.New(user, r.PrimaryIP, auth)
+	client, err := DialHoneyClient(user, r.PrimaryIP)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()

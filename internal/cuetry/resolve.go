@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 // MatchAllSearchHosts is a recipe step host value meaning: run this step on

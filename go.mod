@@ -1,4 +1,4 @@
-module hostctl
+module honey
 
 go 1.26.0
 
@@ -12,11 +12,13 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/hashicorp/consul/api v1.34.2
+	github.com/kevinburke/ssh_config v1.2.0
 	github.com/melbahja/goph v1.5.0
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sync v0.20.0
+	golang.org/x/term v0.41.0
 	google.golang.org/api v0.276.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.36.0
@@ -120,7 +122,6 @@ require (
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/term v0.41.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect

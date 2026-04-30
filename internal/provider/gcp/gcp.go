@@ -11,7 +11,7 @@ import (
 
 	compute "cloud.google.com/go/compute/apiv1"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 // GCP implements provider.Provider for Compute Engine instances.

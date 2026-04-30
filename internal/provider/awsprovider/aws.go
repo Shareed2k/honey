@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 // AWS implements EC2 instance search.

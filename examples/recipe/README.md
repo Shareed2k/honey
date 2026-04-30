@@ -3,19 +3,19 @@
 Validate any file:
 
 ```bash
-hostctl cue-validate examples/recipe/<file>.cue
+honey cue-validate examples/recipe/<file>.cue
 ```
 
-Dry-run (resolves hosts from the same search as `hostctl search`; optional positional name substring):
+Dry-run (resolves hosts from the same search as `honey search`; optional positional name substring):
 
 ```bash
-hostctl cue-exec examples/recipe/<file>.cue my-filter
+honey cue-exec examples/recipe/<file>.cue my-filter
 ```
 
 Run over SSH:
 
 ```bash
-hostctl cue-exec --execute examples/recipe/<file>.cue my-filter
+honey cue-exec --execute examples/recipe/<file>.cue my-filter
 ```
 
 | File | Shows |

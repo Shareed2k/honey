@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"hostctl/internal/cuetry"
+	"honey/internal/cuetry"
 )
 
 func init() {
@@ -28,7 +28,7 @@ of command, put, get, or script {local, remote}; optional run_as on command/scri
 		if err := cuetry.ValidateRemoteRecipe(b); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "OK: recipe satisfies hostctl remote-recipe schema")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "OK: recipe satisfies honey remote-recipe schema")
 		return nil
 	},
 }

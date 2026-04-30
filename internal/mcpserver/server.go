@@ -8,23 +8,23 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"hostctl/internal/config"
-	"hostctl/internal/hosts"
-	"hostctl/internal/searchrun"
+	"honey/internal/config"
+	"honey/internal/hosts"
+	"honey/internal/searchrun"
 )
 
 const serverVersion = "0.1.0"
 
 // Run starts the MCP server on stdio until the client disconnects.
 func Run(ctx context.Context) error {
-	s := mcp.NewServer(&mcp.Implementation{Name: "hostctl", Version: serverVersion}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "honey", Version: serverVersion}, nil)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_hosts",
-		Description: "Search hosts across GCP, AWS, Kubernetes, and Consul in parallel (same behavior as hostctl search). Returns JSON array of records.",
+		Description: "Search hosts across GCP, AWS, Kubernetes, and Consul in parallel (same behavior as honey search). Returns JSON array of records.",
 	}, handleSearchHosts)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_backends",
-		Description: "List named backends from the hostctl config file (requires backends with optional name field in YAML).",
+		Description: "List named backends from the honey config file (requires backends with optional name field in YAML).",
 	}, handleListBackends)
 	return s.Run(ctx, &mcp.StdioTransport{})
 }
@@ -32,7 +32,7 @@ func Run(ctx context.Context) error {
 // --- search_hosts ---
 
 type searchHostsInput struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to hostctl YAML; empty uses HOSTCTL_CONFIG or default paths"`
+	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG / HOSTCTL_CONFIG or default paths"`
 
 	Name        string `json:"name,omitempty" jsonschema:"substring filter on host/instance name"`
 	NameRegex   string `json:"name_regex,omitempty" jsonschema:"regex filter on name"`
@@ -161,7 +161,7 @@ func mergeMCPDefaults(cfg *config.File, q *hosts.Query) {
 // --- list_backends ---
 
 type listBackendsInput struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to hostctl YAML; empty uses HOSTCTL_CONFIG or default paths"`
+	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG / HOSTCTL_CONFIG or default paths"`
 }
 
 type listBackendsOutput struct {
@@ -175,7 +175,7 @@ func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBack
 		return nil, listBackendsOutput{}, err
 	}
 	if cfgPath == "" {
-		return nil, listBackendsOutput{}, fmt.Errorf("no config file found (set config_path or HOSTCTL_CONFIG or install default config)")
+		return nil, listBackendsOutput{}, fmt.Errorf("no config file found (set config_path, HONEY_CONFIG, HOSTCTL_CONFIG, or install default config)")
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

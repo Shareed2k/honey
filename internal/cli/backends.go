@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"hostctl/internal/config"
+	"honey/internal/config"
 )
 
 var (
@@ -17,19 +17,19 @@ var (
 
 var backendsCmd = &cobra.Command{
 	Use:   "backends",
-	Short: "List backends defined in the hostctl config file",
-	Long: `Resolves the config file the same way as search (--config, HOSTCTL_CONFIG, or default paths),
+	Short: "List backends defined in the honey config file",
+	Long: `Resolves the config file the same way as search (--config, HONEY_CONFIG, HOSTCTL_CONFIG, or default paths),
 then prints each backends.* entry: kind, optional name, and a short hint (project, profile/region, kube context, consul addr).
 
 Exits with an error if no config file is found. If the file has no backends: lists,
-hostctl search uses implicit providers from flags only.`,
+honey search uses implicit providers from flags only.`,
 	Args: cobra.NoArgs,
 	RunE: runBackends,
 }
 
 func init() {
 	rootCmd.AddCommand(backendsCmd)
-	backendsCmd.Flags().StringVar(&flagBackendsConfig, "config", "", "Path to hostctl YAML (optional; also HOSTCTL_CONFIG or default paths)")
+	backendsCmd.Flags().StringVar(&flagBackendsConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG / HOSTCTL_CONFIG or default paths)")
 	backendsCmd.Flags().BoolVar(&flagBackendsJSON, "json", false, "Print JSON (config_path + backends) instead of a table")
 }
 
@@ -39,7 +39,7 @@ func runBackends(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if cfgPath == "" {
-		return fmt.Errorf("no config file found (pass --config, set HOSTCTL_CONFIG, or add ~/.config/hostctl/config.yaml)")
+		return fmt.Errorf("no config file found (pass --config, set HONEY_CONFIG or HOSTCTL_CONFIG, or add ~/.config/honey/config.yaml)")
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

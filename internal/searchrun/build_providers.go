@@ -1,12 +1,12 @@
 package searchrun
 
 import (
-	"hostctl/internal/config"
-	"hostctl/internal/hosts"
-	"hostctl/internal/provider/awsprovider"
-	"hostctl/internal/provider/consulprovider"
-	"hostctl/internal/provider/gcp"
-	"hostctl/internal/provider/k8sprovider"
+	"honey/internal/config"
+	"honey/internal/hosts"
+	"honey/internal/provider/awsprovider"
+	"honey/internal/provider/consulprovider"
+	"honey/internal/provider/gcp"
+	"honey/internal/provider/k8sprovider"
 )
 
 // BuildProviders returns backends from the config file when it defines at least

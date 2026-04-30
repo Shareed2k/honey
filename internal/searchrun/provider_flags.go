@@ -1,7 +1,7 @@
 package searchrun
 
 // ProviderFlags carries CLI / MCP provider-related string options used when
-// building backends (mirrors hostctl search flags).
+// building backends (mirrors honey search flags).
 type ProviderFlags struct {
 	GCPProject       string
 	GCPZone          string

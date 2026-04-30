@@ -1,9 +1,10 @@
 package ui
 
 import (
+	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -11,7 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"hostctl/internal/hosts"
+	"honey/internal/cuetry"
+	"honey/internal/hosts"
 )
 
 type action int
@@ -26,6 +28,11 @@ type parallelExecDoneMsg struct {
 	results    []HostExecResult
 	cmdLine    string
 	targetNote string // how parallel exec scope was chosen (shown above results)
+}
+
+type cueRecipeDoneMsg struct {
+	title string
+	body  string
 }
 
 type model struct {
@@ -48,6 +55,10 @@ type model struct {
 	execCmdLine    string
 	execTargetNote string
 	execScroll     int
+
+	// CUE recipe output (non-empty body replaces SSH-style exec result lines).
+	cueResultTitle string
+	cueResultBody  string
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -156,9 +167,22 @@ func (m *model) Init() tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case parallelExecDoneMsg:
+		m.cueResultBody = ""
+		m.cueResultTitle = "Parallel SSH results"
 		m.execResults = SortHostExecForUI(msg.results)
 		m.execCmdLine = msg.cmdLine
 		m.execTargetNote = msg.targetNote
+		m.execScroll = 0
+		m.mode = "execresults"
+		m.ti.Blur()
+		return m, nil
+
+	case cueRecipeDoneMsg:
+		m.cueResultTitle = msg.title
+		m.cueResultBody = msg.body
+		m.execResults = nil
+		m.execCmdLine = ""
+		m.execTargetNote = ""
 		m.execScroll = 0
 		m.mode = "execresults"
 		m.ti.Blur()
@@ -177,7 +201,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == "execresults" {
 			return m.updateExecResultsKeys(msg)
 		}
-		if m.mode == "tunnel" || m.mode == "execinput" {
+		if m.mode == "tunnel" || m.mode == "execinput" || m.mode == "cueexecinput" {
 			return m.updateTextInputMode(msg)
 		}
 
@@ -209,6 +233,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ti.Reset()
 			m.ti.Focus()
 			return m, textinput.Blink
+		case "r":
+			m.mode = "cueexecinput"
+			m.ti.Placeholder = "path/to/recipe.cue (! = execute) — * rows only, or all w/ IP if none marked"
+			m.ti.Reset()
+			m.ti.Focus()
+			return m, textinput.Blink
 		}
 		var cmd tea.Cmd
 		m.tbl, cmd = m.tbl.Update(msg)
@@ -232,6 +262,23 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.lastAction = actTunnel
 			m.ti.Blur()
 			return m, tea.Quit
+		}
+		if m.mode == "cueexecinput" {
+			val := strings.TrimSpace(m.ti.Value())
+			if val == "" {
+				return m, nil
+			}
+			execute := false
+			if strings.HasSuffix(val, "!") {
+				execute = true
+				val = strings.TrimSpace(strings.TrimSuffix(val, "!"))
+			}
+			if val == "" {
+				return m, nil
+			}
+			targets, note := m.parallelExecTargets()
+			m.ti.Blur()
+			return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute)
 		}
 		cmd := strings.TrimSpace(m.ti.Value())
 		if cmd == "" {
@@ -311,6 +358,13 @@ func (m *model) visibleExecLines() int {
 }
 
 func (m *model) execResultLines() []string {
+	if strings.TrimSpace(m.cueResultBody) != "" {
+		s := strings.TrimRight(m.cueResultBody, "\n")
+		if s == "" {
+			return []string{"(empty output)"}
+		}
+		return strings.Split(s, "\n")
+	}
 	var lines []string
 	if m.execCmdLine != "" {
 		lines = append(lines, fmt.Sprintf("Command: %s", m.execCmdLine))
@@ -365,6 +419,16 @@ func (m *model) View() string {
 			m.ti.View(),
 		)
 		return baseStyle.Render(box) + "\n" + help
+	case "cueexecinput":
+		help := helpStyle.Render("enter: run   esc: back   q: quit")
+		_, scope := m.parallelExecTargets()
+		box := lipgloss.JoinVertical(
+			lipgloss.Left,
+			"CUE recipe (selected hosts only):",
+			helpStyle.Render(scope),
+			m.ti.View(),
+		)
+		return baseStyle.Render(box) + "\n" + help
 	case "execresults":
 		lines := m.execResultLines()
 		vis := m.visibleExecLines()
@@ -381,19 +445,58 @@ func (m *model) View() string {
 		if len(lines) > vis {
 			scrollNote = fmt.Sprintf("lines %d–%d of %d", start+1, end, len(lines))
 		}
-		title := lipgloss.NewStyle().Bold(true).Render("Parallel SSH results")
+		titleText := m.cueResultTitle
+		if titleText == "" {
+			titleText = "Parallel SSH results"
+		}
+		title := lipgloss.NewStyle().Bold(true).Render(titleText)
 		help := helpStyle.Render("esc: table   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
 		return title + "\n" + baseStyle.Width(m.winW-2).Render(body.String()) + "\n" +
 			helpStyle.Render(scrollNote) + "\n" + help
 	default:
-		help := helpStyle.Render("enter: ssh   t: tunnel   e: parallel cmd   x: mark row   ^a: mark all w/ IP   c: clear marks   q: quit")
+		help := helpStyle.Render("enter: ssh   t: tunnel   e: parallel cmd   r: cue recipe   x: mark row   ^a: mark all w/ IP   c: clear marks   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
-			sub = helpStyle.Render(fmt.Sprintf("%d row(s) marked for parallel cmd", nMark)) + "\n"
+			sub = helpStyle.Render(fmt.Sprintf("%d row(s) marked (* for parallel SSH and CUE recipe)", nMark)) + "\n"
 		}
-		title := lipgloss.NewStyle().Bold(true).Render("hostctl — select a host")
+		title := lipgloss.NewStyle().Bold(true).Render("honey — select a host")
 		return title + "\n" + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
+	}
+}
+
+func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool) tea.Cmd {
+	title := "CUE recipe (dry-run)"
+	if execute {
+		title = "CUE recipe (execute)"
+	}
+	return func() tea.Msg {
+		if len(targets) == 0 {
+			return cueRecipeDoneMsg{
+				title: title,
+				body: targetNote + "\n\n(no hosts with IP in this scope — use x to mark rows, ^a to mark all with IP, or c to clear marks and use every row with an IP)",
+			}
+		}
+		absRecipe, err := filepath.Abs(recipePath)
+		if err != nil {
+			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\npath: " + err.Error()}
+		}
+		recipeDir := filepath.Dir(absRecipe)
+		raw, err := os.ReadFile(recipePath)
+		if err != nil {
+			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nread: " + err.Error()}
+		}
+		recipe, err := cuetry.ParseRemoteRecipe(raw)
+		if err != nil {
+			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nparse: " + err.Error()}
+		}
+		var buf bytes.Buffer
+		runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute)
+		body := targetNote + "\n\n" + buf.String()
+		if runErr != nil {
+			body += "\nError: " + runErr.Error()
+		}
+		return cueRecipeDoneMsg{title: title, body: body}
 	}
 }
 
@@ -494,12 +597,7 @@ func runSSH(user, host string) error {
 	if host == "" {
 		return fmt.Errorf("no IP for selected host")
 	}
-	target := fmt.Sprintf("%s@%s", user, host)
-	cmd := exec.Command("ssh", target)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return runSSHInteractive(user, host)
 }
 
 func runTunnel(user, host, localFwd string) error {
@@ -509,10 +607,5 @@ func runTunnel(user, host, localFwd string) error {
 	if localFwd == "" || !strings.Contains(localFwd, ":") {
 		return fmt.Errorf("tunnel spec must look like 8080:remotehost:8080")
 	}
-	target := fmt.Sprintf("%s@%s", user, host)
-	cmd := exec.Command("ssh", "-L", localFwd, target)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return runTunnelGo(user, host, localFwd)
 }

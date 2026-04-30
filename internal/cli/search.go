@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"hostctl/internal/config"
-	"hostctl/internal/hosts"
-	"hostctl/internal/searchrun"
-	"hostctl/internal/ui"
+	"honey/internal/config"
+	"honey/internal/hosts"
+	"honey/internal/searchrun"
+	"honey/internal/ui"
 )
 
 var (
@@ -49,7 +49,7 @@ var searchCmd = &cobra.Command{
 }
 
 func init() {
-	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to hostctl YAML (optional; also HOSTCTL_CONFIG or default paths in README)")
+	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG / HOSTCTL_CONFIG or default paths in README)")
 	searchCmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
 	searchCmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
 	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul (default: all)")
@@ -60,7 +60,7 @@ func init() {
 	searchCmd.Flags().DurationVar(&flagCacheTTL, "cache-ttl", time.Minute, "Cache time-to-live")
 	searchCmd.Flags().BoolVar(&flagNoCache, "no-cache", false, "Bypass read/write cache")
 	searchCmd.Flags().BoolVar(&flagRefresh, "refresh", false, "Ignore cached entries and refresh")
-	searchCmd.Flags().StringVar(&flagCacheDir, "cache-dir", "", "Override cache directory (default: XDG_CACHE_HOME/hostctl)")
+	searchCmd.Flags().StringVar(&flagCacheDir, "cache-dir", "", "Override cache directory (default: XDG_CACHE_HOME/honey)")
 
 	searchCmd.Flags().StringVar(&flagGCPProject, "gcp-project", "", "GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)")
 	searchCmd.Flags().StringVar(&flagGCPZone, "gcp-zone", "", "Limit GCP to a single zone (default: all zones)")

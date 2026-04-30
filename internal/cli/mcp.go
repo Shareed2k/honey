@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"hostctl/internal/mcpserver"
+	"honey/internal/mcpserver"
 )
 
 var mcpCmd = &cobra.Command{
@@ -20,7 +20,7 @@ Only stderr may be used for logging; stdout carries the JSON-RPC stream.`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		_ = cmd
 		log.SetOutput(os.Stderr)
-		log.SetPrefix("hostctl mcp: ")
+		log.SetPrefix("honey mcp: ")
 		return mcpserver.Run(context.Background())
 	},
 }

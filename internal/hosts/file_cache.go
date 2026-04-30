@@ -29,7 +29,7 @@ func NewFileCache(path string, ttl time.Duration) *FileCache {
 	return &FileCache{path: path, ttl: ttl}
 }
 
-// DefaultCacheDir returns XDG-style cache directory for hostctl.
+// DefaultCacheDir returns XDG-style cache directory for honey.
 func DefaultCacheDir() (string, error) {
 	base := os.Getenv("XDG_CACHE_HOME")
 	if base == "" {
@@ -39,7 +39,7 @@ func DefaultCacheDir() (string, error) {
 		}
 		base = filepath.Join(home, ".cache")
 	}
-	dir := filepath.Join(base, "hostctl")
+	dir := filepath.Join(base, "honey")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

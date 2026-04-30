@@ -97,7 +97,7 @@ func TestResolvePathExplicit(t *testing.T) {
 
 func TestResolvePathXDG(t *testing.T) {
 	dir := t.TempDir()
-	hostdir := filepath.Join(dir, "hostctl")
+	hostdir := filepath.Join(dir, "honey")
 	if err := os.MkdirAll(hostdir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +106,7 @@ func TestResolvePathXDG(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HONEY_CONFIG", "")
 	t.Setenv("HOSTCTL_CONFIG", "")
 	got, err := ResolvePath("")
 	if err != nil || got != cfgPath {

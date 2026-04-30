@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// File is the optional hostctl YAML configuration.
+// File is the optional honey YAML configuration.
 type File struct {
 	Version  int      `yaml:"version"`
 	Defaults Defaults `yaml:"defaults"`
@@ -103,23 +103,27 @@ func (f *File) HasAnyBackend() bool {
 		len(f.Backends.Consul) > 0
 }
 
-// ResolvePath returns an explicit path from --config or HOSTCTL_CONFIG, or the first
-// existing default file, or "" if none exist.
+// ResolvePath returns an explicit path from --config, HONEY_CONFIG, or HOSTCTL_CONFIG
+// (legacy), then the first existing default file, or "" if none exist.
 func ResolvePath(explicit string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return explicit, nil
+	}
+	if v := strings.TrimSpace(os.Getenv("HONEY_CONFIG")); v != "" {
+		return v, nil
 	}
 	if v := strings.TrimSpace(os.Getenv("HOSTCTL_CONFIG")); v != "" {
 		return v, nil
 	}
 	candidates := []string{}
 	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
-		candidates = append(candidates, filepath.Join(base, "hostctl", "config.yaml"))
+		candidates = append(candidates, filepath.Join(base, "honey", "config.yaml"))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		if base := os.Getenv("XDG_CONFIG_HOME"); base == "" {
-			candidates = append(candidates, filepath.Join(home, ".config", "hostctl", "config.yaml"))
+			candidates = append(candidates, filepath.Join(home, ".config", "honey", "config.yaml"))
 		}
+		candidates = append(candidates, filepath.Join(home, ".honey.yaml"))
 		candidates = append(candidates, filepath.Join(home, ".hostctl.yaml"))
 	}
 	for _, p := range candidates {

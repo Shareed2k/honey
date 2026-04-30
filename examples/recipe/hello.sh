@@ -1,2 +1,2 @@
 #!/bin/sh
-echo "hello from hostctl script step"
+echo "hello from honey script step"

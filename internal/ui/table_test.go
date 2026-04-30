@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 func TestParallelExecTargets_noMarksAllWithIP(t *testing.T) {

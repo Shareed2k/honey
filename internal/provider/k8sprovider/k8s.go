@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 // K8s resolves node or pod addresses.

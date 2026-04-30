@@ -7,7 +7,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 
-	"hostctl/internal/hosts"
+	"honey/internal/hosts"
 )
 
 // Consul lists catalog nodes (and basic service metadata).

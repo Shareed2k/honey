@@ -1,6 +1,6 @@
 package cli
 
-import "hostctl/internal/searchrun"
+import "honey/internal/searchrun"
 
 func providerFlagsSnapshot() searchrun.ProviderFlags {
 	return searchrun.ProviderFlags{

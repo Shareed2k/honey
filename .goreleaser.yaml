@@ -1,0 +1,32 @@
+version: 2
+
+project_name: honey
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: honey
+    main: ./cmd/honey
+    binary: honey
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    builds:
+      - honey
+    format: tar.gz
