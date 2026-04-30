@@ -20,6 +20,84 @@ go mod tidy
 go build -o hostctl ./cmd/hostctl
 ```
 
+## MCP server (stdio)
+
+`hostctl mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/) server over **stdin/stdout** using the official [`go-sdk`](https://github.com/modelcontextprotocol/go-sdk). **Do not log to stdout** (only stderr); stdout is reserved for the JSON-RPC stream.
+
+**Tools**
+
+| Tool | Purpose |
+|------|---------|
+| `search_hosts` | Same parallel search as `hostctl search`; arguments mirror flags (snake_case JSON). Optional `config_path`; otherwise uses `HOSTCTL_CONFIG` / default paths. |
+| `list_backends` | Returns configured backends from YAML (`kind`, `name`, `hint`). Requires a resolvable config file. |
+
+**Cursor** (example `mcp.json` fragment):
+
+```json
+{
+  "mcpServers": {
+    "hostctl": {
+      "command": "/absolute/path/to/hostctl",
+      "args": ["mcp"],
+      "env": {
+        "HOSTCTL_CONFIG": "/absolute/path/to/hostctl.yaml"
+      }
+    }
+  }
+}
+```
+
+**LM Studio** ([MCP docs](https://lmstudio.ai/docs/app/mcp); app **0.3.17+**)
+
+LM Studio uses the same `mcpServers` shape as Cursor. In the app: open the **Program** tab (right sidebar) → **Install** → **Edit `mcp.json`**, then merge a `hostctl` entry into the top-level `mcpServers` object (or create the file if it is empty).
+
+Typical file locations:
+
+- **macOS / Linux:** `~/.lmstudio/mcp.json`
+- **Windows:** `%USERPROFILE%\.lmstudio\mcp.json`
+
+Example (replace paths with your real `hostctl` binary and YAML config):
+
+```json
+{
+  "mcpServers": {
+    "hostctl": {
+      "command": "/Users/you/bin/hostctl",
+      "args": ["mcp"],
+      "env": {
+        "HOSTCTL_CONFIG": "/Users/you/.config/hostctl/config.yaml"
+      }
+    }
+  }
+}
+```
+
+If you already have other servers under `mcpServers`, add only the `"hostctl": { ... }` block inside that object—do not duplicate the outer `"mcpServers"` key. After saving, restart the chat or reload tools if LM Studio does not pick up the server immediately. Enable or allow the **hostctl** tools under **App settings → Tools & integrations** (wording may vary by version) if the UI asks for permission.
+
+**OpenCode** ([MCP servers](https://opencode.ai/docs/mcp-servers/), [config](https://opencode.ai/docs/config/))
+
+OpenCode uses a top-level **`mcp`** object (not `mcpServers`). Local stdio servers use **`type": "local"`** and **`command`** as an **array** of executable + args. Environment variables go under **`environment`** (not `env`).
+
+Merge this into `~/.config/opencode/opencode.json` (global) or a project **`opencode.json` / `opencode.jsonc`**—see OpenCode’s config precedence docs.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "hostctl": {
+      "type": "local",
+      "command": ["/absolute/path/to/hostctl", "mcp"],
+      "enabled": true,
+      "environment": {
+        "HOSTCTL_CONFIG": "/absolute/path/to/hostctl.yaml"
+      }
+    }
+  }
+}
+```
+
+Tools from this server appear with the **`hostctl_`** prefix (e.g. `hostctl_search_hosts`). You can mention `use hostctl` or a specific tool name in prompts; see OpenCode’s MCP docs for disabling servers or scoping tools per agent.
+
 ## Config file (optional)
 
 You can define **multiple backends** per provider (for example two GCP projects or two Consul clusters) and optional **defaults**. If the file omits `backends` or leaves every backend list empty, behavior matches the flag-only mode (one implicit backend per provider).
@@ -114,8 +192,10 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 
 ## Layout
 
-- `cmd/hostctl` — entrypoint
+- `cmd/hostctl` — CLI entrypoint (`search`, `mcp`, …)
 - `internal/cli` — Cobra flags and wiring
+- `internal/mcpserver` — MCP tool handlers
+- `internal/searchrun` — shared search + provider wiring
 - `internal/config` — optional YAML (`backends`, `defaults`)
 - `internal/hosts` — `Record`, `Query`, cache, parallel orchestration
 - `internal/provider/*` — GCP, AWS, k8s, Consul integrations

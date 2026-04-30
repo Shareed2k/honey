@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 
 	"hostctl/internal/config"
 	"hostctl/internal/hosts"
+	"hostctl/internal/searchrun"
 	"hostctl/internal/ui"
 )
 
@@ -145,20 +145,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 	ctx := context.Background()
 
-	if cacheDir == "" {
-		d, derr := hosts.DefaultCacheDir()
-		if derr != nil {
-			return derr
-		}
-		cacheDir = d
-	}
-	cachePath := filepath.Join(cacheDir, "cache.json")
-	var fc *hosts.FileCache
-	if !flagNoCache {
-		fc = hosts.NewFileCache(cachePath, cacheTTL)
-	}
-
-	records, err := hosts.RunParallel(ctx, q, provs, fc, flagNoCache, flagRefresh, hosts.DefaultCacheKey)
+	records, err := searchrun.RunSearch(ctx, q, provs, cacheDir, cacheTTL, flagNoCache, flagRefresh)
 	if err != nil {
 		return err
 	}
