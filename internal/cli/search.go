@@ -77,7 +77,10 @@ func init() {
 	searchCmd.Flags().StringVar(&flagConsulToken, "consul-token", "", "Consul ACL token (or CONSUL_HTTP_TOKEN)")
 }
 
-func runSearch(cmd *cobra.Command, args []string) error {
+// runSearchCore runs the same search pipeline as search (flags, config, cache,
+// providers). queryArgs are optional positional tokens: if exactly one is
+// passed and name filters are empty, it becomes the name substring filter.
+func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, string, error) {
 	q := hosts.Query{
 		NameSubstring:    flagName,
 		NameRegex:        flagNameRegex,
@@ -95,13 +98,13 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	cfgPath, err := config.ResolvePath(flagConfig)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	var cfg *config.File
 	if cfgPath != "" {
 		cfg, err = config.Load(cfgPath)
 		if err != nil {
-			return fmt.Errorf("config: %w", err)
+			return nil, "", fmt.Errorf("config: %w", err)
 		}
 	}
 
@@ -110,7 +113,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	sshUser := flagSSHUser
 	if cfg != nil {
 		if d, ok, perr := cfg.Defaults.DefaultsCacheTTL(); perr != nil {
-			return fmt.Errorf("defaults.cache_ttl: %w", perr)
+			return nil, "", fmt.Errorf("defaults.cache_ttl: %w", perr)
 		} else if ok && !cmd.Flags().Changed("cache-ttl") {
 			cacheTTL = d
 		}
@@ -131,8 +134,8 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(args) == 1 && q.NameSubstring == "" && q.NameRegex == "" {
-		q.NameSubstring = args[0]
+	if len(queryArgs) == 1 && q.NameSubstring == "" && q.NameRegex == "" {
+		q.NameSubstring = queryArgs[0]
 	}
 
 	provs := buildProviders(cfg)
@@ -140,12 +143,20 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	if len(wantBackends) > 0 {
 		provs = hosts.FilterBackendsByNames(provs, wantBackends)
 		if len(provs) == 0 {
-			return fmt.Errorf("no backends match --backends %q: set name on each backends.* list entry in config (unnamed backends are ignored by this filter)", flagBackends)
+			return nil, "", fmt.Errorf("no backends match --backends %q: set name on each backends.* list entry in config (unnamed backends are ignored by this filter)", flagBackends)
 		}
 	}
 	ctx := context.Background()
 
 	records, err := searchrun.RunSearch(ctx, q, provs, cacheDir, cacheTTL, flagNoCache, flagRefresh)
+	if err != nil {
+		return nil, "", err
+	}
+	return records, sshUser, nil
+}
+
+func runSearch(cmd *cobra.Command, args []string) error {
+	records, sshUser, err := runSearchCore(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -161,3 +172,4 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	return ui.RunTable(records, sshUser)
 }
+

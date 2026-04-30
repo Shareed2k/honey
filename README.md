@@ -164,6 +164,10 @@ backends:
 ./hostctl search --backends gcp-team-a,k8s-staging web
 ./hostctl search --backends gcp-prod-us2 --provider gcp my-node
 
+# List backends from config (same config resolution as search)
+./hostctl backends
+./hostctl backends --json
+
 # Regex filter
 ./hostctl search --name-regex '^prod-'
 
@@ -173,11 +177,38 @@ backends:
 ./hostctl search --cache-ttl 5m foo
 ```
 
+### CUE recipes (experimental)
+
+Validate a playbook-shaped [CUE](https://cuelang.org/) file: each step has `host` and **exactly one** of `command`, `put` (SFTP upload), `get` (SFTP download), or `script` (upload `local` → `remote`, then run `sh <remote>` on the **same** SSH connection). Optional `run_as` applies to `command` and `script` runs (not to SFTP-only `put`/`get`). **Example recipes** live under [`examples/recipe/`](examples/recipe/) — see that folder’s [`README.md`](examples/recipe/README.md) for a table of files (including `file_transfer.cue`, `script_step.cue`).
+
+```bash
+./hostctl cue-validate examples/recipe/recipe.cue
+```
+
+The document must include a top-level `recipe` field. Implementation: [`cuelang.org/go`](https://github.com/cue-lang/cue) v0.12 (`internal/cuetry`).
+
+**`cue-exec`** runs the same search as `hostctl search` (all search flags apply), resolves each step’s `host` using the result set: **exact name** match (case-insensitive), a **literal IP**, **`host: "*"`** to run on **every** matching row with a **PrimaryIP**, or **`host: "re:PATTERN"`** for a **Go regexp** (RE2) matched against each row’s **Name** (again only rows with an IP). Each step runs **in parallel** across targets: shell via SSH; **SFTP** for `put` / `get`; **`script`** uploads then runs in one session per host. Relative `local` paths are resolved from the **recipe file’s directory**. For **`get`** with **multiple** targets, `local` must be a **directory** (trailing `/` or an existing folder); files are written as `<dir>/<sanitized_host>_<basename(remote)>`. It prints a **dry-run plan** by default and only runs when you pass **`--execute`**. Use `(?i)` inside regex patterns for case-insensitive matching. Optional `recipe.defaults.run_as` or per-step `run_as` applies to **`command` and `script`** runs (`sudo -n -u <user> -- sh -lc '...'`).
+
+```bash
+# Plan only (safe default)
+./hostctl cue-exec examples/recipe/recipe.cue my-name-filter
+
+# Same as search: backends, --name, --ssh-user, etc.
+./hostctl cue-exec --backends gcp-prod-us2 examples/recipe/recipe.cue
+
+# Actually run each step over SSH
+./hostctl cue-exec --execute examples/recipe/recipe.cue
+```
+
 ### TUI keys
 
-- **Enter**: `ssh <user>@<ip>` (user from `--ssh-user`, default `$USER`)
-- **t**: enter `-L` spec (e.g. `8080:localhost:8080`), then **Enter** to run `ssh -L ... user@ip`
-- **q** / **Ctrl+C**: quit without SSH
+- **Enter**: `ssh <user>@<ip>` (user from `--ssh-user`, default `$USER`) for the **selected** row
+- **t**: enter `-L` spec (e.g. `8080:localhost:8080`), then **Enter** to run `ssh -L ... user@ip` on the selected host
+- **x**: toggle a `*` mark on the current table row (for parallel SSH only). The first column shows `*` for marked rows.
+- **Ctrl+a**: mark all rows that have an IP (replaces the previous mark set).
+- **c**: clear all `*` marks.
+- **e**: run the **same** remote shell command in parallel via [goph](https://github.com/melbahja/goph) (`golang.org/x/crypto/ssh`): **only** on marked rows that have an IP; if **nothing** is marked, it runs on **every** listed host that has an IP. **known_hosts** host-key checking; auth from **ssh-agent** (`SSH_AUTH_SOCK`) and keys under `~/.ssh` (`id_ed25519`, `id_rsa`, `id_ecdsa`). Non-interactive; one host failing does not stop the others. The command prompt shows the current scope; results include a short scope line. **Esc** from the prompt returns to the table; **Esc** from results returns to the table; **q** / **Ctrl+C** quits without opening a single-host SSH session. (Single-host **Enter** / **t** still use the system `ssh` binary, including `~/.ssh/config`.)
+- **q** / **Ctrl+C**: quit without SSH (from the table or from the parallel-results view)
 
 ### Provider auth / flags
 
@@ -192,7 +223,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 
 ## Layout
 
-- `cmd/hostctl` — CLI entrypoint (`search`, `mcp`, …)
+- `cmd/hostctl` — CLI entrypoint (`search`, `backends`, `mcp`, …)
 - `internal/cli` — Cobra flags and wiring
 - `internal/mcpserver` — MCP tool handlers
 - `internal/searchrun` — shared search + provider wiring
@@ -200,6 +231,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `internal/hosts` — `Record`, `Query`, cache, parallel orchestration
 - `internal/provider/*` — GCP, AWS, k8s, Consul integrations
 - `internal/ui` — Bubble Tea table + SSH actions
+- `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
 
 ## Tests
 

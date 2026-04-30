@@ -164,14 +164,8 @@ type listBackendsInput struct {
 	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to hostctl YAML; empty uses HOSTCTL_CONFIG or default paths"`
 }
 
-type backendRow struct {
-	Kind string `json:"kind"`
-	Name string `json:"name,omitempty"`
-	Hint string `json:"hint,omitempty"`
-}
-
 type listBackendsOutput struct {
-	Backends []backendRow `json:"backends"`
+	Backends []config.BackendRow `json:"backends"`
 }
 
 func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBackendsInput) (*mcp.CallToolResult, listBackendsOutput, error) {
@@ -187,21 +181,5 @@ func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBack
 	if err != nil {
 		return nil, listBackendsOutput{}, fmt.Errorf("config: %w", err)
 	}
-	if !cfg.HasAnyBackend() {
-		return nil, listBackendsOutput{Backends: nil}, nil
-	}
-	var rows []backendRow
-	for _, e := range cfg.Backends.GCP {
-		rows = append(rows, backendRow{Kind: "gcp", Name: e.Name, Hint: e.Project})
-	}
-	for _, e := range cfg.Backends.AWS {
-		rows = append(rows, backendRow{Kind: "aws", Name: e.Name, Hint: e.Profile + " " + e.Region})
-	}
-	for _, e := range cfg.Backends.Kubernetes {
-		rows = append(rows, backendRow{Kind: "kubernetes", Name: e.Name, Hint: e.Context})
-	}
-	for _, e := range cfg.Backends.Consul {
-		rows = append(rows, backendRow{Kind: "consul", Name: e.Name, Hint: e.Addr})
-	}
-	return nil, listBackendsOutput{Backends: rows}, nil
+	return nil, listBackendsOutput{Backends: cfg.ListBackendRows()}, nil
 }

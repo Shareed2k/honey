@@ -59,6 +59,16 @@ backends:
 	if f.Defaults.SSHUser != "ops" {
 		t.Fatalf("ssh_user: %q", f.Defaults.SSHUser)
 	}
+	rows := f.ListBackendRows()
+	if len(rows) != 5 {
+		t.Fatalf("ListBackendRows len=%d %+v", len(rows), rows)
+	}
+	if rows[0].Kind != "gcp" || rows[0].Name != "gcp-a" || rows[0].Hint != "p1" {
+		t.Fatalf("row0: %+v", rows[0])
+	}
+	if rows[1].Kind != "gcp" || rows[1].Hint != "p2" {
+		t.Fatalf("row1: %+v", rows[1])
+	}
 }
 
 func TestHasAnyBackendEmpty(t *testing.T) {
