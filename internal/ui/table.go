@@ -3,6 +3,9 @@ package ui
 import (
 	"bytes"
 	"fmt"
+	"honey/internal/cuetry"
+	"honey/internal/hosts"
+	"honey/internal/safepath"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +14,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-
-	"honey/internal/cuetry"
-	"honey/internal/hosts"
 )
 
 type action int
@@ -472,9 +472,10 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 	}
 	return func() tea.Msg {
 		if len(targets) == 0 {
+			const noHostMsg = "(no hosts with IP in this scope — use x to mark rows, ^a to mark all with IP, or c to clear marks and use every row with an IP)"
 			return cueRecipeDoneMsg{
 				title: title,
-				body: targetNote + "\n\n(no hosts with IP in this scope — use x to mark rows, ^a to mark all with IP, or c to clear marks and use every row with an IP)",
+				body:  targetNote + "\n\n" + noHostMsg,
 			}
 		}
 		absRecipe, err := filepath.Abs(recipePath)
@@ -482,7 +483,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\npath: " + err.Error()}
 		}
 		recipeDir := filepath.Dir(absRecipe)
-		raw, err := os.ReadFile(recipePath)
+		raw, err := safepath.ReadFile(absRecipe)
 		if err != nil {
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nread: " + err.Error()}
 		}

@@ -1,3 +1,4 @@
+// Package hosts defines the host search record model and pluggable cloud backends.
 package hosts
 
 import "context"

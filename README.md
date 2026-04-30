@@ -1,18 +1,6 @@
 # honey
 
-CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), and **Consul** catalog nodes **in parallel**, optionally cache results, then use a **terminal UI** to SSH or open an **SSH local forward** (`-L`) via the system `ssh` binary.
-
-## Prerequisites
-
-- Go 1.26+ (see `go` directive in `go.mod`)
-- Credentials for each backend you enable (see below)
-
-After cloning, generate checksums:
-
-```bash
-cd honey
-go mod tidy
-```
+CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), and **Consul** catalog nodes
 
 ## Build
 
@@ -241,3 +229,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 ```bash
 go test ./...
 ```
+
+## License
+
+This project is released under the [MIT License](LICENSE).

@@ -1,6 +1,6 @@
 module honey
 
-go 1.26.0
+go 1.26.2
 
 require (
 	cloud.google.com/go/compute v1.60.0

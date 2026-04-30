@@ -2,6 +2,7 @@ package gcp
 
 import (
 	"context"
+	"honey/internal/hosts"
 	"os"
 	"strconv"
 	"strings"
@@ -10,8 +11,6 @@ import (
 	"google.golang.org/api/iterator"
 
 	compute "cloud.google.com/go/compute/apiv1"
-
-	"honey/internal/hosts"
 )
 
 // GCP implements provider.Provider for Compute Engine instances.
@@ -21,6 +20,7 @@ type GCP struct {
 	Zone    string // empty = aggregated all zones
 }
 
+// ID returns the honey backend identifier ("gcp").
 func (GCP) ID() string { return "gcp" }
 
 // BackendName returns the optional YAML backends.gcp[].name value.
@@ -33,7 +33,8 @@ func (g *GCP) CacheIdentity() string {
 
 var _ hosts.Backend = (*GCP)(nil)
 
-func (g *GCP) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
+// Search returns Compute Engine instances matching the query.
+func (g *GCP) Search(ctx context.Context, q hosts.Query) (out []hosts.Record, err error) {
 	project := g.Project
 	if q.GCPProject != "" {
 		project = q.GCPProject
@@ -52,14 +53,16 @@ func (g *GCP) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
+	defer func() {
+		if cerr := client.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	zone := g.Zone
 	if q.GCPZone != "" {
 		zone = q.GCPZone
 	}
-
-	var out []hosts.Record
 
 	if zone != "" {
 		it := client.List(ctx, &computepb.ListInstancesRequest{

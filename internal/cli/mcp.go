@@ -2,12 +2,11 @@ package cli
 
 import (
 	"context"
+	"honey/internal/mcpserver"
 	"log"
 	"os"
 
 	"github.com/spf13/cobra"
-
-	"honey/internal/mcpserver"
 )
 
 var mcpCmd = &cobra.Command{

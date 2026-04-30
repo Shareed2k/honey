@@ -27,6 +27,7 @@ builds:
 
 archives:
   - id: default
-    builds:
+    ids:
       - honey
-    format: tar.gz
+    formats:
+      - tar.gz

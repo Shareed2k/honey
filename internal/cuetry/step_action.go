@@ -8,6 +8,7 @@ import (
 // StepKind describes which action a recipe step performs.
 type StepKind int
 
+// StepKind values correspond to exactly one populated field on RecipeStep.
 const (
 	StepKindCommand StepKind = iota
 	StepKindPut

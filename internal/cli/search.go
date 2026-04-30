@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"honey/internal/config"
+	"honey/internal/hosts"
+	"honey/internal/searchrun"
+	"honey/internal/ui"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"honey/internal/config"
-	"honey/internal/hosts"
-	"honey/internal/searchrun"
-	"honey/internal/ui"
 )
 
 var (
@@ -172,4 +171,3 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	return ui.RunTable(records, sshUser)
 }
-

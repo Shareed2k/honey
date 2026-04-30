@@ -3,11 +3,10 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"honey/internal/config"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-
-	"honey/internal/config"
 )
 
 var (

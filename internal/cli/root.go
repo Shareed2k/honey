@@ -1,3 +1,4 @@
+// Package cli implements the honey Cobra commands.
 package cli
 
 import (

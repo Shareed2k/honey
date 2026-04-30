@@ -2,14 +2,13 @@ package awsprovider
 
 import (
 	"context"
+	"honey/internal/hosts"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-
-	"honey/internal/hosts"
 )
 
 // AWS implements EC2 instance search.
@@ -19,6 +18,7 @@ type AWS struct {
 	Region  string
 }
 
+// ID returns the honey backend identifier ("aws").
 func (AWS) ID() string { return "aws" }
 
 // BackendName returns the optional YAML backends.aws[].name value.
@@ -31,6 +31,7 @@ func (a *AWS) CacheIdentity() string {
 
 var _ hosts.Backend = (*AWS)(nil)
 
+// Search returns EC2 instances matching the query (running or pending).
 func (a *AWS) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	opts := []func(*config.LoadOptions) error{}
 	profile := a.Profile
@@ -56,7 +57,7 @@ func (a *AWS) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 
 	var out []hosts.Record
 	paginator := ec2.NewDescribeInstancesPaginator(svc, &ec2.DescribeInstancesInput{
-			Filters: []types.Filter{
+		Filters: []types.Filter{
 			{Name: aws.String("instance-state-name"), Values: []string{"running", "pending"}},
 		},
 	})

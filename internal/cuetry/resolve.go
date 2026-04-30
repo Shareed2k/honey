@@ -2,11 +2,10 @@ package cuetry
 
 import (
 	"fmt"
+	"honey/internal/hosts"
 	"net"
 	"regexp"
 	"strings"
-
-	"honey/internal/hosts"
 )
 
 // MatchAllSearchHosts is a recipe step host value meaning: run this step on
