@@ -1,9 +1,8 @@
 package ui
 
 import (
-	"testing"
-
 	"honey/internal/hosts"
+	"testing"
 )
 
 func TestExecuteSSHParallel_emptyCmd(t *testing.T) {

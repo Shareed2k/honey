@@ -1,10 +1,10 @@
+// Package main is the honey CLI entrypoint.
 package main
 
 import (
 	"fmt"
-	"os"
-
 	"honey/internal/cli"
+	"os"
 )
 
 // Set by goreleaser / -ldflags at link time.

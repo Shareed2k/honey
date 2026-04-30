@@ -13,7 +13,8 @@ import (
 // one backend entry; otherwise the default quartet from f (each provider once).
 func BuildProviders(cfg *config.File, f ProviderFlags) []hosts.Backend {
 	if cfg != nil && cfg.HasAnyBackend() {
-		var out []hosts.Backend
+		n := len(cfg.Backends.GCP) + len(cfg.Backends.AWS) + len(cfg.Backends.Kubernetes) + len(cfg.Backends.Consul)
+		out := make([]hosts.Backend, 0, n)
 		for _, e := range cfg.Backends.GCP {
 			proj := e.Project
 			if proj == "" {

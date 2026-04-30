@@ -55,7 +55,7 @@ func compileAndUnifyRecipe(cueBytes []byte) (cue.Value, error) {
 		return cue.Value{}, fmt.Errorf("cuetry: missing top-level field \"recipe\"")
 	}
 
-	def := schema.LookupDef("#Recipe")
+	def := schema.LookupPath(cue.ParsePath("#Recipe"))
 	if !def.Exists() {
 		return cue.Value{}, fmt.Errorf("cuetry: internal schema missing #Recipe")
 	}

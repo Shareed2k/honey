@@ -2,12 +2,11 @@ package consulprovider
 
 import (
 	"context"
+	"honey/internal/hosts"
 	"os"
 	"strings"
 
 	"github.com/hashicorp/consul/api"
-
-	"honey/internal/hosts"
 )
 
 // Consul lists catalog nodes (and basic service metadata).
@@ -18,6 +17,7 @@ type Consul struct {
 	Token      string
 }
 
+// ID returns the honey backend identifier ("consul").
 func (Consul) ID() string { return "consul" }
 
 // BackendName returns the optional YAML backends.consul[].name value.
@@ -30,6 +30,7 @@ func (c *Consul) CacheIdentity() string {
 
 var _ hosts.Backend = (*Consul)(nil)
 
+// Search returns Consul catalog nodes matching the query.
 func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	cfg := api.DefaultConfig()
 	addr := c.Addr

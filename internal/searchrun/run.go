@@ -2,10 +2,9 @@ package searchrun
 
 import (
 	"context"
+	"honey/internal/hosts"
 	"path/filepath"
 	"time"
-
-	"honey/internal/hosts"
 )
 
 // RunSearch executes hosts.RunParallel with an on-disk cache under cacheDir.

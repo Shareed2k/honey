@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"honey/internal/safepath"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,7 +15,7 @@ import (
 // CacheEntry is a single cached provider result.
 type CacheEntry struct {
 	StoredAt time.Time `json:"stored_at"`
-	Records  []Record   `json:"records"`
+	Records  []Record  `json:"records"`
 }
 
 // FileCache is a simple JSON file cache with TTL.
@@ -39,8 +40,12 @@ func DefaultCacheDir() (string, error) {
 		}
 		base = filepath.Join(home, ".cache")
 	}
-	dir := filepath.Join(base, "honey")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	dir, err := safepath.JoinUnder(base, "honey")
+	if err != nil {
+		return "", err
+	}
+	// dir is under the resolved cache root (safepath.JoinUnder); MkdirAll cannot widen the path.
+	if err := os.MkdirAll(dir, 0o750); err != nil { // #nosec G703
 		return "", err
 	}
 	return dir, nil
@@ -56,7 +61,7 @@ func (c *FileCache) load() (diskDoc, error) {
 	if c.path == "" {
 		return doc, errors.New("cache path empty")
 	}
-	b, err := os.ReadFile(c.path)
+	b, err := safepath.ReadFile(c.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return doc, nil
@@ -79,18 +84,11 @@ func (c *FileCache) save(doc diskDoc) error {
 	if c.path == "" {
 		return errors.New("cache path empty")
 	}
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, c.path)
+	return safepath.WriteFile(c.path, b, 0o600)
 }
 
 // CacheKeySHA256 builds a stable cache key from provider id and payload.

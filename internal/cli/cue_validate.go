@@ -2,11 +2,10 @@ package cli
 
 import (
 	"fmt"
-	"os"
+	"honey/internal/cuetry"
+	"honey/internal/safepath"
 
 	"github.com/spf13/cobra"
-
-	"honey/internal/cuetry"
 )
 
 func init() {
@@ -21,7 +20,7 @@ the built-in schema: name (string) and steps (each step has host and exactly one
 of command, put, get, or script {local, remote}; optional run_as on command/script steps).`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		b, err := os.ReadFile(args[0])
+		b, err := safepath.ReadFile(args[0])
 		if err != nil {
 			return err
 		}

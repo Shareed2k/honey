@@ -2,13 +2,12 @@ package cli
 
 import (
 	"fmt"
-	"os"
+	"honey/internal/cuetry"
+	"honey/internal/safepath"
+	"honey/internal/ui"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-
-	"honey/internal/cuetry"
-	"honey/internal/ui"
 )
 
 var flagCueExecExecute bool
@@ -55,7 +54,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	}
 	recipeDir := filepath.Dir(absRecipe)
 
-	raw, err := os.ReadFile(recipePath)
+	raw, err := safepath.ReadFile(absRecipe)
 	if err != nil {
 		return err
 	}

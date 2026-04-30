@@ -3,14 +3,13 @@ package k8sprovider
 import (
 	"context"
 	"fmt"
+	"honey/internal/hosts"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"honey/internal/hosts"
 )
 
 // K8s resolves node or pod addresses.
@@ -22,6 +21,7 @@ type K8s struct {
 	Mode string
 }
 
+// ID returns the honey backend identifier ("k8s").
 func (K8s) ID() string { return "k8s" }
 
 // BackendName returns the optional YAML backends.kubernetes[].name value.
@@ -38,6 +38,7 @@ func (k *K8s) CacheIdentity() string {
 
 var _ hosts.Backend = (*K8s)(nil)
 
+// Search returns Kubernetes nodes or pods matching the query.
 func (k *K8s) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	kubePath := k.KubeconfigPath
@@ -173,12 +174,15 @@ func nodeIPs(n corev1.Node) (primary string, extras []string) {
 	}
 	if len(ext) > 0 {
 		primary = ext[0]
-		extras = append(ext[1:], internal...)
+		extras = append(extras[:0], ext[1:]...)
+		extras = append(extras, internal...)
 		return primary, extras
 	}
 	if len(internal) > 0 {
 		primary = internal[0]
-		extras = append(internal[1:], extras...)
+		suffix := append([]string(nil), extras...)
+		extras = append(extras[:0], internal[1:]...)
+		extras = append(extras, suffix...)
 		return primary, extras
 	}
 	return "", nil

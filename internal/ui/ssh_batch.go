@@ -3,13 +3,12 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"honey/internal/hosts"
 	"sort"
 	"strings"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
-
-	"honey/internal/hosts"
 )
 
 const (

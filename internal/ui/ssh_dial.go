@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"honey/internal/safepath"
 	"io"
 	"net"
 	"os"
@@ -46,6 +47,7 @@ var knownHostsAppendMu sync.Mutex
 func hostKeyCallbackForAlias(alias string) (ssh.HostKeyCallback, error) {
 	strictSSH := strings.ToLower(strings.TrimSpace(honeySSHConfig.Get(alias, "StrictHostKeyChecking")))
 	if strictSSH == "no" {
+		// #nosec G106 -- mirrors OpenSSH StrictHostKeyChecking=no (explicit ssh_config opt-out of host key checking).
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
 
@@ -76,15 +78,40 @@ func hostKeyCallbackForAlias(alias string) (ssh.HostKeyCallback, error) {
 	return buildHostKeyCallback(inner, len(paths), !useStrict, writeTo), nil
 }
 
-func ensureUserKnownHostsFile() (string, error) {
-	p, err := userKnownHostsWritePath()
+func ensureUserKnownHostsFile() (p string, err error) {
+	p, err = userKnownHostsWritePath()
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return "", err
 	}
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDONLY, 0600)
+	homeAbs, err := filepath.Abs(filepath.Clean(home))
+	if err != nil {
+		return "", err
+	}
+	dirAbs, err := filepath.Abs(filepath.Clean(filepath.Dir(p)))
+	if err != nil {
+		return "", err
+	}
+	if err := safepath.Under(homeAbs, dirAbs); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dirAbs, 0o700); err != nil {
+		return "", err
+	}
+	r, err := os.OpenRoot(dirAbs)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+			p = ""
+		}
+	}()
+	f, err := r.OpenFile(filepath.Base(p), os.O_CREATE|os.O_RDONLY, 0o600)
 	if err != nil {
 		return "", err
 	}
@@ -114,7 +141,7 @@ func buildHostKeyCallback(inner ssh.HostKeyCallback, knownFiles int, acceptNew b
 			return fmt.Errorf("%w: host key differs from known_hosts (possible MITM or server rebuild)", ke)
 		}
 		if acceptNew {
-			_ = os.MkdirAll(filepath.Dir(writeTo), 0700)
+			_ = os.MkdirAll(filepath.Dir(writeTo), 0o700)
 			knownHostsAppendMu.Lock()
 			werr := goph.AddKnownHost(hostname, remote, key, writeTo)
 			knownHostsAppendMu.Unlock()

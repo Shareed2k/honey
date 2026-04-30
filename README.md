@@ -4,7 +4,7 @@ CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods
 
 ## Prerequisites
 
-- Go 1.26+ (see `go` directive in `go.mod`)
+- Go 1.26.2+ (see `go` directive in `go.mod`; use this toolchain or newer so `govulncheck` reports clean stdlib fixes from Go 1.26.1/1.26.2)
 - Credentials for each backend you enable (see below)
 
 After cloning, generate checksums:
@@ -241,3 +241,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 ```bash
 go test ./...
 ```
+
+## License
+
+This project is released under the [MIT License](LICENSE).

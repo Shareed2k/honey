@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"honey/internal/safepath"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,24 +33,27 @@ type Defaults struct {
 // If a slice is nil or omitted, that provider is not defined by the file (use CLI defaults).
 // If a slice is non-empty, one backend is created per element.
 type Backends struct {
-	GCP          []GCPBackend          `yaml:"gcp"`
-	AWS          []AWSBackend          `yaml:"aws"`
-	Kubernetes   []KubernetesBackend   `yaml:"kubernetes"`
-	Consul       []ConsulBackend       `yaml:"consul"`
+	GCP        []GCPBackend        `yaml:"gcp"`
+	AWS        []AWSBackend        `yaml:"aws"`
+	Kubernetes []KubernetesBackend `yaml:"kubernetes"`
+	Consul     []ConsulBackend     `yaml:"consul"`
 }
 
+// GCPBackend configures one Google Cloud Compute Engine listing.
 type GCPBackend struct {
 	Name    string `yaml:"name"`
 	Project string `yaml:"project"`
 	Zone    string `yaml:"zone"`
 }
 
+// AWSBackend configures one Amazon EC2 listing.
 type AWSBackend struct {
 	Name    string `yaml:"name"`
 	Profile string `yaml:"profile"`
 	Region  string `yaml:"region"`
 }
 
+// KubernetesBackend configures one Kubernetes nodes/pods listing.
 type KubernetesBackend struct {
 	Name       string `yaml:"name"`
 	Context    string `yaml:"context"`
@@ -57,6 +61,7 @@ type KubernetesBackend struct {
 	Mode       string `yaml:"mode"`
 }
 
+// ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
 	Name       string `yaml:"name"`
 	Addr       string `yaml:"addr"`
@@ -69,7 +74,7 @@ func Load(path string) (*File, error) {
 	if path == "" {
 		return nil, errors.New("config path empty")
 	}
-	b, err := os.ReadFile(path)
+	b, err := safepath.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -107,27 +112,35 @@ func (f *File) HasAnyBackend() bool {
 // (legacy), then the first existing default file, or "" if none exist.
 func ResolvePath(explicit string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
-		return explicit, nil
+		return filepath.Abs(filepath.Clean(strings.TrimSpace(explicit)))
 	}
 	if v := strings.TrimSpace(os.Getenv("HONEY_CONFIG")); v != "" {
-		return v, nil
+		return filepath.Abs(filepath.Clean(v))
 	}
 	if v := strings.TrimSpace(os.Getenv("HOSTCTL_CONFIG")); v != "" {
-		return v, nil
+		return filepath.Abs(filepath.Clean(v))
 	}
-	candidates := []string{}
-	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
-		candidates = append(candidates, filepath.Join(base, "honey", "config.yaml"))
+	var candidates []string
+	if base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); base != "" {
+		if p, err := safepath.JoinUnder(base, "honey", "config.yaml"); err == nil {
+			candidates = append(candidates, p)
+		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		if base := os.Getenv("XDG_CONFIG_HOME"); base == "" {
-			candidates = append(candidates, filepath.Join(home, ".config", "honey", "config.yaml"))
+		if strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")) == "" {
+			if p, err := safepath.JoinUnder(home, ".config", "honey", "config.yaml"); err == nil {
+				candidates = append(candidates, p)
+			}
 		}
-		candidates = append(candidates, filepath.Join(home, ".honey.yaml"))
-		candidates = append(candidates, filepath.Join(home, ".hostctl.yaml"))
+		if p, err := safepath.JoinUnder(home, ".honey.yaml"); err == nil {
+			candidates = append(candidates, p)
+		}
+		if p, err := safepath.JoinUnder(home, ".hostctl.yaml"); err == nil {
+			candidates = append(candidates, p)
+		}
 	}
 	for _, p := range candidates {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		if st, err := safepath.Stat(p); err == nil && !st.IsDir() {
 			return p, nil
 		}
 	}

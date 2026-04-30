@@ -10,9 +10,11 @@ type stubBackend struct {
 	name string
 }
 
-func (s stubBackend) ID() string                            { return s.id }
-func (s stubBackend) BackendName() string                  { return s.name }
-func (s stubBackend) CacheIdentity() string                  { return s.name + "|id" }
+func (s stubBackend) ID() string { return s.id }
+
+func (s stubBackend) BackendName() string { return s.name }
+
+func (s stubBackend) CacheIdentity() string { return s.name + "|id" }
 func (s stubBackend) Search(_ context.Context, _ Query) ([]Record, error) {
 	return nil, nil
 }
