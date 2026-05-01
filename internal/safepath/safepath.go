@@ -104,6 +104,37 @@ func Stat(path string) (info os.FileInfo, err error) {
 	return r.Stat(file)
 }
 
+// OpenReadWriteProbe returns nil if path is a regular file that can be opened read-write via [os.Root]
+// on the parent directory (used to detect user-writable known_hosts files).
+func OpenReadWriteProbe(path string) (err error) {
+	abs, err := absClean(path)
+	if err != nil {
+		return err
+	}
+	dir, file := filepath.Split(abs)
+	dir = filepath.Clean(dir)
+	if file == "" || file == "." {
+		return fmt.Errorf("invalid path %q", abs)
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+	f, err := r.OpenFile(file, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	if cerr := f.Close(); cerr != nil {
+		return cerr
+	}
+	return nil
+}
+
 // WriteFile writes data to path using a temp file and rename within [os.Root] of the parent directory.
 func WriteFile(path string, data []byte, perm os.FileMode) (err error) {
 	abs, err := absClean(path)

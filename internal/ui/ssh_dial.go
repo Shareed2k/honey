@@ -44,6 +44,9 @@ var knownHostsAppendMu sync.Mutex
 // "ask", "accept-new", and the ssh_config default ("ask" when no directive matches) are treated like
 // accept-new here: honey is non-interactive, so unknown keys are written once to ~/.ssh/known_hosts.
 // Set HONEY_SSH_STRICT_HOSTKEYS=1 to require known keys (and fail if the host is not listed).
+//
+// Stale host keys are renewed by default (matching known_hosts lines removed in pure Go, then append the new key).
+// Set HONEY_SSH_RENEW_STALE_HOST_KEYS=0 (or false/no/off) to disable stale-key renewal. Useful after VM rebuilds; weaker against MITM during renewal.
 func hostKeyCallbackForAlias(alias string) (ssh.HostKeyCallback, error) {
 	strictSSH := strings.ToLower(strings.TrimSpace(honeySSHConfig.Get(alias, "StrictHostKeyChecking")))
 	if strictSSH == "no" {
@@ -75,7 +78,7 @@ func hostKeyCallbackForAlias(alias string) (ssh.HostKeyCallback, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildHostKeyCallback(inner, len(paths), !useStrict, writeTo), nil
+	return buildHostKeyCallback(inner, paths, len(paths), !useStrict, writeTo, honeySSHAutoRenewStaleHostKeys()), nil
 }
 
 func ensureUserKnownHostsFile() (p string, err error) {
@@ -126,8 +129,8 @@ func userKnownHostsWritePath() (string, error) {
 	return filepath.Join(home, ".ssh", "known_hosts"), nil
 }
 
-// buildHostKeyCallback wraps knownhosts: on unknown host, optionally appends the key (accept-new); on mismatch, fails.
-func buildHostKeyCallback(inner ssh.HostKeyCallback, knownFiles int, acceptNew bool, writeTo string) ssh.HostKeyCallback {
+// buildHostKeyCallback wraps knownhosts: on unknown host, optionally appends the key (accept-new); on mismatch, fails or renews.
+func buildHostKeyCallback(inner ssh.HostKeyCallback, knownHostsPaths []string, knownFiles int, acceptNew bool, writeTo string, renewStale bool) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		err := inner(hostname, remote, key)
 		if err == nil {
@@ -138,7 +141,19 @@ func buildHostKeyCallback(inner ssh.HostKeyCallback, knownFiles int, acceptNew b
 			return err
 		}
 		if len(ke.Want) > 0 {
-			return fmt.Errorf("%w: host key differs from known_hosts (possible MITM or server rebuild)", ke)
+			if !renewStale {
+				return fmt.Errorf("%w: host key differs from known_hosts (possible MITM or server rebuild); stale renewal is off (set HONEY_SSH_RENEW_STALE_HOST_KEYS=0). Re-enable default renewal by unsetting that var, or fix with: ssh-keygen -R <host>", ke)
+			}
+			knownHostsAppendMu.Lock()
+			defer knownHostsAppendMu.Unlock()
+			if rerr := removeHostFromKnownHostsFiles(knownHostsPaths, hostname, remote); rerr != nil {
+				return fmt.Errorf("%w: key mismatch and auto-renew failed: %v", ke, rerr)
+			}
+			_ = os.MkdirAll(filepath.Dir(writeTo), 0o700)
+			if werr := goph.AddKnownHost(hostname, remote, key, writeTo); werr != nil {
+				return fmt.Errorf("%w: removed stale keys but could not append new key to %s: %v", ke, writeTo, werr)
+			}
+			return nil
 		}
 		if acceptNew {
 			_ = os.MkdirAll(filepath.Dir(writeTo), 0o700)

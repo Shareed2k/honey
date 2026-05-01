@@ -216,6 +216,8 @@ From the **search TUI**, **r** runs a recipe against **marked `*` rows (with IP)
 - **r**: run a **CUE recipe** (same as `honey cue-exec`) against a **chosen subset** of the table: **only `*`‑marked rows that have an IP** if you marked any rows; **otherwise every row that has an IP** (same scope as **e**). **No second search.** Append `!` to the recipe path to execute for real; without `!` it is a dry-run plan. Uses the same `--ssh-user` as the table.
 - **q** / **Ctrl+C**: quit without SSH (from the table or from the parallel-results view)
 
+Parallel SSH (**e**), CUE recipes, and **`cue-exec`** share the same in-process host-key check (`~/.ssh/known_hosts`, etc.). **By default**, if the server host key changed (e.g. VM rebuild), honey **rewrites writable known_hosts files** (in-process, same idea as `ssh-keygen -R`) and appends the new key instead of failing. Set **`HONEY_SSH_RENEW_STALE_HOST_KEYS=0`** to turn that off and require manual `ssh-keygen -R <host>` on mismatch.
+
 ### Provider auth / flags
 
 | Provider | Auth / config |
