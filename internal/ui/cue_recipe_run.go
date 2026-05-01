@@ -13,12 +13,13 @@ import (
 
 // RunCueRecipeSteps runs a parsed recipe against the given search snapshot (no
 // second query). Writes the same plan / progress text as honey cue-exec.
-func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool) error {
+// cliEnv is merged into each command/script step's remote env (overrides recipe env on duplicate keys); nil is treated as empty.
+func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string) error {
 	if len(records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
 	for i, step := range recipe.Steps {
-		if err := runCueRecipeStep(out, recipe, recipeDir, records, sshUser, execute, i, step); err != nil {
+		if err := runCueRecipeStep(out, recipe, recipeDir, records, sshUser, execute, cliEnv, i, step); err != nil {
 			return err
 		}
 	}
@@ -28,7 +29,7 @@ func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, re
 	return nil
 }
 
-func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, i int, step cuetry.RecipeStep) error {
+func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, i int, step cuetry.RecipeStep) error {
 	targets, err := cuetry.ExpandStepHosts(step.Host, records)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
@@ -39,21 +40,29 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 	}
 	switch kind {
 	case cuetry.StepKindCommand:
-		return runCueStepCommand(out, recipe, sshUser, execute, i, step, targets)
+		return runCueStepCommand(out, recipe, sshUser, execute, cliEnv, i, step, targets)
 	case cuetry.StepKindPut:
 		return runCueStepPut(out, recipeDir, sshUser, execute, i, step, targets)
 	case cuetry.StepKindGet:
 		return runCueStepGet(out, recipeDir, sshUser, execute, i, step, targets)
 	case cuetry.StepKindScript:
-		return runCueStepScript(out, recipeDir, recipe, sshUser, execute, i, step, targets)
+		return runCueStepScript(out, recipeDir, recipe, sshUser, execute, cliEnv, i, step, targets)
 	default:
 		return nil
 	}
 }
 
-func runCueStepCommand(out io.Writer, recipe cuetry.Recipe, sshUser string, execute bool, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
+func runCueStepCommand(out io.Writer, recipe cuetry.Recipe, sshUser string, execute bool, cliEnv map[string]string, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
-	remoteCmd, err := cuetry.WrapRemoteShell(runAs, step.Command)
+	env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv)
+	if err != nil {
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(step.Command))
+	if err != nil {
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	remoteCmd, err := cuetry.WrapRemoteShell(runAs, inner)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
 	}
@@ -164,14 +173,18 @@ func runCueStepGet(out io.Writer, recipeDir, sshUser string, execute bool, i int
 	return nil
 }
 
-func runCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, sshUser string, execute bool, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
+func runCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, sshUser string, execute bool, cliEnv map[string]string, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
 	localAbs, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, step.Script.Local)
 	if err != nil {
 		return fmt.Errorf("step %d script.local: %w", i, err)
 	}
 	remotePath := strings.TrimSpace(step.Script.Remote)
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
-	remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs)
+	env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv)
+	if err != nil {
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
 	}

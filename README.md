@@ -1,6 +1,18 @@
 # honey
 
-CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), and **Consul** catalog nodes
+CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), and **Consul** catalog nodes **in parallel**, optionally cache results, then use a **terminal UI** to SSH or open an **SSH local forward** (`-L`) via the system `ssh` binary.
+
+## Prerequisites
+
+- Go 1.26.2+ (see `go` directive in `go.mod`; use this toolchain or newer so `govulncheck` reports clean stdlib fixes from Go 1.26.1/1.26.2)
+- Credentials for each backend you enable (see below)
+
+After cloning, generate checksums:
+
+```bash
+cd honey
+go mod tidy
+```
 
 ## Build
 
@@ -169,7 +181,7 @@ backends:
 
 ### CUE recipes (experimental)
 
-Validate a playbook-shaped [CUE](https://cuelang.org/) file: each step has `host` and **exactly one** of `command`, `put` (SFTP upload), `get` (SFTP download), or `script` (upload `local` → `remote`, then run `sh <remote>` on the **same** SSH connection). Optional `run_as` applies to `command` and `script` runs (not to SFTP-only `put`/`get`). **Example recipes** live under [`examples/recipe/`](examples/recipe/) — see that folder’s [`README.md`](examples/recipe/README.md) for a table of files (including `file_transfer.cue`, `script_step.cue`).
+Validate a playbook-shaped [CUE](https://cuelang.org/) file: each step has `host` and **exactly one** of `command`, `put` (SFTP upload), `get` (SFTP download), or `script` (upload `local` → `remote`, then run `sh <remote>` on the **same** SSH connection). Optional `run_as` applies to `command` and `script` runs (not to SFTP-only `put`/`get`). Optional `recipe.defaults.env` and per-step `env` are `export`’d on the remote before the command or script (step overrides duplicate keys from defaults); `env` is not supported on `put`/`get`. **Example recipes** live under [`examples/recipe/`](examples/recipe/) — see that folder’s [`README.md`](examples/recipe/README.md) for a table of files (including `file_transfer.cue`, `script_step.cue`, `with_env.cue`).
 
 ```bash
 ./honey cue-validate examples/recipe/recipe.cue
@@ -177,7 +189,7 @@ Validate a playbook-shaped [CUE](https://cuelang.org/) file: each step has `host
 
 The document must include a top-level `recipe` field. Implementation: [`cuelang.org/go`](https://github.com/cue-lang/cue) v0.12 (`internal/cuetry`).
 
-From the **search TUI**, **r** runs a recipe against **marked `*` rows (with IP) or all with IP if nothing is marked** — same scope as parallel **e** (dry-run unless the path ends with `!`). **`cue-exec`** on the CLI runs the same search as `honey search` (all search flags apply), resolves each step’s `host` using the result set: **exact name** match (case-insensitive), a **literal IP**, **`host: "*"`** to run on **every** matching row with a **PrimaryIP**, or **`host: "re:PATTERN"`** for a **Go regexp** (RE2) matched against each row’s **Name** (again only rows with an IP). Each step runs **in parallel** across targets: shell via SSH; **SFTP** for `put` / `get`; **`script`** uploads then runs in one session per host. Relative `local` paths are resolved from the **recipe file’s directory**. For **`get`** with **multiple** targets, `local` must be a **directory** (trailing `/` or an existing folder); files are written as `<dir>/<sanitized_host>_<basename(remote)>`. It prints a **dry-run plan** by default and only runs when you pass **`--execute`**. Use `(?i)` inside regex patterns for case-insensitive matching. Optional `recipe.defaults.run_as` or per-step `run_as` applies to **`command` and `script`** runs (`sudo -n -u <user> -- sh -lc '...'`).
+From the **search TUI**, **r** runs a recipe against **marked `*` rows (with IP) or all with IP if nothing is marked** — same scope as parallel **e** (dry-run unless the path ends with `!`). **`cue-exec`** on the CLI runs the same search as `honey search` (all search flags apply), resolves each step’s `host` using the result set: **exact name** match (case-insensitive), a **literal IP**, **`host: "*"`** to run on **every** matching row with a **PrimaryIP**, or **`host: "re:PATTERN"`** for a **Go regexp** (RE2) matched against each row’s **Name** (again only rows with an IP). Each step runs **in parallel** across targets: shell via SSH; **SFTP** for `put` / `get`; **`script`** uploads then runs in one session per host. Relative `local` paths are resolved from the **recipe file’s directory**. For **`get`** with **multiple** targets, `local` must be a **directory** (trailing `/` or an existing folder); files are written as `<dir>/<sanitized_host>_<basename(remote)>`. It prints a **dry-run plan** by default and only runs when you pass **`--execute`**. Use `(?i)` inside regex patterns for case-insensitive matching. Optional `recipe.defaults.run_as` or per-step `run_as` applies to **`command` and `script`** runs (`sudo -n -u <user> -- sh -lc '...'`). Optional `defaults.env` / step `env` apply to those same runs.
 
 ```bash
 # Plan only (safe default)
@@ -188,6 +200,9 @@ From the **search TUI**, **r** runs a recipe against **marked `*` rows (with IP)
 
 # Actually run each step over SSH
 ./honey cue-exec --execute examples/recipe/recipe.cue
+
+# Extra remote env for command/script steps (repeat -e or --env; overrides recipe keys)
+./honey cue-exec -e FOO=bar --env BAZ=qux examples/recipe/with_env.cue my-filter
 ```
 
 ### TUI keys

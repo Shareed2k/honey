@@ -12,6 +12,9 @@ recipe: {
 				local:  "./hello.sh"
 				remote: "/tmp/honey-hello.sh"
 			}
+			env: {
+				FOO: "bar"
+			}
 		},
 	]
 }

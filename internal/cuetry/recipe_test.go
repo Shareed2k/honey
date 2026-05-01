@@ -159,13 +159,17 @@ recipe: {
 }
 
 func TestScriptRunAfterUpload(t *testing.T) {
-	got, err := ScriptRunAfterUpload("/tmp/x.sh", "")
+	got, err := ScriptRunAfterUpload("/tmp/x.sh", "", nil)
 	if err != nil || got != `sh '/tmp/x.sh'` {
 		t.Fatalf("%q %v", got, err)
 	}
-	got2, err := ScriptRunAfterUpload("/tmp/x.sh", "root")
+	got2, err := ScriptRunAfterUpload("/tmp/x.sh", "root", nil)
 	if err != nil || !strings.Contains(got2, "sudo") {
 		t.Fatalf("%q %v", got2, err)
+	}
+	got3, err := ScriptRunAfterUpload("/tmp/x.sh", "", map[string]string{"FOO": "bar"})
+	if err != nil || !strings.HasPrefix(got3, "export FOO='bar'; ") || !strings.Contains(got3, `sh '/tmp/x.sh'`) {
+		t.Fatalf("%q %v", got3, err)
 	}
 }
 

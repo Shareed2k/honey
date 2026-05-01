@@ -10,7 +10,8 @@ type Recipe struct {
 
 // RecipeDefaults holds recipe-level defaults (optional fields).
 type RecipeDefaults struct {
-	RunAs string `json:"run_as,omitempty"`
+	RunAs string            `json:"run_as,omitempty"`
+	Env   map[string]string `json:"env,omitempty"`
 }
 
 // RecipeFileTransfer is a local ↔ remote path pair for SFTP put/get steps.
@@ -28,4 +29,5 @@ type RecipeStep struct {
 	Get     *RecipeFileTransfer `json:"get,omitempty"`
 	Script  *RecipeFileTransfer `json:"script,omitempty"`
 	RunAs   string              `json:"run_as,omitempty"`
+	Env     map[string]string   `json:"env,omitempty"`
 }

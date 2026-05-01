@@ -492,7 +492,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nparse: " + err.Error()}
 		}
 		var buf bytes.Buffer
-		runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute)
+		runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute, nil)
 		body := targetNote + "\n\n" + buf.String()
 		if runErr != nil {
 			body += "\nError: " + runErr.Error()

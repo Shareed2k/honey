@@ -28,11 +28,13 @@ const schemaSource = `
 		local:  string
 		remote: string
 	})
+	env?: {[string]: string}
 })
 #Recipe: close({
 	name:  string
 	defaults?: close({
 		run_as?: string
+		env?: {[string]: string}
 	})
 	steps: [...#Step]
 })
@@ -85,6 +87,11 @@ func ParseRemoteRecipe(cueBytes []byte) (Recipe, error) {
 			return out, fmt.Errorf("cuetry: defaults.run_as: %w", err)
 		}
 	}
+	if out.Defaults != nil && len(out.Defaults.Env) > 0 {
+		if err := ValidateRecipeEnvMap(out.Defaults.Env); err != nil {
+			return out, fmt.Errorf("cuetry: defaults.env: %w", err)
+		}
+	}
 	for i, s := range out.Steps {
 		if err := ValidateHostField(s.Host); err != nil {
 			return out, fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
@@ -92,6 +99,14 @@ func ParseRemoteRecipe(cueBytes []byte) (Recipe, error) {
 		kind, err := ClassifyStep(s)
 		if err != nil {
 			return out, fmt.Errorf("cuetry: steps[%d]: %w", i, err)
+		}
+		if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet) {
+			return out, fmt.Errorf("cuetry: steps[%d]: env is only supported for command and script steps", i)
+		}
+		if len(s.Env) > 0 {
+			if err := ValidateRecipeEnvMap(s.Env); err != nil {
+				return out, fmt.Errorf("cuetry: steps[%d].env: %w", i, err)
+			}
 		}
 		if err := ValidateStepRunAsForKind(kind, s); err != nil {
 			return out, fmt.Errorf("cuetry: steps[%d]: %w", i, err)

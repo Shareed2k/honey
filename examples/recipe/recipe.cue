@@ -15,5 +15,7 @@ recipe: {
 		// {host: "*", command: "hostname"},
 		// Per-step run_as overrides defaults.run_as when both are set.
 		// {host: "my-vm-name", command: "id", run_as: "nobody"},
+		// Optional env (command/script only): defaults.env + step.env, exports before the shell.
+		// {host: "10.0.0.1", command: "printenv MY_VAR", env: {MY_VAR: "hello"}},
 	]
 }

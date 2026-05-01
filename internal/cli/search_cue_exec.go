@@ -10,12 +10,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var flagCueExecExecute bool
+var (
+	flagCueExecExecute bool
+	flagCueExecEnv     []string
 
-var cueExecCmd = &cobra.Command{
-	Use:   "cue-exec <recipe.cue> [name]",
-	Short: "Resolve a CUE recipe against search results and optionally run steps over SSH",
-	Long: `Loads a .cue recipe (see examples/recipe), runs the same host search as honey search
+	cueExecCmd = &cobra.Command{
+		Use:   "cue-exec <recipe.cue> [name]",
+		Short: "Resolve a CUE recipe against search results and optionally run steps over SSH",
+		Long: `Loads a .cue recipe (see examples/recipe), runs the same host search as honey search
 (share all search flags), resolves each step's host field using search results:
 literal IP, exact name match, host "*" for all rows with an IP, or host "re:PATTERN"
 for a Go regexp (RE2) matched against each row's name (only rows with PrimaryIP).
@@ -30,15 +32,24 @@ Optional positional name is forwarded like search: one extra argument sets the
 name substring filter when --name / --name-regex are not set.
 
 Use recipe.defaults.run_as or per-step run_as for command and script steps
-(sudo -n on the remote run only); put/get SFTP uses the SSH login user.`,
-	Args: cobra.RangeArgs(1, 2),
-	RunE: runCueExec,
-}
+(sudo -n on the remote run only); put/get SFTP uses the SSH login user.
+
+Optional recipe.defaults.env and per-step env (map of NAME to value) set
+export assignments before the shell command or sh <script> on the remote;
+step keys override defaults. Not allowed on put/get steps.
+
+Repeat -e/--env KEY=value to set remote variables from the CLI; they override
+recipe env on duplicate keys (command and script steps only).`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: runCueExec,
+	}
+)
 
 func init() {
 	rootCmd.AddCommand(cueExecCmd)
 	cueExecCmd.Flags().AddFlagSet(searchCmd.Flags())
 	cueExecCmd.Flags().BoolVar(&flagCueExecExecute, "execute", false, "Run steps over SSH/SFTP (default: dry-run, print resolved plan only)")
+	cueExecCmd.Flags().StringArrayVarP(&flagCueExecEnv, "env", "e", nil, "Remote env for command/script (repeat: -e KEY=value); overrides recipe env on duplicate keys")
 }
 
 func runCueExec(cmd *cobra.Command, args []string) error {
@@ -62,6 +73,10 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	cliEnv, err := cuetry.ParseEnvKeyValuePairs(flagCueExecEnv)
+	if err != nil {
+		return err
+	}
 
 	records, sshUser, err := runSearchCore(cmd, queryArgs)
 	if err != nil {
@@ -71,5 +86,5 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search returned no hosts; widen filters or fix recipe host keys")
 	}
 
-	return ui.RunCueRecipeSteps(cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute)
+	return ui.RunCueRecipeSteps(cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv)
 }

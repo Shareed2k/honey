@@ -27,5 +27,6 @@ honey cue-exec --execute examples/recipe/<file>.cue my-filter
 | [`with_run_as.cue`](with_run_as.cue) | `defaults.run_as` and per-step `run_as` override |
 | [`file_transfer.cue`](file_transfer.cue) | `put` (upload) and `get` (download); relative paths vs this folder |
 | [`script_step.cue`](script_step.cue) | `script` — upload [`hello.sh`](hello.sh) then run it (one SSH connection per host) |
+| [`with_env.cue`](with_env.cue) | `defaults.env` and per-step `env` for `command` / `script` |
 
 See the main [README](../../README.md) § CUE recipes for full `host` semantics and flags.
