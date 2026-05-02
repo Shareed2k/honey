@@ -4,15 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"honey/internal/config"
-	"honey/internal/hosts"
-	"honey/internal/searchrun"
-	"honey/internal/ui"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/ui"
 )
 
 var (

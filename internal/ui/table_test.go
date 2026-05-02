@@ -1,8 +1,9 @@
 package ui
 
 import (
-	"honey/internal/hosts"
 	"testing"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 func TestParallelExecTargets_noMarksAllWithIP(t *testing.T) {

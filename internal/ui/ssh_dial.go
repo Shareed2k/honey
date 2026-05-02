@@ -3,7 +3,6 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"honey/internal/safepath"
 	"io"
 	"net"
 	"os"
@@ -17,6 +16,8 @@ import (
 	"github.com/melbahja/goph"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // honeySSHConfig uses kevinburke/ssh_config (https://github.com/kevinburke/ssh_config) to read
@@ -494,7 +495,7 @@ func DialHoneyClient(userOverride, hostAlias string) (*HoneyClient, error) {
 	}
 
 	jumps := parseProxyJumpChain(honeySSHConfig.Get(hostAlias, "ProxyJump"))
-	var stack []*ssh.Client
+	stack := make([]*ssh.Client, 0, len(jumps)+1)
 	var cur *ssh.Client
 
 	for _, hopSpec := range jumps {

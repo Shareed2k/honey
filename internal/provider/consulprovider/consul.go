@@ -2,11 +2,12 @@ package consulprovider
 
 import (
 	"context"
-	"honey/internal/hosts"
 	"os"
 	"strings"
 
 	"github.com/hashicorp/consul/api"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // Consul lists catalog nodes (and basic service metadata).
@@ -73,7 +74,7 @@ func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, err
 		return nil, err
 	}
 
-	var out []hosts.Record
+	out := make([]hosts.Record, 0, len(nodes))
 	for _, n := range nodes {
 		name := n.Node
 		ok, err := hosts.NameMatches(name, q)

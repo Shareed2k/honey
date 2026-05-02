@@ -9,15 +9,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"honey/internal/hosts"
-	"honey/internal/k8sdebug"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
+
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/k8sdebug"
 )
 
 type k8sNativeClient struct {
@@ -82,7 +82,7 @@ func (c *k8sNativeClient) Run(cmd string) ([]byte, error) {
 }
 
 func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
-	localFile, err := os.Open(localPath)
+	localFile, err := os.Open(localPath) // #nosec G304 -- CLI tool, user explicitly provides the local path for upload
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
 		if err := tw.WriteHeader(hdr); err != nil {
 			return
 		}
-		io.Copy(tw, localFile)
+		_, _ = io.Copy(tw, localFile)
 	}()
 
 	remoteDir := filepath.Dir(remotePath)
@@ -147,12 +147,14 @@ func (c *k8sNativeClient) Download(remotePath, localPath string) error {
 		}
 
 		if hdr.Name == remoteBase {
-			localFile, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(hdr.Mode))
+			// #nosec G304 -- CLI tool, user explicitly provides the local path for download
+			localFile, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, hdr.FileInfo().Mode())
 			if err != nil {
 				return err
 			}
 			defer localFile.Close()
 
+			// #nosec G110 -- decompression bounded by the user's pod, intentionally downloading
 			if _, err := io.Copy(localFile, tr); err != nil {
 				return err
 			}
@@ -166,7 +168,7 @@ func (c *k8sNativeClient) Download(remotePath, localPath string) error {
 	return fmt.Errorf("file not found in remote archive")
 }
 
-func (k k8sPodExecutor) Dial(user string, r hosts.Record) (HostClient, error) {
+func (k k8sPodExecutor) Dial(_ string, r hosts.Record) (HostClient, error) {
 	namespace := r.Meta["namespace"]
 	podName := r.Meta["pod_name"]
 	kubeContext := r.Meta["kube_context"]

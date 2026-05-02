@@ -3,13 +3,14 @@ package k8sprovider
 import (
 	"context"
 	"fmt"
-	"honey/internal/hosts"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // K8s resolves node or pod addresses.
@@ -90,7 +91,7 @@ func (k *K8s) searchNodes(ctx context.Context, clientset kubernetes.Interface, q
 	if err != nil {
 		return nil, err
 	}
-	var out []hosts.Record
+	out := make([]hosts.Record, 0, len(list.Items))
 	for _, n := range list.Items {
 		ok, err := hosts.NameMatches(n.Name, q)
 		if err != nil {
@@ -123,7 +124,7 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 	if err != nil {
 		return nil, err
 	}
-	var out []hosts.Record
+	out := make([]hosts.Record, 0, len(list.Items))
 	for _, p := range list.Items {
 		ok, err := hosts.NameMatches(p.Name, q)
 		if err != nil {
@@ -145,12 +146,12 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 			Zone:      "",
 			Region:    "",
 			Meta: map[string]string{
-				"kind":           "pod",
-				"namespace":      ns,
-				"pod_name":       p.Name,
-				"kube_context":   resolvedContext,
-				"kubeconfig":     kubeconfig,
-				"backend_name":   k.BackendName(),
+				"kind":         "pod",
+				"namespace":    ns,
+				"pod_name":     p.Name,
+				"kube_context": resolvedContext,
+				"kubeconfig":   kubeconfig,
+				"backend_name": k.BackendName(),
 			},
 		})
 	}

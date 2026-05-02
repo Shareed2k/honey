@@ -2,8 +2,9 @@ package awsprovider
 
 import (
 	"context"
-	"honey/internal/hosts"
 	"strings"
+
+	"github.com/shareed2k/honey/internal/hosts"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"

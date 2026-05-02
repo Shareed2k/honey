@@ -1,3 +1,4 @@
+// Package k8sdebug provides utilities for Kubernetes debug containers.
 package k8sdebug
 
 import (
@@ -14,10 +15,15 @@ import (
 
 func generateID() string {
 	b := make([]byte, 4)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// rand.Read on crypto/rand should only fail if the system's random number generator fails.
+		// Fallback to time if absolutely necessary or just panic.
+		panic(fmt.Errorf("failed to generate random ID: %w", err))
+	}
 	return hex.EncodeToString(b)
 }
 
+// EnsureEphemeralContainer creates or waits for an ephemeral debug container in a pod.
 func EnsureEphemeralContainer(ctx context.Context, clientset kubernetes.Interface, namespace, podName string) (string, error) {
 	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
@@ -84,7 +90,7 @@ func waitForEphemeralContainer(ctx context.Context, clientset kubernetes.Interfa
 		if !ok {
 			continue
 		}
-		
+
 		if isContainerRunning(p, containerName) {
 			return nil
 		}

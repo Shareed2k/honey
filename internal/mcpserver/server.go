@@ -3,13 +3,14 @@ package mcpserver
 import (
 	"context"
 	"fmt"
-	"honey/internal/config"
-	"honey/internal/hosts"
-	"honey/internal/searchrun"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 const serverVersion = "0.1.0"

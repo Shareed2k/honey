@@ -1,4 +1,4 @@
-module honey
+module github.com/shareed2k/honey
 
 go 1.26.2
 

@@ -3,9 +3,6 @@ package ui
 import (
 	"bytes"
 	"fmt"
-	"honey/internal/cuetry"
-	"honey/internal/hosts"
-	"honey/internal/safepath"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +11,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 type action int
@@ -192,11 +193,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamResultMsg:
 		m.execResults = append(m.execResults, msg.res)
-		
+
 		// If cursor is at the bottom and a new item arrives, follow it if we are at the end
 		if !m.execPopupOpen && m.execListCursor == len(m.execResults)-2 {
 			m.execListCursor = len(m.execResults) - 1
-			
+
 			// Adjust scroll to keep it in view
 			vis := m.visibleExecLines() - len(m.execResultLines())
 			if vis < 1 {
@@ -389,7 +390,7 @@ func (m *model) updateExecResultsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "end", "G":
 		m.execListCursor = maxCursor
 	}
-	
+
 	// Keep cursor in view
 	vis := m.visibleExecLines() - 4 // Leave room for headers
 	if vis < 1 {
@@ -491,7 +492,7 @@ func (m *model) popupResultLines() []string {
 	}
 	r := m.execResults[m.execListCursor]
 	var lines []string
-	
+
 	status := "ok"
 	if !r.Success {
 		status = "FAILED"
@@ -510,9 +511,7 @@ func (m *model) popupResultLines() []string {
 	if strings.TrimSpace(r.Output) == "" {
 		lines = append(lines, "(no output)")
 	} else {
-		for _, ln := range strings.Split(r.Output, "\n") {
-			lines = append(lines, ln)
-		}
+		lines = append(lines, strings.Split(r.Output, "\n")...)
 	}
 
 	return lines
@@ -573,7 +572,7 @@ func (m *model) View() string {
 		return baseStyle.Render(box) + "\n" + help
 	case "execresults":
 		var body strings.Builder
-		
+
 		if strings.TrimSpace(m.cueResultBody) != "" {
 			s := strings.TrimRight(m.cueResultBody, "\n")
 			lines := []string{"(empty output)"}
@@ -635,13 +634,13 @@ func (m *model) View() string {
 
 		if len(m.execResults) == 0 {
 			if !m.execDone {
-				body.WriteString(fmt.Sprintf("Running... 0 / %d\n", m.execTotalJobs))
+				fmt.Fprintf(&body, "Running... 0 / %d\n", m.execTotalJobs)
 			} else {
 				body.WriteString("(no command output — no hosts ran or none with IP in scope)\n")
 			}
 		} else {
 			if !m.execDone {
-				body.WriteString(fmt.Sprintf("Running... %d / %d\n\n", len(m.execResults), m.execTotalJobs))
+				fmt.Fprintf(&body, "Running... %d / %d\n\n", len(m.execResults), m.execTotalJobs)
 				vis -= 2 // Account for running header
 				// Recompute end with smaller vis
 				end = start + vis
@@ -662,14 +661,14 @@ func (m *model) View() string {
 					status = "FAILED"
 					statusColor = lipgloss.Color("196") // red
 				}
-				
+
 				styledStatus := lipgloss.NewStyle().Foreground(statusColor).Render(status)
 				row := fmt.Sprintf("%s[%s] %s @ %s — %s", cursor, r.Provider, r.Name, r.IP, styledStatus)
-				
+
 				if r.ErrMsg != "" {
 					row += " — " + r.ErrMsg
 				}
-				
+
 				if i == m.execListCursor {
 					row = lipgloss.NewStyle().Bold(true).Render(row)
 				}
@@ -689,7 +688,7 @@ func (m *model) View() string {
 			}
 		}
 		title := lipgloss.NewStyle().Bold(true).Render(titleText)
-		
+
 		help := helpStyle.Render("enter: view output   esc: table   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
 		if !m.execDone {
 			help = helpStyle.Render("Running... please wait.   esc: cancel/back   q: quit")
@@ -734,7 +733,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		if err != nil {
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nparse: " + err.Error()}
 		}
-		
+
 		if !execute {
 			var buf bytes.Buffer
 			runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute, nil)
@@ -821,31 +820,6 @@ func readNextStreamResult(ch chan HostExecResult) tea.Cmd {
 	}
 }
 
-func runParallelSSHCmd(user string, targets []hosts.Record, cmd, targetNote string) tea.Cmd {
-	return func() tea.Msg {
-		if len(targets) == 0 {
-			return parallelExecDoneMsg{
-				results:    []HostExecResult{},
-				cmdLine:    cmd,
-				targetNote: targetNote + " — nothing to run",
-			}
-		}
-		res, err := ExecuteSSHParallel(user, targets, cmd, 0)
-		if err != nil {
-			res = []HostExecResult{{
-				Name:     "(SSH setup)",
-				Provider: "—",
-				Success:  false,
-				ErrMsg:   err.Error(),
-			}}
-		}
-		if res == nil {
-			res = []HostExecResult{}
-		}
-		return parallelExecDoneMsg{results: res, cmdLine: cmd, targetNote: targetNote}
-	}
-}
-
 // parallelExecTargets returns hosts to run a parallel command on. If at least
 // one table row is marked (*), only marked rows that have PrimaryIP are used.
 // If nothing is marked, every row with PrimaryIP is used.
@@ -855,7 +829,7 @@ func isExecutableHost(r hosts.Record) bool {
 
 func (m *model) parallelExecTargets() ([]hosts.Record, string) {
 	if len(m.selected) == 0 {
-		var out []hosts.Record
+		out := make([]hosts.Record, 0, len(m.recs))
 		for _, r := range m.recs {
 			if isExecutableHost(r) {
 				out = append(out, r)
@@ -864,7 +838,7 @@ func (m *model) parallelExecTargets() ([]hosts.Record, string) {
 		note := fmt.Sprintf("Scope: all %d host(s) (no * marks — use x on rows, or ^a to mark all executable)", len(out))
 		return out, note
 	}
-	var out []hosts.Record
+	out := make([]hosts.Record, 0, len(m.selected))
 	skippedNoIP := 0
 	for i, r := range m.recs {
 		if _, ok := m.selected[i]; !ok {
@@ -919,7 +893,7 @@ func (m *model) clearParallelMarks() {
 }
 
 func runSSH(user string, r hosts.Record) error {
-	if r.PrimaryIP == "" && !(r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") {
 		return fmt.Errorf("no IP for selected host")
 	}
 	executor := GetExecutor(r)

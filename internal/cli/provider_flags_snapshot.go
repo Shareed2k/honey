@@ -1,6 +1,6 @@
 package cli
 
-import "honey/internal/searchrun"
+import "github.com/shareed2k/honey/internal/searchrun"
 
 func providerFlagsSnapshot() searchrun.ProviderFlags {
 	return searchrun.ProviderFlags{

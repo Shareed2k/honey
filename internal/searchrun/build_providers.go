@@ -1,12 +1,12 @@
 package searchrun
 
 import (
-	"honey/internal/config"
-	"honey/internal/hosts"
-	"honey/internal/provider/awsprovider"
-	"honey/internal/provider/consulprovider"
-	"honey/internal/provider/gcp"
-	"honey/internal/provider/k8sprovider"
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/awsprovider"
+	"github.com/shareed2k/honey/internal/provider/consulprovider"
+	"github.com/shareed2k/honey/internal/provider/gcp"
+	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 )
 
 // BuildProviders returns backends from the config file when it defines at least

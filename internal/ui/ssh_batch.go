@@ -3,10 +3,11 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"honey/internal/hosts"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/shareed2k/honey/internal/hosts"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -73,7 +74,7 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxC
 		_ = StreamSSHParallel(user, jobs, remoteCmd, maxConc, ch, nil)
 	}()
 
-	var out []HostExecResult
+	out := make([]HostExecResult, 0, len(jobs))
 	for res := range ch {
 		out = append(out, res)
 	}
@@ -129,7 +130,7 @@ type SFTPDownloadJob struct {
 	RemotePath string
 }
 
-// ExecuteSFTPUploadParallel uploads the same local file to remotePath on each
+// StreamSFTPUploadParallel uploads the same local file to remotePath on each
 // record (SFTP over DialHoneyClient). Failures on one host do not cancel others.
 func StreamSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remotePath string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
 	localAbs = strings.TrimSpace(localAbs)
@@ -164,6 +165,7 @@ func StreamSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remote
 	return nil
 }
 
+// StreamSFTPDownloadParallel downloads files from multiple hosts in parallel.
 func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
@@ -179,7 +181,7 @@ func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if strings.TrimSpace(j.Record.PrimaryIP) == "" && !(j.Record.Provider == "k8s" && j.Record.Meta["kind"] == "pod") {
+			if strings.TrimSpace(j.Record.PrimaryIP) == "" && (j.Record.Provider != "k8s" || j.Record.Meta["kind"] != "pod") {
 				out <- HostExecResult{Name: j.Record.Name, Provider: j.Record.Provider, Success: false, ErrMsg: "missing PrimaryIP"}
 				return
 			}
@@ -190,6 +192,7 @@ func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int
 	return nil
 }
 
+// StreamScriptUploadRunParallel uploads a script and executes it on multiple hosts in parallel.
 func StreamScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, remotePath, remoteCmd string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
@@ -223,6 +226,8 @@ func StreamScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, r
 	wg.Wait()
 	return nil
 }
+
+// ExecuteSFTPUploadParallel executes an SFTP upload in parallel across multiple hosts and returns results synchronously.
 func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remotePath string, maxConc int) ([]HostExecResult, error) {
 	var jobs []hosts.Record
 	for _, r := range recs {
@@ -240,7 +245,7 @@ func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remot
 		_ = StreamSFTPUploadParallel(user, recs, localAbs, remotePath, maxConc, ch, nil)
 	}()
 
-	var out []HostExecResult
+	out := make([]HostExecResult, 0, len(jobs))
 	for res := range ch {
 		out = append(out, res)
 	}
@@ -260,7 +265,7 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 		_ = StreamSFTPDownloadParallel(user, jobs, maxConc, ch, nil)
 	}()
 
-	var out []HostExecResult
+	out := make([]HostExecResult, 0, len(jobs))
 	for res := range ch {
 		out = append(out, res)
 	}
@@ -308,7 +313,7 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 		_ = StreamScriptUploadRunParallel(user, recs, localAbs, remotePath, remoteCmd, maxConc, ch, nil)
 	}()
 
-	var out []HostExecResult
+	out := make([]HostExecResult, 0, len(jobs))
 	for res := range ch {
 		out = append(out, res)
 	}

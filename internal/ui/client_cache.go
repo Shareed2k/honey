@@ -1,8 +1,9 @@
 package ui
 
 import (
-	"honey/internal/hosts"
 	"sync"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // ClientCache maintains a pool of open HostClient connections for reuse across steps.
@@ -11,6 +12,7 @@ type ClientCache struct {
 	clients map[string]HostClient
 }
 
+// NewClientCache creates a new initialized ClientCache.
 func NewClientCache() *ClientCache {
 	return &ClientCache{
 		clients: make(map[string]HostClient),

@@ -3,13 +3,14 @@ package config
 import (
 	"errors"
 	"fmt"
-	"honey/internal/safepath"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // File is the optional honey YAML configuration.

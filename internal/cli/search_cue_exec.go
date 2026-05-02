@@ -2,12 +2,13 @@ package cli
 
 import (
 	"fmt"
-	"honey/internal/cuetry"
-	"honey/internal/safepath"
-	"honey/internal/ui"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/safepath"
+	"github.com/shareed2k/honey/internal/ui"
 )
 
 var (

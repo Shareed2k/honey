@@ -2,12 +2,13 @@ package k8sprovider
 
 import (
 	"context"
-	"honey/internal/hosts"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 func TestSearchPodsMeta(t *testing.T) {

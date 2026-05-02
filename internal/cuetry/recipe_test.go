@@ -1,9 +1,10 @@
 package cuetry
 
 import (
-	"honey/internal/hosts"
 	"strings"
 	"testing"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 func TestValidateRemoteRecipe_ok(t *testing.T) {
