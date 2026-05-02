@@ -799,7 +799,7 @@ func runParallelSSHStreamCmd(user string, targets []hosts.Record, cmdLine, targe
 
 		go func() {
 			defer close(ch)
-			_ = StreamSSHParallel(user, jobs, cmdLine, 0, ch)
+			_ = StreamSSHParallel(user, jobs, cmdLine, 0, ch, nil)
 		}()
 
 		return streamStartMsg{

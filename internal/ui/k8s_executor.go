@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 
 	"honey/internal/hosts"
-
 	"honey/internal/k8sdebug"
 
 	corev1 "k8s.io/api/core/v1"
@@ -116,7 +115,7 @@ func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
 	var stderr bytes.Buffer
 	// Create the directory if it doesn't exist, then extract the tar stream into it
 	cmd := []string{"sh", "-c", fmt.Sprintf("mkdir -p '%s' && tar -xf - -C '%s'", remoteDir, remoteDir)}
-	
+
 	if err := c.execInPod(cmd, pr, nil, &stderr, false); err != nil {
 		return fmt.Errorf("upload extract failed: %w: %s", err, stderr.String())
 	}
@@ -186,7 +185,7 @@ func (k k8sPodExecutor) Dial(user string, r hosts.Record) (HostClient, error) {
 		overrides.CurrentContext = kubeContext
 	}
 	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
-	
+
 	config, err := cc.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("k8s config: %w", err)

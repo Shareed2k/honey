@@ -15,20 +15,29 @@ func StreamCueRecipeSteps(recipe cuetry.Recipe, recipeDir string, records []host
 	if len(records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
+
+	cache := NewClientCache()
+	defer cache.CloseAll()
+
 	for i, step := range recipe.Steps {
-		if err := streamCueRecipeStep(recipe, recipeDir, records, sshUser, cliEnv, i, step, out); err != nil {
+		if err := streamCueRecipeStep(recipe, recipeDir, records, sshUser, cliEnv, i, step, out, cache); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, i int, step cuetry.RecipeStep, out chan<- HostExecResult) error {
+func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, i int, step cuetry.RecipeStep, out chan<- HostExecResult, cache *ClientCache) error {
 	targets, err := cuetry.ExpandStepHosts(step.Host, records)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
 	}
 	
+	// Fast path if nothing to run
+	if len(targets) == 0 {
+		return nil
+	}
+
 	// Create an intermediate channel to prefix the results with the step number
 	ch := make(chan HostExecResult, len(targets))
 	done := make(chan struct{})
@@ -60,7 +69,7 @@ func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts
 					if err != nil {
 						stepErr = fmt.Errorf("step %d: %w", i, err)
 					} else {
-						stepErr = StreamSSHParallel(sshUser, targets, remoteCmd, 0, ch)
+						stepErr = StreamSSHParallel(sshUser, targets, remoteCmd, 0, ch, cache)
 					}
 				}
 			}
@@ -74,7 +83,7 @@ func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts
 				if _, statErr := os.Stat(localAbs); statErr != nil {
 					stepErr = fmt.Errorf("step %d put: local file %q: %w", i, localAbs, statErr)
 				} else {
-					stepErr = StreamSFTPUploadParallel(sshUser, targets, localAbs, remotePath, 0, ch)
+					stepErr = StreamSFTPUploadParallel(sshUser, targets, localAbs, remotePath, 0, ch, cache)
 				}
 			}
 
@@ -119,7 +128,7 @@ func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts
 						}
 					}
 					if stepErr == nil {
-						stepErr = StreamSFTPDownloadParallel(sshUser, jobs, 0, ch)
+						stepErr = StreamSFTPDownloadParallel(sshUser, jobs, 0, ch, cache)
 					}
 				}
 			}
@@ -142,7 +151,7 @@ func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts
 						if _, statErr := os.Stat(localAbs); statErr != nil {
 							stepErr = fmt.Errorf("step %d script: local file %q: %w", i, localAbs, statErr)
 						} else {
-							stepErr = StreamScriptUploadRunParallel(sshUser, targets, localAbs, remotePath, remoteCmd, 0, ch)
+							stepErr = StreamScriptUploadRunParallel(sshUser, targets, localAbs, remotePath, remoteCmd, 0, ch, cache)
 						}
 					}
 				}
