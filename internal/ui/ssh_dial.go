@@ -629,6 +629,10 @@ func runSSHInteractive(user, host string) error {
 	}
 	defer cleanup()
 
+	return runSSHTerminal(client)
+}
+
+func runSSHTerminal(client *ssh.Client) error {
 	fd := int(os.Stdin.Fd())
 	if !termIsTerminal(fd) {
 		return fmt.Errorf("stdin is not a terminal")

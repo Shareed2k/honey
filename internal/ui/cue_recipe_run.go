@@ -68,8 +68,8 @@ func runCueStepCommand(out io.Writer, recipe cuetry.Recipe, sshUser string, exec
 	}
 	if !execute {
 		for _, target := range targets {
-			_, _ = fmt.Fprintf(out, "step %d: kind=command name=%q ip=%s provider=%s run_as=%q remote=%q\n",
-				i, target.Name, target.PrimaryIP, target.Provider, runAs, remoteCmd)
+			_, _ = fmt.Fprintf(out, "step %d: kind=command name=%q %s provider=%s run_as=%q remote=%q\n",
+				i, target.Name, FormatTargetForDryRun(target), target.Provider, runAs, remoteCmd)
 		}
 		return nil
 	}
@@ -95,8 +95,8 @@ func runCueStepPut(out io.Writer, recipeDir, sshUser string, execute bool, i int
 			_, _ = fmt.Fprintf(out, "step %d: kind=put (warning: local not readable: %v)\n", i, statErr)
 		}
 		for _, target := range targets {
-			_, _ = fmt.Fprintf(out, "step %d: kind=put name=%q ip=%s provider=%s %q → remote:%q\n",
-				i, target.Name, target.PrimaryIP, target.Provider, localAbs, remotePath)
+			_, _ = fmt.Fprintf(out, "step %d: kind=put name=%q %s provider=%s %q → remote:%q\n",
+				i, target.Name, FormatTargetForDryRun(target), target.Provider, localAbs, remotePath)
 		}
 		return nil
 	}
@@ -148,8 +148,8 @@ func runCueStepGet(out io.Writer, recipeDir, sshUser string, execute bool, i int
 	}
 	if !execute {
 		for _, j := range jobs {
-			_, _ = fmt.Fprintf(out, "step %d: kind=get name=%q ip=%s provider=%s remote:%q → %q\n",
-				i, j.Record.Name, j.Record.PrimaryIP, j.Record.Provider, j.RemotePath, j.LocalAbs)
+			_, _ = fmt.Fprintf(out, "step %d: kind=get name=%q %s provider=%s remote:%q → %q\n",
+				i, j.Record.Name, FormatTargetForDryRun(j.Record), j.Record.Provider, j.RemotePath, j.LocalAbs)
 		}
 		return nil
 	}
@@ -193,8 +193,8 @@ func runCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, ssh
 			_, _ = fmt.Fprintf(out, "step %d: kind=script (warning: local not readable: %v)\n", i, statErr)
 		}
 		for _, target := range targets {
-			_, _ = fmt.Fprintf(out, "step %d: kind=script name=%q ip=%s provider=%s put %q → %q then exec run_as=%q cmd=%q\n",
-				i, target.Name, target.PrimaryIP, target.Provider, localAbs, remotePath, runAs, remoteCmd)
+			_, _ = fmt.Fprintf(out, "step %d: kind=script name=%q %s provider=%s put %q → %q then exec run_as=%q cmd=%q\n",
+				i, target.Name, FormatTargetForDryRun(target), target.Provider, localAbs, remotePath, runAs, remoteCmd)
 		}
 		return nil
 	}

@@ -224,7 +224,16 @@ Parallel SSH (**e**), CUE recipes, and **`cue-exec`** share the same in-process 
 |----------|----------------|
 | **GCP** | Application Default Credentials; set `GOOGLE_CLOUD_PROJECT` or `GCP_PROJECT`, or pass `--gcp-project`. Optional `--gcp-zone` (default: all zones, aggregated list). |
 | **AWS** | Default credential chain; `--aws-profile`, `--aws-region`. |
-| **Kubernetes** | Current kubeconfig; `--kube-context`, `--kubeconfig`, `--k8s-mode=nodes` (default) or `pods`. |
+| **Kubernetes** | Current kubeconfig; `--kube-context`, `--kubeconfig`, `--k8s-mode=nodes` (default) or `pods`. For pods, `hostctl` seamlessly utilizes Kubernetes `exec` directly without needing SSH or SFTP. |
+
+### Kubernetes Pod Direct Exec
+
+When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `hostctl` provides advanced, transparent execution capabilities without needing any server daemons:
+
+1. **Native Integration:** Selecting a pod and pressing `enter` (or running batch commands) automatically connects via the Kubernetes SDK `exec` mechanism.
+2. **Ephemeral Containers:** To avoid permission issues (like read-only root filesystems), `hostctl` injects a lightweight, short-lived `alpine` Ephemeral Container (`hostctl-debug-*`) into the target pod. This container shares the process and filesystem namespace but has its own writable overlay.
+3. **Transparent File Transfers:** CUE `put` and `get` operations, as well as `script` step uploads, are implemented securely by dynamically streaming `tar` archives over the `exec` connection into the ephemeral container (similar to `kubectl cp`). No SFTP server required!
+4. **Seamless Experience:** Your interactive sessions, parallel commands, and CUE recipes work identically to actual SSH nodes, preserving context, streams, and file permissions, completely daemonless.
 | **Consul** | `CONSUL_HTTP_ADDR` or `--consul-addr`; `--consul-datacenter`, `--consul-token` / `CONSUL_HTTP_TOKEN`. |
 
 If a provider is unreachable, the command fails (use `--provider` to narrow scope).

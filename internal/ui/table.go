@@ -88,7 +88,7 @@ func RunTable(records []hosts.Record, sshUser string) error {
 	r := fm.recs[row]
 	switch fm.lastAction {
 	case actSSH:
-		return runSSH(fm.sshUser, r.PrimaryIP)
+		return runSSH(fm.sshUser, r)
 	case actTunnel:
 		return runTunnel(fm.sshUser, r.PrimaryIP, fm.tunnelArg)
 	default:
@@ -454,7 +454,7 @@ func (m *model) View() string {
 		return title + "\n" + baseStyle.Width(m.winW-2).Render(body.String()) + "\n" +
 			helpStyle.Render(scrollNote) + "\n" + help
 	default:
-		help := helpStyle.Render("enter: ssh   t: tunnel   e: parallel cmd   r: cue recipe   x: mark row   ^a: mark all w/ IP   c: clear marks   q: quit")
+		help := helpStyle.Render("enter: ssh (k8s: debug pod)   t: tunnel   e: parallel cmd   r: cue recipe   x: mark row   ^a: mark all   c: clear marks   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
@@ -529,15 +529,19 @@ func runParallelSSHCmd(user string, targets []hosts.Record, cmd, targetNote stri
 // parallelExecTargets returns hosts to run a parallel command on. If at least
 // one table row is marked (*), only marked rows that have PrimaryIP are used.
 // If nothing is marked, every row with PrimaryIP is used.
+func isExecutableHost(r hosts.Record) bool {
+	return strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod")
+}
+
 func (m *model) parallelExecTargets() ([]hosts.Record, string) {
 	if len(m.selected) == 0 {
 		var out []hosts.Record
 		for _, r := range m.recs {
-			if strings.TrimSpace(r.PrimaryIP) != "" {
+			if isExecutableHost(r) {
 				out = append(out, r)
 			}
 		}
-		note := fmt.Sprintf("Scope: all %d host(s) with an IP (no * marks — use x on rows, or ^a to mark all with IP)", len(out))
+		note := fmt.Sprintf("Scope: all %d host(s) (no * marks — use x on rows, or ^a to mark all executable)", len(out))
 		return out, note
 	}
 	var out []hosts.Record
@@ -546,7 +550,7 @@ func (m *model) parallelExecTargets() ([]hosts.Record, string) {
 		if _, ok := m.selected[i]; !ok {
 			continue
 		}
-		if strings.TrimSpace(r.PrimaryIP) == "" {
+		if !isExecutableHost(r) {
 			skippedNoIP++
 			continue
 		}
@@ -554,7 +558,7 @@ func (m *model) parallelExecTargets() ([]hosts.Record, string) {
 	}
 	note := fmt.Sprintf("Scope: %d host(s) from %d marked row(s)", len(out), len(m.selected))
 	if skippedNoIP > 0 {
-		note += fmt.Sprintf(" (%d marked row(s) have no IP)", skippedNoIP)
+		note += fmt.Sprintf(" (%d marked row(s) not executable)", skippedNoIP)
 	}
 	return out, note
 }
@@ -582,7 +586,7 @@ func (m *model) toggleParallelMark() {
 func (m *model) selectAllWithIPForParallel() {
 	m.selected = make(map[int]struct{})
 	for i, r := range m.recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" {
+		if isExecutableHost(r) {
 			m.selected[i] = struct{}{}
 		}
 	}
@@ -594,11 +598,12 @@ func (m *model) clearParallelMarks() {
 	m.refreshTableRows(m.tbl.Cursor())
 }
 
-func runSSH(user, host string) error {
-	if host == "" {
+func runSSH(user string, r hosts.Record) error {
+	if r.PrimaryIP == "" && !(r.Provider == "k8s" && r.Meta["kind"] == "pod") {
 		return fmt.Errorf("no IP for selected host")
 	}
-	return runSSHInteractive(user, host)
+	executor := GetExecutor(r)
+	return executor.RunInteractive(user, r)
 }
 
 func runTunnel(user, host, localFwd string) error {

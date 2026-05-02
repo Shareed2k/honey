@@ -74,13 +74,18 @@ func (k *K8s) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	case "nodes":
 		return k.searchNodes(ctx, clientset, q)
 	case "pods":
-		return k.searchPods(ctx, clientset, q)
+		rawConfig, _ := cc.RawConfig()
+		resolvedContext := ctxName
+		if resolvedContext == "" {
+			resolvedContext = rawConfig.CurrentContext
+		}
+		return k.searchPods(ctx, clientset, q, resolvedContext, kubePath)
 	default:
 		return nil, fmt.Errorf("unsupported k8s mode %q (use nodes or pods)", mode)
 	}
 }
 
-func (k *K8s) searchNodes(ctx context.Context, clientset *kubernetes.Clientset, q hosts.Query) ([]hosts.Record, error) {
+func (k *K8s) searchNodes(ctx context.Context, clientset kubernetes.Interface, q hosts.Query) ([]hosts.Record, error) {
 	list, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -113,7 +118,7 @@ func (k *K8s) searchNodes(ctx context.Context, clientset *kubernetes.Clientset, 
 	return out, nil
 }
 
-func (k *K8s) searchPods(ctx context.Context, clientset *kubernetes.Clientset, q hosts.Query) ([]hosts.Record, error) {
+func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q hosts.Query, resolvedContext string, kubeconfig string) ([]hosts.Record, error) {
 	list, err := clientset.CoreV1().Pods(corev1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -140,8 +145,12 @@ func (k *K8s) searchPods(ctx context.Context, clientset *kubernetes.Clientset, q
 			Zone:      "",
 			Region:    "",
 			Meta: map[string]string{
-				"kind":      "pod",
-				"namespace": ns,
+				"kind":           "pod",
+				"namespace":      ns,
+				"pod_name":       p.Name,
+				"kube_context":   resolvedContext,
+				"kubeconfig":     kubeconfig,
+				"backend_name":   k.BackendName(),
 			},
 		})
 	}

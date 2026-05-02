@@ -41,7 +41,7 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxC
 
 	var jobs []hosts.Record
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
@@ -71,7 +71,8 @@ func runOneRemoteSSH(user string, r hosts.Record, remoteCmd string) HostExecResu
 		IP:       r.PrimaryIP,
 		Provider: r.Provider,
 	}
-	client, err := DialHoneyClient(user, r.PrimaryIP)
+	executor := GetExecutor(r)
+	client, err := executor.Dial(user, r)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
@@ -125,7 +126,7 @@ func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remot
 	}
 	var jobs []hosts.Record
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
@@ -166,7 +167,7 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if strings.TrimSpace(j.Record.PrimaryIP) == "" {
+			if strings.TrimSpace(j.Record.PrimaryIP) == "" && !(j.Record.Provider == "k8s" && j.Record.Meta["kind"] == "pod") {
 				out[i] = HostExecResult{Name: j.Record.Name, Provider: j.Record.Provider, Success: false, ErrMsg: "missing PrimaryIP"}
 				return
 			}
@@ -179,7 +180,8 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 
 func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := DialHoneyClient(user, r.PrimaryIP)
+	executor := GetExecutor(r)
+	client, err := executor.Dial(user, r)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
@@ -211,7 +213,7 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 	}
 	var jobs []hosts.Record
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
@@ -236,7 +238,8 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 
 func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, remoteCmd string) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := DialHoneyClient(user, r.PrimaryIP)
+	executor := GetExecutor(r)
+	client, err := executor.Dial(user, r)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
@@ -279,7 +282,8 @@ func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, re
 func runOneSFTPDownload(user string, j SFTPDownloadJob) HostExecResult {
 	r := j.Record
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := DialHoneyClient(user, r.PrimaryIP)
+	executor := GetExecutor(r)
+	client, err := executor.Dial(user, r)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
