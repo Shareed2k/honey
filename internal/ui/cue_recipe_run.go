@@ -11,20 +11,187 @@ import (
 	"unicode"
 )
 
-// RunCueRecipeSteps runs a parsed recipe against the given search snapshot (no
+func StreamCueRecipeSteps(recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, out chan<- HostExecResult) error {
+	if len(records) == 0 {
+		return fmt.Errorf("no hosts in current result set")
+	}
+	for i, step := range recipe.Steps {
+		if err := streamCueRecipeStep(recipe, recipeDir, records, sshUser, cliEnv, i, step, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, i int, step cuetry.RecipeStep, out chan<- HostExecResult) error {
+	targets, err := cuetry.ExpandStepHosts(step.Host, records)
+	if err != nil {
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	
+	// Create an intermediate channel to prefix the results with the step number
+	ch := make(chan HostExecResult, len(targets))
+	done := make(chan struct{})
+	go func() {
+		for res := range ch {
+			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
+			out <- res
+		}
+		close(done)
+	}()
+
+	var stepErr error
+	kind, err := cuetry.ClassifyStep(step)
+	if err != nil {
+		stepErr = fmt.Errorf("step %d: %w", i, err)
+	} else {
+		switch kind {
+		case cuetry.StepKindCommand:
+			runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
+			env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv)
+			if err != nil {
+				stepErr = fmt.Errorf("step %d: %w", i, err)
+			} else {
+				inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(step.Command))
+				if err != nil {
+					stepErr = fmt.Errorf("step %d: %w", i, err)
+				} else {
+					remoteCmd, err := cuetry.WrapRemoteShell(runAs, inner)
+					if err != nil {
+						stepErr = fmt.Errorf("step %d: %w", i, err)
+					} else {
+						stepErr = StreamSSHParallel(sshUser, targets, remoteCmd, 0, ch)
+					}
+				}
+			}
+
+		case cuetry.StepKindPut:
+			localAbs, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, step.Put.Local)
+			if err != nil {
+				stepErr = fmt.Errorf("step %d put.local: %w", i, err)
+			} else {
+				remotePath := strings.TrimSpace(step.Put.Remote)
+				if _, statErr := os.Stat(localAbs); statErr != nil {
+					stepErr = fmt.Errorf("step %d put: local file %q: %w", i, localAbs, statErr)
+				} else {
+					stepErr = StreamSFTPUploadParallel(sshUser, targets, localAbs, remotePath, 0, ch)
+				}
+			}
+
+		case cuetry.StepKindGet:
+			remotePath := strings.TrimSpace(step.Get.Remote)
+			localRoot, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, step.Get.Local)
+			if err != nil {
+				stepErr = fmt.Errorf("step %d get.local: %w", i, err)
+			} else {
+				if len(targets) > 1 {
+					ok, err := cueGetLocalIsDirectory(step.Get.Local, localRoot)
+					if err != nil {
+						stepErr = fmt.Errorf("step %d get: %w", i, err)
+					} else if !ok {
+						stepErr = fmt.Errorf("step %d get: %d hosts require get.local to be a directory; got %q", i, len(targets), step.Get.Local)
+					}
+				}
+				if stepErr == nil {
+					jobs := make([]SFTPDownloadJob, 0, len(targets))
+					base := filepath.Base(remotePath)
+					if base == "." || base == "/" {
+						base = "download"
+					}
+					for _, target := range targets {
+						dest := localRoot
+						if len(targets) > 1 {
+							dest = filepath.Join(localRoot, cueSanitizeHostName(target.Name)+"_"+base)
+						}
+						jobs = append(jobs, SFTPDownloadJob{
+							Record:     target,
+							LocalAbs:   dest,
+							RemotePath: remotePath,
+						})
+					}
+					if len(targets) > 1 {
+						if err := os.MkdirAll(localRoot, 0o750); err != nil {
+							stepErr = fmt.Errorf("step %d get: mkdir %q: %w", i, localRoot, err)
+						}
+					} else {
+						if err := os.MkdirAll(filepath.Dir(jobs[0].LocalAbs), 0o750); err != nil {
+							stepErr = fmt.Errorf("step %d get: mkdir parent: %w", i, err)
+						}
+					}
+					if stepErr == nil {
+						stepErr = StreamSFTPDownloadParallel(sshUser, jobs, 0, ch)
+					}
+				}
+			}
+
+		case cuetry.StepKindScript:
+			localAbs, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, step.Script.Local)
+			if err != nil {
+				stepErr = fmt.Errorf("step %d script.local: %w", i, err)
+			} else {
+				remotePath := strings.TrimSpace(step.Script.Remote)
+				runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
+				env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv)
+				if err != nil {
+					stepErr = fmt.Errorf("step %d: %w", i, err)
+				} else {
+					remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
+					if err != nil {
+						stepErr = fmt.Errorf("step %d: %w", i, err)
+					} else {
+						if _, statErr := os.Stat(localAbs); statErr != nil {
+							stepErr = fmt.Errorf("step %d script: local file %q: %w", i, localAbs, statErr)
+						} else {
+							stepErr = StreamScriptUploadRunParallel(sshUser, targets, localAbs, remotePath, remoteCmd, 0, ch)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	close(ch)
+	<-done
+	return stepErr
+}
 // second query). Writes the same plan / progress text as honey cue-exec.
 // cliEnv is merged into each command/script step's remote env (overrides recipe env on duplicate keys); nil is treated as empty.
 func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string) error {
 	if len(records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
-	for i, step := range recipe.Steps {
-		if err := runCueRecipeStep(out, recipe, recipeDir, records, sshUser, execute, cliEnv, i, step); err != nil {
-			return err
-		}
-	}
+
 	if !execute {
+		for i, step := range recipe.Steps {
+			if err := runCueRecipeStep(out, recipe, recipeDir, records, sshUser, false, cliEnv, i, step); err != nil {
+				return err
+			}
+		}
 		_, _ = fmt.Fprintln(out, "\nDry-run only. Append ! to the path in the TUI to execute, or use honey cue-exec --execute.")
+		return nil
+	}
+
+	// Second execution path: actual execution via streaming logic
+	ch := make(chan HostExecResult)
+	go func() {
+		defer close(ch)
+		_ = StreamCueRecipeSteps(recipe, recipeDir, records, sshUser, cliEnv, ch)
+	}()
+
+	for res := range ch {
+		status := "ok"
+		if !res.Success {
+			status = "FAILED"
+		}
+		// The Name already includes the "Step X | " prefix from streamCueRecipeStep
+		_, _ = fmt.Fprintf(out, "[%s] %s @ %s — %s", res.Provider, res.Name, res.IP, status)
+		if res.ErrMsg != "" {
+			_, _ = fmt.Fprintf(out, " — %s", res.ErrMsg)
+		}
+		_, _ = fmt.Fprintln(out)
+		if strings.TrimSpace(res.Output) != "" {
+			_, _ = fmt.Fprintln(out, strings.TrimSpace(res.Output))
+		}
 	}
 	return nil
 }
@@ -73,14 +240,6 @@ func runCueStepCommand(out io.Writer, recipe cuetry.Recipe, sshUser string, exec
 		}
 		return nil
 	}
-	res, err := ExecuteSSHParallel(sshUser, targets, remoteCmd, 0)
-	if err != nil {
-		return fmt.Errorf("step %d: ssh setup: %w", i, err)
-	}
-	if len(res) != len(targets) {
-		return fmt.Errorf("step %d: expected %d ssh results, got %d", i, len(targets), len(res))
-	}
-	printCueHostExecResults(out, i, res)
 	return nil
 }
 
@@ -100,17 +259,6 @@ func runCueStepPut(out io.Writer, recipeDir, sshUser string, execute bool, i int
 		}
 		return nil
 	}
-	if _, statErr := os.Stat(localAbs); statErr != nil {
-		return fmt.Errorf("step %d put: local file %q: %w", i, localAbs, statErr)
-	}
-	res, err := ExecuteSFTPUploadParallel(sshUser, targets, localAbs, remotePath, 0)
-	if err != nil {
-		return fmt.Errorf("step %d: sftp upload setup: %w", i, err)
-	}
-	if len(res) != len(targets) {
-		return fmt.Errorf("step %d: expected %d upload results, got %d", i, len(targets), len(res))
-	}
-	printCueHostExecResults(out, i, res)
 	return nil
 }
 
@@ -153,23 +301,6 @@ func runCueStepGet(out io.Writer, recipeDir, sshUser string, execute bool, i int
 		}
 		return nil
 	}
-	if len(targets) > 1 {
-		if err := os.MkdirAll(localRoot, 0o750); err != nil {
-			return fmt.Errorf("step %d get: mkdir %q: %w", i, localRoot, err)
-		}
-	} else {
-		if err := os.MkdirAll(filepath.Dir(jobs[0].LocalAbs), 0o750); err != nil {
-			return fmt.Errorf("step %d get: mkdir parent: %w", i, err)
-		}
-	}
-	res, err := ExecuteSFTPDownloadParallel(sshUser, jobs, 0)
-	if err != nil {
-		return fmt.Errorf("step %d: sftp download setup: %w", i, err)
-	}
-	if len(res) != len(jobs) {
-		return fmt.Errorf("step %d: expected %d download results, got %d", i, len(jobs), len(res))
-	}
-	printCueHostExecResults(out, i, res)
 	return nil
 }
 
@@ -198,36 +329,9 @@ func runCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, ssh
 		}
 		return nil
 	}
-	if _, statErr := os.Stat(localAbs); statErr != nil {
-		return fmt.Errorf("step %d script: local file %q: %w", i, localAbs, statErr)
-	}
-	res, err := ExecuteScriptUploadRunParallel(sshUser, targets, localAbs, remotePath, remoteCmd, 0)
-	if err != nil {
-		return fmt.Errorf("step %d: script step setup: %w", i, err)
-	}
-	if len(res) != len(targets) {
-		return fmt.Errorf("step %d: expected %d script results, got %d", i, len(targets), len(res))
-	}
-	printCueHostExecResults(out, i, res)
 	return nil
 }
 
-func printCueHostExecResults(out io.Writer, stepIdx int, res []HostExecResult) {
-	for _, r := range SortHostExecForUI(res) {
-		status := "ok"
-		if !r.Success {
-			status = "FAILED"
-		}
-		_, _ = fmt.Fprintf(out, "step %d: [%s] %s @ %s — %s", stepIdx, r.Provider, r.Name, r.IP, status)
-		if r.ErrMsg != "" {
-			_, _ = fmt.Fprintf(out, " — %s", r.ErrMsg)
-		}
-		_, _ = fmt.Fprintln(out)
-		if strings.TrimSpace(r.Output) != "" {
-			_, _ = fmt.Fprintln(out, strings.TrimSpace(r.Output))
-		}
-	}
-}
 
 func cueGetLocalIsDirectory(localField, absResolved string) (bool, error) {
 	t := strings.TrimSpace(localField)

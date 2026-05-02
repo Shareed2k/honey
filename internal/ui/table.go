@@ -51,10 +51,15 @@ type model struct {
 	// selected marks table row indices for parallel SSH (see execTargets).
 	selected map[int]struct{}
 
-	execResults    []HostExecResult
-	execCmdLine    string
-	execTargetNote string
-	execScroll     int
+	execResults     []HostExecResult
+	execCmdLine     string
+	execTargetNote  string
+	execScroll      int // Scroll position for the list view
+	execTotalJobs   int
+	execDone        bool
+	execListCursor  int // Selected item in the results list
+	execPopupOpen   bool
+	execPopupScroll int // Scroll position inside the popup
 
 	// CUE recipe output (non-empty body replaces SSH-style exec result lines).
 	cueResultTitle string
@@ -166,6 +171,50 @@ func (m *model) Init() tea.Cmd {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case streamStartMsg:
+		m.mode = "execresults"
+		m.execCmdLine = msg.cmdLine
+		m.execTargetNote = msg.targetNote
+		m.execResults = nil
+		m.execScroll = 0
+		m.execListCursor = 0
+		m.execPopupOpen = false
+		m.execPopupScroll = 0
+		m.execTotalJobs = msg.totalJobs
+		m.execDone = false
+		m.cueResultBody = ""
+		if msg.isCue {
+			m.cueResultTitle = "CUE recipe execution"
+		} else {
+			m.cueResultTitle = ""
+		}
+		return m, readNextStreamResult(msg.ch)
+
+	case streamResultMsg:
+		m.execResults = append(m.execResults, msg.res)
+		
+		// If cursor is at the bottom and a new item arrives, follow it if we are at the end
+		if !m.execPopupOpen && m.execListCursor == len(m.execResults)-2 {
+			m.execListCursor = len(m.execResults) - 1
+			
+			// Adjust scroll to keep it in view
+			vis := m.visibleExecLines() - len(m.execResultLines())
+			if vis < 1 {
+				vis = 1
+			}
+			if m.execListCursor >= m.execScroll+vis {
+				m.execScroll = m.execListCursor - vis + 1
+			}
+		}
+
+		return m, readNextStreamResult(msg.ch)
+
+	case streamDoneMsg:
+		m.execDone = true
+		m.execResults = SortHostExecForUI(m.execResults)
+		m.clampExecScroll()
+		return m, nil
+
 	case parallelExecDoneMsg:
 		m.cueResultBody = ""
 		m.cueResultTitle = "Parallel SSH results"
@@ -286,7 +335,7 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		targets, note := m.parallelExecTargets()
 		m.ti.Blur()
-		return m, runParallelSSHCmd(m.sshUser, targets, cmd, note)
+		return m, runParallelSSHStreamCmd(m.sshUser, targets, cmd, note)
 	}
 	var cmd tea.Cmd
 	m.ti, cmd = m.ti.Update(msg)
@@ -294,42 +343,105 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateExecResultsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	lines := m.execResultLines()
+	if m.execPopupOpen {
+		return m.updateExecPopupKeys(msg)
+	}
+
+	maxCursor := len(m.execResults) - 1
+	if maxCursor < 0 {
+		maxCursor = 0
+	}
+
+	switch msg.String() {
+	case "esc":
+		m.mode = "table"
+		m.execScroll = 0
+		m.execListCursor = 0
+		return m, nil
+	case "q", "ctrl+c":
+		m.lastAction = actNone
+		return m, tea.Quit
+	case "enter":
+		if len(m.execResults) > 0 {
+			m.execPopupOpen = true
+			m.execPopupScroll = 0
+		}
+	case "up", "k":
+		if m.execListCursor > 0 {
+			m.execListCursor--
+		}
+	case "down", "j":
+		if m.execListCursor < maxCursor {
+			m.execListCursor++
+		}
+	case "pgup", "b":
+		m.execListCursor -= 10
+		if m.execListCursor < 0 {
+			m.execListCursor = 0
+		}
+	case "pgdown", "f":
+		m.execListCursor += 10
+		if m.execListCursor > maxCursor {
+			m.execListCursor = maxCursor
+		}
+	case "home", "g":
+		m.execListCursor = 0
+	case "end", "G":
+		m.execListCursor = maxCursor
+	}
+	
+	// Keep cursor in view
+	vis := m.visibleExecLines() - 4 // Leave room for headers
+	if vis < 1 {
+		vis = 1
+	}
+	if m.execListCursor < m.execScroll {
+		m.execScroll = m.execListCursor
+	} else if m.execListCursor >= m.execScroll+vis {
+		m.execScroll = m.execListCursor - vis + 1
+	}
+
+	return m, nil
+}
+
+func (m *model) updateExecPopupKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	lines := m.popupResultLines()
 	vis := m.visibleExecLines()
 	maxScroll := 0
 	if len(lines) > vis {
 		maxScroll = len(lines) - vis
 	}
+
 	switch msg.String() {
-	case "esc":
-		m.mode = "table"
-		m.execScroll = 0
+	case "esc", "enter": // allow enter to toggle it back off too
+		m.execPopupOpen = false
+		m.execPopupScroll = 0
 		return m, nil
 	case "q", "ctrl+c":
 		m.lastAction = actNone
 		return m, tea.Quit
 	case "up", "k":
-		if m.execScroll > 0 {
-			m.execScroll--
+		if m.execPopupScroll > 0 {
+			m.execPopupScroll--
 		}
 	case "down", "j":
-		if m.execScroll < maxScroll {
-			m.execScroll++
+		if m.execPopupScroll < maxScroll {
+			m.execPopupScroll++
 		}
 	case "pgup", "b":
-		m.execScroll -= vis / 2
-		if m.execScroll < 0 {
-			m.execScroll = 0
+		m.execPopupScroll -= vis / 2
+		if m.execPopupScroll < 0 {
+			m.execPopupScroll = 0
 		}
 	case "pgdown", "f":
-		m.execScroll += vis / 2
-		if m.execScroll > maxScroll {
-			m.execScroll = maxScroll
+		m.execPopupScroll += vis / 2
+		if m.execPopupScroll > maxScroll {
+			m.execPopupScroll = maxScroll
 		}
 	case "home", "g":
-		m.execScroll = 0
+		m.execPopupScroll = 0
 	case "end", "G":
-		m.execScroll = maxScroll
+		m.execPopupScroll = maxScroll
 	}
 	return m, nil
 }
@@ -341,12 +453,69 @@ func (m *model) clampExecScroll() {
 	if len(lines) > vis {
 		maxScroll = len(lines) - vis
 	}
-	if m.execScroll > maxScroll {
-		m.execScroll = maxScroll
+	if m.execPopupOpen {
+		if m.execPopupScroll > maxScroll {
+			m.execPopupScroll = maxScroll
+		}
+		if m.execPopupScroll < 0 {
+			m.execPopupScroll = 0
+		}
+		return
+	}
+
+	maxCursor := len(m.execResults) - 1
+	if maxCursor < 0 {
+		maxCursor = 0
+	}
+	if m.execListCursor > maxCursor {
+		m.execListCursor = maxCursor
+	}
+
+	vis = m.visibleExecLines() - 4
+	if vis < 1 {
+		vis = 1
+	}
+	if m.execListCursor < m.execScroll {
+		m.execScroll = m.execListCursor
+	} else if m.execListCursor >= m.execScroll+vis {
+		m.execScroll = m.execListCursor - vis + 1
 	}
 	if m.execScroll < 0 {
 		m.execScroll = 0
 	}
+}
+
+func (m *model) popupResultLines() []string {
+	if !m.execPopupOpen || len(m.execResults) == 0 || m.execListCursor >= len(m.execResults) {
+		return []string{"(no data)"}
+	}
+	r := m.execResults[m.execListCursor]
+	var lines []string
+	
+	status := "ok"
+	if !r.Success {
+		status = "FAILED"
+	}
+
+	lines = append(lines, fmt.Sprintf("Host:     %s", r.Name))
+	lines = append(lines, fmt.Sprintf("IP:       %s", r.IP))
+	lines = append(lines, fmt.Sprintf("Provider: %s", r.Provider))
+	lines = append(lines, fmt.Sprintf("Status:   %s", status))
+	if r.ErrMsg != "" {
+		lines = append(lines, fmt.Sprintf("Error:    %s", r.ErrMsg))
+	}
+	lines = append(lines, "")
+	lines = append(lines, "--- Output ---")
+
+	if strings.TrimSpace(r.Output) == "" {
+		lines = append(lines, "(no output)")
+	} else {
+		for _, ln := range strings.Split(r.Output, "\n") {
+			lines = append(lines, ln)
+		}
+	}
+
+	return lines
 }
 
 func (m *model) visibleExecLines() int {
@@ -358,13 +527,6 @@ func (m *model) visibleExecLines() int {
 }
 
 func (m *model) execResultLines() []string {
-	if strings.TrimSpace(m.cueResultBody) != "" {
-		s := strings.TrimRight(m.cueResultBody, "\n")
-		if s == "" {
-			return []string{"(empty output)"}
-		}
-		return strings.Split(s, "\n")
-	}
 	var lines []string
 	if m.execCmdLine != "" {
 		lines = append(lines, fmt.Sprintf("Command: %s", m.execCmdLine))
@@ -374,27 +536,7 @@ func (m *model) execResultLines() []string {
 		lines = append(lines, m.execTargetNote)
 		lines = append(lines, "")
 	}
-	if len(m.execResults) == 0 {
-		lines = append(lines, "(no command output — no hosts ran or none with IP in scope)")
-		return lines
-	}
-	for _, r := range m.execResults {
-		status := "ok"
-		if !r.Success {
-			status = "FAILED"
-		}
-		head := fmt.Sprintf("[%s] %s @ %s — %s", r.Provider, r.Name, r.IP, status)
-		if r.ErrMsg != "" {
-			head += " — " + r.ErrMsg
-		}
-		lines = append(lines, head)
-		if strings.TrimSpace(r.Output) != "" {
-			for _, ln := range strings.Split(r.Output, "\n") {
-				lines = append(lines, "    "+ln)
-			}
-		}
-		lines = append(lines, "")
-	}
+
 	return lines
 }
 
@@ -430,31 +572,132 @@ func (m *model) View() string {
 		)
 		return baseStyle.Render(box) + "\n" + help
 	case "execresults":
-		lines := m.execResultLines()
+		var body strings.Builder
+		
+		if strings.TrimSpace(m.cueResultBody) != "" {
+			s := strings.TrimRight(m.cueResultBody, "\n")
+			lines := []string{"(empty output)"}
+			if s != "" {
+				lines = strings.Split(s, "\n")
+			}
+			vis := m.visibleExecLines()
+			start := m.execScroll
+			end := start + vis
+			if end > len(lines) {
+				end = len(lines)
+			}
+			if len(lines) > 0 {
+				body.WriteString(strings.Join(lines[start:end], "\n"))
+			}
+			scrollNote := ""
+			if len(lines) > vis {
+				scrollNote = fmt.Sprintf("lines %d–%d of %d", start+1, end, len(lines))
+			}
+			titleText := m.cueResultTitle
+			if titleText == "" {
+				titleText = "CUE recipe results"
+			}
+			title := lipgloss.NewStyle().Bold(true).Render(titleText)
+			help := helpStyle.Render("esc: table   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
+			return title + "\n" + baseStyle.Width(m.winW-2).Render(body.String()) + "\n" +
+				helpStyle.Render(scrollNote) + "\n" + help
+		}
+
+		if m.execPopupOpen {
+			lines := m.popupResultLines()
+			vis := m.visibleExecLines()
+			start := m.execPopupScroll
+			end := start + vis
+			if end > len(lines) {
+				end = len(lines)
+			}
+			if len(lines) > 0 {
+				body.WriteString(strings.Join(lines[start:end], "\n"))
+			}
+			scrollNote := ""
+			if len(lines) > vis {
+				scrollNote = fmt.Sprintf("lines %d–%d of %d", start+1, end, len(lines))
+			}
+			titleText := "Host Execution Detail"
+			title := lipgloss.NewStyle().Bold(true).Render(titleText)
+			help := helpStyle.Render("esc/enter: back to list   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
+			return title + "\n" + baseStyle.Width(m.winW-2).Render(body.String()) + "\n" +
+				helpStyle.Render(scrollNote) + "\n" + help
+		}
+
+		// List Mode
 		vis := m.visibleExecLines()
 		start := m.execScroll
 		end := start + vis
-		if end > len(lines) {
-			end = len(lines)
+		if end > len(m.execResults) {
+			end = len(m.execResults)
 		}
-		var body strings.Builder
-		if len(lines) > 0 {
-			body.WriteString(strings.Join(lines[start:end], "\n"))
+
+		if len(m.execResults) == 0 {
+			if !m.execDone {
+				body.WriteString(fmt.Sprintf("Running... 0 / %d\n", m.execTotalJobs))
+			} else {
+				body.WriteString("(no command output — no hosts ran or none with IP in scope)\n")
+			}
+		} else {
+			if !m.execDone {
+				body.WriteString(fmt.Sprintf("Running... %d / %d\n\n", len(m.execResults), m.execTotalJobs))
+				vis -= 2 // Account for running header
+				// Recompute end with smaller vis
+				end = start + vis
+				if end > len(m.execResults) {
+					end = len(m.execResults)
+				}
+			}
+
+			for i := start; i < end; i++ {
+				r := m.execResults[i]
+				cursor := "  "
+				if i == m.execListCursor {
+					cursor = "> "
+				}
+				status := "ok"
+				statusColor := lipgloss.Color("42") // green
+				if !r.Success {
+					status = "FAILED"
+					statusColor = lipgloss.Color("196") // red
+				}
+				
+				styledStatus := lipgloss.NewStyle().Foreground(statusColor).Render(status)
+				row := fmt.Sprintf("%s[%s] %s @ %s — %s", cursor, r.Provider, r.Name, r.IP, styledStatus)
+				
+				if r.ErrMsg != "" {
+					row += " — " + r.ErrMsg
+				}
+				
+				if i == m.execListCursor {
+					row = lipgloss.NewStyle().Bold(true).Render(row)
+				}
+				body.WriteString(row + "\n")
+			}
 		}
+
 		scrollNote := ""
-		if len(lines) > vis {
-			scrollNote = fmt.Sprintf("lines %d–%d of %d", start+1, end, len(lines))
+		if len(m.execResults) > vis {
+			scrollNote = fmt.Sprintf("items %d–%d of %d", start+1, end, len(m.execResults))
 		}
 		titleText := m.cueResultTitle
 		if titleText == "" {
 			titleText = "Parallel SSH results"
+			if !m.execDone {
+				titleText += " (Running...)"
+			}
 		}
 		title := lipgloss.NewStyle().Bold(true).Render(titleText)
-		help := helpStyle.Render("esc: table   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
+		
+		help := helpStyle.Render("enter: view output   esc: table   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
+		if !m.execDone {
+			help = helpStyle.Render("Running... please wait.   esc: cancel/back   q: quit")
+		}
 		return title + "\n" + baseStyle.Width(m.winW-2).Render(body.String()) + "\n" +
 			helpStyle.Render(scrollNote) + "\n" + help
 	default:
-		help := helpStyle.Render("enter: ssh (k8s: debug pod)   t: tunnel   e: parallel cmd   r: cue recipe   x: mark row   ^a: mark all   c: clear marks   q: quit")
+		help := helpStyle.Render("enter: ssh (k8s: exec)   t: tunnel   e: parallel cmd   r: cue recipe   x: mark row   ^a: mark all   c: clear marks   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
@@ -491,13 +734,90 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		if err != nil {
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nparse: " + err.Error()}
 		}
-		var buf bytes.Buffer
-		runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute, nil)
-		body := targetNote + "\n\n" + buf.String()
-		if runErr != nil {
-			body += "\nError: " + runErr.Error()
+		
+		if !execute {
+			var buf bytes.Buffer
+			runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute, nil)
+			body := targetNote + "\n\n" + buf.String()
+			if runErr != nil {
+				body += "\nError: " + runErr.Error()
+			}
+			return cueRecipeDoneMsg{title: title, body: body}
 		}
-		return cueRecipeDoneMsg{title: title, body: body}
+
+		totalJobs := len(recipe.Steps) * len(targets)
+		ch := make(chan HostExecResult, totalJobs)
+
+		go func() {
+			defer close(ch)
+			_ = StreamCueRecipeSteps(recipe, recipeDir, targets, sshUser, nil, ch)
+		}()
+
+		return streamStartMsg{
+			cmdLine:    recipePath,
+			targetNote: targetNote,
+			totalJobs:  totalJobs,
+			ch:         ch,
+			isCue:      true,
+		}
+	}
+}
+
+type streamStartMsg struct {
+	cmdLine    string
+	targetNote string
+	totalJobs  int
+	ch         chan HostExecResult
+	isCue      bool
+}
+
+type streamResultMsg struct {
+	res HostExecResult
+	ch  chan HostExecResult
+}
+
+type streamDoneMsg struct{}
+
+func runParallelSSHStreamCmd(user string, targets []hosts.Record, cmdLine, targetNote string) tea.Cmd {
+	return func() tea.Msg {
+		var jobs []hosts.Record
+		for _, r := range targets {
+			if isExecutableHost(r) {
+				jobs = append(jobs, r)
+			}
+		}
+
+		if len(jobs) == 0 {
+			return parallelExecDoneMsg{
+				results:    []HostExecResult{},
+				cmdLine:    cmdLine,
+				targetNote: targetNote + " — nothing to run",
+			}
+		}
+
+		ch := make(chan HostExecResult, len(jobs))
+
+		go func() {
+			defer close(ch)
+			_ = StreamSSHParallel(user, jobs, cmdLine, 0, ch)
+		}()
+
+		return streamStartMsg{
+			cmdLine:    cmdLine,
+			targetNote: targetNote,
+			totalJobs:  len(jobs),
+			ch:         ch,
+		}
+	}
+}
+
+func readNextStreamResult(ch chan HostExecResult) tea.Cmd {
+	return func() tea.Msg {
+		res, ok := <-ch
+		if !ok {
+			return streamDoneMsg{}
+		}
+		return streamResultMsg{res: res, ch: ch}
 	}
 }
 
