@@ -19,4 +19,11 @@ type Query struct {
 	ConsulAddr       string
 	ConsulDatacenter string
 	ConsulToken      string
+
+	ProxmoxURL         string
+	ProxmoxUser        string
+	ProxmoxPassword    string
+	ProxmoxTokenID     string
+	ProxmoxTokenSecret string
+	ProxmoxInsecure    bool
 }

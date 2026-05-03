@@ -1,6 +1,6 @@
 # honey
 
-CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), and **Consul** catalog nodes **in parallel**, optionally cache results, then use a **terminal UI** to SSH or open an **SSH local forward** (`-L`) via the system `ssh` binary.
+CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), **Consul** catalog nodes, and **Proxmox VE** instances **in parallel**, optionally cache results, then use a **terminal UI** to SSH or open an **SSH local forward** (`-L`) via the system `ssh` binary.
 
 ## Prerequisites
 
@@ -140,11 +140,19 @@ backends:
       kubeconfig: ~/.kube/config.staging
       debug_image: "ubuntu:latest"
   consul:
-    - name: consul-a
-      addr: consul-a.internal:8500
-    - name: consul-b-dc1
-      addr: consul-b.internal:8500
-      datacenter: dc1
+    - name: consul-prod
+      addr: "10.0.0.5:8500"
+      token: "secret"
+  proxmox:
+    - name: "pve-cluster"
+      url: "https://10.0.0.10:8006/api2/json"
+      user: "root@pam"
+      password: "my-password"
+      insecure: true
+    - name: "pve-token"
+      url: "https://10.0.0.11:8006/api2/json"
+      token_id: "root@pam!mytoken"
+      token_secret: "1234abcd-1234-abcd-1234-abcd1234abcd"
 ```
 
 ## Usage
@@ -236,6 +244,7 @@ When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `honey` p
 3. **Transparent File Transfers:** CUE `put` and `get` operations, as well as `script` step uploads, are implemented securely by dynamically streaming `tar` archives over the `exec` connection into the ephemeral container (similar to `kubectl cp`). No SFTP server required!
 4. **Seamless Experience:** Your interactive sessions, parallel commands, and CUE recipes work identically to actual SSH nodes, preserving context, streams, and file permissions, completely daemonless.
 | **Consul** | `CONSUL_HTTP_ADDR` or `--consul-addr`; `--consul-datacenter`, `--consul-token` / `CONSUL_HTTP_TOKEN`. |
+| **Proxmox** | `--proxmox-url` (e.g. `https://10.0.0.1:8006/api2/json`); Auth via `--proxmox-user` / `--proxmox-password` OR `--proxmox-token-id` / `--proxmox-token-secret`. Add `--proxmox-insecure` to bypass TLS verification. Both LXC and QEMU (VM) types are fully supported.<br><br>**Token Creation Example**: Proxmox requires the `PVEVMRO` (Read Only) role to list VMs and fetch networking information. <br>1. Log into your Proxmox web UI.<br>2. Navigate to **Datacenter** > **Permissions** > **API Tokens**.<br>3. Click **Add** and select your User (e.g., `root@pam`), name the token `honey`.<br>4. Uncheck **Privilege Separation** if you want the token to inherit full user privileges, OR assign the `PVEVMRO` role to `/vms` explicitly.<br>5. Copy the Secret ID.<br>Your `token_id` in the YAML config will be formatted exactly as `user@realm!tokenname` (e.g. `root@pam!honey`). |
 
 If a provider is unreachable, the command fails (use `--provider` to narrow scope).
 

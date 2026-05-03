@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -170,6 +171,7 @@ func (c *k8sNativeClient) Download(remotePath, localPath string) error {
 }
 
 func (k k8sPodExecutor) Dial(_ string, r hosts.Record) (HostClient, error) {
+	zap.L().Debug("dialing k8s pod executor", zap.String("record", r.Name))
 	namespace := r.Meta["namespace"]
 	podName := r.Meta["pod_name"]
 	kubeContext := r.Meta["kube_context"]

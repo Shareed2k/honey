@@ -14,6 +14,7 @@ import (
 
 	"github.com/kevinburke/ssh_config"
 	"github.com/melbahja/goph"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
@@ -467,6 +468,7 @@ func closeSSHStack(stack []*ssh.Client) {
 // StrictHostKeyChecking, UserKnownHostsFile, GlobalKnownHostsFile) and known_hosts verification
 // via golang.org/x/crypto/ssh/knownhosts (see hostKeyCallbackForAlias).
 func DialHoneyClient(userOverride, hostAlias string) (*HoneyClient, error) {
+	zap.L().Debug("dialing honey client", zap.String("host", hostAlias), zap.String("user", userOverride))
 	hostAlias = strings.TrimSpace(hostAlias)
 	if hostAlias == "" {
 		return nil, fmt.Errorf("empty host")

@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/hosts"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -54,6 +56,8 @@ func (a *AWS) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	if err != nil {
 		return nil, err
 	}
+
+	zap.L().Debug("aws starting DescribeInstances", zap.String("profile", profile), zap.String("region", cfg.Region))
 	svc := ec2.NewFromConfig(cfg)
 
 	var out []hosts.Record

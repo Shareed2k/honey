@@ -15,7 +15,7 @@ func (f *File) ListBackendRows() []BackendRow {
 	if f == nil || !f.HasAnyBackend() {
 		return nil
 	}
-	rows := make([]BackendRow, 0, len(f.Backends.GCP)+len(f.Backends.AWS)+len(f.Backends.Kubernetes)+len(f.Backends.Consul))
+	rows := make([]BackendRow, 0, len(f.Backends.GCP)+len(f.Backends.AWS)+len(f.Backends.Kubernetes)+len(f.Backends.Consul)+len(f.Backends.Proxmox))
 	for _, e := range f.Backends.GCP {
 		rows = append(rows, BackendRow{Kind: "gcp", Name: e.Name, Hint: strings.TrimSpace(e.Project)})
 	}
@@ -27,6 +27,9 @@ func (f *File) ListBackendRows() []BackendRow {
 	}
 	for _, e := range f.Backends.Consul {
 		rows = append(rows, BackendRow{Kind: "consul", Name: e.Name, Hint: strings.TrimSpace(e.Addr)})
+	}
+	for _, e := range f.Backends.Proxmox {
+		rows = append(rows, BackendRow{Kind: "proxmox", Name: e.Name, Hint: strings.TrimSpace(e.URL)})
 	}
 	return rows
 }
