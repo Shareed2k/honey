@@ -55,18 +55,15 @@ changelog:
       - '^test:'
       - '^chore:'
 
-brews:
+homebrew_casks:
   - name: honey
     repository:
       owner: shareed2k
       name: homebrew-tap
       token: "{{ .Env.GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/shareed2k/honey"
     description: "Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox"
-    license: "MIT"
-    test: |
-      system "#{bin}/honey version"
 
 mcp:
   name: "io.github.shareed2k/honey"
