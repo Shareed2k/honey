@@ -197,5 +197,5 @@ func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBack
 	if err != nil {
 		return nil, listBackendsOutput{}, fmt.Errorf("config: %w", err)
 	}
-	return nil, listBackendsOutput{Backends: cfg.ListBackendRows()}, nil
+	return nil, listBackendsOutput{Backends: searchrun.ListBackendRows(cfg)}, nil
 }

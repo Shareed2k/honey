@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 var (
@@ -42,7 +43,7 @@ func runBackends(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	rows := cfg.ListBackendRows()
+	rows := searchrun.ListBackendRows(cfg)
 	if flagBackendsJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
