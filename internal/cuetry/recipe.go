@@ -7,6 +7,8 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/errors"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // schemaSource defines the shape of a "remote recipe" document: a named list of
@@ -35,19 +37,28 @@ const schemaSource = `
 	defaults?: close({
 		run_as?: string
 		env?: {[string]: string}
+		k8s_debug_image?: string
 	})
 	steps: [...#Step]
 })
 `
 
-func compileAndUnifyRecipe(cueBytes []byte) (cue.Value, error) {
+func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, error) {
 	ctx := cuecontext.New()
 	schema := ctx.CompileString(schemaSource)
 	if err := schema.Err(); err != nil {
 		return cue.Value{}, fmt.Errorf("cuetry: internal schema: %w", err)
 	}
 
-	user := ctx.CompileBytes(cueBytes, cue.Filename("recipe.cue"))
+	var user cue.Value
+	if len(records) > 0 {
+		recordsVal := ctx.Encode(records)
+		scope := ctx.CompileString("").FillPath(cue.ParsePath("hosts"), recordsVal)
+		user = ctx.CompileBytes(cueBytes, cue.Filename("recipe.cue"), cue.Scope(scope))
+	} else {
+		user = ctx.CompileBytes(cueBytes, cue.Filename("recipe.cue"))
+	}
+
 	if err := user.Err(); err != nil {
 		return cue.Value{}, fmt.Errorf("cuetry: parse: %w", formatCueErr(err))
 	}
@@ -73,9 +84,9 @@ func compileAndUnifyRecipe(cueBytes []byte) (cue.Value, error) {
 }
 
 // ParseRemoteRecipe validates cueBytes and decodes the recipe into Go values.
-func ParseRemoteRecipe(cueBytes []byte) (Recipe, error) {
+func ParseRemoteRecipe(cueBytes []byte, records []hosts.Record) (Recipe, error) {
 	var out Recipe
-	unified, err := compileAndUnifyRecipe(cueBytes)
+	unified, err := compileAndUnifyRecipe(cueBytes, records)
 	if err != nil {
 		return out, err
 	}
@@ -122,7 +133,7 @@ func ParseRemoteRecipe(cueBytes []byte) (Recipe, error) {
 
 // ValidateRemoteRecipe checks that cueBytes is valid CUE and conforms to #Recipe.
 func ValidateRemoteRecipe(cueBytes []byte) error {
-	_, err := ParseRemoteRecipe(cueBytes)
+	_, err := ParseRemoteRecipe(cueBytes, nil)
 	return err
 }
 

@@ -1,12 +1,12 @@
 package searchrun
 
 import (
-	"honey/internal/config"
-	"honey/internal/hosts"
-	"honey/internal/provider/awsprovider"
-	"honey/internal/provider/consulprovider"
-	"honey/internal/provider/gcp"
-	"honey/internal/provider/k8sprovider"
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/awsprovider"
+	"github.com/shareed2k/honey/internal/provider/consulprovider"
+	"github.com/shareed2k/honey/internal/provider/gcp"
+	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 )
 
 // BuildProviders returns backends from the config file when it defines at least
@@ -50,11 +50,16 @@ func BuildProviders(cfg *config.File, f ProviderFlags) []hosts.Backend {
 			if mode == "" {
 				mode = f.K8sMode
 			}
+			img := e.DebugImage
+			if img == "" {
+				img = f.K8sDebugImage
+			}
 			out = append(out, &k8sprovider.K8s{
 				Name:           e.Name,
 				KubeconfigPath: kpath,
 				Context:        ctx,
 				Mode:           mode,
+				DebugImage:     img,
 			})
 		}
 		for _, e := range cfg.Backends.Consul {
@@ -86,7 +91,7 @@ func BuildProviders(cfg *config.File, f ProviderFlags) []hosts.Backend {
 	return []hosts.Backend{
 		&gcp.GCP{Project: f.GCPProject, Zone: f.GCPZone},
 		&awsprovider.AWS{Profile: f.AWSProfile, Region: f.AWSRegion},
-		&k8sprovider.K8s{KubeconfigPath: f.Kubeconfig, Context: f.KubeContext, Mode: mode},
+		&k8sprovider.K8s{KubeconfigPath: f.Kubeconfig, Context: f.KubeContext, Mode: mode, DebugImage: f.K8sDebugImage},
 		&consulprovider.Consul{},
 	}
 }

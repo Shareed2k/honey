@@ -12,8 +12,9 @@ type Query struct {
 	AWSProfile string
 	AWSRegion  string
 
-	KubeContext string
-	K8sMode     string
+	KubeContext   string
+	K8sMode       string
+	K8sDebugImage string
 
 	ConsulAddr       string
 	ConsulDatacenter string

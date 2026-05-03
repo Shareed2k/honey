@@ -3,8 +3,9 @@ package main
 
 import (
 	"fmt"
-	"honey/internal/cli"
 	"os"
+
+	"github.com/shareed2k/honey/internal/cli"
 )
 
 // Set by goreleaser / -ldflags at link time.

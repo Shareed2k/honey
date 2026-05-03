@@ -3,13 +3,14 @@ package k8sprovider
 import (
 	"context"
 	"fmt"
-	"honey/internal/hosts"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // K8s resolves node or pod addresses.
@@ -19,6 +20,8 @@ type K8s struct {
 	Context        string
 	// Mode is the default k8s mode (nodes|pods) when q.K8sMode is empty.
 	Mode string
+	// DebugImage is the default container image when q.K8sDebugImage is empty.
+	DebugImage string
 }
 
 // ID returns the honey backend identifier ("k8s").
@@ -74,18 +77,23 @@ func (k *K8s) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	case "nodes":
 		return k.searchNodes(ctx, clientset, q)
 	case "pods":
-		return k.searchPods(ctx, clientset, q)
+		rawConfig, _ := cc.RawConfig()
+		resolvedContext := ctxName
+		if resolvedContext == "" {
+			resolvedContext = rawConfig.CurrentContext
+		}
+		return k.searchPods(ctx, clientset, q, resolvedContext, kubePath)
 	default:
 		return nil, fmt.Errorf("unsupported k8s mode %q (use nodes or pods)", mode)
 	}
 }
 
-func (k *K8s) searchNodes(ctx context.Context, clientset *kubernetes.Clientset, q hosts.Query) ([]hosts.Record, error) {
+func (k *K8s) searchNodes(ctx context.Context, clientset kubernetes.Interface, q hosts.Query) ([]hosts.Record, error) {
 	list, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
-	var out []hosts.Record
+	out := make([]hosts.Record, 0, len(list.Items))
 	for _, n := range list.Items {
 		ok, err := hosts.NameMatches(n.Name, q)
 		if err != nil {
@@ -113,12 +121,12 @@ func (k *K8s) searchNodes(ctx context.Context, clientset *kubernetes.Clientset, 
 	return out, nil
 }
 
-func (k *K8s) searchPods(ctx context.Context, clientset *kubernetes.Clientset, q hosts.Query) ([]hosts.Record, error) {
+func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q hosts.Query, resolvedContext string, kubeconfig string) ([]hosts.Record, error) {
 	list, err := clientset.CoreV1().Pods(corev1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
-	var out []hosts.Record
+	out := make([]hosts.Record, 0, len(list.Items))
 	for _, p := range list.Items {
 		ok, err := hosts.NameMatches(p.Name, q)
 		if err != nil {
@@ -132,6 +140,21 @@ func (k *K8s) searchPods(ctx context.Context, clientset *kubernetes.Clientset, q
 			continue
 		}
 		ns := p.Namespace
+		meta := map[string]string{
+			"kind":         "pod",
+			"namespace":    ns,
+			"pod_name":     p.Name,
+			"kube_context": resolvedContext,
+			"kubeconfig":   kubeconfig,
+			"backend_name": k.BackendName(),
+		}
+		img := q.K8sDebugImage
+		if img == "" {
+			img = k.DebugImage
+		}
+		if img != "" {
+			meta["debug_image"] = img
+		}
 		out = append(out, hosts.Record{
 			Provider:  "k8s",
 			Name:      fmt.Sprintf("%s/%s", ns, p.Name),
@@ -139,10 +162,7 @@ func (k *K8s) searchPods(ctx context.Context, clientset *kubernetes.Clientset, q
 			ExtraIPs:  nil,
 			Zone:      "",
 			Region:    "",
-			Meta: map[string]string{
-				"kind":      "pod",
-				"namespace": ns,
-			},
+			Meta:      meta,
 		})
 	}
 	return out, nil

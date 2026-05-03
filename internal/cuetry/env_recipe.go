@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 const maxEnvValueLen = 8192
@@ -80,16 +82,17 @@ func ParseEnvKeyValuePairs(pairs []string) (map[string]string, error) {
 	return out, nil
 }
 
-// EffectiveEnvForRun merges recipe env (defaults then step) with cliEnv; cliEnv wins on duplicate keys.
-func EffectiveEnvForRun(step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string) (map[string]string, error) {
+func sanitizeEnvKey(k string) string {
+	return regexp.MustCompile(`[^a-zA-Z0-9_]`).ReplaceAllString(strings.ToUpper(k), "_")
+}
+
+// EffectiveEnvForRun merges recipe env (defaults then step) with cliEnv and adds host variables; cliEnv wins on duplicate keys.
+func EffectiveEnvForRun(step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
 	out, err := EffectiveEnv(step, defaults)
 	if err != nil {
 		return nil, err
 	}
-	if len(cliEnv) == 0 {
-		return out, nil
-	}
-	merged := make(map[string]string, len(out)+len(cliEnv))
+	merged := make(map[string]string, len(out)+len(cliEnv)+10)
 	for k, v := range out {
 		merged[k] = v
 	}
@@ -99,6 +102,26 @@ func EffectiveEnvForRun(step RecipeStep, defaults *RecipeDefaults, cliEnv map[st
 		}
 		merged[k] = v
 	}
+
+	if r != nil {
+		merged["HONEY_HOST_NAME"] = r.Name
+		merged["HONEY_HOST_PRIMARY_IP"] = r.PrimaryIP
+		merged["HONEY_HOST_PROVIDER"] = r.Provider
+		if r.Zone != "" {
+			merged["HONEY_HOST_ZONE"] = r.Zone
+		}
+		if r.Region != "" {
+			merged["HONEY_HOST_REGION"] = r.Region
+		}
+		for k, v := range r.Meta {
+			key := "HONEY_HOST_META_" + sanitizeEnvKey(k)
+			// Avoid invalid env names (like those starting with numbers)
+			if err := validateOneEnv(key, v); err == nil {
+				merged[key] = v
+			}
+		}
+	}
+
 	return merged, nil
 }
 

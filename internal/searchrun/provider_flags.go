@@ -9,6 +9,7 @@ type ProviderFlags struct {
 	AWSRegion        string
 	KubeContext      string
 	K8sMode          string
+	K8sDebugImage    string
 	Kubeconfig       string
 	ConsulAddr       string
 	ConsulDatacenter string
