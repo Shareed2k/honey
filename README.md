@@ -14,6 +14,13 @@ cd honey
 go mod tidy
 ```
 
+## Install
+
+**Homebrew (macOS & Linux)**:
+```bash
+brew install shareed2k/tap/honey
+```
+
 ## Build
 
 ```bash
