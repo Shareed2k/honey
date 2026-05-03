@@ -16,9 +16,10 @@ go mod tidy
 
 ## Install
 
-**Homebrew (macOS & Linux)**:
+**Homebrew (macOS)**:
+Because this tool relies on Homebrew Casks, it is installed via the `--cask` flag:
 ```bash
-brew install shareed2k/tap/honey
+brew install --cask shareed2k/tap/honey
 ```
 
 ## Build
