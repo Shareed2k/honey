@@ -87,5 +87,16 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search returned no hosts; widen filters or fix recipe host keys")
 	}
 
+	if recipe.Defaults != nil && recipe.Defaults.K8sDebugImage != "" {
+		for i := range records {
+			if records[i].Provider == "k8s" && records[i].Meta["kind"] == "pod" {
+				if records[i].Meta == nil {
+					records[i].Meta = make(map[string]string)
+				}
+				records[i].Meta["debug_image"] = recipe.Defaults.K8sDebugImage
+			}
+		}
+	}
+
 	return ui.RunCueRecipeSteps(cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv)
 }

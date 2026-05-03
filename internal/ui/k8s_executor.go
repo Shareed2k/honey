@@ -198,7 +198,8 @@ func (k k8sPodExecutor) Dial(_ string, r hosts.Record) (HostClient, error) {
 		return nil, fmt.Errorf("k8s client: %w", err)
 	}
 
-	containerName, err := k8sdebug.EnsureEphemeralContainer(context.Background(), clientset, namespace, podName)
+	debugImage := r.Meta["debug_image"]
+	containerName, err := k8sdebug.EnsureEphemeralContainer(context.Background(), clientset, namespace, podName, debugImage)
 	if err != nil {
 		return nil, fmt.Errorf("ensure ephemeral container: %w", err)
 	}

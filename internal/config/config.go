@@ -22,12 +22,13 @@ type File struct {
 
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
-	SSHUser   string `yaml:"ssh_user"`
-	CacheTTL  string `yaml:"cache_ttl"` // e.g. "5m", "1h"
-	K8sMode   string `yaml:"k8s_mode"`
-	CacheDir  string `yaml:"cache_dir"`
-	Name      string `yaml:"name"`
-	NameRegex string `yaml:"name_regex"`
+	SSHUser       string `yaml:"ssh_user"`
+	CacheTTL      string `yaml:"cache_ttl"` // e.g. "5m", "1h"
+	K8sMode       string `yaml:"k8s_mode"`
+	K8sDebugImage string `yaml:"k8s_debug_image"`
+	CacheDir      string `yaml:"cache_dir"`
+	Name          string `yaml:"name"`
+	NameRegex     string `yaml:"name_regex"`
 }
 
 // Backends lists optional multiple instances per provider type.
@@ -60,6 +61,7 @@ type KubernetesBackend struct {
 	Context    string `yaml:"context"`
 	Kubeconfig string `yaml:"kubeconfig"`
 	Mode       string `yaml:"mode"`
+	DebugImage string `yaml:"debug_image"`
 }
 
 // ConsulBackend configures one HashiCorp Consul catalog listing.
@@ -109,16 +111,13 @@ func (f *File) HasAnyBackend() bool {
 		len(f.Backends.Consul) > 0
 }
 
-// ResolvePath returns an explicit path from --config, HONEY_CONFIG, or HOSTCTL_CONFIG
-// (legacy), then the first existing default file, or "" if none exist.
+// ResolvePath returns an explicit path from --config or HONEY_CONFIG
+// then the first existing default file, or "" if none exist.
 func ResolvePath(explicit string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return filepath.Abs(filepath.Clean(strings.TrimSpace(explicit)))
 	}
 	if v := strings.TrimSpace(os.Getenv("HONEY_CONFIG")); v != "" {
-		return filepath.Abs(filepath.Clean(v))
-	}
-	if v := strings.TrimSpace(os.Getenv("HOSTCTL_CONFIG")); v != "" {
 		return filepath.Abs(filepath.Clean(v))
 	}
 	var candidates []string
@@ -134,9 +133,6 @@ func ResolvePath(explicit string) (string, error) {
 			}
 		}
 		if p, err := safepath.JoinUnder(home, ".honey.yaml"); err == nil {
-			candidates = append(candidates, p)
-		}
-		if p, err := safepath.JoinUnder(home, ".hostctl.yaml"); err == nil {
 			candidates = append(candidates, p)
 		}
 	}

@@ -33,6 +33,7 @@ var (
 	flagAWSRegion   string
 	flagKubeContext string
 	flagK8sMode     string
+	flagK8sDebugImg string
 	flagConsulAddr  string
 	flagConsulDC    string
 	flagConsulToken string
@@ -49,7 +50,7 @@ var searchCmd = &cobra.Command{
 }
 
 func init() {
-	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG / HOSTCTL_CONFIG or default paths in README)")
+	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
 	searchCmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
 	searchCmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
 	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul (default: all)")
@@ -71,6 +72,7 @@ func init() {
 	searchCmd.Flags().StringVar(&flagKubeContext, "kube-context", "", "Kubernetes context override")
 	searchCmd.Flags().StringVar(&flagKubeconfig, "kubeconfig", "", "Path to kubeconfig file")
 	searchCmd.Flags().StringVar(&flagK8sMode, "k8s-mode", "nodes", "Kubernetes search mode: nodes or pods")
+	searchCmd.Flags().StringVar(&flagK8sDebugImg, "k8s-debug-image", "", "Container image used for ephemeral debug containers (default: alpine:3.23)")
 
 	searchCmd.Flags().StringVar(&flagConsulAddr, "consul-addr", "", "Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)")
 	searchCmd.Flags().StringVar(&flagConsulDC, "consul-datacenter", "", "Consul datacenter")
@@ -91,6 +93,7 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 		AWSRegion:        flagAWSRegion,
 		KubeContext:      flagKubeContext,
 		K8sMode:          flagK8sMode,
+		K8sDebugImage:    flagK8sDebugImg,
 		ConsulAddr:       flagConsulAddr,
 		ConsulDatacenter: flagConsulDC,
 		ConsulToken:      flagConsulToken,
@@ -125,6 +128,9 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 		}
 		if s := strings.TrimSpace(cfg.Defaults.K8sMode); s != "" && !cmd.Flags().Changed("k8s-mode") {
 			q.K8sMode = s
+		}
+		if s := strings.TrimSpace(cfg.Defaults.K8sDebugImage); s != "" && !cmd.Flags().Changed("k8s-debug-image") {
+			q.K8sDebugImage = s
 		}
 		if s := strings.TrimSpace(cfg.Defaults.Name); s != "" && !cmd.Flags().Changed("name") && q.NameSubstring == "" {
 			q.NameSubstring = s

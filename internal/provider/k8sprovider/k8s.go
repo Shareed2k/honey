@@ -20,6 +20,8 @@ type K8s struct {
 	Context        string
 	// Mode is the default k8s mode (nodes|pods) when q.K8sMode is empty.
 	Mode string
+	// DebugImage is the default container image when q.K8sDebugImage is empty.
+	DebugImage string
 }
 
 // ID returns the honey backend identifier ("k8s").
@@ -138,6 +140,21 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 			continue
 		}
 		ns := p.Namespace
+		meta := map[string]string{
+			"kind":         "pod",
+			"namespace":    ns,
+			"pod_name":     p.Name,
+			"kube_context": resolvedContext,
+			"kubeconfig":   kubeconfig,
+			"backend_name": k.BackendName(),
+		}
+		img := q.K8sDebugImage
+		if img == "" {
+			img = k.DebugImage
+		}
+		if img != "" {
+			meta["debug_image"] = img
+		}
 		out = append(out, hosts.Record{
 			Provider:  "k8s",
 			Name:      fmt.Sprintf("%s/%s", ns, p.Name),
@@ -145,14 +162,7 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 			ExtraIPs:  nil,
 			Zone:      "",
 			Region:    "",
-			Meta: map[string]string{
-				"kind":         "pod",
-				"namespace":    ns,
-				"pod_name":     p.Name,
-				"kube_context": resolvedContext,
-				"kubeconfig":   kubeconfig,
-				"backend_name": k.BackendName(),
-			},
+			Meta:      meta,
 		})
 	}
 	return out, nil

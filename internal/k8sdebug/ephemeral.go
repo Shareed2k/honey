@@ -24,20 +24,24 @@ func generateID() string {
 }
 
 // EnsureEphemeralContainer creates or waits for an ephemeral debug container in a pod.
-func EnsureEphemeralContainer(ctx context.Context, clientset kubernetes.Interface, namespace, podName string) (string, error) {
+func EnsureEphemeralContainer(ctx context.Context, clientset kubernetes.Interface, namespace, podName, image string) (string, error) {
+	if image == "" {
+		image = "alpine:3.23"
+	}
+
 	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("get pod: %w", err)
 	}
 
-	// Look for an existing hostctl-debug container
+	// Look for an existing honey-debug container
 	for _, ec := range pod.Spec.EphemeralContainers {
-		if ec.Name == "hostctl-debug" {
+		if ec.Name == "honey-debug" {
 			return ec.Name, waitForEphemeralContainer(ctx, clientset, namespace, podName, ec.Name)
 		}
 	}
 
-	containerName := "hostctl-debug-" + generateID()
+	containerName := "honey-debug-" + generateID()
 	targetContainer := ""
 	if len(pod.Spec.Containers) > 0 {
 		targetContainer = pod.Spec.Containers[0].Name
@@ -46,7 +50,7 @@ func EnsureEphemeralContainer(ctx context.Context, clientset kubernetes.Interfac
 	pod.Spec.EphemeralContainers = append(pod.Spec.EphemeralContainers, corev1.EphemeralContainer{
 		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
 			Name:            containerName,
-			Image:           "alpine:3.19",
+			Image:           image,
 			Command:         []string{"sh", "-c", "sleep infinity"},
 			ImagePullPolicy: corev1.PullIfNotPresent,
 		},

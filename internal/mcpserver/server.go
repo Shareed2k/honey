@@ -32,8 +32,7 @@ func Run(ctx context.Context) error {
 // --- search_hosts ---
 
 type searchHostsInput struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG / HOSTCTL_CONFIG or default paths"`
-
+	ConfigPath  string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG or default paths"`
 	Name        string `json:"name,omitempty" jsonschema:"substring filter on host/instance name"`
 	NameRegex   string `json:"name_regex,omitempty" jsonschema:"regex filter on name"`
 	Providers   string `json:"providers,omitempty" jsonschema:"comma-separated: gcp,aws,k8s,consul"`
@@ -48,11 +47,10 @@ type searchHostsInput struct {
 	ConsulAddr  string `json:"consul_addr,omitempty"`
 	ConsulDC    string `json:"consul_datacenter,omitempty"`
 	ConsulToken string `json:"consul_token,omitempty"`
-
-	CacheTTL string `json:"cache_ttl,omitempty" jsonschema:"duration e.g. 5m, 1h; empty uses config default or 1m"`
-	CacheDir string `json:"cache_dir,omitempty"`
-	NoCache  bool   `json:"no_cache,omitempty"`
-	Refresh  bool   `json:"refresh,omitempty"`
+	CacheTTL    string `json:"cache_ttl,omitempty" jsonschema:"duration e.g. 5m, 1h; empty uses config default or 1m"`
+	CacheDir    string `json:"cache_dir,omitempty"`
+	NoCache     bool   `json:"no_cache,omitempty"`
+	Refresh     bool   `json:"refresh,omitempty"`
 }
 
 type searchHostsOutput struct {
@@ -161,7 +159,7 @@ func mergeMCPDefaults(cfg *config.File, q *hosts.Query) {
 // --- list_backends ---
 
 type listBackendsInput struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG / HOSTCTL_CONFIG or default paths"`
+	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG or default paths"`
 }
 
 type listBackendsOutput struct {
@@ -175,7 +173,7 @@ func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBack
 		return nil, listBackendsOutput{}, err
 	}
 	if cfgPath == "" {
-		return nil, listBackendsOutput{}, fmt.Errorf("no config file found (set config_path, HONEY_CONFIG, HOSTCTL_CONFIG, or install default config)")
+		return nil, listBackendsOutput{}, fmt.Errorf("no config file found (set config_path, HONEY_CONFIG, or install default config)")
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

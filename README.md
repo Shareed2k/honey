@@ -28,7 +28,7 @@ go build -o honey ./cmd/honey
 
 | Tool | Purpose |
 |------|---------|
-| `search_hosts` | Same parallel search as `honey search`; arguments mirror flags (snake_case JSON). Optional `config_path`; otherwise uses `HONEY_CONFIG` (or legacy `HOSTCTL_CONFIG`) / default paths. |
+| `search_hosts` | Same parallel search as `honey search`; arguments mirror flags (snake_case JSON). Optional `config_path`; otherwise uses `HONEY_CONFIG` / default paths. |
 | `list_backends` | Returns configured backends from YAML (`kind`, `name`, `hint`). Requires a resolvable config file. |
 
 **Cursor** (example `mcp.json` fragment):
@@ -108,11 +108,9 @@ Each list entry may set **`name`** (any stable string). Use **`--backends`** wit
 
 1. `--config /path/to/file.yaml`
 2. `HONEY_CONFIG`
-3. `HOSTCTL_CONFIG` (legacy, same meaning)
-4. `$XDG_CONFIG_HOME/honey/config.yaml`
-5. `~/.config/honey/config.yaml` when `XDG_CONFIG_HOME` is unset
-6. `~/.honey.yaml`
-7. `~/.hostctl.yaml` (legacy filename)
+3. `$XDG_CONFIG_HOME/honey/config.yaml`
+4. `~/.config/honey/config.yaml` when `XDG_CONFIG_HOME` is unset
+5. `~/.honey.yaml`
 
 **Precedence:** CLI flags override config `defaults` when you pass the flag (Cobra “changed” semantics). Query flags (`--gcp-project`, `--consul-addr`, etc.) override per-backend YAML values at search time.
 
@@ -124,6 +122,7 @@ defaults:
   cache_ttl: 5m
   ssh_user: deploy
   k8s_mode: nodes
+  k8s_debug_image: "nicolaka/netshoot:latest"
 backends:
   gcp:
     - name: gcp-team-a
@@ -139,6 +138,7 @@ backends:
     - name: k8s-staging
       context: staging
       kubeconfig: ~/.kube/config.staging
+      debug_image: "ubuntu:latest"
   consul:
     - name: consul-a
       addr: consul-a.internal:8500
@@ -224,14 +224,15 @@ Parallel SSH (**e**), CUE recipes, and **`cue-exec`** share the same in-process 
 |----------|----------------|
 | **GCP** | Application Default Credentials; set `GOOGLE_CLOUD_PROJECT` or `GCP_PROJECT`, or pass `--gcp-project`. Optional `--gcp-zone` (default: all zones, aggregated list). |
 | **AWS** | Default credential chain; `--aws-profile`, `--aws-region`. |
-| **Kubernetes** | Current kubeconfig; `--kube-context`, `--kubeconfig`, `--k8s-mode=nodes` (default) or `pods`. For pods, `hostctl` seamlessly utilizes Kubernetes `exec` directly without needing SSH or SFTP. |
+| **Kubernetes** | Current kubeconfig; `--kube-context`, `--kubeconfig`, `--k8s-mode=nodes` (default) or `pods`. For pods, `honey` seamlessly utilizes Kubernetes `exec` directly without needing SSH or SFTP. |
 
-### Kubernetes Pod Direct Exec
+...
 
-When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `hostctl` provides advanced, transparent execution capabilities without needing any server daemons:
+When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `honey` provides advanced, transparent execution capabilities without needing any server daemons:
 
-1. **Native Integration:** Selecting a pod and pressing `enter` (or running batch commands) automatically connects via the Kubernetes SDK `exec` mechanism.
-2. **Ephemeral Containers:** To avoid permission issues (like read-only root filesystems), `hostctl` injects a lightweight, short-lived `alpine` Ephemeral Container (`hostctl-debug-*`) into the target pod. This container shares the process and filesystem namespace but has its own writable overlay.
+...
+
+2. **Ephemeral Containers:** To avoid permission issues (like read-only root filesystems), `honey` injects a lightweight, short-lived `alpine` Ephemeral Container (`honey-debug-*`) into the target pod. This container shares the process and filesystem namespace but has its own writable overlay.
 3. **Transparent File Transfers:** CUE `put` and `get` operations, as well as `script` step uploads, are implemented securely by dynamically streaming `tar` archives over the `exec` connection into the ephemeral container (similar to `kubectl cp`). No SFTP server required!
 4. **Seamless Experience:** Your interactive sessions, parallel commands, and CUE recipes work identically to actual SSH nodes, preserving context, streams, and file permissions, completely daemonless.
 | **Consul** | `CONSUL_HTTP_ADDR` or `--consul-addr`; `--consul-datacenter`, `--consul-token` / `CONSUL_HTTP_TOKEN`. |

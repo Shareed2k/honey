@@ -35,6 +35,7 @@ const schemaSource = `
 	defaults?: close({
 		run_as?: string
 		env?: {[string]: string}
+		k8s_debug_image?: string
 	})
 	steps: [...#Step]
 })

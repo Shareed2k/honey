@@ -10,6 +10,7 @@ func providerFlagsSnapshot() searchrun.ProviderFlags {
 		AWSRegion:        flagAWSRegion,
 		KubeContext:      flagKubeContext,
 		K8sMode:          flagK8sMode,
+		K8sDebugImage:    flagK8sDebugImg,
 		Kubeconfig:       flagKubeconfig,
 		ConsulAddr:       flagConsulAddr,
 		ConsulDatacenter: flagConsulDC,

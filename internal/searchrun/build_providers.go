@@ -50,11 +50,16 @@ func BuildProviders(cfg *config.File, f ProviderFlags) []hosts.Backend {
 			if mode == "" {
 				mode = f.K8sMode
 			}
+			img := e.DebugImage
+			if img == "" {
+				img = f.K8sDebugImage
+			}
 			out = append(out, &k8sprovider.K8s{
 				Name:           e.Name,
 				KubeconfigPath: kpath,
 				Context:        ctx,
 				Mode:           mode,
+				DebugImage:     img,
 			})
 		}
 		for _, e := range cfg.Backends.Consul {
@@ -86,7 +91,7 @@ func BuildProviders(cfg *config.File, f ProviderFlags) []hosts.Backend {
 	return []hosts.Backend{
 		&gcp.GCP{Project: f.GCPProject, Zone: f.GCPZone},
 		&awsprovider.AWS{Profile: f.AWSProfile, Region: f.AWSRegion},
-		&k8sprovider.K8s{KubeconfigPath: f.Kubeconfig, Context: f.KubeContext, Mode: mode},
+		&k8sprovider.K8s{KubeconfigPath: f.Kubeconfig, Context: f.KubeContext, Mode: mode, DebugImage: f.K8sDebugImage},
 		&consulprovider.Consul{},
 	}
 }
