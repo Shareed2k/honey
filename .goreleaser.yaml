@@ -79,7 +79,7 @@ homebrew_casks:
       fish: completions/honey.fish
 
 mcp:
-  name: "io.github.shareed2k/honey"
+  name: "io.github.Shareed2k/honey"
   title: "Honey MCP Server"
   description: "Search instances across GCP, AWS, K8s, Consul & Proxmox"
   homepage: "https://github.com/shareed2k/honey"
