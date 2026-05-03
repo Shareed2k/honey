@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -27,9 +29,21 @@ func RunSearch(
 		cacheDir = d
 	}
 	cachePath := filepath.Join(cacheDir, "cache.json")
+	
+	zap.L().Debug("starting search run",
+		zap.String("cache_path", cachePath),
+		zap.Duration("cache_ttl", cacheTTL),
+		zap.Bool("no_cache", noCache),
+		zap.Bool("refresh", refresh),
+		zap.Int("providers_count", len(provs)),
+	)
+	
 	var fc *hosts.FileCache
 	if !noCache {
 		fc = hosts.NewFileCache(cachePath, cacheTTL)
 	}
-	return hosts.RunParallel(ctx, q, provs, fc, noCache, refresh, hosts.DefaultCacheKey)
+	
+	records, err := hosts.RunParallel(ctx, q, provs, fc, noCache, refresh, hosts.DefaultCacheKey)
+	zap.L().Debug("completed search run", zap.Int("total_records", len(records)), zap.Error(err))
+	return records, err
 }

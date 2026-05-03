@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
 	"github.com/shareed2k/honey/internal/safepath"
@@ -39,6 +40,7 @@ type Backends struct {
 	AWS        []AWSBackend        `yaml:"aws"`
 	Kubernetes []KubernetesBackend `yaml:"kubernetes"`
 	Consul     []ConsulBackend     `yaml:"consul"`
+	Proxmox    []ProxmoxBackend    `yaml:"proxmox"`
 }
 
 // GCPBackend configures one Google Cloud Compute Engine listing.
@@ -72,11 +74,23 @@ type ConsulBackend struct {
 	Token      string `yaml:"token"`
 }
 
+// ProxmoxBackend configures one Proxmox VE listing.
+type ProxmoxBackend struct {
+	Name        string `yaml:"name"`
+	URL         string `yaml:"url"`
+	User        string `yaml:"user"`
+	Password    string `yaml:"password"`
+	TokenID     string `yaml:"token_id"`
+	TokenSecret string `yaml:"token_secret"`
+	Insecure    bool   `yaml:"insecure"`
+}
+
 // Load reads and parses a YAML config file.
 func Load(path string) (*File, error) {
 	if path == "" {
 		return nil, errors.New("config path empty")
 	}
+	zap.L().Debug("loading config file", zap.String("path", path))
 	b, err := safepath.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -108,7 +122,8 @@ func (f *File) HasAnyBackend() bool {
 	return len(f.Backends.GCP) > 0 ||
 		len(f.Backends.AWS) > 0 ||
 		len(f.Backends.Kubernetes) > 0 ||
-		len(f.Backends.Consul) > 0
+		len(f.Backends.Consul) > 0 ||
+		len(f.Backends.Proxmox) > 0
 }
 
 // ResolvePath returns an explicit path from --config or HONEY_CONFIG
@@ -138,8 +153,10 @@ func ResolvePath(explicit string) (string, error) {
 	}
 	for _, p := range candidates {
 		if st, err := safepath.Stat(p); err == nil && !st.IsDir() {
+			zap.L().Debug("resolved config path via default candidates", zap.String("path", p))
 			return p, nil
 		}
 	}
+	zap.L().Debug("no config file resolved")
 	return "", nil
 }

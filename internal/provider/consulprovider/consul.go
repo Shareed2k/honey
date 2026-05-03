@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/consul/api"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -69,6 +70,7 @@ func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, err
 	}
 	opts = opts.WithContext(ctx)
 
+	zap.L().Debug("consul starting catalog nodes query", zap.String("address", cfg.Address), zap.String("datacenter", dc))
 	nodes, _, err := client.Catalog().Nodes(opts)
 	if err != nil {
 		return nil, err

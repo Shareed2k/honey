@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -170,6 +171,7 @@ func (c *k8sNativeClient) Download(remotePath, localPath string) error {
 }
 
 func (k k8sPodExecutor) Dial(_ string, r hosts.Record) (HostClient, error) {
+	zap.L().Debug("dialing k8s pod executor", zap.String("record", r.Name))
 	namespace := r.Meta["namespace"]
 	podName := r.Meta["pod_name"]
 	kubeContext := r.Meta["kube_context"]

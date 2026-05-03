@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -51,10 +52,13 @@ func RunParallel(
 			}
 
 			var err error
+			zap.L().Debug("provider search start", zap.String("provider", p.ID()), zap.String("backend", p.BackendName()))
 			recs, err = p.Search(ctx, q)
 			if err != nil {
+				zap.L().Error("provider search failed", zap.String("provider", p.ID()), zap.Error(err))
 				return err
 			}
+			zap.L().Debug("provider search success", zap.String("provider", p.ID()), zap.String("backend", p.BackendName()), zap.Int("found", len(recs)))
 			if useCache && key != "" {
 				_ = fc.Set(key, recs)
 			}

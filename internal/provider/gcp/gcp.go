@@ -8,6 +8,7 @@ import (
 
 	compute "cloud.google.com/go/compute/apiv1"
 	computepb "cloud.google.com/go/compute/apiv1/computepb"
+	"go.uber.org/zap"
 	"google.golang.org/api/iterator"
 
 	"github.com/shareed2k/honey/internal/hosts"
@@ -53,6 +54,7 @@ func (g *GCP) Search(ctx context.Context, q hosts.Query) (out []hosts.Record, er
 	if err != nil {
 		return nil, err
 	}
+	zap.L().Debug("gcp starting search", zap.String("project", project))
 	defer func() {
 		if cerr := client.Close(); cerr != nil && err == nil {
 			err = cerr

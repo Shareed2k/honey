@@ -17,29 +17,35 @@ import (
 )
 
 var (
-	flagName        string
-	flagNameRegex   string
-	flagProviders   string
-	flagNoUI        bool
-	flagJSON        bool
-	flagSSHUser     string
-	flagCacheTTL    time.Duration
-	flagNoCache     bool
-	flagRefresh     bool
-	flagCacheDir    string
-	flagGCPProject  string
-	flagGCPZone     string
-	flagAWSProfile  string
-	flagAWSRegion   string
-	flagKubeContext string
-	flagK8sMode     string
-	flagK8sDebugImg string
-	flagConsulAddr  string
-	flagConsulDC    string
-	flagConsulToken string
-	flagKubeconfig  string
-	flagConfig      string
-	flagBackends    string
+	flagName               string
+	flagNameRegex          string
+	flagProviders          string
+	flagNoUI               bool
+	flagJSON               bool
+	flagSSHUser            string
+	flagCacheTTL           time.Duration
+	flagNoCache            bool
+	flagRefresh            bool
+	flagCacheDir           string
+	flagGCPProject         string
+	flagGCPZone            string
+	flagAWSProfile         string
+	flagAWSRegion          string
+	flagKubeContext        string
+	flagK8sMode            string
+	flagK8sDebugImg        string
+	flagConsulAddr         string
+	flagConsulDC           string
+	flagConsulToken        string
+	flagKubeconfig         string
+	flagConfig             string
+	flagBackends           string
+	flagProxmoxURL         string
+	flagProxmoxUser        string
+	flagProxmoxPassword    string
+	flagProxmoxTokenID     string
+	flagProxmoxTokenSecret string
+	flagProxmoxInsecure    bool
 )
 
 var searchCmd = &cobra.Command{
@@ -53,7 +59,7 @@ func init() {
 	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
 	searchCmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
 	searchCmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
-	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul (default: all)")
+	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox (default: all)")
 	searchCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	searchCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Skip interactive UI")
 	searchCmd.Flags().BoolVar(&flagJSON, "json", false, "Print results as JSON (implies --no-ui)")
@@ -77,6 +83,13 @@ func init() {
 	searchCmd.Flags().StringVar(&flagConsulAddr, "consul-addr", "", "Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)")
 	searchCmd.Flags().StringVar(&flagConsulDC, "consul-datacenter", "", "Consul datacenter")
 	searchCmd.Flags().StringVar(&flagConsulToken, "consul-token", "", "Consul ACL token (or CONSUL_HTTP_TOKEN)")
+
+	searchCmd.Flags().StringVar(&flagProxmoxURL, "proxmox-url", "", "Proxmox API URL (e.g. https://10.0.0.1:8006/api2/json)")
+	searchCmd.Flags().StringVar(&flagProxmoxUser, "proxmox-user", "", "Proxmox user (e.g. root@pam)")
+	searchCmd.Flags().StringVar(&flagProxmoxPassword, "proxmox-password", "", "Proxmox password")
+	searchCmd.Flags().StringVar(&flagProxmoxTokenID, "proxmox-token-id", "", "Proxmox token ID (e.g. root@pam!token)")
+	searchCmd.Flags().StringVar(&flagProxmoxTokenSecret, "proxmox-token-secret", "", "Proxmox token secret")
+	searchCmd.Flags().BoolVar(&flagProxmoxInsecure, "proxmox-insecure", false, "Skip TLS verification for Proxmox")
 }
 
 // runSearchCore runs the same search pipeline as search (flags, config, cache,
@@ -84,19 +97,25 @@ func init() {
 // passed and name filters are empty, it becomes the name substring filter.
 func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, string, error) {
 	q := hosts.Query{
-		NameSubstring:    flagName,
-		NameRegex:        flagNameRegex,
-		Providers:        hosts.ParseProviders(flagProviders),
-		GCPProject:       flagGCPProject,
-		GCPZone:          flagGCPZone,
-		AWSProfile:       flagAWSProfile,
-		AWSRegion:        flagAWSRegion,
-		KubeContext:      flagKubeContext,
-		K8sMode:          flagK8sMode,
-		K8sDebugImage:    flagK8sDebugImg,
-		ConsulAddr:       flagConsulAddr,
-		ConsulDatacenter: flagConsulDC,
-		ConsulToken:      flagConsulToken,
+		NameSubstring:      flagName,
+		NameRegex:          flagNameRegex,
+		Providers:          hosts.ParseProviders(flagProviders),
+		GCPProject:         flagGCPProject,
+		GCPZone:            flagGCPZone,
+		AWSProfile:         flagAWSProfile,
+		AWSRegion:          flagAWSRegion,
+		KubeContext:        flagKubeContext,
+		K8sMode:            flagK8sMode,
+		K8sDebugImage:      flagK8sDebugImg,
+		ConsulAddr:         flagConsulAddr,
+		ConsulDatacenter:   flagConsulDC,
+		ConsulToken:        flagConsulToken,
+		ProxmoxURL:         flagProxmoxURL,
+		ProxmoxUser:        flagProxmoxUser,
+		ProxmoxPassword:    flagProxmoxPassword,
+		ProxmoxTokenID:     flagProxmoxTokenID,
+		ProxmoxTokenSecret: flagProxmoxTokenSecret,
+		ProxmoxInsecure:    flagProxmoxInsecure,
 	}
 
 	cfgPath, err := config.ResolvePath(flagConfig)

@@ -32,25 +32,31 @@ func Run(ctx context.Context) error {
 // --- search_hosts ---
 
 type searchHostsInput struct {
-	ConfigPath  string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG or default paths"`
-	Name        string `json:"name,omitempty" jsonschema:"substring filter on host/instance name"`
-	NameRegex   string `json:"name_regex,omitempty" jsonschema:"regex filter on name"`
-	Providers   string `json:"providers,omitempty" jsonschema:"comma-separated: gcp,aws,k8s,consul"`
-	Backends    string `json:"backends,omitempty" jsonschema:"comma-separated backend names from config YAML"`
-	GCPProject  string `json:"gcp_project,omitempty"`
-	GCPZone     string `json:"gcp_zone,omitempty"`
-	AWSProfile  string `json:"aws_profile,omitempty"`
-	AWSRegion   string `json:"aws_region,omitempty"`
-	KubeContext string `json:"kube_context,omitempty"`
-	Kubeconfig  string `json:"kubeconfig,omitempty"`
-	K8sMode     string `json:"k8s_mode,omitempty"`
-	ConsulAddr  string `json:"consul_addr,omitempty"`
-	ConsulDC    string `json:"consul_datacenter,omitempty"`
-	ConsulToken string `json:"consul_token,omitempty"`
-	CacheTTL    string `json:"cache_ttl,omitempty" jsonschema:"duration e.g. 5m, 1h; empty uses config default or 1m"`
-	CacheDir    string `json:"cache_dir,omitempty"`
-	NoCache     bool   `json:"no_cache,omitempty"`
-	Refresh     bool   `json:"refresh,omitempty"`
+	ConfigPath         string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG or default paths"`
+	Name               string `json:"name,omitempty" jsonschema:"substring filter on host/instance name"`
+	NameRegex          string `json:"name_regex,omitempty" jsonschema:"regex filter on name"`
+	Providers          string `json:"providers,omitempty" jsonschema:"comma-separated: gcp,aws,k8s,consul,proxmox"`
+	Backends           string `json:"backends,omitempty" jsonschema:"comma-separated backend names from config YAML"`
+	GCPProject         string `json:"gcp_project,omitempty"`
+	GCPZone            string `json:"gcp_zone,omitempty"`
+	AWSProfile         string `json:"aws_profile,omitempty"`
+	AWSRegion          string `json:"aws_region,omitempty"`
+	KubeContext        string `json:"kube_context,omitempty"`
+	Kubeconfig         string `json:"kubeconfig,omitempty"`
+	K8sMode            string `json:"k8s_mode,omitempty"`
+	ConsulAddr         string `json:"consul_addr,omitempty"`
+	ConsulDC           string `json:"consul_datacenter,omitempty"`
+	ConsulToken        string `json:"consul_token,omitempty"`
+	ProxmoxURL         string `json:"proxmox_url,omitempty"`
+	ProxmoxUser        string `json:"proxmox_user,omitempty"`
+	ProxmoxPassword    string `json:"proxmox_password,omitempty"`
+	ProxmoxTokenID     string `json:"proxmox_token_id,omitempty"`
+	ProxmoxTokenSecret string `json:"proxmox_token_secret,omitempty"`
+	ProxmoxInsecure    bool   `json:"proxmox_insecure,omitempty"`
+	CacheTTL           string `json:"cache_ttl,omitempty" jsonschema:"duration e.g. 5m, 1h; empty uses config default or 1m"`
+	CacheDir           string `json:"cache_dir,omitempty"`
+	NoCache            bool   `json:"no_cache,omitempty"`
+	Refresh            bool   `json:"refresh,omitempty"`
 }
 
 type searchHostsOutput struct {
@@ -72,18 +78,24 @@ func handleSearchHosts(ctx context.Context, _ *mcp.CallToolRequest, in searchHos
 	}
 
 	q := hosts.Query{
-		NameSubstring:    strings.TrimSpace(in.Name),
-		NameRegex:        strings.TrimSpace(in.NameRegex),
-		Providers:        hosts.ParseProviders(strings.TrimSpace(in.Providers)),
-		GCPProject:       strings.TrimSpace(in.GCPProject),
-		GCPZone:          strings.TrimSpace(in.GCPZone),
-		AWSProfile:       strings.TrimSpace(in.AWSProfile),
-		AWSRegion:        strings.TrimSpace(in.AWSRegion),
-		KubeContext:      strings.TrimSpace(in.KubeContext),
-		K8sMode:          strings.TrimSpace(in.K8sMode),
-		ConsulAddr:       strings.TrimSpace(in.ConsulAddr),
-		ConsulDatacenter: strings.TrimSpace(in.ConsulDC),
-		ConsulToken:      strings.TrimSpace(in.ConsulToken),
+		NameSubstring:      strings.TrimSpace(in.Name),
+		NameRegex:          strings.TrimSpace(in.NameRegex),
+		Providers:          hosts.ParseProviders(strings.TrimSpace(in.Providers)),
+		GCPProject:         strings.TrimSpace(in.GCPProject),
+		GCPZone:            strings.TrimSpace(in.GCPZone),
+		AWSProfile:         strings.TrimSpace(in.AWSProfile),
+		AWSRegion:          strings.TrimSpace(in.AWSRegion),
+		KubeContext:        strings.TrimSpace(in.KubeContext),
+		K8sMode:            strings.TrimSpace(in.K8sMode),
+		ConsulAddr:         strings.TrimSpace(in.ConsulAddr),
+		ConsulDatacenter:   strings.TrimSpace(in.ConsulDC),
+		ConsulToken:        strings.TrimSpace(in.ConsulToken),
+		ProxmoxURL:         strings.TrimSpace(in.ProxmoxURL),
+		ProxmoxUser:        strings.TrimSpace(in.ProxmoxUser),
+		ProxmoxPassword:    strings.TrimSpace(in.ProxmoxPassword),
+		ProxmoxTokenID:     strings.TrimSpace(in.ProxmoxTokenID),
+		ProxmoxTokenSecret: strings.TrimSpace(in.ProxmoxTokenSecret),
+		ProxmoxInsecure:    in.ProxmoxInsecure,
 	}
 	mergeMCPDefaults(cfg, &q)
 
@@ -107,16 +119,22 @@ func handleSearchHosts(ctx context.Context, _ *mcp.CallToolRequest, in searchHos
 	}
 
 	pf := searchrun.ProviderFlags{
-		GCPProject:       strings.TrimSpace(in.GCPProject),
-		GCPZone:          strings.TrimSpace(in.GCPZone),
-		AWSProfile:       strings.TrimSpace(in.AWSProfile),
-		AWSRegion:        strings.TrimSpace(in.AWSRegion),
-		KubeContext:      strings.TrimSpace(in.KubeContext),
-		K8sMode:          strings.TrimSpace(in.K8sMode),
-		Kubeconfig:       strings.TrimSpace(in.Kubeconfig),
-		ConsulAddr:       strings.TrimSpace(in.ConsulAddr),
-		ConsulDatacenter: strings.TrimSpace(in.ConsulDC),
-		ConsulToken:      strings.TrimSpace(in.ConsulToken),
+		GCPProject:         strings.TrimSpace(in.GCPProject),
+		GCPZone:            strings.TrimSpace(in.GCPZone),
+		AWSProfile:         strings.TrimSpace(in.AWSProfile),
+		AWSRegion:          strings.TrimSpace(in.AWSRegion),
+		KubeContext:        strings.TrimSpace(in.KubeContext),
+		K8sMode:            strings.TrimSpace(in.K8sMode),
+		Kubeconfig:         strings.TrimSpace(in.Kubeconfig),
+		ConsulAddr:         strings.TrimSpace(in.ConsulAddr),
+		ConsulDatacenter:   strings.TrimSpace(in.ConsulDC),
+		ConsulToken:        strings.TrimSpace(in.ConsulToken),
+		ProxmoxURL:         strings.TrimSpace(in.ProxmoxURL),
+		ProxmoxUser:        strings.TrimSpace(in.ProxmoxUser),
+		ProxmoxPassword:    strings.TrimSpace(in.ProxmoxPassword),
+		ProxmoxTokenID:     strings.TrimSpace(in.ProxmoxTokenID),
+		ProxmoxTokenSecret: strings.TrimSpace(in.ProxmoxTokenSecret),
+		ProxmoxInsecure:    in.ProxmoxInsecure,
 	}
 	provs := searchrun.BuildProviders(cfg, pf)
 	want := hosts.ParseBackendNames(in.Backends)
