@@ -81,7 +81,7 @@ homebrew_casks:
 mcp:
   name: "io.github.shareed2k/honey"
   title: "Honey MCP Server"
-  description: "Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox directly from Cursor"
+  description: "Search instances across GCP, AWS, K8s, Consul & Proxmox"
   homepage: "https://github.com/shareed2k/honey"
   auth:
     type: github
