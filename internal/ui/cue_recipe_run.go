@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -222,6 +224,7 @@ func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, re
 }
 
 func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, execute bool, cliEnv map[string]string, i int, step cuetry.RecipeStep) error {
+	zap.L().Debug("evaluating cue step", zap.Int("step_index", i), zap.String("host", step.Host))
 	targets, err := cuetry.ExpandStepHosts(step.Host, records)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
