@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -74,7 +74,7 @@ func (k *K8s) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	if mode == "" {
 		mode = "nodes"
 	}
-	
+
 	zap.L().Debug("k8s starting search", zap.String("context", ctxName), zap.String("mode", mode))
 
 	switch mode {

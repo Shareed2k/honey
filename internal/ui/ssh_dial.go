@@ -12,9 +12,9 @@ import (
 	"strings"
 	"sync"
 
-	"go.uber.org/zap"
 	"github.com/kevinburke/ssh_config"
 	"github.com/melbahja/goph"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 

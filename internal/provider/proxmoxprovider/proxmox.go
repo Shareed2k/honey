@@ -80,6 +80,15 @@ func (p *Proxmox) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, er
 		name, _ := m["name"].(string)
 		status, _ := m["status"].(string)
 
+		// Skip templates
+		if templateRaw, ok := m["template"]; ok {
+			if isTemplate, ok := templateRaw.(float64); ok && isTemplate == 1 {
+				continue
+			} else if isTemplateInt, ok := templateRaw.(int); ok && isTemplateInt == 1 {
+				continue
+			}
+		}
+
 		okMatch, err := hosts.NameMatches(name, q)
 		if err != nil {
 			return nil, err
@@ -131,9 +140,10 @@ func (p *Proxmox) fetchIPs(ctx context.Context, c *proxmox.Client, vmid proxmox.
 		return "", nil
 	}
 
-	if vmType == "qemu" {
+	switch vmType {
+	case "qemu":
 		return fetchQemuIPs(ctx, c, vmr, node, vmid)
-	} else if vmType == "lxc" {
+	case "lxc":
 		return fetchLXCIPs(ctx, c, vmr, node, vmid)
 	}
 

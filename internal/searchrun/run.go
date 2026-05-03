@@ -29,7 +29,7 @@ func RunSearch(
 		cacheDir = d
 	}
 	cachePath := filepath.Join(cacheDir, "cache.json")
-	
+
 	zap.L().Debug("starting search run",
 		zap.String("cache_path", cachePath),
 		zap.Duration("cache_ttl", cacheTTL),
@@ -37,12 +37,12 @@ func RunSearch(
 		zap.Bool("refresh", refresh),
 		zap.Int("providers_count", len(provs)),
 	)
-	
+
 	var fc *hosts.FileCache
 	if !noCache {
 		fc = hosts.NewFileCache(cachePath, cacheTTL)
 	}
-	
+
 	records, err := hosts.RunParallel(ctx, q, provs, fc, noCache, refresh, hosts.DefaultCacheKey)
 	zap.L().Debug("completed search run", zap.Int("total_records", len(records)), zap.Error(err))
 	return records, err

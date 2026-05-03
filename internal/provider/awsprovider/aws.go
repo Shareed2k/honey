@@ -56,7 +56,7 @@ func (a *AWS) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	zap.L().Debug("aws starting DescribeInstances", zap.String("profile", profile), zap.String("region", cfg.Region))
 	svc := ec2.NewFromConfig(cfg)
 

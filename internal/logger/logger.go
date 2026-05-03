@@ -1,3 +1,4 @@
+// Package logger provides global debug logging initialization via go.uber.org/zap.
 package logger
 
 import (
