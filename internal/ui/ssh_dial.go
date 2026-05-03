@@ -17,6 +17,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
@@ -620,7 +622,8 @@ func parseLocalForward(spec string) (localPort, remoteHost, remotePort string, e
 }
 
 // runSSHInteractive opens a login shell over crypto/ssh (respects ~/.ssh/config).
-func runSSHInteractive(user, host string) error {
+func runSSHInteractive(user string, r hosts.Record) error {
+	host := r.PrimaryIP
 	if strings.TrimSpace(host) == "" {
 		return fmt.Errorf("no IP for selected host")
 	}
@@ -630,10 +633,10 @@ func runSSHInteractive(user, host string) error {
 	}
 	defer cleanup()
 
-	return runSSHTerminal(client)
+	return runSSHTerminal(client, r)
 }
 
-func runSSHTerminal(client *ssh.Client) error {
+func runSSHTerminal(client *ssh.Client, r hosts.Record) error {
 	fd := int(os.Stdin.Fd())
 	if !termIsTerminal(fd) {
 		return fmt.Errorf("stdin is not a terminal")
@@ -650,6 +653,20 @@ func runSSHTerminal(client *ssh.Client) error {
 	}
 	defer func() { _ = sess.Close() }()
 
+	var shellCmd string
+	env, err := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
+	if err == nil && len(env) > 0 {
+		for k, v := range env {
+			// RFC 4254 requires the server to accept the env, but most SSH servers drop it by default
+			// via AcceptEnv in sshd_config. We send it anyway, but don't fail if the server rejects it.
+			_ = sess.Setenv(k, v)
+		}
+		// Because Setenv is frequently dropped, we also prepare an explicit export wrapper command.
+		// We execute the login shell natively if possible, or fallback to sh.
+		// We prepend `-` to argv[0] to simulate a login shell so profiles load correctly.
+		shellCmd, _ = cuetry.ShellExportPrefixForRemote(env, `exec "${SHELL:-sh}" -l || exec "${SHELL:-sh}"`)
+	}
+
 	w, h, err := termGetSize(fd)
 	if err != nil {
 		w, h = 80, 24
@@ -665,8 +682,14 @@ func runSSHTerminal(client *ssh.Client) error {
 	stopResize := startPTYResizeForwarding(fd, sess)
 	defer stopResize()
 
-	if err := sess.Shell(); err != nil {
-		return err
+	if shellCmd != "" {
+		if err := sess.Start(shellCmd); err != nil {
+			return err
+		}
+	} else {
+		if err := sess.Shell(); err != nil {
+			return err
+		}
 	}
 	return sess.Wait()
 }

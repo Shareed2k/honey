@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/k8sdebug"
 )
@@ -235,6 +236,10 @@ func (k k8sPodExecutor) RunInteractive(user string, r hosts.Record) error {
 	}
 	defer func() { _ = termRestore(fd, oldState) }()
 
+	// Inject host environment variables into the interactive shell session
+	env, _ := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
+	cmd, _ := cuetry.ShellExportPrefixForRemote(env, "sh")
+
 	// Start standard sh for interactive session
-	return podClient.execInPod([]string{"sh"}, os.Stdin, os.Stdout, os.Stderr, true)
+	return podClient.execInPod([]string{"sh", "-c", cmd}, os.Stdin, os.Stdout, os.Stderr, true)
 }

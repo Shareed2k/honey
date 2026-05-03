@@ -30,11 +30,7 @@ type HostExecResult struct {
 
 // StreamSSHParallel runs the command on records and streams results to out channel.
 // It does not close the channel itself.
-func StreamSSHParallel(user string, jobs []hosts.Record, remoteCmd string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
-	remoteCmd = strings.TrimSpace(remoteCmd)
-	if remoteCmd == "" {
-		return nil
-	}
+func StreamSSHParallel(user string, jobs []hosts.Record, remoteCmdFunc func(hosts.Record) string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
 	}
@@ -47,7 +43,13 @@ func StreamSSHParallel(user string, jobs []hosts.Record, remoteCmd string, maxCo
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out <- runOneRemoteSSH(user, r, remoteCmd, cache)
+
+			cmd := remoteCmdFunc(r)
+			if strings.TrimSpace(cmd) == "" {
+				out <- HostExecResult{Name: r.Name, Provider: r.Provider, Success: true, Output: ""}
+				return
+			}
+			out <- runOneRemoteSSH(user, r, cmd, cache)
 		}(jobs[i])
 	}
 	wg.Wait()
@@ -57,7 +59,7 @@ func StreamSSHParallel(user string, jobs []hosts.Record, remoteCmd string, maxCo
 // ExecuteSSHParallel runs the same remote shell command on every record that has
 // PrimaryIP set. Failures on individual hosts do not cancel others.
 // It uses DialHoneyClient (golang.org/x/crypto/ssh + ~/.ssh/config) with known_hosts verification.
-func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxConc int) ([]HostExecResult, error) {
+func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hosts.Record) string, maxConc int) ([]HostExecResult, error) {
 	var jobs []hosts.Record
 	for _, r := range recs {
 		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
@@ -71,7 +73,7 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxC
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		_ = StreamSSHParallel(user, jobs, remoteCmd, maxConc, ch, nil)
+		_ = StreamSSHParallel(user, jobs, remoteCmdFunc, maxConc, ch, nil)
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))
@@ -193,11 +195,10 @@ func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int
 }
 
 // StreamScriptUploadRunParallel uploads a script and executes it on multiple hosts in parallel.
-func StreamScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, remotePath, remoteCmd string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
+func StreamScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, remotePath string, remoteCmdFunc func(hosts.Record) string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
-	remoteCmd = strings.TrimSpace(remoteCmd)
-	if localAbs == "" || remotePath == "" || remoteCmd == "" {
+	if localAbs == "" || remotePath == "" {
 		return fmt.Errorf("script step: empty local, remote path, or remote command")
 	}
 	if maxConc <= 0 {
@@ -220,7 +221,12 @@ func StreamScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, r
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out <- runOneScriptUploadRun(user, r, localAbs, remotePath, remoteCmd, cache)
+			cmd := remoteCmdFunc(r)
+			if strings.TrimSpace(cmd) == "" {
+				out <- HostExecResult{Name: r.Name, Provider: r.Provider, Success: true, Output: ""}
+				return
+			}
+			out <- runOneScriptUploadRun(user, r, localAbs, remotePath, cmd, cache)
 		}(jobs[i])
 	}
 	wg.Wait()
@@ -310,7 +316,7 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		_ = StreamScriptUploadRunParallel(user, recs, localAbs, remotePath, remoteCmd, maxConc, ch, nil)
+		_ = StreamScriptUploadRunParallel(user, recs, localAbs, remotePath, func(_ hosts.Record) string { return remoteCmd }, maxConc, ch, nil)
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))

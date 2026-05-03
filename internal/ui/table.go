@@ -729,7 +729,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		if err != nil {
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nread: " + err.Error()}
 		}
-		recipe, err := cuetry.ParseRemoteRecipe(raw)
+		recipe, err := cuetry.ParseRemoteRecipe(raw, targets)
 		if err != nil {
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nparse: " + err.Error()}
 		}
@@ -798,7 +798,19 @@ func runParallelSSHStreamCmd(user string, targets []hosts.Record, cmdLine, targe
 
 		go func() {
 			defer close(ch)
-			_ = StreamSSHParallel(user, jobs, cmdLine, 0, ch, nil)
+			cmdFunc := func(r hosts.Record) string {
+				// Inject host variables even for direct UI commands
+				env, err := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
+				if err != nil {
+					return fmt.Sprintf("echo 'env err: %s'", err.Error())
+				}
+				remoteCmd, err := cuetry.ShellExportPrefixForRemote(env, cmdLine)
+				if err != nil {
+					return fmt.Sprintf("echo 'export err: %s'", err.Error())
+				}
+				return remoteCmd
+			}
+			_ = StreamSSHParallel(user, jobs, cmdFunc, 0, ch, nil)
 		}()
 
 		return streamStartMsg{

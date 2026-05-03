@@ -28,7 +28,7 @@ func (e defaultSSHExecutor) Dial(user string, r hosts.Record) (HostClient, error
 }
 
 func (e defaultSSHExecutor) RunInteractive(user string, r hosts.Record) error {
-	return runSSHInteractive(user, r.PrimaryIP)
+	return runSSHInteractive(user, r)
 }
 
 // DefaultExecutor is the default implementation for remote execution.

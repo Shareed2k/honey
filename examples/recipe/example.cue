@@ -18,7 +18,7 @@ recipe: {
 		{
 			// Target all hosts from the search results
 			host: "*"
-			command: "echo \"Running on $(hostname) with APP_ENV=$APP_ENV\""
+			command: "echo \"Running on $HONEY_HOST_NAME ($HONEY_HOST_PRIMARY_IP) with APP_ENV=$APP_ENV\""
 		},
 		{
 			// Target hosts using a regular expression matched against the host name
@@ -41,14 +41,11 @@ recipe: {
 			}
 		},
 		{
-			// Download a file from an exact host match
-			host: "db-server-01"
-			// Clear run_as to run as the SSH login user instead of root
-			run_as: ""
-			get: {
-				remote: "/var/log/syslog"
-				// Note: if downloading from multiple hosts, 'local' must be a directory
-				local:  "downloads/syslog.txt" 
+			// Loop dynamically generated via the injected 'hosts' variable
+			// This generates one step per matching k8s pod
+			for h in hosts if h.provider == "k8s" {
+				host: h.name
+				command: "echo \"Kubernetes Pod IP is \(h.primary_ip)\""
 			}
 		}
 	]

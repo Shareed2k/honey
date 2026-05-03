@@ -58,7 +58,7 @@ recipe: {
 	]
 }
 `
-	r, err := ParseRemoteRecipe([]byte(src))
+	r, err := ParseRemoteRecipe([]byte(src), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ recipe: {
 	]
 }
 `
-	_, err := ParseRemoteRecipe([]byte(src))
+	_, err := ParseRemoteRecipe([]byte(src), nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -199,7 +199,7 @@ recipe: {
 	]
 }
 `
-	_, err := ParseRemoteRecipe([]byte(src))
+	_, err := ParseRemoteRecipe([]byte(src), nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

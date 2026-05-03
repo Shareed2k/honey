@@ -70,21 +70,21 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	recipe, err := cuetry.ParseRemoteRecipe(raw)
-	if err != nil {
-		return err
-	}
-	cliEnv, err := cuetry.ParseEnvKeyValuePairs(flagCueExecEnv)
-	if err != nil {
-		return err
-	}
-
 	records, sshUser, err := runSearchCore(cmd, queryArgs)
 	if err != nil {
 		return err
 	}
 	if len(records) == 0 {
 		return fmt.Errorf("search returned no hosts; widen filters or fix recipe host keys")
+	}
+
+	recipe, err := cuetry.ParseRemoteRecipe(raw, records)
+	if err != nil {
+		return err
+	}
+	cliEnv, err := cuetry.ParseEnvKeyValuePairs(flagCueExecEnv)
+	if err != nil {
+		return err
 	}
 
 	if recipe.Defaults != nil && recipe.Defaults.K8sDebugImage != "" {

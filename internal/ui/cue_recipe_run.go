@@ -78,19 +78,24 @@ func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts
 
 func streamCueStepCommand(recipe cuetry.Recipe, step cuetry.RecipeStep, cliEnv map[string]string, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, cache *ClientCache) error {
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
-	env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv)
-	if err != nil {
-		return err
+
+	cmdFunc := func(r hosts.Record) string {
+		env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv, &r)
+		if err != nil {
+			return fmt.Sprintf("echo 'env err: %s'", err.Error())
+		}
+		inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(step.Command))
+		if err != nil {
+			return fmt.Sprintf("echo 'export err: %s'", err.Error())
+		}
+		remoteCmd, err := cuetry.WrapRemoteShell(runAs, inner)
+		if err != nil {
+			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
+		}
+		return remoteCmd
 	}
-	inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(step.Command))
-	if err != nil {
-		return err
-	}
-	remoteCmd, err := cuetry.WrapRemoteShell(runAs, inner)
-	if err != nil {
-		return err
-	}
-	return StreamSSHParallel(sshUser, targets, remoteCmd, 0, ch, cache)
+
+	return StreamSSHParallel(sshUser, targets, cmdFunc, 0, ch, cache)
 }
 
 func streamCueStepPut(recipeDir string, step cuetry.RecipeStep, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, cache *ClientCache) error {
@@ -154,18 +159,24 @@ func streamCueStepScript(recipe cuetry.Recipe, recipeDir string, step cuetry.Rec
 	}
 	remotePath := strings.TrimSpace(step.Script.Remote)
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
-	env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv)
-	if err != nil {
-		return err
-	}
-	remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
-	if err != nil {
-		return err
-	}
+
 	if _, statErr := os.Stat(localAbs); statErr != nil {
 		return fmt.Errorf("script: local file %q: %w", localAbs, statErr)
 	}
-	return StreamScriptUploadRunParallel(sshUser, targets, localAbs, remotePath, remoteCmd, 0, ch, cache)
+
+	cmdFunc := func(r hosts.Record) string {
+		env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv, &r)
+		if err != nil {
+			return fmt.Sprintf("echo 'env err: %s'", err.Error())
+		}
+		remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
+		if err != nil {
+			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
+		}
+		return remoteCmd
+	}
+
+	return StreamScriptUploadRunParallel(sshUser, targets, localAbs, remotePath, cmdFunc, 0, ch, cache)
 }
 
 // RunCueRecipeSteps executes a CUE recipe over a slice of target records without streaming.
@@ -235,20 +246,21 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 
 func runCueStepCommand(out io.Writer, recipe cuetry.Recipe, execute bool, cliEnv map[string]string, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
-	env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv)
-	if err != nil {
-		return fmt.Errorf("step %d: %w", i, err)
-	}
-	inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(step.Command))
-	if err != nil {
-		return fmt.Errorf("step %d: %w", i, err)
-	}
-	remoteCmd, err := cuetry.WrapRemoteShell(runAs, inner)
-	if err != nil {
-		return fmt.Errorf("step %d: %w", i, err)
-	}
 	if !execute {
 		for _, target := range targets {
+			env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv, &target)
+			if err != nil {
+				return fmt.Errorf("step %d: %w", i, err)
+			}
+			inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(step.Command))
+			if err != nil {
+				return fmt.Errorf("step %d: %w", i, err)
+			}
+			remoteCmd, err := cuetry.WrapRemoteShell(runAs, inner)
+			if err != nil {
+				return fmt.Errorf("step %d: %w", i, err)
+			}
+
 			_, _ = fmt.Fprintf(out, "step %d: kind=command name=%q %s provider=%s run_as=%q remote=%q\n",
 				i, target.Name, FormatTargetForDryRun(target), target.Provider, runAs, remoteCmd)
 		}
@@ -325,19 +337,20 @@ func runCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, exe
 	}
 	remotePath := strings.TrimSpace(step.Script.Remote)
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
-	env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv)
-	if err != nil {
-		return fmt.Errorf("step %d: %w", i, err)
-	}
-	remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
-	if err != nil {
-		return fmt.Errorf("step %d: %w", i, err)
-	}
+
 	if !execute {
 		if _, statErr := os.Stat(localAbs); statErr != nil {
 			_, _ = fmt.Fprintf(out, "step %d: kind=script (warning: local not readable: %v)\n", i, statErr)
 		}
 		for _, target := range targets {
+			env, err := cuetry.EffectiveEnvForRun(step, recipe.Defaults, cliEnv, &target)
+			if err != nil {
+				return fmt.Errorf("step %d: %w", i, err)
+			}
+			remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
+			if err != nil {
+				return fmt.Errorf("step %d: %w", i, err)
+			}
 			_, _ = fmt.Fprintf(out, "step %d: kind=script name=%q %s provider=%s put %q → %q then exec run_as=%q cmd=%q\n",
 				i, target.Name, FormatTargetForDryRun(target), target.Provider, localAbs, remotePath, runAs, remoteCmd)
 		}
