@@ -3,6 +3,8 @@ package cuetry
 import (
 	"strings"
 	"testing"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 func TestValidateRecipeEnvMap_badKey(t *testing.T) {
@@ -48,12 +50,53 @@ func TestEffectiveEnvForRun_cliOverrides(t *testing.T) {
 	def := &RecipeDefaults{Env: map[string]string{"A": "1"}}
 	step := RecipeStep{Env: map[string]string{"B": "2"}}
 	cli := map[string]string{"A": "9", "C": "3"}
-	got, err := EffectiveEnvForRun(step, def, cli)
+	got, err := EffectiveEnvForRun(step, def, cli, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got["A"] != "9" || got["B"] != "2" || got["C"] != "3" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestEffectiveEnvForRun_withHostRecord(t *testing.T) {
+	step := RecipeStep{Env: map[string]string{"USER_VAR": "custom"}}
+	r := &hosts.Record{
+		Name:      "web-01",
+		PrimaryIP: "10.0.0.5",
+		Provider:  "aws",
+		Zone:      "us-east-1a",
+		Region:    "us-east-1",
+		Meta: map[string]string{
+			"kind":     "instance",
+			"bad-key@": "ignored",
+		},
+	}
+
+	got, err := EffectiveEnvForRun(step, nil, nil, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedVars := map[string]string{
+		"USER_VAR":              "custom",
+		"HONEY_HOST_NAME":       "web-01",
+		"HONEY_HOST_PRIMARY_IP": "10.0.0.5",
+		"HONEY_HOST_PROVIDER":   "aws",
+		"HONEY_HOST_ZONE":       "us-east-1a",
+		"HONEY_HOST_REGION":     "us-east-1",
+		"HONEY_HOST_META_KIND":  "instance",
+	}
+
+	for k, v := range expectedVars {
+		if got[k] != v {
+			t.Errorf("expected %s=%s, got %s", k, v, got[k])
+		}
+	}
+
+	// bad-key@ becomes BAD_KEY_
+	if got["HONEY_HOST_META_BAD_KEY_"] != "ignored" {
+		t.Errorf("expected BAD_KEY_ to be present as sanitized format, got %s", got["HONEY_HOST_META_BAD_KEY_"])
 	}
 }
 
@@ -94,7 +137,7 @@ recipe: {
 	]
 }
 `
-	r, err := ParseRemoteRecipe([]byte(src))
+	r, err := ParseRemoteRecipe([]byte(src), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

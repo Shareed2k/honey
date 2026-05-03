@@ -15,7 +15,7 @@ func (f *File) ListBackendRows() []BackendRow {
 	if f == nil || !f.HasAnyBackend() {
 		return nil
 	}
-	var rows []BackendRow
+	rows := make([]BackendRow, 0, len(f.Backends.GCP)+len(f.Backends.AWS)+len(f.Backends.Kubernetes)+len(f.Backends.Consul))
 	for _, e := range f.Backends.GCP {
 		rows = append(rows, BackendRow{Kind: "gcp", Name: e.Name, Hint: strings.TrimSpace(e.Project)})
 	}

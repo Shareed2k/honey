@@ -2,12 +2,13 @@ package ui
 
 import (
 	"fmt"
-	"honey/internal/safepath"
 	"net"
 	"os"
 	"strings"
 
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // honeySSHAutoRenewStaleHostKeys is true by default: when a known_hosts entry no longer matches the server,

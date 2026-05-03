@@ -107,7 +107,6 @@ func TestResolvePathXDG(t *testing.T) {
 	}
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HONEY_CONFIG", "")
-	t.Setenv("HOSTCTL_CONFIG", "")
 	got, err := ResolvePath("")
 	if err != nil || got != cfgPath {
 		t.Fatalf("got %q err %v want %q", got, err, cfgPath)

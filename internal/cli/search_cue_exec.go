@@ -2,12 +2,13 @@ package cli
 
 import (
 	"fmt"
-	"honey/internal/cuetry"
-	"honey/internal/safepath"
-	"honey/internal/ui"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/safepath"
+	"github.com/shareed2k/honey/internal/ui"
 )
 
 var (
@@ -69,7 +70,15 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	recipe, err := cuetry.ParseRemoteRecipe(raw)
+	records, sshUser, err := runSearchCore(cmd, queryArgs)
+	if err != nil {
+		return err
+	}
+	if len(records) == 0 {
+		return fmt.Errorf("search returned no hosts; widen filters or fix recipe host keys")
+	}
+
+	recipe, err := cuetry.ParseRemoteRecipe(raw, records)
 	if err != nil {
 		return err
 	}
@@ -78,12 +87,15 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	records, sshUser, err := runSearchCore(cmd, queryArgs)
-	if err != nil {
-		return err
-	}
-	if len(records) == 0 {
-		return fmt.Errorf("search returned no hosts; widen filters or fix recipe host keys")
+	if recipe.Defaults != nil && recipe.Defaults.K8sDebugImage != "" {
+		for i := range records {
+			if records[i].Provider == "k8s" && records[i].Meta["kind"] == "pod" {
+				if records[i].Meta == nil {
+					records[i].Meta = make(map[string]string)
+				}
+				records[i].Meta["debug_image"] = recipe.Defaults.K8sDebugImage
+			}
+		}
 	}
 
 	return ui.RunCueRecipeSteps(cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv)

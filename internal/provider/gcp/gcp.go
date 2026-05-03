@@ -2,15 +2,15 @@ package gcp
 
 import (
 	"context"
-	"honey/internal/hosts"
 	"os"
 	"strconv"
 	"strings"
 
+	compute "cloud.google.com/go/compute/apiv1"
 	computepb "cloud.google.com/go/compute/apiv1/computepb"
 	"google.golang.org/api/iterator"
 
-	compute "cloud.google.com/go/compute/apiv1"
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // GCP implements provider.Provider for Compute Engine instances.

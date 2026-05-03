@@ -17,10 +17,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"honey/internal/safepath"
 	"net"
 	"os"
 	"strings"
+
+	"github.com/shareed2k/honey/internal/safepath"
 
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -166,8 +167,9 @@ func khParseLine(line []byte) (marker, hostField string, err error) {
 }
 
 func newKhHostnameMatcher(pattern string) (khMatcher, error) {
-	var hps khHostPatterns
-	for _, p := range strings.Split(pattern, ",") {
+	parts := strings.Split(pattern, ",")
+	hps := make(khHostPatterns, 0, len(parts))
+	for _, p := range parts {
 		if len(p) == 0 {
 			continue
 		}

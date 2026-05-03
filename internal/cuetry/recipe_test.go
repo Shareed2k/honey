@@ -1,9 +1,10 @@
 package cuetry
 
 import (
-	"honey/internal/hosts"
 	"strings"
 	"testing"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 func TestValidateRemoteRecipe_ok(t *testing.T) {
@@ -57,7 +58,7 @@ recipe: {
 	]
 }
 `
-	r, err := ParseRemoteRecipe([]byte(src))
+	r, err := ParseRemoteRecipe([]byte(src), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ recipe: {
 	]
 }
 `
-	_, err := ParseRemoteRecipe([]byte(src))
+	_, err := ParseRemoteRecipe([]byte(src), nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -198,7 +199,7 @@ recipe: {
 	]
 }
 `
-	_, err := ParseRemoteRecipe([]byte(src))
+	_, err := ParseRemoteRecipe([]byte(src), nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

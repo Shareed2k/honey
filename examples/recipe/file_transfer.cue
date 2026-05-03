@@ -11,6 +11,6 @@ recipe: {
 	name: "file-transfer-demo"
 	steps: [
 		{host: "*", put: {local: "./README.md", remote: "/tmp/honey-recipe-readme"}},
-		{host: "10.0.0.1", get: {local: "./hostname.single", remote: "/etc/hostname"}},
+		{host: "*", get: {local: "./hostname.single", remote: "/etc/hostname"}},
 	]
 }

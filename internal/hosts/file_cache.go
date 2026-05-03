@@ -5,11 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"honey/internal/safepath"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // CacheEntry is a single cached provider result.

@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"honey/internal/config"
-	"honey/internal/hosts"
-	"honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 func buildProviders(cfg *config.File) []hosts.Backend {

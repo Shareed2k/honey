@@ -3,10 +3,11 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"honey/internal/hosts"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/shareed2k/honey/internal/hosts"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -27,21 +28,41 @@ type HostExecResult struct {
 	ErrMsg   string // transport / spawn failure (not remote stderr)
 }
 
-// ExecuteSSHParallel runs the same remote shell command on every record that has
-// PrimaryIP set. Failures on individual hosts do not cancel others.
-// It uses DialHoneyClient (golang.org/x/crypto/ssh + ~/.ssh/config) with known_hosts verification.
-func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxConc int) ([]HostExecResult, error) {
-	remoteCmd = strings.TrimSpace(remoteCmd)
-	if remoteCmd == "" {
-		return []HostExecResult{}, nil
-	}
+// StreamSSHParallel runs the command on records and streams results to out channel.
+// It does not close the channel itself.
+func StreamSSHParallel(user string, jobs []hosts.Record, remoteCmdFunc func(hosts.Record) string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
 	}
 
+	sem := make(chan struct{}, maxConc)
+	var wg sync.WaitGroup
+	for i := range jobs {
+		wg.Add(1)
+		go func(r hosts.Record) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			cmd := remoteCmdFunc(r)
+			if strings.TrimSpace(cmd) == "" {
+				out <- HostExecResult{Name: r.Name, Provider: r.Provider, Success: true, Output: ""}
+				return
+			}
+			out <- runOneRemoteSSH(user, r, cmd, cache)
+		}(jobs[i])
+	}
+	wg.Wait()
+	return nil
+}
+
+// ExecuteSSHParallel runs the same remote shell command on every record that has
+// PrimaryIP set. Failures on individual hosts do not cancel others.
+// It uses DialHoneyClient (golang.org/x/crypto/ssh + ~/.ssh/config) with known_hosts verification.
+func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hosts.Record) string, maxConc int) ([]HostExecResult, error) {
 	var jobs []hosts.Record
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
@@ -49,35 +70,34 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmd string, maxC
 		return []HostExecResult{}, nil
 	}
 
-	sem := make(chan struct{}, maxConc)
-	var wg sync.WaitGroup
-	out := make([]HostExecResult, len(jobs))
-	for i := range jobs {
-		wg.Add(1)
-		go func(i int, r hosts.Record) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			out[i] = runOneRemoteSSH(user, r, remoteCmd)
-		}(i, jobs[i])
+	ch := make(chan HostExecResult, len(jobs))
+	go func() {
+		defer close(ch)
+		_ = StreamSSHParallel(user, jobs, remoteCmdFunc, maxConc, ch, nil)
+	}()
+
+	out := make([]HostExecResult, 0, len(jobs))
+	for res := range ch {
+		out = append(out, res)
 	}
-	wg.Wait()
 	return out, nil
 }
 
-func runOneRemoteSSH(user string, r hosts.Record, remoteCmd string) HostExecResult {
+func runOneRemoteSSH(user string, r hosts.Record, remoteCmd string, cache *ClientCache) HostExecResult {
 	res := HostExecResult{
 		Name:     r.Name,
 		IP:       r.PrimaryIP,
 		Provider: r.Provider,
 	}
-	client, err := DialHoneyClient(user, r.PrimaryIP)
+	client, err := cache.GetOrDial(user, r)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
 		return res
 	}
-	defer func() { _ = client.Close() }()
+	if cache == nil {
+		defer func() { _ = client.Close() }()
+	}
 
 	raw, err := client.Run(remoteCmd)
 	out := strings.TrimSpace(string(raw))
@@ -112,80 +132,163 @@ type SFTPDownloadJob struct {
 	RemotePath string
 }
 
-// ExecuteSFTPUploadParallel uploads the same local file to remotePath on each
+// StreamSFTPUploadParallel uploads the same local file to remotePath on each
 // record (SFTP over DialHoneyClient). Failures on one host do not cancel others.
-func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remotePath string, maxConc int) ([]HostExecResult, error) {
+func StreamSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remotePath string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
 	if localAbs == "" || remotePath == "" {
-		return nil, fmt.Errorf("upload: empty local or remote path")
+		return fmt.Errorf("upload: empty local or remote path")
 	}
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
 	}
 	var jobs []hosts.Record
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+			jobs = append(jobs, r)
+		}
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	sem := make(chan struct{}, maxConc)
+	var wg sync.WaitGroup
+	for i := range jobs {
+		wg.Add(1)
+		go func(r hosts.Record) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			out <- runOneSFTPUpload(user, r, localAbs, remotePath, cache)
+		}(jobs[i])
+	}
+	wg.Wait()
+	return nil
+}
+
+// StreamSFTPDownloadParallel downloads files from multiple hosts in parallel.
+func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
+	if maxConc <= 0 {
+		maxConc = defaultSSHBatchConcurrency
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	sem := make(chan struct{}, maxConc)
+	var wg sync.WaitGroup
+	for i := range jobs {
+		wg.Add(1)
+		go func(j SFTPDownloadJob) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if strings.TrimSpace(j.Record.PrimaryIP) == "" && (j.Record.Provider != "k8s" || j.Record.Meta["kind"] != "pod") {
+				out <- HostExecResult{Name: j.Record.Name, Provider: j.Record.Provider, Success: false, ErrMsg: "missing PrimaryIP"}
+				return
+			}
+			out <- runOneSFTPDownload(user, j, cache)
+		}(jobs[i])
+	}
+	wg.Wait()
+	return nil
+}
+
+// StreamScriptUploadRunParallel uploads a script and executes it on multiple hosts in parallel.
+func StreamScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, remotePath string, remoteCmdFunc func(hosts.Record) string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
+	localAbs = strings.TrimSpace(localAbs)
+	remotePath = strings.TrimSpace(remotePath)
+	if localAbs == "" || remotePath == "" {
+		return fmt.Errorf("script step: empty local, remote path, or remote command")
+	}
+	if maxConc <= 0 {
+		maxConc = defaultSSHBatchConcurrency
+	}
+	var jobs []hosts.Record
+	for _, r := range recs {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+			jobs = append(jobs, r)
+		}
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	sem := make(chan struct{}, maxConc)
+	var wg sync.WaitGroup
+	for i := range jobs {
+		wg.Add(1)
+		go func(r hosts.Record) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			cmd := remoteCmdFunc(r)
+			if strings.TrimSpace(cmd) == "" {
+				out <- HostExecResult{Name: r.Name, Provider: r.Provider, Success: true, Output: ""}
+				return
+			}
+			out <- runOneScriptUploadRun(user, r, localAbs, remotePath, cmd, cache)
+		}(jobs[i])
+	}
+	wg.Wait()
+	return nil
+}
+
+// ExecuteSFTPUploadParallel executes an SFTP upload in parallel across multiple hosts and returns results synchronously.
+func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remotePath string, maxConc int) ([]HostExecResult, error) {
+	var jobs []hosts.Record
+	for _, r := range recs {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
 	if len(jobs) == 0 {
 		return []HostExecResult{}, nil
 	}
-	sem := make(chan struct{}, maxConc)
-	var wg sync.WaitGroup
-	out := make([]HostExecResult, len(jobs))
-	for i := range jobs {
-		wg.Add(1)
-		go func(i int, r hosts.Record) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			out[i] = runOneSFTPUpload(user, r, localAbs, remotePath)
-		}(i, jobs[i])
+
+	ch := make(chan HostExecResult, len(jobs))
+	go func() {
+		defer close(ch)
+		_ = StreamSFTPUploadParallel(user, recs, localAbs, remotePath, maxConc, ch, nil)
+	}()
+
+	out := make([]HostExecResult, 0, len(jobs))
+	for res := range ch {
+		out = append(out, res)
 	}
-	wg.Wait()
 	return out, nil
 }
 
 // ExecuteSFTPDownloadParallel runs each download job (possibly different local
 // paths per host) in parallel.
 func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int) ([]HostExecResult, error) {
-	if maxConc <= 0 {
-		maxConc = defaultSSHBatchConcurrency
-	}
 	if len(jobs) == 0 {
 		return []HostExecResult{}, nil
 	}
-	sem := make(chan struct{}, maxConc)
-	var wg sync.WaitGroup
-	out := make([]HostExecResult, len(jobs))
-	for i := range jobs {
-		wg.Add(1)
-		go func(i int, j SFTPDownloadJob) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			if strings.TrimSpace(j.Record.PrimaryIP) == "" {
-				out[i] = HostExecResult{Name: j.Record.Name, Provider: j.Record.Provider, Success: false, ErrMsg: "missing PrimaryIP"}
-				return
-			}
-			out[i] = runOneSFTPDownload(user, j)
-		}(i, jobs[i])
+
+	ch := make(chan HostExecResult, len(jobs))
+	go func() {
+		defer close(ch)
+		_ = StreamSFTPDownloadParallel(user, jobs, maxConc, ch, nil)
+	}()
+
+	out := make([]HostExecResult, 0, len(jobs))
+	for res := range ch {
+		out = append(out, res)
 	}
-	wg.Wait()
 	return out, nil
 }
 
-func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string) HostExecResult {
+func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string, cache *ClientCache) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := DialHoneyClient(user, r.PrimaryIP)
+	client, err := cache.GetOrDial(user, r)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
 		return res
 	}
-	defer func() { _ = client.Close() }()
+	if cache == nil {
+		defer func() { _ = client.Close() }()
+	}
 	if err := client.Upload(localAbs, remotePath); err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
@@ -200,49 +303,40 @@ func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string) 
 // ExecuteScriptUploadRunParallel uploads localAbs to remotePath on each host over SFTP,
 // then runs remoteCmd on the same SSH connection (one session per host per step).
 func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, remotePath, remoteCmd string, maxConc int) ([]HostExecResult, error) {
-	localAbs = strings.TrimSpace(localAbs)
-	remotePath = strings.TrimSpace(remotePath)
-	remoteCmd = strings.TrimSpace(remoteCmd)
-	if localAbs == "" || remotePath == "" || remoteCmd == "" {
-		return nil, fmt.Errorf("script step: empty local, remote path, or remote command")
-	}
-	if maxConc <= 0 {
-		maxConc = defaultSSHBatchConcurrency
-	}
 	var jobs []hosts.Record
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
 	if len(jobs) == 0 {
 		return []HostExecResult{}, nil
 	}
-	sem := make(chan struct{}, maxConc)
-	var wg sync.WaitGroup
-	out := make([]HostExecResult, len(jobs))
-	for i := range jobs {
-		wg.Add(1)
-		go func(i int, r hosts.Record) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			out[i] = runOneScriptUploadRun(user, r, localAbs, remotePath, remoteCmd)
-		}(i, jobs[i])
+
+	ch := make(chan HostExecResult, len(jobs))
+	go func() {
+		defer close(ch)
+		_ = StreamScriptUploadRunParallel(user, recs, localAbs, remotePath, func(_ hosts.Record) string { return remoteCmd }, maxConc, ch, nil)
+	}()
+
+	out := make([]HostExecResult, 0, len(jobs))
+	for res := range ch {
+		out = append(out, res)
 	}
-	wg.Wait()
 	return out, nil
 }
 
-func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, remoteCmd string) HostExecResult {
+func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, remoteCmd string, cache *ClientCache) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := DialHoneyClient(user, r.PrimaryIP)
+	client, err := cache.GetOrDial(user, r)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
 		return res
 	}
-	defer func() { _ = client.Close() }()
+	if cache == nil {
+		defer func() { _ = client.Close() }()
+	}
 
 	if err := client.Upload(localAbs, remotePath); err != nil {
 		res.Success = false
@@ -276,16 +370,18 @@ func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, re
 	return res
 }
 
-func runOneSFTPDownload(user string, j SFTPDownloadJob) HostExecResult {
+func runOneSFTPDownload(user string, j SFTPDownloadJob, cache *ClientCache) HostExecResult {
 	r := j.Record
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := DialHoneyClient(user, r.PrimaryIP)
+	client, err := cache.GetOrDial(user, r)
 	if err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()
 		return res
 	}
-	defer func() { _ = client.Close() }()
+	if cache == nil {
+		defer func() { _ = client.Close() }()
+	}
 	if err := client.Download(j.RemotePath, j.LocalAbs); err != nil {
 		res.Success = false
 		res.ErrMsg = err.Error()

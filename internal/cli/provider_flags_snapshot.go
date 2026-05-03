@@ -1,6 +1,6 @@
 package cli
 
-import "honey/internal/searchrun"
+import "github.com/shareed2k/honey/internal/searchrun"
 
 func providerFlagsSnapshot() searchrun.ProviderFlags {
 	return searchrun.ProviderFlags{
@@ -10,6 +10,7 @@ func providerFlagsSnapshot() searchrun.ProviderFlags {
 		AWSRegion:        flagAWSRegion,
 		KubeContext:      flagKubeContext,
 		K8sMode:          flagK8sMode,
+		K8sDebugImage:    flagK8sDebugImg,
 		Kubeconfig:       flagKubeconfig,
 		ConsulAddr:       flagConsulAddr,
 		ConsulDatacenter: flagConsulDC,
