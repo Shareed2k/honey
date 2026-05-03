@@ -16,8 +16,8 @@ require (
 	github.com/kevinburke/ssh_config v1.2.0
 	github.com/melbahja/goph v1.5.0
 	github.com/modelcontextprotocol/go-sdk v1.5.0
-	go.uber.org/zap v1.28.0
 	github.com/spf13/cobra v1.10.2
+	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/term v0.41.0
