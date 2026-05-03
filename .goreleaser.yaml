@@ -5,6 +5,11 @@ project_name: honey
 before:
   hooks:
     - go mod tidy
+    - go generate ./...
+    - mkdir -p completions
+    - go run ./cmd/honey completion bash > completions/honey.bash
+    - go run ./cmd/honey completion zsh > completions/honey.zsh
+    - go run ./cmd/honey completion fish > completions/honey.fish
 
 builds:
   - id: honey
@@ -40,6 +45,10 @@ archives:
       - goos: windows
         formats:
           - zip
+    files:
+      - README.md
+      - LICENSE
+      - completions/*
 
 checksum:
   name_template: 'checksums.txt'
@@ -55,23 +64,24 @@ changelog:
       - '^test:'
       - '^chore:'
 
-brews:
+homebrew_casks:
   - name: honey
     repository:
       owner: shareed2k
       name: homebrew-tap
       token: "{{ .Env.GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/shareed2k/honey"
     description: "Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox"
-    license: "MIT"
-    test: |
-      system "#{bin}/honey version"
+    completions:
+      bash: completions/honey.bash
+      zsh: completions/honey.zsh
+      fish: completions/honey.fish
 
 mcp:
   name: "io.github.shareed2k/honey"
   title: "Honey MCP Server"
-  description: "Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox directly from Cursor"
+  description: "Search instances across GCP, AWS, K8s, Consul & Proxmox"
   homepage: "https://github.com/shareed2k/honey"
   auth:
     type: github
