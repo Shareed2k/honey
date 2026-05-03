@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/logger"
+	_ "github.com/shareed2k/honey/internal/provider/all" // register all providers natively during boot
 )
 
 var flagDebugLog string
