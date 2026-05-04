@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -15,19 +16,13 @@ func PrintStaticTable(records []hosts.Record) error {
 		return nil
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"PROVIDER", "NAME", "PRIMARY IP", "ZONE / EXTRA"})
-	table.SetAutoWrapText(true)
-	table.SetAutoFormatHeaders(true)
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetCenterSeparator("*")
-	table.SetColumnSeparator("|")
-	table.SetRowSeparator("~")
-	table.SetHeaderLine(true)
-	table.SetBorder(true)
-	table.SetTablePadding("\t") // pad with tabs
-	table.SetNoWhiteSpace(true)
+	tbl := tablewriter.NewTable(
+		os.Stdout,
+		tablewriter.WithHeader([]string{"PROVIDER", "NAME", "PRIMARY IP", "ZONE / EXTRA"}),
+		tablewriter.WithRowAlignment(tw.AlignLeft),
+		tablewriter.WithHeaderAlignment(tw.AlignLeft),
+		tablewriter.WithSymbols(tw.NewSymbols(tw.StyleDefault)),
+	)
 
 	for _, r := range records {
 		var zoneExtra []string
@@ -37,13 +32,12 @@ func PrintStaticTable(records []hosts.Record) error {
 		if len(r.ExtraIPs) > 0 {
 			zoneExtra = append(zoneExtra, strings.Join(r.ExtraIPs, ", "))
 		}
-		table.Append([]string{
+		_ = tbl.Append([]string{
 			r.Provider,
 			r.Name,
 			r.PrimaryIP,
 			strings.Join(zoneExtra, " | "),
 		})
 	}
-	table.Render()
-	return nil
+	return tbl.Render()
 }
