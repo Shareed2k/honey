@@ -86,7 +86,20 @@ type ProxmoxBackend struct {
 	Insecure    bool   `yaml:"insecure"`
 }
 
-// Load reads and parses a YAML config file.
+// Save serializes the config and writes it to path.
+func (f *File) Save(path string) error {
+	if path == "" {
+		return errors.New("config path empty")
+	}
+	b, err := yaml.Marshal(f)
+	if err != nil {
+		return fmt.Errorf("serialize config: %w", err)
+	}
+	if err := safepath.WriteFile(path, b, 0600); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
+}
 func Load(path string) (*File, error) {
 	if path == "" {
 		return nil, errors.New("config path empty")
