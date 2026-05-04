@@ -16,6 +16,8 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
+	
+	"golang.org/x/crypto/ssh"
 )
 
 type action int
@@ -100,6 +102,8 @@ func RunTable(records []hosts.Record, sshUser string) error {
 			return nil
 		}
 
+		lastAction := fm.lastAction // capture action before we reset it
+		
 		// Save the model state for the next loop iteration (preserves cursor, marks, inputs)
 		m = fm
 		m.lastAction = actNone // Reset action for the next run so 'q' gracefully exits
@@ -111,14 +115,17 @@ func RunTable(records []hosts.Record, sshUser string) error {
 		realIdx := fm.visible[row]
 		r := fm.recs[realIdx]
 
-		switch fm.lastAction {
+		switch lastAction {
 		case actSSH:
 			err = runSSH(fm.sshUser, r)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "\r\n[honey] SSH Connection Error: %v\r\n", err)
-				fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
-				var b [1]byte
-				_, _ = os.Stdin.Read(b[:])
+				// Avoid "ExitError" halting the TUI when users just type 'exit 1'
+				if _, isExitErr := err.(*ssh.ExitError); !isExitErr {
+					fmt.Fprintf(os.Stderr, "\r\n[honey] SSH Connection Error: %v\r\n", err)
+					fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
+					var b [1]byte
+					_, _ = os.Stdin.Read(b[:])
+				}
 			}
 			continue
 		case actTunnel:
@@ -406,7 +413,8 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mode == "filter" {
 			m.mode = "table"
 			m.ti.Blur()
-			return m, nil
+			m.lastAction = actSSH
+			return m, tea.Quit
 		}
 		cmd := strings.TrimSpace(m.ti.Value())
 		if cmd == "" {
