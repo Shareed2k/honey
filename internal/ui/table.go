@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
@@ -67,6 +68,10 @@ type model struct {
 	// CUE recipe output (non-empty body replaces SSH-style exec result lines).
 	cueResultTitle string
 	cueResultBody  string
+
+	// CUE dropdown
+	availableRecipes []string
+	recipeCursor     int
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -163,15 +168,16 @@ func newModel(records []hosts.Record, sshUser string) *model {
 	ti.Width = 60
 
 	return &model{
-		recs:     records,
-		tbl:      t,
-		ti:       ti,
-		sshUser:  sshUser,
-		mode:     "table",
-		visible:  vis,
-		winW:     100,
-		winH:     24,
-		selected: sel,
+		recs:             records,
+		tbl:              t,
+		ti:               ti,
+		sshUser:          sshUser,
+		mode:             "table",
+		visible:          vis,
+		winW:             100,
+		winH:             24,
+		selected:         sel,
+		availableRecipes: config.ListDefaultRecipes(),
 	}
 }
 
@@ -294,8 +300,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		case "r":
 			m.mode = "cueexecinput"
+			if len(m.availableRecipes) > 0 {
+				m.recipeCursor = 0
+				m.ti.SetValue(m.availableRecipes[0])
+			} else {
+				m.ti.Reset()
+			}
 			m.ti.Placeholder = "path/to/recipe.cue (! = execute) — * rows only, or all w/ IP if none marked"
-			m.ti.Reset()
 			m.ti.Focus()
 			return m, textinput.Blink
 		case "/":
@@ -318,6 +329,24 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "up", "k", "ctrl+p":
+		if m.mode == "cueexecinput" && len(m.availableRecipes) > 0 {
+			m.recipeCursor--
+			if m.recipeCursor < 0 {
+				m.recipeCursor = len(m.availableRecipes) - 1
+			}
+			m.ti.SetValue(m.availableRecipes[m.recipeCursor])
+			return m, nil
+		}
+	case "down", "j", "ctrl+n":
+		if m.mode == "cueexecinput" && len(m.availableRecipes) > 0 {
+			m.recipeCursor++
+			if m.recipeCursor >= len(m.availableRecipes) {
+				m.recipeCursor = 0
+			}
+			m.ti.SetValue(m.availableRecipes[m.recipeCursor])
+			return m, nil
+		}
 	case "esc":
 		m.mode = "table"
 		m.ti.Blur()
@@ -597,7 +626,11 @@ func (m *model) View() string {
 		)
 		return baseStyle.Render(box) + "\n" + help
 	case "cueexecinput":
-		help := helpStyle.Render("enter: run   esc: back   q: quit")
+		helpStr := "enter: run   esc: back   q: quit"
+		if len(m.availableRecipes) > 0 {
+			helpStr = "enter: run   esc: back   ↑/↓: cycle built-in recipes   q: quit"
+		}
+		help := helpStyle.Render(helpStr)
 		_, scope := m.parallelExecTargets()
 		box := lipgloss.JoinVertical(
 			lipgloss.Left,
