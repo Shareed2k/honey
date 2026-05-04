@@ -95,10 +95,11 @@ func RunTable(records []hosts.Record, sshUser string) error {
 		return nil
 	}
 	row := fm.tbl.Cursor()
-	if row < 0 || row >= len(fm.recs) {
+	if row < 0 || row >= len(fm.visible) {
 		return nil
 	}
-	r := fm.recs[row]
+	realIdx := fm.visible[row]
+	r := fm.recs[realIdx]
 	switch fm.lastAction {
 	case actSSH:
 		return runSSH(fm.sshUser, r)
