@@ -3,7 +3,7 @@ package consulprovider
 import (
 	"fmt"
 
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/searchrun"
 )

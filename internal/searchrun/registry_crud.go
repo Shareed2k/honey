@@ -1,7 +1,7 @@
 package searchrun
 
 import (
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 
 	"github.com/shareed2k/honey/internal/config"
 )

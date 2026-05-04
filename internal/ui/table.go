@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -85,7 +85,7 @@ func RunTable(records []hosts.Record, sshUser string) error {
 		return nil
 	}
 	m := newModel(records, sshUser)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	final, err := p.Run()
 	if err != nil {
 		return err
@@ -166,7 +166,7 @@ func newModel(records []hosts.Record, sshUser string) *model {
 	ti := textinput.New()
 	ti.Placeholder = "8080:localhost:8080 (local:remote for ssh -L)"
 	ti.CharLimit = 400
-	ti.Width = 60
+	ti.SetWidth(60)
 
 	return &model{
 		recs:             records,
@@ -259,7 +259,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.winH = msg.Height
 		m.tbl.SetWidth(msg.Width - 4)
 		m.tbl.SetHeight(msg.Height - 8)
-		m.ti.Width = msg.Width - 8
+		m.ti.SetWidth(msg.Width - 8)
 		m.clampExecScroll()
 		return m, nil
 
@@ -596,36 +596,38 @@ func (m *model) execResultLines() []string {
 	return lines
 }
 
-func (m *model) View() string {
+func (m *model) View() tea.View {
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	var box string
+
 	switch m.mode {
 	case "filter":
 		help := helpStyle.Render("enter: search   esc: clear filter   q: quit")
-		box := lipgloss.JoinVertical(
+		box = lipgloss.JoinVertical(
 			lipgloss.Left,
 			baseStyle.Render(m.tbl.View()),
 			"Filter ("+fmt.Sprintf("%d/%d", len(m.visible), len(m.recs))+")",
 			m.ti.View(),
 		)
-		return box + "\n" + help
+		box += "\n" + help
 	case "tunnel":
 		help := helpStyle.Render("enter: connect   esc: back   q: quit")
-		box := lipgloss.JoinVertical(
+		box = lipgloss.JoinVertical(
 			lipgloss.Left,
 			"SSH local forward (-L):",
 			m.ti.View(),
 		)
-		return baseStyle.Render(box) + "\n" + help
+		box = baseStyle.Render(box) + "\n" + help
 	case "execinput":
 		help := helpStyle.Render("enter: run   esc: back   q: quit")
 		_, scope := m.parallelExecTargets()
-		box := lipgloss.JoinVertical(
+		box = lipgloss.JoinVertical(
 			lipgloss.Left,
 			"Parallel SSH:",
 			helpStyle.Render(scope),
 			m.ti.View(),
 		)
-		return baseStyle.Render(box) + "\n" + help
+		box = baseStyle.Render(box) + "\n" + help
 	case "cueexecinput":
 		helpStr := "enter: run   esc: back   q: quit"
 		if len(m.availableRecipes) > 0 {
@@ -633,15 +635,15 @@ func (m *model) View() string {
 		}
 		help := helpStyle.Render(helpStr)
 		_, scope := m.parallelExecTargets()
-		box := lipgloss.JoinVertical(
+		box = lipgloss.JoinVertical(
 			lipgloss.Left,
 			"CUE recipe (selected hosts only):",
 			helpStyle.Render(scope),
 			m.ti.View(),
 		)
-		return baseStyle.Render(box) + "\n" + help
+		box = baseStyle.Render(box) + "\n" + help
 	case "execresults":
-		return m.viewExecResults(helpStyle)
+		box = m.viewExecResults(helpStyle)
 	default:
 		help := helpStyle.Render("enter: ssh (k8s: exec)   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks   q: quit")
 		nMark := len(m.selected)
@@ -650,8 +652,12 @@ func (m *model) View() string {
 			sub = helpStyle.Render(fmt.Sprintf("%d row(s) marked (* for parallel SSH and CUE recipe)", nMark)) + "\n"
 		}
 		title := lipgloss.NewStyle().Bold(true).Render("honey — select a host")
-		return title + "\n" + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
+		box = title + "\n" + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
 	}
+
+	view := tea.NewView(box)
+	view.AltScreen = true
+	return view
 }
 
 func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool) tea.Cmd {
