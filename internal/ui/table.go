@@ -78,35 +78,62 @@ var baseStyle = lipgloss.NewStyle().
 	BorderStyle(lipgloss.NormalBorder()).
 	BorderForeground(lipgloss.Color("240"))
 
-// RunTable shows an interactive table and optionally execs ssh after the UI exits.
+// RunTable shows an interactive table and optionally execs ssh.
+// After SSH/Tunnel disconnects, it returns to the UI.
 func RunTable(records []hosts.Record, sshUser string) error {
 	if len(records) == 0 {
 		fmt.Fprintln(os.Stderr, "no matching hosts")
 		return nil
 	}
+
 	m := newModel(records, sshUser)
-	p := tea.NewProgram(m)
-	final, err := p.Run()
-	if err != nil {
-		return err
-	}
-	fm, ok := final.(*model)
-	if !ok || fm == nil {
-		return nil
-	}
-	row := fm.tbl.Cursor()
-	if row < 0 || row >= len(fm.visible) {
-		return nil
-	}
-	realIdx := fm.visible[row]
-	r := fm.recs[realIdx]
-	switch fm.lastAction {
-	case actSSH:
-		return runSSH(fm.sshUser, r)
-	case actTunnel:
-		return runTunnel(fm.sshUser, r.PrimaryIP, fm.tunnelArg)
-	default:
-		return nil
+
+	for {
+		p := tea.NewProgram(m)
+		final, err := p.Run()
+		if err != nil {
+			return err
+		}
+
+		fm, ok := final.(*model)
+		if !ok || fm == nil {
+			return nil
+		}
+
+		// Save the model state for the next loop iteration (preserves cursor, marks, inputs)
+		m = fm
+		m.lastAction = actNone // Reset action for the next run so 'q' gracefully exits
+
+		row := fm.tbl.Cursor()
+		if row < 0 || row >= len(fm.visible) {
+			return nil
+		}
+		realIdx := fm.visible[row]
+		r := fm.recs[realIdx]
+
+		switch fm.lastAction {
+		case actSSH:
+			err = runSSH(fm.sshUser, r)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\r\n[honey] SSH Connection Error: %v\r\n", err)
+				fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
+				var b [1]byte
+				_, _ = os.Stdin.Read(b[:])
+			}
+			continue
+		case actTunnel:
+			err = runTunnel(fm.sshUser, r.PrimaryIP, fm.tunnelArg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\r\n[honey] Tunnel Connection Error: %v\r\n", err)
+				fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
+				var b [1]byte
+				_, _ = os.Stdin.Read(b[:])
+			}
+			continue
+		default:
+			// "q", "ctrl+c" or esc to actually quit
+			return nil
+		}
 	}
 }
 
