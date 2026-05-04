@@ -413,8 +413,7 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mode == "filter" {
 			m.mode = "table"
 			m.ti.Blur()
-			m.lastAction = actSSH
-			return m, tea.Quit
+			return m, nil
 		}
 		cmd := strings.TrimSpace(m.ti.Value())
 		if cmd == "" {
