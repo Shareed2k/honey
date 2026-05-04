@@ -95,11 +95,13 @@ func (f *File) Save(path string) error {
 	if err != nil {
 		return fmt.Errorf("serialize config: %w", err)
 	}
-	if err := safepath.WriteFile(path, b, 0600); err != nil {
+	if err := safepath.WriteFile(path, b, 0o600); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
 }
+
+// Load reads and parses a YAML config file.
 func Load(path string) (*File, error) {
 	if path == "" {
 		return nil, errors.New("config path empty")

@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/charmbracelet/huh"
+	"github.com/spf13/cobra"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/searchrun"
@@ -57,7 +58,7 @@ func runConfig(_ *cobra.Command, _ []string) error {
 
 	for {
 		var action string
-		err = huh.NewForm(
+		if err = huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
 					Title(fmt.Sprintf("Manage Backends (%s)", cfgPath)).
@@ -69,9 +70,7 @@ func runConfig(_ *cobra.Command, _ []string) error {
 					).
 					Value(&action),
 			),
-		).Run()
-
-		if err != nil {
+		).Run(); err != nil {
 			return err
 		}
 
@@ -102,16 +101,14 @@ func runAddBackend(cfgPath string, cfg *config.File) error {
 	}
 
 	var providerID string
-	err := huh.NewForm(
+	if err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Provider").
 				Options(opts...).
 				Value(&providerID),
 		),
-	).Run()
-
-	if err != nil {
+	).Run(); err != nil {
 		return err
 	}
 
@@ -134,7 +131,12 @@ func runAddBackend(cfgPath string, cfg *config.File) error {
 
 func runEditBackend(cfgPath string, cfg *config.File) error {
 	handlers := searchrun.GetCRUDHandlers()
-	var opts []huh.Option[string]
+
+	var totalOpts int
+	for _, h := range handlers {
+		totalOpts += len(h.ListOptions(cfg))
+	}
+	opts := make([]huh.Option[string], 0, totalOpts)
 	for _, h := range handlers {
 		opts = append(opts, h.ListOptions(cfg)...)
 	}
@@ -177,7 +179,12 @@ func runEditBackend(cfgPath string, cfg *config.File) error {
 
 func runDeleteBackend(cfgPath string, cfg *config.File) error {
 	handlers := searchrun.GetCRUDHandlers()
-	var opts []huh.Option[string]
+
+	var totalOpts int
+	for _, h := range handlers {
+		totalOpts += len(h.ListOptions(cfg))
+	}
+	opts := make([]huh.Option[string], 0, totalOpts)
 	for _, h := range handlers {
 		opts = append(opts, h.ListOptions(cfg)...)
 	}
