@@ -41,7 +41,9 @@ type model struct {
 	tbl     table.Model
 	ti      textinput.Model
 	sshUser string
-	mode    string // table | tunnel | execinput | execresults
+	mode    string // table | tunnel | execinput | execresults | filter
+	filter  string
+	visible []int // indexes of recs visible when filtered
 
 	winW int
 	winH int
@@ -102,12 +104,13 @@ func RunTable(records []hosts.Record, sshUser string) error {
 	}
 }
 
-func rowsFromRecs(recs []hosts.Record, selected map[int]struct{}) []table.Row {
-	rows := make([]table.Row, 0, len(recs))
-	for i, r := range recs {
+func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{}) []table.Row {
+	rows := make([]table.Row, 0, len(visible))
+	for _, idx := range visible {
+		r := recs[idx]
 		mark := " "
 		if selected != nil {
-			if _, ok := selected[i]; ok {
+			if _, ok := selected[idx]; ok {
 				mark = "*"
 			}
 		}
@@ -122,6 +125,11 @@ func rowsFromRecs(recs []hosts.Record, selected map[int]struct{}) []table.Row {
 
 func newModel(records []hosts.Record, sshUser string) *model {
 	sel := make(map[int]struct{})
+	vis := make([]int, len(records))
+	for i := range records {
+		vis[i] = i
+	}
+
 	columns := []table.Column{
 		{Title: "*", Width: 2},
 		{Title: "Provider", Width: 8},
@@ -130,7 +138,7 @@ func newModel(records []hosts.Record, sshUser string) *model {
 		{Title: "Zone", Width: 18},
 		{Title: "Region/DC", Width: 14},
 	}
-	rows := rowsFromRecs(records, sel)
+	rows := rowsFromRecs(records, vis, sel)
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithRows(rows),
@@ -160,6 +168,7 @@ func newModel(records []hosts.Record, sshUser string) *model {
 		ti:       ti,
 		sshUser:  sshUser,
 		mode:     "table",
+		visible:  vis,
 		winW:     100,
 		winH:     24,
 		selected: sel,
@@ -251,7 +260,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == "execresults" {
 			return m.updateExecResultsKeys(msg)
 		}
-		if m.mode == "tunnel" || m.mode == "execinput" || m.mode == "cueexecinput" {
+		if m.mode == "tunnel" || m.mode == "execinput" || m.mode == "cueexecinput" || m.mode == "filter" {
 			return m.updateTextInputMode(msg)
 		}
 
@@ -289,7 +298,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ti.Reset()
 			m.ti.Focus()
 			return m, textinput.Blink
+		case "/":
+			m.mode = "filter"
+			m.ti.Placeholder = "filter hosts..."
+			m.ti.SetValue(m.filter)
+			m.ti.Focus()
+			return m, textinput.Blink
 		}
+
 		var cmd tea.Cmd
 		m.tbl, cmd = m.tbl.Update(msg)
 		return m, cmd
@@ -330,6 +346,11 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ti.Blur()
 			return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute)
 		}
+		if m.mode == "filter" {
+			m.mode = "table"
+			m.ti.Blur()
+			return m, nil
+		}
 		cmd := strings.TrimSpace(m.ti.Value())
 		if cmd == "" {
 			return m, nil
@@ -340,6 +361,12 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.ti, cmd = m.ti.Update(msg)
+
+	if m.mode == "filter" && m.filter != m.ti.Value() {
+		m.filter = m.ti.Value()
+		m.applyFilter()
+	}
+
 	return m, cmd
 }
 
@@ -542,6 +569,15 @@ func (m *model) execResultLines() []string {
 func (m *model) View() string {
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	switch m.mode {
+	case "filter":
+		help := helpStyle.Render("enter: search   esc: clear filter   q: quit")
+		box := lipgloss.JoinVertical(
+			lipgloss.Left,
+			baseStyle.Render(m.tbl.View()),
+			"Filter ("+fmt.Sprintf("%d/%d", len(m.visible), len(m.recs))+")",
+			m.ti.View(),
+		)
+		return box + "\n" + help
 	case "tunnel":
 		help := helpStyle.Render("enter: connect   esc: back   q: quit")
 		box := lipgloss.JoinVertical(
@@ -571,132 +607,9 @@ func (m *model) View() string {
 		)
 		return baseStyle.Render(box) + "\n" + help
 	case "execresults":
-		var body strings.Builder
-
-		if strings.TrimSpace(m.cueResultBody) != "" {
-			s := strings.TrimRight(m.cueResultBody, "\n")
-			lines := []string{"(empty output)"}
-			if s != "" {
-				lines = strings.Split(s, "\n")
-			}
-			vis := m.visibleExecLines()
-			start := m.execScroll
-			end := start + vis
-			if end > len(lines) {
-				end = len(lines)
-			}
-			if len(lines) > 0 {
-				body.WriteString(strings.Join(lines[start:end], "\n"))
-			}
-			scrollNote := ""
-			if len(lines) > vis {
-				scrollNote = fmt.Sprintf("lines %d–%d of %d", start+1, end, len(lines))
-			}
-			titleText := m.cueResultTitle
-			if titleText == "" {
-				titleText = "CUE recipe results"
-			}
-			title := lipgloss.NewStyle().Bold(true).Render(titleText)
-			help := helpStyle.Render("esc: table   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
-			return title + "\n" + baseStyle.Width(m.winW-2).Render(body.String()) + "\n" +
-				helpStyle.Render(scrollNote) + "\n" + help
-		}
-
-		if m.execPopupOpen {
-			lines := m.popupResultLines()
-			vis := m.visibleExecLines()
-			start := m.execPopupScroll
-			end := start + vis
-			if end > len(lines) {
-				end = len(lines)
-			}
-			if len(lines) > 0 {
-				body.WriteString(strings.Join(lines[start:end], "\n"))
-			}
-			scrollNote := ""
-			if len(lines) > vis {
-				scrollNote = fmt.Sprintf("lines %d–%d of %d", start+1, end, len(lines))
-			}
-			titleText := "Host Execution Detail"
-			title := lipgloss.NewStyle().Bold(true).Render(titleText)
-			help := helpStyle.Render("esc/enter: back to list   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
-			return title + "\n" + baseStyle.Width(m.winW-2).Render(body.String()) + "\n" +
-				helpStyle.Render(scrollNote) + "\n" + help
-		}
-
-		// List Mode
-		vis := m.visibleExecLines()
-		start := m.execScroll
-		end := start + vis
-		if end > len(m.execResults) {
-			end = len(m.execResults)
-		}
-
-		if len(m.execResults) == 0 {
-			if !m.execDone {
-				fmt.Fprintf(&body, "Running... 0 / %d\n", m.execTotalJobs)
-			} else {
-				body.WriteString("(no command output — no hosts ran or none with IP in scope)\n")
-			}
-		} else {
-			if !m.execDone {
-				fmt.Fprintf(&body, "Running... %d / %d\n\n", len(m.execResults), m.execTotalJobs)
-				vis -= 2 // Account for running header
-				// Recompute end with smaller vis
-				end = start + vis
-				if end > len(m.execResults) {
-					end = len(m.execResults)
-				}
-			}
-
-			for i := start; i < end; i++ {
-				r := m.execResults[i]
-				cursor := "  "
-				if i == m.execListCursor {
-					cursor = "> "
-				}
-				status := "ok"
-				statusColor := lipgloss.Color("42") // green
-				if !r.Success {
-					status = "FAILED"
-					statusColor = lipgloss.Color("196") // red
-				}
-
-				styledStatus := lipgloss.NewStyle().Foreground(statusColor).Render(status)
-				row := fmt.Sprintf("%s[%s] %s @ %s — %s", cursor, r.Provider, r.Name, r.IP, styledStatus)
-
-				if r.ErrMsg != "" {
-					row += " — " + r.ErrMsg
-				}
-
-				if i == m.execListCursor {
-					row = lipgloss.NewStyle().Bold(true).Render(row)
-				}
-				body.WriteString(row + "\n")
-			}
-		}
-
-		scrollNote := ""
-		if len(m.execResults) > vis {
-			scrollNote = fmt.Sprintf("items %d–%d of %d", start+1, end, len(m.execResults))
-		}
-		titleText := m.cueResultTitle
-		if titleText == "" {
-			titleText = "Parallel SSH results"
-			if !m.execDone {
-				titleText += " (Running...)"
-			}
-		}
-		title := lipgloss.NewStyle().Bold(true).Render(titleText)
-
-		help := helpStyle.Render("enter: view output   esc: table   q: quit   ↑/k ↓/j   pgup/pgdn   home/end")
-		if !m.execDone {
-			help = helpStyle.Render("Running... please wait.   esc: cancel/back   q: quit")
-		}
-		return title + "\n" + baseStyle.Width(m.winW-2).Render(body.String()) + "\n" +
-			helpStyle.Render(scrollNote) + "\n" + help
+		return m.viewExecResults(helpStyle)
 	default:
-		help := helpStyle.Render("enter: ssh (k8s: exec)   t: tunnel   e: parallel cmd   r: cue recipe   x: mark row   ^a: mark all   c: clear marks   q: quit")
+		help := helpStyle.Render("enter: ssh (k8s: exec)   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
@@ -869,22 +782,43 @@ func (m *model) parallelExecTargets() ([]hosts.Record, string) {
 	return out, note
 }
 
+func (m *model) applyFilter() {
+	term := strings.TrimSpace(strings.ToLower(m.filter))
+	if term == "" {
+		vis := make([]int, len(m.recs))
+		for i := range m.recs {
+			vis[i] = i
+		}
+		m.visible = vis
+	} else {
+		var vis []int
+		for i, r := range m.recs {
+			if strings.Contains(strings.ToLower(r.Name), term) || strings.Contains(strings.ToLower(r.PrimaryIP), term) {
+				vis = append(vis, i)
+			}
+		}
+		m.visible = vis
+	}
+	m.refreshTableRows(0) // reset cursor to top
+}
+
 func (m *model) refreshTableRows(preserveCursor int) {
-	m.tbl.SetRows(rowsFromRecs(m.recs, m.selected))
-	if preserveCursor >= 0 && preserveCursor < len(m.recs) {
+	m.tbl.SetRows(rowsFromRecs(m.recs, m.visible, m.selected))
+	if preserveCursor >= 0 && preserveCursor < len(m.visible) {
 		m.tbl.SetCursor(preserveCursor)
 	}
 }
 
 func (m *model) toggleParallelMark() {
 	cur := m.tbl.Cursor()
-	if cur < 0 || cur >= len(m.recs) {
+	if cur < 0 || cur >= len(m.visible) {
 		return
 	}
-	if _, ok := m.selected[cur]; ok {
-		delete(m.selected, cur)
+	realIdx := m.visible[cur]
+	if _, ok := m.selected[realIdx]; ok {
+		delete(m.selected, realIdx)
 	} else {
-		m.selected[cur] = struct{}{}
+		m.selected[realIdx] = struct{}{}
 	}
 	m.refreshTableRows(cur)
 }
