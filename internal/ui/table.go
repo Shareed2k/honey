@@ -11,13 +11,12 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
-	
-	"golang.org/x/crypto/ssh"
 )
 
 type action int
@@ -103,7 +102,7 @@ func RunTable(records []hosts.Record, sshUser string) error {
 		}
 
 		lastAction := fm.lastAction // capture action before we reset it
-		
+
 		// Save the model state for the next loop iteration (preserves cursor, marks, inputs)
 		m = fm
 		m.lastAction = actNone // Reset action for the next run so 'q' gracefully exits
