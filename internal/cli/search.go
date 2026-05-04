@@ -20,6 +20,7 @@ var (
 	flagName               string
 	flagNameRegex          string
 	flagProviders          string
+	flagOutput             string
 	flagNoUI               bool
 	flagJSON               bool
 	flagSSHUser            string
@@ -61,8 +62,9 @@ func init() {
 	searchCmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
 	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox (default: all)")
 	searchCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
-	searchCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Skip interactive UI")
-	searchCmd.Flags().BoolVar(&flagJSON, "json", false, "Print results as JSON (implies --no-ui)")
+	searchCmd.Flags().StringVarP(&flagOutput, "output", "o", "tui", "Output format: tui, table, json")
+	searchCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Skip interactive UI (same as --output=json)")
+	searchCmd.Flags().BoolVar(&flagJSON, "json", false, "Print results as JSON (same as --output=json)")
 	searchCmd.Flags().StringVar(&flagSSHUser, "ssh-user", os.Getenv("USER"), "Default SSH user for connect actions")
 	searchCmd.Flags().DurationVar(&flagCacheTTL, "cache-ttl", time.Minute, "Cache time-to-live")
 	searchCmd.Flags().BoolVar(&flagNoCache, "no-cache", false, "Bypass read/write cache")
@@ -95,7 +97,7 @@ func init() {
 // runSearchCore runs the same search pipeline as search (flags, config, cache,
 // providers). queryArgs are optional positional tokens: if exactly one is
 // passed and name filters are empty, it becomes the name substring filter.
-func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, string, error) {
+func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, string, *config.File, error) {
 	q := hosts.Query{
 		NameSubstring:      flagName,
 		NameRegex:          flagNameRegex,
@@ -120,13 +122,13 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 
 	cfgPath, err := config.ResolvePath(flagConfig)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	var cfg *config.File
 	if cfgPath != "" {
 		cfg, err = config.Load(cfgPath)
 		if err != nil {
-			return nil, "", fmt.Errorf("config: %w", err)
+			return nil, "", nil, fmt.Errorf("config: %w", err)
 		}
 	}
 
@@ -135,7 +137,7 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 	sshUser := flagSSHUser
 	if cfg != nil {
 		if d, ok, perr := cfg.Defaults.DefaultsCacheTTL(); perr != nil {
-			return nil, "", fmt.Errorf("defaults.cache_ttl: %w", perr)
+			return nil, "", nil, fmt.Errorf("defaults.cache_ttl: %w", perr)
 		} else if ok && !cmd.Flags().Changed("cache-ttl") {
 			cacheTTL = d
 		}
@@ -168,32 +170,41 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 	if len(wantBackends) > 0 {
 		provs = hosts.FilterBackendsByNames(provs, wantBackends)
 		if len(provs) == 0 {
-			return nil, "", fmt.Errorf("no backends match --backends %q: set name on each backends.* list entry in config (unnamed backends are ignored by this filter)", flagBackends)
+			return nil, "", nil, fmt.Errorf("no backends match --backends %q: set name on each backends.* list entry in config (unnamed backends are ignored by this filter)", flagBackends)
 		}
 	}
 	ctx := context.Background()
 
 	records, err := searchrun.RunSearch(ctx, q, provs, cacheDir, cacheTTL, flagNoCache, flagRefresh)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
-	return records, sshUser, nil
+	return records, sshUser, cfg, nil
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	records, sshUser, err := runSearchCore(cmd, args)
+	records, sshUser, cfg, err := runSearchCore(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	if flagJSON {
-		flagNoUI = true
-	}
 	if flagJSON || flagNoUI {
+		flagOutput = "json"
+	}
+	if cfg != nil && !cmd.Flags().Changed("output") && !cmd.Flags().Changed("json") && !cmd.Flags().Changed("no-ui") {
+		if s := strings.TrimSpace(cfg.Defaults.Output); s != "" {
+			flagOutput = s
+		}
+	}
+
+	switch flagOutput {
+	case "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(records)
+	case "table":
+		return ui.PrintStaticTable(records)
+	default:
+		return ui.RunTable(records, sshUser)
 	}
-
-	return ui.RunTable(records, sshUser)
 }

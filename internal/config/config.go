@@ -28,6 +28,7 @@ type Defaults struct {
 	K8sMode       string `yaml:"k8s_mode"`
 	K8sDebugImage string `yaml:"k8s_debug_image"`
 	CacheDir      string `yaml:"cache_dir"`
+	Output        string `yaml:"output"` // e.g. "table", "json", "tui" (default)
 	Name          string `yaml:"name"`
 	NameRegex     string `yaml:"name_regex"`
 }
