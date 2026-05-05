@@ -74,6 +74,12 @@ type model struct {
 	// CUE dropdown
 	availableRecipes []string
 	recipeCursor     int
+
+	// Tunnel popup state
+	tunnelLocalPort  textinput.Model
+	tunnelRemoteHost textinput.Model
+	tunnelRemotePort textinput.Model
+	tunnelFocusIndex int
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -209,6 +215,22 @@ func newModel(records []hosts.Record, sshUser string) *model {
 	ti.CharLimit = 400
 	ti.SetWidth(60)
 
+	tunLocal := textinput.New()
+	tunLocal.Placeholder = "8080"
+	tunLocal.CharLimit = 5
+	tunLocal.SetWidth(10)
+
+	tunHost := textinput.New()
+	tunHost.Placeholder = "localhost"
+	tunHost.SetValue("localhost")
+	tunHost.CharLimit = 100
+	tunHost.SetWidth(20)
+
+	tunRemote := textinput.New()
+	tunRemote.Placeholder = "8080"
+	tunRemote.CharLimit = 5
+	tunRemote.SetWidth(10)
+
 	return &model{
 		recs:             records,
 		tbl:              t,
@@ -220,6 +242,10 @@ func newModel(records []hosts.Record, sshUser string) *model {
 		winH:             24,
 		selected:         sel,
 		availableRecipes: config.ListDefaultRecipes(),
+		tunnelLocalPort:  tunLocal,
+		tunnelRemoteHost: tunHost,
+		tunnelRemotePort: tunRemote,
+		tunnelFocusIndex: 0,
 	}
 }
 
@@ -230,138 +256,28 @@ func (m *model) Init() tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case streamStartMsg:
-		m.mode = "execresults"
-		m.execCmdLine = msg.cmdLine
-		m.execTargetNote = msg.targetNote
-		m.execResults = nil
-		m.execScroll = 0
-		m.execListCursor = 0
-		m.execPopupOpen = false
-		m.execPopupScroll = 0
-		m.execTotalJobs = msg.totalJobs
-		m.execDone = false
-		m.cueResultBody = ""
-		if msg.isCue {
-			m.cueResultTitle = "CUE recipe execution"
-		} else {
-			m.cueResultTitle = ""
-		}
-		return m, readNextStreamResult(msg.ch)
-
+		return m.handleStreamStartMsg(msg)
 	case streamResultMsg:
-		m.execResults = append(m.execResults, msg.res)
-
-		// If cursor is at the bottom and a new item arrives, follow it if we are at the end
-		if !m.execPopupOpen && m.execListCursor == len(m.execResults)-2 {
-			m.execListCursor = len(m.execResults) - 1
-
-			// Adjust scroll to keep it in view
-			vis := m.visibleExecLines() - len(m.execResultLines())
-			if vis < 1 {
-				vis = 1
-			}
-			if m.execListCursor >= m.execScroll+vis {
-				m.execScroll = m.execListCursor - vis + 1
-			}
-		}
-
-		return m, readNextStreamResult(msg.ch)
-
+		return m.handleStreamResultMsg(msg)
 	case streamDoneMsg:
-		m.execDone = true
-		m.execResults = SortHostExecForUI(m.execResults)
-		m.clampExecScroll()
-		return m, nil
-
+		return m.handleStreamDoneMsg(msg)
 	case parallelExecDoneMsg:
-		m.cueResultBody = ""
-		m.cueResultTitle = "Parallel SSH results"
-		m.execResults = SortHostExecForUI(msg.results)
-		m.execCmdLine = msg.cmdLine
-		m.execTargetNote = msg.targetNote
-		m.execScroll = 0
-		m.mode = "execresults"
-		m.ti.Blur()
-		return m, nil
-
+		return m.handleParallelExecDoneMsg(msg)
 	case cueRecipeDoneMsg:
-		m.cueResultTitle = msg.title
-		m.cueResultBody = msg.body
-		m.execResults = nil
-		m.execCmdLine = ""
-		m.execTargetNote = ""
-		m.execScroll = 0
-		m.mode = "execresults"
-		m.ti.Blur()
-		return m, nil
-
+		return m.handleCueRecipeDoneMsg(msg)
 	case tea.WindowSizeMsg:
-		m.winW = msg.Width
-		m.winH = msg.Height
-		m.tbl.SetWidth(msg.Width - 4)
-		m.tbl.SetHeight(msg.Height - 8)
-		m.ti.SetWidth(msg.Width - 8)
-		m.clampExecScroll()
-		return m, nil
-
+		return m.handleWindowSizeMsg(msg)
 	case tea.KeyMsg:
 		if m.mode == "execresults" {
 			return m.updateExecResultsKeys(msg)
 		}
-		if m.mode == "tunnel" || m.mode == "execinput" || m.mode == "cueexecinput" || m.mode == "filter" {
+		if m.mode == "tunnel" {
+			return m.updateTunnelInputs(msg)
+		}
+		if m.mode == "execinput" || m.mode == "cueexecinput" || m.mode == "filter" {
 			return m.updateTextInputMode(msg)
 		}
-
-		switch msg.String() {
-		case "q", "ctrl+c":
-			m.lastAction = actNone
-			return m, tea.Quit
-		case "x":
-			m.toggleParallelMark()
-			return m, nil
-		case "ctrl+a":
-			m.selectAllWithIPForParallel()
-			return m, nil
-		case "c":
-			m.clearParallelMarks()
-			return m, nil
-		case "enter":
-			m.lastAction = actSSH
-			return m, tea.Quit
-		case "t":
-			m.mode = "tunnel"
-			m.ti.Placeholder = "8080:localhost:8080 (local:remote for ssh -L)"
-			m.ti.Reset()
-			m.ti.Focus()
-			return m, textinput.Blink
-		case "e":
-			m.mode = "execinput"
-			m.ti.Placeholder = "remote shell command (* rows only, or all with IP if none marked)"
-			m.ti.Reset()
-			m.ti.Focus()
-			return m, textinput.Blink
-		case "r":
-			m.mode = "cueexecinput"
-			if len(m.availableRecipes) > 0 {
-				m.recipeCursor = 0
-				m.ti.SetValue(m.availableRecipes[0])
-			} else {
-				m.ti.Reset()
-			}
-			m.ti.Placeholder = "path/to/recipe.cue (! = execute) — * rows only, or all w/ IP if none marked"
-			m.ti.Focus()
-			return m, textinput.Blink
-		case "/":
-			m.mode = "filter"
-			m.ti.Placeholder = "filter hosts..."
-			m.ti.SetValue(m.filter)
-			m.ti.Focus()
-			return m, textinput.Blink
-		}
-
-		var cmd tea.Cmd
-		m.tbl, cmd = m.tbl.Update(msg)
-		return m, cmd
+		return m.handleTableKeyMsg(msg)
 	}
 
 	var cmd tea.Cmd
@@ -394,12 +310,6 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ti.Blur()
 		return m, nil
 	case "enter":
-		if m.mode == "tunnel" {
-			m.tunnelArg = strings.TrimSpace(m.ti.Value())
-			m.lastAction = actTunnel
-			m.ti.Blur()
-			return m, tea.Quit
-		}
 		if m.mode == "cueexecinput" {
 			val := strings.TrimSpace(m.ti.Value())
 			if val == "" {
@@ -652,13 +562,7 @@ func (m *model) View() tea.View {
 		)
 		box += "\n" + help
 	case "tunnel":
-		help := helpStyle.Render("enter: connect   esc: back   q: quit")
-		box = lipgloss.JoinVertical(
-			lipgloss.Left,
-			"SSH local forward (-L):",
-			m.ti.View(),
-		)
-		box = baseStyle.Render(box) + "\n" + help
+		box = m.viewTunnel(helpStyle)
 	case "execinput":
 		help := helpStyle.Render("enter: run   esc: back   q: quit")
 		_, scope := m.parallelExecTargets()
