@@ -17,6 +17,7 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
+	k8sexec "k8s.io/client-go/util/exec"
 )
 
 type action int
@@ -118,8 +119,15 @@ func RunTable(records []hosts.Record, sshUser string) error {
 		case actSSH:
 			err = runSSH(fm.sshUser, r)
 			if err != nil {
-				// Avoid "ExitError" halting the TUI when users just type 'exit 1'
-				if _, isExitErr := err.(*ssh.ExitError); !isExitErr {
+				// Avoid "ExitError" halting the TUI when users just type 'exit 1' or Ctrl+C
+				_, isSSHExitErr := err.(*ssh.ExitError)
+
+				// Kubernetes exec returns an unwrapped error matching "command terminated with exit code"
+				// but let's check both the formal interface and the string to be safe.
+				_, isK8sExitErr := err.(k8sexec.ExitError)
+				isK8sStringErr := strings.Contains(err.Error(), "command terminated with exit code")
+
+				if !isSSHExitErr && !isK8sExitErr && !isK8sStringErr {
 					fmt.Fprintf(os.Stderr, "\r\n[honey] SSH Connection Error: %v\r\n", err)
 					fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
 					var b [1]byte
