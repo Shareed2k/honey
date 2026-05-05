@@ -70,7 +70,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	records, sshUser, err := runSearchCore(cmd, queryArgs)
+	records, sshUser, _, err := runSearchCore(cmd, queryArgs)
 	if err != nil {
 		return err
 	}
