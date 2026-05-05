@@ -183,17 +183,9 @@ func newModel(records []hosts.Record, sshUser string) *model {
 		vis[i] = i
 	}
 
-	columns := []table.Column{
-		{Title: "*", Width: 2},
-		{Title: "Provider", Width: 8},
-		{Title: "Name", Width: 26},
-		{Title: "IP", Width: 16},
-		{Title: "Zone", Width: 18},
-		{Title: "Region/DC", Width: 14},
-	}
 	rows := rowsFromRecs(records, vis, sel)
 	t := table.New(
-		table.WithColumns(columns),
+		table.WithColumns(recalculateTableColumns(100)), // Fallback initial width
 		table.WithRows(rows),
 		table.WithFocused(true),
 		table.WithHeight(12),

@@ -79,8 +79,11 @@ func (m *model) handleCueRecipeDoneMsg(msg cueRecipeDoneMsg) (tea.Model, tea.Cmd
 func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.winW = msg.Width
 	m.winH = msg.Height
+
 	m.tbl.SetWidth(msg.Width - 4)
 	m.tbl.SetHeight(msg.Height - 8)
+	m.tbl.SetColumns(recalculateTableColumns(msg.Width - 4))
+
 	m.ti.SetWidth(msg.Width - 8)
 	m.clampExecScroll()
 	return m, nil
