@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -36,7 +37,7 @@ func EnsureEphemeralContainer(ctx context.Context, clientset kubernetes.Interfac
 
 	// Look for an existing honey-debug container
 	for _, ec := range pod.Spec.EphemeralContainers {
-		if ec.Name == "honey-debug" {
+		if strings.HasPrefix(ec.Name, "honey-debug") {
 			return ec.Name, waitForEphemeralContainer(ctx, clientset, namespace, podName, ec.Name)
 		}
 	}
