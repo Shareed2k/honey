@@ -136,7 +136,7 @@ func RunTable(records []hosts.Record, sshUser string) error {
 			}
 			continue
 		case actTunnel:
-			err = runTunnel(fm.sshUser, r.PrimaryIP, fm.tunnelArg)
+			err = runTunnel(fm.sshUser, r, fm.tunnelArg)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\r\n[honey] Tunnel Connection Error: %v\r\n", err)
 				fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
@@ -927,12 +927,13 @@ func runSSH(user string, r hosts.Record) error {
 	return executor.RunInteractive(user, r)
 }
 
-func runTunnel(user, host, localFwd string) error {
-	if host == "" {
+func runTunnel(user string, r hosts.Record, localFwd string) error {
+	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") {
 		return fmt.Errorf("no IP for selected host")
 	}
 	if localFwd == "" || !strings.Contains(localFwd, ":") {
-		return fmt.Errorf("tunnel spec must look like 8080:remotehost:8080")
+		return fmt.Errorf("tunnel spec must look like 8080:remotehost:8080 or 8080:8080 for kubernetes pods")
 	}
-	return runTunnelGo(user, host, localFwd)
+	executor := GetExecutor(r)
+	return executor.RunTunnel(user, r, localFwd)
 }
