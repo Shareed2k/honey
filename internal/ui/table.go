@@ -217,17 +217,20 @@ func newModel(records []hosts.Record, sshUser string) *model {
 
 	tunLocal := textinput.New()
 	tunLocal.Placeholder = "8080"
+	tunLocal.Prompt = ""
 	tunLocal.CharLimit = 5
 	tunLocal.SetWidth(10)
 
 	tunHost := textinput.New()
 	tunHost.Placeholder = "localhost"
 	tunHost.SetValue("localhost")
+	tunHost.Prompt = ""
 	tunHost.CharLimit = 100
 	tunHost.SetWidth(20)
 
 	tunRemote := textinput.New()
 	tunRemote.Placeholder = "8080"
+	tunRemote.Prompt = ""
 	tunRemote.CharLimit = 5
 	tunRemote.SetWidth(10)
 

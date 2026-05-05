@@ -8,7 +8,20 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+func (m *model) isK8sSelected() bool {
+	row := m.tbl.Cursor()
+	if row >= 0 && row < len(m.visible) {
+		realIdx := m.visible[row]
+		if m.recs[realIdx].Provider == "k8s" {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *model) updateTunnelInputs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	isK8s := m.isK8sSelected()
+
 	switch msg.String() {
 	case "esc":
 		m.mode = "table"
@@ -22,6 +35,15 @@ func (m *model) updateTunnelInputs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.tunnelFocusIndex--
 		} else {
 			m.tunnelFocusIndex++
+		}
+
+		// K8s skips the middle input (Target Host)
+		if isK8s && m.tunnelFocusIndex == 1 {
+			if s == "up" || s == "shift+tab" {
+				m.tunnelFocusIndex--
+			} else {
+				m.tunnelFocusIndex++
+			}
 		}
 
 		if m.tunnelFocusIndex > 2 {
@@ -51,24 +73,23 @@ func (m *model) updateTunnelInputs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		lp := strings.TrimSpace(m.tunnelLocalPort.Value())
 		rh := strings.TrimSpace(m.tunnelRemoteHost.Value())
 		rp := strings.TrimSpace(m.tunnelRemotePort.Value())
-		
+
 		if lp != "" && rp != "" {
 			if rh == "" {
 				rh = "localhost"
 			}
 			m.tunnelArg = fmt.Sprintf("%s:%s:%s", lp, rh, rp)
 			m.lastAction = actTunnel
-			
+
 			m.tunnelLocalPort.Blur()
 			m.tunnelRemoteHost.Blur()
 			m.tunnelRemotePort.Blur()
-			
+
 			return m, tea.Quit
 		}
 	}
 
 	var cmd tea.Cmd
-	var cmds []tea.Cmd
 
 	switch m.tunnelFocusIndex {
 	case 0:
@@ -78,33 +99,27 @@ func (m *model) updateTunnelInputs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		m.tunnelRemotePort, cmd = m.tunnelRemotePort.Update(msg)
 	}
-	cmds = append(cmds, cmd)
 
-	return m, tea.Batch(cmds...)
+	return m, cmd
 }
 
 func (m *model) viewTunnel(helpStyle lipgloss.Style) string {
 	help := helpStyle.Render("tab/↑/↓: next input   enter: connect   esc: back   q: quit")
 
 	titleText := "SSH Local Forward (-L):"
-	row := m.tbl.Cursor()
-	isK8s := false
-	if row >= 0 && row < len(m.visible) {
-		realIdx := m.visible[row]
-		if m.recs[realIdx].Provider == "k8s" {
-			titleText = "Kubernetes Port-Forward:"
-			isK8s = true
-		}
+	isK8s := m.isK8sSelected()
+	if isK8s {
+		titleText = "Kubernetes Port-Forward:"
 	}
 
 	var inputs string
 	if isK8s {
 		// k8s only really needs Local Port and Remote Port (to the pod)
-		inputs = fmt.Sprintf("Local Port: %s\nPod Port:   %s", 
+		inputs = fmt.Sprintf("Local Port: %s\nPod Port:   %s",
 			m.tunnelLocalPort.View(),
 			m.tunnelRemotePort.View())
 	} else {
-		inputs = fmt.Sprintf("Local Port:  %s\nTarget Host: %s\nTarget Port: %s", 
+		inputs = fmt.Sprintf("Local Port:  %s\nTarget Host: %s\nTarget Port: %s",
 			m.tunnelLocalPort.View(),
 			m.tunnelRemoteHost.View(),
 			m.tunnelRemotePort.View())
@@ -116,6 +131,6 @@ func (m *model) viewTunnel(helpStyle lipgloss.Style) string {
 		"",
 		inputs,
 	)
-	
+
 	return baseStyle.Render(box) + "\n" + help
 }
