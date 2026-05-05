@@ -1,0 +1,27 @@
+{
+  "id": "cli/honey_cue-validate",
+  "title": "honey cue-validate",
+  "description": "honey cue-validate",
+  "source": "@site/docs/cli/honey_cue-validate.md",
+  "sourceDirName": "cli",
+  "slug": "/cli/honey_cue-validate",
+  "permalink": "/honey/cli/honey_cue-validate",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/shareed2k/honey/tree/main/website/docs/cli/honey_cue-validate.md",
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "id": "honey_cue-validate",
+    "title": "honey cue-validate"
+  },
+  "sidebar": "tutorialSidebar",
+  "previous": {
+    "title": "honey cue-exec",
+    "permalink": "/honey/cli/honey_cue-exec"
+  },
+  "next": {
+    "title": "honey mcp",
+    "permalink": "/honey/cli/honey_mcp"
+  }
+}

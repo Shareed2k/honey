@@ -1,0 +1,27 @@
+{
+  "id": "cli/honey_completion",
+  "title": "honey completion",
+  "description": "honey completion",
+  "source": "@site/docs/cli/honey_completion.md",
+  "sourceDirName": "cli",
+  "slug": "/cli/honey_completion",
+  "permalink": "/honey/cli/honey_completion",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/shareed2k/honey/tree/main/website/docs/cli/honey_completion.md",
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "id": "honey_completion",
+    "title": "honey completion"
+  },
+  "sidebar": "tutorialSidebar",
+  "previous": {
+    "title": "honey backends",
+    "permalink": "/honey/cli/honey_backends"
+  },
+  "next": {
+    "title": "honey completion bash",
+    "permalink": "/honey/cli/honey_completion_bash"
+  }
+}

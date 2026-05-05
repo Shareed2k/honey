@@ -1,0 +1,27 @@
+{
+  "id": "cli/honey_cue-exec",
+  "title": "honey cue-exec",
+  "description": "honey cue-exec",
+  "source": "@site/docs/cli/honey_cue-exec.md",
+  "sourceDirName": "cli",
+  "slug": "/cli/honey_cue-exec",
+  "permalink": "/honey/cli/honey_cue-exec",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/shareed2k/honey/tree/main/website/docs/cli/honey_cue-exec.md",
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "id": "honey_cue-exec",
+    "title": "honey cue-exec"
+  },
+  "sidebar": "tutorialSidebar",
+  "previous": {
+    "title": "honey config",
+    "permalink": "/honey/cli/honey_config"
+  },
+  "next": {
+    "title": "honey cue-validate",
+    "permalink": "/honey/cli/honey_cue-validate"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "cli/honey_completion_fish",
+  "title": "honey completion fish",
+  "description": "honey completion fish",
+  "source": "@site/docs/cli/honey_completion_fish.md",
+  "sourceDirName": "cli",
+  "slug": "/cli/honey_completion_fish",
+  "permalink": "/honey/cli/honey_completion_fish",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/shareed2k/honey/tree/main/website/docs/cli/honey_completion_fish.md",
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "id": "honey_completion_fish",
+    "title": "honey completion fish"
+  },
+  "sidebar": "tutorialSidebar",
+  "previous": {
+    "title": "honey completion bash",
+    "permalink": "/honey/cli/honey_completion_bash"
+  },
+  "next": {
+    "title": "honey completion powershell",
+    "permalink": "/honey/cli/honey_completion_powershell"
+  }
+}

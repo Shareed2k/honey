@@ -1,0 +1,98 @@
+{
+  "docusaurus-plugin-content-docs": {
+    "default": {
+      "path": "/honey/",
+      "versions": [
+        {
+          "name": "current",
+          "label": "Next",
+          "isLast": true,
+          "path": "/honey/",
+          "mainDocId": "index",
+          "docs": [
+            {
+              "id": "cli/honey",
+              "path": "/honey/cli/honey",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_backends",
+              "path": "/honey/cli/honey_backends",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_completion",
+              "path": "/honey/cli/honey_completion",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_completion_bash",
+              "path": "/honey/cli/honey_completion_bash",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_completion_fish",
+              "path": "/honey/cli/honey_completion_fish",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_completion_powershell",
+              "path": "/honey/cli/honey_completion_powershell",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_completion_zsh",
+              "path": "/honey/cli/honey_completion_zsh",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_config",
+              "path": "/honey/cli/honey_config",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_cue-exec",
+              "path": "/honey/cli/honey_cue-exec",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_cue-validate",
+              "path": "/honey/cli/honey_cue-validate",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_mcp",
+              "path": "/honey/cli/honey_mcp",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_search",
+              "path": "/honey/cli/honey_search",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "cli/honey_version",
+              "path": "/honey/cli/honey_version",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "index",
+              "path": "/honey/",
+              "sidebar": "tutorialSidebar"
+            }
+          ],
+          "draftIds": [],
+          "sidebars": {
+            "tutorialSidebar": {
+              "link": {
+                "path": "/honey/",
+                "label": "index"
+              }
+            }
+          }
+        }
+      ],
+      "breadcrumbs": true
+    }
+  }
+}

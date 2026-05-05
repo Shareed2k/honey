@@ -1,0 +1,24 @@
+{
+  "id": "index",
+  "title": "Honey Documentation",
+  "description": "Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox in parallel, optionally cache results, then use a terminal UI to SSH or open an SSH local forward via the system ssh binary.",
+  "source": "@site/docs/index.md",
+  "sourceDirName": ".",
+  "slug": "/",
+  "permalink": "/honey/",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/shareed2k/honey/tree/main/website/docs/index.md",
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "id": "index",
+    "title": "Honey Documentation",
+    "slug": "/"
+  },
+  "sidebar": "tutorialSidebar",
+  "next": {
+    "title": "honey",
+    "permalink": "/honey/cli/honey"
+  }
+}

@@ -1,0 +1,57 @@
+name: Docs
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Generate CLI Documentation
+        run: |
+          go run ./cmd/honey docs ./website/docs/cli
+          # Copy latest README to docs index
+          cp README.md website/docs/index.md
+          
+          # Fix README paths for Docusaurus index
+          sed -i 's/docs\/assets/assets/g' website/docs/index.md || true
+          
+          # Strip the first huge <h1> header from README to prevent Docusaurus title collision
+          sed -i '1{/^# honey$/d;}' website/docs/index.md
+
+      - name: Install dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build Docusaurus
+        working-directory: website
+        run: npm run build
+
+      - name: Deploy to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./website/build

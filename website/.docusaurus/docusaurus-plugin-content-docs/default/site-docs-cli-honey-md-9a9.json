@@ -1,0 +1,27 @@
+{
+  "id": "cli/honey",
+  "title": "honey",
+  "description": "honey",
+  "source": "@site/docs/cli/honey.md",
+  "sourceDirName": "cli",
+  "slug": "/cli/honey",
+  "permalink": "/honey/cli/honey",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/shareed2k/honey/tree/main/website/docs/cli/honey.md",
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "id": "honey",
+    "title": "honey"
+  },
+  "sidebar": "tutorialSidebar",
+  "previous": {
+    "title": "Honey Documentation",
+    "permalink": "/honey/"
+  },
+  "next": {
+    "title": "honey backends",
+    "permalink": "/honey/cli/honey_backends"
+  }
+}
