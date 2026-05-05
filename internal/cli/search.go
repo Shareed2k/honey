@@ -199,6 +199,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	switch flagOutput {
 	case "json":
+		if records == nil {
+			records = make([]hosts.Record, 0)
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(records)
