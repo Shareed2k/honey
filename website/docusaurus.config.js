@@ -4,7 +4,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 const config = {
   title: 'Honey',
   tagline: 'Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/logo.svg',
 
   // Set the production url of your site here
   url: 'https://shareed2k.github.io',

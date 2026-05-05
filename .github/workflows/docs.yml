@@ -32,14 +32,12 @@ jobs:
       - name: Generate CLI Documentation
         run: |
           go run ./cmd/honey docs ./website/docs/cli
-          # Copy latest README to docs index
-          cp README.md website/docs/index.md
-          
-          # Fix README paths for Docusaurus index
-          sed -i 's/docs\/assets/assets/g' website/docs/index.md || true
-          
-          # Strip the first huge <h1> header from README to prevent Docusaurus title collision
-          sed -i '1{/^# honey$/d;}' website/docs/index.md
+          # README as docs home (front matter + body; drop repo H1 to avoid colliding with doc title)
+          {
+            printf '%s\n' '---' 'id: index' 'title: Honey Documentation' 'slug: /' '---'
+            tail -n +2 README.md
+          } > website/docs/index.md
+          sed -i 's|docs/assets|assets|g' website/docs/index.md || true
 
       - name: Install dependencies
         working-directory: website

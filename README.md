@@ -197,7 +197,7 @@ backends:
 
 ### CUE recipes (experimental)
 
-Validate a playbook-shaped [CUE](https://cuelang.org/) file: each step has `host` and **exactly one** of `command`, `put` (SFTP upload), `get` (SFTP download), or `script` (upload `local` → `remote`, then run `sh <remote>` on the **same** SSH connection). Optional `run_as` applies to `command` and `script` runs (not to SFTP-only `put`/`get`). Optional `recipe.defaults.env` and per-step `env` are `export`’d on the remote before the command or script (step overrides duplicate keys from defaults); `env` is not supported on `put`/`get`. **Example recipes** live under [`examples/recipe/`](examples/recipe/) — see that folder’s [`README.md`](examples/recipe/README.md) for a table of files (including `file_transfer.cue`, `script_step.cue`, `with_env.cue`).
+Validate a playbook-shaped [CUE](https://cuelang.org/) file: each step has `host` and **exactly one** of `command`, `put` (SFTP upload), `get` (SFTP download), or `script` (upload `local` → `remote`, then run `sh <remote>` on the **same** SSH connection). Optional `run_as` applies to `command` and `script` runs (not to SFTP-only `put`/`get`). Optional `recipe.defaults.env` and per-step `env` are `export`’d on the remote before the command or script (step overrides duplicate keys from defaults); `env` is not supported on `put`/`get`. **Example recipes** live under [`examples/recipe/`](https://github.com/shareed2k/honey/tree/main/examples/recipe) — see that folder’s [`README.md`](https://github.com/shareed2k/honey/blob/main/examples/recipe/README.md) for a table of files (including `file_transfer.cue`, `script_step.cue`, `with_env.cue`).
 
 ```bash
 ./honey cue-validate examples/recipe/recipe.cue
@@ -252,7 +252,7 @@ When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `honey` p
 3. **Transparent File Transfers:** CUE `put` and `get` operations, as well as `script` step uploads, are implemented securely by dynamically streaming `tar` archives over the `exec` connection into the ephemeral container (similar to `kubectl cp`). No SFTP server required!
 4. **Seamless Experience:** Your interactive sessions, parallel commands, and CUE recipes work identically to actual SSH nodes, preserving context, streams, and file permissions, completely daemonless.
 | **Consul** | `CONSUL_HTTP_ADDR` or `--consul-addr`; `--consul-datacenter`, `--consul-token` / `CONSUL_HTTP_TOKEN`. |
-| **Proxmox** | `--proxmox-url` (e.g. `https://10.0.0.1:8006/api2/json`); Auth via `--proxmox-user` / `--proxmox-password` OR `--proxmox-token-id` / `--proxmox-token-secret`. Add `--proxmox-insecure` to bypass TLS verification. Both LXC and QEMU (VM) types are fully supported.<br><br>**Token Creation Example**: Proxmox requires the `PVEVMRO` (Read Only) role to list VMs and fetch networking information. <br>1. Log into your Proxmox web UI.<br>2. Navigate to **Datacenter** > **Permissions** > **API Tokens**.<br>3. Click **Add** and select your User (e.g., `root@pam`), name the token `honey`.<br>4. Uncheck **Privilege Separation** if you want the token to inherit full user privileges, OR assign the `PVEVMRO` role to `/vms` explicitly.<br>5. Copy the Secret ID.<br>Your `token_id` in the YAML config will be formatted exactly as `user@realm!tokenname` (e.g. `root@pam!honey`). |
+| **Proxmox** | `--proxmox-url` (e.g. `https://10.0.0.1:8006/api2/json`); Auth via `--proxmox-user` / `--proxmox-password` OR `--proxmox-token-id` / `--proxmox-token-secret`. Add `--proxmox-insecure` to bypass TLS verification. Both LXC and QEMU (VM) types are fully supported.<br /><br />**Token Creation Example**: Proxmox requires the `PVEVMRO` (Read Only) role to list VMs and fetch networking information. <br />1. Log into your Proxmox web UI.<br />2. Navigate to **Datacenter** > **Permissions** > **API Tokens**.<br />3. Click **Add** and select your User (e.g., `root@pam`), name the token `honey`.<br />4. Uncheck **Privilege Separation** if you want the token to inherit full user privileges, OR assign the `PVEVMRO` role to `/vms` explicitly.<br />5. Copy the Secret ID.<br />Your `token_id` in the YAML config will be formatted exactly as `user@realm!tokenname` (e.g. `root@pam!honey`). |
 
 If a provider is unreachable, the command fails (use `--provider` to narrow scope).
 
@@ -276,4 +276,4 @@ go test ./...
 
 ## License
 
-This project is released under the [MIT License](LICENSE).
+This project is released under the [MIT License](https://github.com/shareed2k/honey/blob/main/LICENSE).
