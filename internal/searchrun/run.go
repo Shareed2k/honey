@@ -30,7 +30,8 @@ func RunSearch(
 	}
 	cachePath := filepath.Join(cacheDir, "cache.json")
 
-	zap.L().Debug("starting search run",
+	zap.L().Debug(
+		"starting search run",
 		zap.String("cache_path", cachePath),
 		zap.Duration("cache_ttl", cacheTTL),
 		zap.Bool("no_cache", noCache),

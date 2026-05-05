@@ -18,6 +18,7 @@ type HostClient interface {
 type Executor interface {
 	Dial(user string, r hosts.Record) (HostClient, error)
 	RunInteractive(user string, r hosts.Record) error
+	RunTunnel(user string, r hosts.Record, localFwd string) error
 }
 
 // defaultSSHExecutor implements standard SSH execution using DialHoneyClient.
@@ -29,6 +30,10 @@ func (e defaultSSHExecutor) Dial(user string, r hosts.Record) (HostClient, error
 
 func (e defaultSSHExecutor) RunInteractive(user string, r hosts.Record) error {
 	return runSSHInteractive(user, r)
+}
+
+func (e defaultSSHExecutor) RunTunnel(user string, r hosts.Record, localFwd string) error {
+	return runTunnelGo(user, r.PrimaryIP, localFwd)
 }
 
 // DefaultExecutor is the default implementation for remote execution.

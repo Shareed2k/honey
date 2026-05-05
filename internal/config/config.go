@@ -28,6 +28,7 @@ type Defaults struct {
 	K8sMode       string `yaml:"k8s_mode"`
 	K8sDebugImage string `yaml:"k8s_debug_image"`
 	CacheDir      string `yaml:"cache_dir"`
+	Output        string `yaml:"output"` // e.g. "table", "json", "tui" (default)
 	Name          string `yaml:"name"`
 	NameRegex     string `yaml:"name_regex"`
 }
@@ -83,6 +84,21 @@ type ProxmoxBackend struct {
 	TokenID     string `yaml:"token_id"`
 	TokenSecret string `yaml:"token_secret"`
 	Insecure    bool   `yaml:"insecure"`
+}
+
+// Save serializes the config and writes it to path.
+func (f *File) Save(path string) error {
+	if path == "" {
+		return errors.New("config path empty")
+	}
+	b, err := yaml.Marshal(f)
+	if err != nil {
+		return fmt.Errorf("serialize config: %w", err)
+	}
+	if err := safepath.WriteFile(path, b, 0o600); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
 }
 
 // Load reads and parses a YAML config file.
