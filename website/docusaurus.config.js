@@ -7,9 +7,9 @@ const config = {
   favicon: 'img/logo.svg',
 
   // Set the production url of your site here
-  url: 'https://shareed2k.github.io',
+  url: 'https://honey.shareed2k.win',
   // Set the /<baseUrl>/ pathname under which your site is served
-  baseUrl: '/honey/',
+  baseUrl: '/',
 
   organizationName: 'shareed2k',
   projectName: 'honey',
