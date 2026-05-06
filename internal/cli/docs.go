@@ -16,7 +16,7 @@ var docsCmd = &cobra.Command{
 	Args:   cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		dir := args[0]
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return err
 		}
 
@@ -39,8 +39,8 @@ var docsCmd = &cobra.Command{
 			entries, _ := os.ReadDir(dir)
 			for _, e := range entries {
 				if strings.HasSuffix(e.Name(), ".md") {
-					path := filepath.Join(dir, e.Name())
-					b, _ := os.ReadFile(path)
+					path := filepath.Clean(filepath.Join(dir, filepath.Base(e.Name())))
+					b, _ := os.ReadFile(path) // #nosec G304 -- path is securely joined with a safe base name
 
 					// Escape < and > to prevent Docusaurus from interpreting them as JSX tags
 					content := strings.ReplaceAll(string(b), "<", "&lt;")
@@ -53,7 +53,7 @@ var docsCmd = &cobra.Command{
 					// Escape bracket references in cue-validate synopsis
 					content = strings.ReplaceAll(content, "script {local, remote}", "script \\{local, remote\\}")
 
-					_ = os.WriteFile(path, []byte(content), 0644)
+					_ = os.WriteFile(path, []byte(content), 0o600)
 				}
 			}
 		}

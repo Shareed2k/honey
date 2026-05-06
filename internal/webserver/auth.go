@@ -1,3 +1,4 @@
+// Package webserver provides the embedded HTTP server for honey.
 package webserver
 
 import (

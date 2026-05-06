@@ -11,7 +11,7 @@ import (
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
-func (s *Server) handleConfigGet(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, err := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)

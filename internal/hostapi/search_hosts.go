@@ -77,7 +77,7 @@ func MergeSearchDefaultsFromConfig(cfg *config.File, q *hosts.Query) {
 
 // SearchHosts runs the same search pipeline as honey search / MCP search_hosts.
 func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, error) {
-	var out SearchHostsOutput
+	out := SearchHostsOutput{Records: []hosts.Record{}}
 	if in == nil {
 		return out, fmt.Errorf("nil input")
 	}

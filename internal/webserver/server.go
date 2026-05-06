@@ -59,6 +59,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/config", s.withAuth(s.handleConfigGet))
 	s.mux.HandleFunc("PUT /api/v1/config", s.withAuth(s.handleConfigPut))
 	s.mux.HandleFunc("POST /api/v1/upload", s.withAuth(s.handleUpload))
+	s.mux.HandleFunc("GET /api/v1/recipes", s.withAuth(s.handleRecipesList))
+	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
+	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
+	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
 	s.mux.HandleFunc("GET /ws/ssh", s.handleWebSSH)
 
 	static, err := fs.Sub(staticFS, "static")
@@ -109,7 +113,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
-func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
@@ -128,7 +132,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleBackends(w http.ResponseWriter, _ *http.Request) {
 	out, err := hostapi.ListBackends(strings.TrimSpace(s.opts.ConfigPath))
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)

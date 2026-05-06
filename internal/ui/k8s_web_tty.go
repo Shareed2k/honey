@@ -11,7 +11,6 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-// podTermSize builds a remote terminal size with sane bounds for uint16 SPDY fields.
 // ResizeFromColsRows returns a terminal size for k8s remotecommand, or nil if cols or rows are non-positive.
 func ResizeFromColsRows(cols, rows int) *remotecommand.TerminalSize {
 	if cols <= 0 || rows <= 0 {

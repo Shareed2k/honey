@@ -14,9 +14,9 @@ import (
 )
 
 type uploadRequestMeta struct {
-	SSHUser    string        `json:"ssh_user"`
-	RemotePath string        `json:"remote_path"`
-	Record     hosts.Record  `json:"record"`
+	SSHUser    string       `json:"ssh_user"`
+	RemotePath string       `json:"remote_path"`
+	Record     hosts.Record `json:"record"`
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -63,8 +63,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if hdr != nil && hdr.Filename != "" {
 		base = filepath.Base(hdr.Filename)
 	}
-	localPath := filepath.Join(tmpDir, base)
-	out, err := os.Create(localPath)
+	localPath := filepath.Clean(filepath.Join(tmpDir, base))
+	out, err := os.Create(localPath) // #nosec G304 -- localPath is securely joined in a temporary directory
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
