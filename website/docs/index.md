@@ -260,6 +260,10 @@ When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `honey` p
 
 If a provider is unreachable, the command fails (use `--provider` to narrow scope).
 
+## Embedded web UI (`honey web`)
+
+Loopback HTTP server with bearer token auth (see the repository **README** for `make webui`, listen address, and `HONEY_WEB_TOKEN`). The bundled UI covers search (with provider/backend dropdowns), raw YAML config, structured **backends** JSON CRUD under `/api/v1/config/backends/…`, and a WebSocket terminal on `/ws/ssh` for **SSH** hosts and **Kubernetes pods** (ephemeral container exec). REST path segments use YAML keys such as **`kubernetes`**; search filters still use the provider id **`k8s`**.
+
 ## Layout
 
 - `cmd/honey` — CLI entrypoint (`search`, `backends`, `mcp`, …)
@@ -270,6 +274,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `internal/hosts` — `Record`, `Query`, cache, parallel orchestration
 - `internal/provider/*` — GCP, AWS, k8s, Consul integrations
 - `internal/ui` — Bubble Tea table + SSH actions
+- `internal/webserver` — embedded `honey web` UI (static SPA + REST + WebSocket terminal)
 - `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
 
 ## Tests

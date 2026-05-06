@@ -34,7 +34,7 @@ func (c *k8sNativeClient) Close() error {
 	return nil // no persistent connection to close, SPDY connections are ephemeral per exec
 }
 
-func (c *k8sNativeClient) execInPod(cmd []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
+func (c *k8sNativeClient) execInPod(ctx context.Context, cmd []string, stdin io.Reader, stdout, stderr io.Writer, tty bool, sizeQ remotecommand.TerminalSizeQueue) error {
 	req := c.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(c.podName).
@@ -58,12 +58,16 @@ func (c *k8sNativeClient) execInPod(cmd []string, stdin io.Reader, stdout, stder
 		return fmt.Errorf("create spdy executor: %w", err)
 	}
 
-	err = exec.StreamWithContext(context.Background(), remotecommand.StreamOptions{
+	streamOpts := remotecommand.StreamOptions{
 		Stdin:  stdin,
 		Stdout: stdout,
 		Stderr: stderr,
 		Tty:    tty,
-	})
+	}
+	if tty && sizeQ != nil {
+		streamOpts.TerminalSizeQueue = sizeQ
+	}
+	err = exec.StreamWithContext(ctx, streamOpts)
 	if err != nil {
 		return fmt.Errorf("exec stream: %w", err)
 	}
@@ -73,7 +77,7 @@ func (c *k8sNativeClient) execInPod(cmd []string, stdin io.Reader, stdout, stder
 
 func (c *k8sNativeClient) Run(cmd string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
-	err := c.execInPod([]string{"sh", "-c", cmd}, nil, &stdout, &stderr, false)
+	err := c.execInPod(context.Background(), []string{"sh", "-c", cmd}, nil, &stdout, &stderr, false, nil)
 	if err != nil {
 		if stderr.Len() > 0 {
 			return stdout.Bytes(), fmt.Errorf("%w: %s", err, stderr.String())
@@ -118,7 +122,7 @@ func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
 	// Create the directory if it doesn't exist, then extract the tar stream into it
 	cmd := []string{"sh", "-c", fmt.Sprintf("mkdir -p '%s' && tar -xf - -C '%s'", remoteDir, remoteDir)}
 
-	if err := c.execInPod(cmd, pr, nil, &stderr, false); err != nil {
+	if err := c.execInPod(context.Background(), cmd, pr, nil, &stderr, false, nil); err != nil {
 		return fmt.Errorf("upload extract failed: %w: %s", err, stderr.String())
 	}
 
@@ -135,7 +139,7 @@ func (c *k8sNativeClient) Download(remotePath, localPath string) error {
 	go func() {
 		defer pw.Close()
 		cmd := []string{"tar", "-cf", "-", "-C", remoteDir, remoteBase}
-		_ = c.execInPod(cmd, nil, pw, &stderr, false)
+		_ = c.execInPod(context.Background(), cmd, nil, pw, &stderr, false, nil)
 	}()
 
 	tr := tar.NewReader(pr)
@@ -243,5 +247,5 @@ func (k k8sPodExecutor) RunInteractive(user string, r hosts.Record) error {
 	cmd, _ := cuetry.ShellExportPrefixForRemote(env, "sh")
 
 	// Start standard sh for interactive session
-	return podClient.execInPod([]string{"sh", "-c", cmd}, os.Stdin, os.Stdout, os.Stderr, true)
+	return podClient.execInPod(context.Background(), []string{"sh", "-c", cmd}, os.Stdin, os.Stdout, os.Stderr, true, nil)
 }

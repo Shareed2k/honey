@@ -24,6 +24,16 @@ func Register(f ProviderFactory) {
 	factories = append(factories, f)
 }
 
+// ListSearchProviderIDs returns hosts.Backend.ID() for each registered factory's default backend,
+// in registration order (matches implicit providers when config has no backend entries).
+func ListSearchProviderIDs(f ProviderFlags) []string {
+	ids := make([]string, 0, len(factories))
+	for _, factory := range factories {
+		ids = append(ids, factory.Default(f).ID())
+	}
+	return ids
+}
+
 // ListBackendRows queries all registered providers to build a list of configured backends.
 func ListBackendRows(cfg *config.File) []config.BackendRow {
 	var rows []config.BackendRow

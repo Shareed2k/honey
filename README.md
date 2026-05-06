@@ -268,6 +268,22 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `internal/ui` — Bubble Tea table + SSH actions
 - `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
 
+## Web UI (`honey web`)
+
+Embedded **loopback-only** web server with a random bearer token (override with `HONEY_WEB_TOKEN`). Serves a React UI for backends list, search, provider/backend filters (dropdowns), YAML config edit, structured **backends** CRUD (JSON REST mirroring `backends.*` in YAML), browser terminal over WebSocket (**SSH** nodes and **Kubernetes pods** via ephemeral exec TTY), and drag-and-drop SFTP upload.
+
+```bash
+# One-time: build UI assets into internal/webserver/static (CI runs this automatically)
+make webui
+
+go build -o honey ./cmd/honey
+./honey web --listen 127.0.0.1:8765 --config ~/.config/honey/config.yaml
+```
+
+Open the **URL printed on stderr** (includes `?token=…`). API routes: `/api/v1/meta`, `GET /api/v1/providers` (search provider ids, e.g. `k8s`), `GET /api/v1/backends`, `POST /api/v1/search`, `GET`/`PUT /api/v1/config` (raw YAML), `GET`/`POST`/`PUT`/`DELETE /api/v1/config/backends/…` (structured backends: path segment **`kubernetes`** matches YAML, while search uses provider id **`k8s`**), `POST /api/v1/upload`, WebSocket `GET /ws/ssh?token=…` (SSH or k8s pod TTY).
+
+**Local UI dev** (Vite proxies to the Go server): run `honey web` on `8765`, then `cd webui && npm install && npm run dev` and open Vite’s URL.
+
 ## Tests
 
 ```bash
