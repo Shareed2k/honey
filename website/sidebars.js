@@ -2,6 +2,7 @@
 const sidebars = {
   tutorialSidebar: [
     'index',
+    'web-ui',
     {
       type: 'category',
       label: 'CLI Reference',

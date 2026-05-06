@@ -29,4 +29,5 @@ Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox
 * [honey mcp](honey_mcp.md)	 - Run the Model Context Protocol (stdio) server
 * [honey search](honey_search.md)	 - Search instances across providers in parallel
 * [honey version](honey_version.md)	 - Print version, commit, date, and logo
+* [honey web](honey_web.md)	 - Start embedded web UI (loopback + token) for backends, search, config, SSH terminal, and uploads
 
