@@ -332,21 +332,12 @@ export function App() {
   };
 
   const uploadModal = uploadModalOpen ? (
-    <div
-      className="modal-backdrop"
-      role="presentation"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          closeUploadModal();
-        }
-      }}
-    >
+    <div className="modal-backdrop" role="presentation">
       <div
         className="modal"
         style={{ height: 'auto', maxHeight: '90vh', width: 'min(480px, 94vw)' }}
         role="dialog"
         aria-labelledby="upload-modal-title"
-        onClick={(e) => e.stopPropagation()}
       >
         <header>
           <strong id="upload-modal-title">SFTP upload</strong>

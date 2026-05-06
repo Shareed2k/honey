@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { getToken } from './api';
@@ -20,12 +20,32 @@ export function TerminalModal({ record, sshUser, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const [showConnectOverlay, setShowConnectOverlay] = useState(true);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) {
+      setShowConnectOverlay(false);
       return;
     }
+
+    let connectUiDismissed = false;
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const dismissConnectOverlay = () => {
+      if (connectUiDismissed) {
+        return;
+      }
+      connectUiDismissed = true;
+      if (fallbackTimer !== undefined) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = undefined;
+      }
+      setShowConnectOverlay(false);
+    };
+
+    setShowConnectOverlay(true);
+
     const term = new Terminal({ cursorBlink: true, fontSize: 14 });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -59,9 +79,11 @@ export function TerminalModal({ record, sshUser, onClose }: Props) {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
         }
       });
+      fallbackTimer = setTimeout(dismissConnectOverlay, 2000);
     };
 
     ws.onmessage = (ev) => {
+      dismissConnectOverlay();
       if (typeof ev.data === 'string') {
         try {
           const j = JSON.parse(ev.data) as { closed?: boolean; error?: string };
@@ -81,10 +103,12 @@ export function TerminalModal({ record, sshUser, onClose }: Props) {
     };
 
     ws.onerror = () => {
+      dismissConnectOverlay();
       term.writeln('\r\n\x1b[31m[websocket error]\x1b[0m');
     };
 
     ws.onclose = () => {
+      dismissConnectOverlay();
       term.writeln('\r\n\x1b[33m[disconnected]\x1b[0m');
     };
 
@@ -104,6 +128,9 @@ export function TerminalModal({ record, sshUser, onClose }: Props) {
     window.addEventListener('resize', onResize);
 
     return () => {
+      if (fallbackTimer !== undefined) {
+        clearTimeout(fallbackTimer);
+      }
       window.removeEventListener('resize', onResize);
       ws.close();
       term.dispose();
@@ -113,8 +140,8 @@ export function TerminalModal({ record, sshUser, onClose }: Props) {
   }, [record, sshUser]);
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal" role="dialog" aria-busy={showConnectOverlay} aria-label={`Terminal: ${record.name}`}>
         <header>
           <strong>
             {record.name} ({record.primary_ip})
@@ -123,7 +150,15 @@ export function TerminalModal({ record, sshUser, onClose }: Props) {
             Close
           </button>
         </header>
-        <div id="term-host" ref={ref} />
+        <div className="term-wrap">
+          <div className="term-xterm-host" ref={ref} />
+          {showConnectOverlay ? (
+            <div className="term-connect-overlay" aria-live="polite" aria-atomic="true">
+              <div className="term-spinner" role="status" />
+              <span className="sr-only">Connecting…</span>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
