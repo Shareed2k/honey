@@ -1,0 +1,8 @@
+# Docusaurus site (website/)
+website/node_modules/
+website/build/
+website/.docusaurus/
+website/.npm-cache/
+website/.npm-tmp/
+
+webui/node_modules/

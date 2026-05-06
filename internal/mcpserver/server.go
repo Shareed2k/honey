@@ -2,15 +2,10 @@ package mcpserver
 
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/hostapi"
 )
 
 const serverVersion = "0.1.0"
@@ -31,147 +26,16 @@ func Run(ctx context.Context) error {
 
 // --- search_hosts ---
 
-type searchHostsInput struct {
-	ConfigPath         string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG or default paths"`
-	Name               string `json:"name,omitempty" jsonschema:"substring filter on host/instance name"`
-	NameRegex          string `json:"name_regex,omitempty" jsonschema:"regex filter on name"`
-	Providers          string `json:"providers,omitempty" jsonschema:"comma-separated: gcp,aws,k8s,consul,proxmox"`
-	Backends           string `json:"backends,omitempty" jsonschema:"comma-separated backend names from config YAML"`
-	GCPProject         string `json:"gcp_project,omitempty"`
-	GCPZone            string `json:"gcp_zone,omitempty"`
-	AWSProfile         string `json:"aws_profile,omitempty"`
-	AWSRegion          string `json:"aws_region,omitempty"`
-	KubeContext        string `json:"kube_context,omitempty"`
-	Kubeconfig         string `json:"kubeconfig,omitempty"`
-	K8sMode            string `json:"k8s_mode,omitempty"`
-	ConsulAddr         string `json:"consul_addr,omitempty"`
-	ConsulDC           string `json:"consul_datacenter,omitempty"`
-	ConsulToken        string `json:"consul_token,omitempty"`
-	ProxmoxURL         string `json:"proxmox_url,omitempty"`
-	ProxmoxUser        string `json:"proxmox_user,omitempty"`
-	ProxmoxPassword    string `json:"proxmox_password,omitempty"`
-	ProxmoxTokenID     string `json:"proxmox_token_id,omitempty"`
-	ProxmoxTokenSecret string `json:"proxmox_token_secret,omitempty"`
-	ProxmoxInsecure    bool   `json:"proxmox_insecure,omitempty"`
-	CacheTTL           string `json:"cache_ttl,omitempty" jsonschema:"duration e.g. 5m, 1h; empty uses config default or 1m"`
-	CacheDir           string `json:"cache_dir,omitempty"`
-	NoCache            bool   `json:"no_cache,omitempty"`
-	Refresh            bool   `json:"refresh,omitempty"`
-}
+type searchHostsInput = hostapi.SearchHostsInput
 
-type searchHostsOutput struct {
-	Records []hosts.Record `json:"records"`
-	Count   int            `json:"count"`
-}
+type searchHostsOutput = hostapi.SearchHostsOutput
 
 func handleSearchHosts(ctx context.Context, _ *mcp.CallToolRequest, in searchHostsInput) (*mcp.CallToolResult, searchHostsOutput, error) {
-	cfgPath, err := config.ResolvePath(strings.TrimSpace(in.ConfigPath))
+	out, err := hostapi.SearchHosts(ctx, &in)
 	if err != nil {
 		return nil, searchHostsOutput{}, err
 	}
-	var cfg *config.File
-	if cfgPath != "" {
-		cfg, err = config.Load(cfgPath)
-		if err != nil {
-			return nil, searchHostsOutput{}, fmt.Errorf("config: %w", err)
-		}
-	}
-
-	q := hosts.Query{
-		NameSubstring:      strings.TrimSpace(in.Name),
-		NameRegex:          strings.TrimSpace(in.NameRegex),
-		Providers:          hosts.ParseProviders(strings.TrimSpace(in.Providers)),
-		GCPProject:         strings.TrimSpace(in.GCPProject),
-		GCPZone:            strings.TrimSpace(in.GCPZone),
-		AWSProfile:         strings.TrimSpace(in.AWSProfile),
-		AWSRegion:          strings.TrimSpace(in.AWSRegion),
-		KubeContext:        strings.TrimSpace(in.KubeContext),
-		K8sMode:            strings.TrimSpace(in.K8sMode),
-		ConsulAddr:         strings.TrimSpace(in.ConsulAddr),
-		ConsulDatacenter:   strings.TrimSpace(in.ConsulDC),
-		ConsulToken:        strings.TrimSpace(in.ConsulToken),
-		ProxmoxURL:         strings.TrimSpace(in.ProxmoxURL),
-		ProxmoxUser:        strings.TrimSpace(in.ProxmoxUser),
-		ProxmoxPassword:    strings.TrimSpace(in.ProxmoxPassword),
-		ProxmoxTokenID:     strings.TrimSpace(in.ProxmoxTokenID),
-		ProxmoxTokenSecret: strings.TrimSpace(in.ProxmoxTokenSecret),
-		ProxmoxInsecure:    in.ProxmoxInsecure,
-	}
-	mergeMCPDefaults(cfg, &q)
-
-	cacheTTL := time.Minute
-	if s := strings.TrimSpace(in.CacheTTL); s != "" {
-		cacheTTL, err = time.ParseDuration(s)
-		if err != nil {
-			return nil, searchHostsOutput{}, fmt.Errorf("cache_ttl: %w", err)
-		}
-	} else if cfg != nil {
-		if d, ok, perr := cfg.Defaults.DefaultsCacheTTL(); perr != nil {
-			return nil, searchHostsOutput{}, fmt.Errorf("defaults.cache_ttl: %w", perr)
-		} else if ok {
-			cacheTTL = d
-		}
-	}
-
-	cacheDir := strings.TrimSpace(in.CacheDir)
-	if cacheDir == "" && cfg != nil {
-		cacheDir = strings.TrimSpace(cfg.Defaults.CacheDir)
-	}
-
-	pf := searchrun.ProviderFlags{
-		GCPProject:         strings.TrimSpace(in.GCPProject),
-		GCPZone:            strings.TrimSpace(in.GCPZone),
-		AWSProfile:         strings.TrimSpace(in.AWSProfile),
-		AWSRegion:          strings.TrimSpace(in.AWSRegion),
-		KubeContext:        strings.TrimSpace(in.KubeContext),
-		K8sMode:            strings.TrimSpace(in.K8sMode),
-		Kubeconfig:         strings.TrimSpace(in.Kubeconfig),
-		ConsulAddr:         strings.TrimSpace(in.ConsulAddr),
-		ConsulDatacenter:   strings.TrimSpace(in.ConsulDC),
-		ConsulToken:        strings.TrimSpace(in.ConsulToken),
-		ProxmoxURL:         strings.TrimSpace(in.ProxmoxURL),
-		ProxmoxUser:        strings.TrimSpace(in.ProxmoxUser),
-		ProxmoxPassword:    strings.TrimSpace(in.ProxmoxPassword),
-		ProxmoxTokenID:     strings.TrimSpace(in.ProxmoxTokenID),
-		ProxmoxTokenSecret: strings.TrimSpace(in.ProxmoxTokenSecret),
-		ProxmoxInsecure:    in.ProxmoxInsecure,
-	}
-	provs := searchrun.BuildProviders(cfg, pf)
-	want := hosts.ParseBackendNames(in.Backends)
-	if len(want) > 0 {
-		provs = hosts.FilterBackendsByNames(provs, want)
-		if len(provs) == 0 {
-			return nil, searchHostsOutput{}, fmt.Errorf("no backends match backends=%q", in.Backends)
-		}
-	}
-
-	recs, err := searchrun.RunSearch(ctx, q, provs, cacheDir, cacheTTL, in.NoCache, in.Refresh)
-	if err != nil {
-		return nil, searchHostsOutput{}, err
-	}
-	out := searchHostsOutput{Records: recs, Count: len(recs)}
 	return nil, out, nil
-}
-
-func mergeMCPDefaults(cfg *config.File, q *hosts.Query) {
-	if cfg == nil {
-		return
-	}
-	if q.NameSubstring == "" {
-		if s := strings.TrimSpace(cfg.Defaults.Name); s != "" {
-			q.NameSubstring = s
-		}
-	}
-	if q.NameRegex == "" {
-		if s := strings.TrimSpace(cfg.Defaults.NameRegex); s != "" {
-			q.NameRegex = s
-		}
-	}
-	if q.K8sMode == "" {
-		if s := strings.TrimSpace(cfg.Defaults.K8sMode); s != "" {
-			q.K8sMode = s
-		}
-	}
 }
 
 // --- list_backends ---
@@ -181,21 +45,25 @@ type listBackendsInput struct {
 }
 
 type listBackendsOutput struct {
-	Backends []config.BackendRow `json:"backends"`
+	Backends []listBackendsRow `json:"backends"`
+}
+
+// listBackendsRow mirrors config.BackendRow for stable MCP JSON without importing config in tool output alias.
+type listBackendsRow struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	Hint string `json:"hint"`
 }
 
 func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBackendsInput) (*mcp.CallToolResult, listBackendsOutput, error) {
 	_ = ctx
-	cfgPath, err := config.ResolvePath(strings.TrimSpace(in.ConfigPath))
+	lb, err := hostapi.ListBackends(in.ConfigPath)
 	if err != nil {
 		return nil, listBackendsOutput{}, err
 	}
-	if cfgPath == "" {
-		return nil, listBackendsOutput{}, fmt.Errorf("no config file found (set config_path, HONEY_CONFIG, or install default config)")
+	rows := make([]listBackendsRow, 0, len(lb.Backends))
+	for _, b := range lb.Backends {
+		rows = append(rows, listBackendsRow{Kind: b.Kind, Name: b.Name, Hint: b.Hint})
 	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return nil, listBackendsOutput{}, fmt.Errorf("config: %w", err)
-	}
-	return nil, listBackendsOutput{Backends: searchrun.ListBackendRows(cfg)}, nil
+	return nil, listBackendsOutput{Backends: rows}, nil
 }

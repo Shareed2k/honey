@@ -22,3 +22,12 @@ func InitBuildInfo(version, commit, date string) {
 	rootCmd.SetVersionTemplate(VersionTemplate())
 	rootCmd.InitDefaultVersionFlag()
 }
+
+// BuildVersion returns the binary version (for embedded web UI meta).
+func BuildVersion() string { return buildVersion }
+
+// BuildCommit returns the git commit string embedded at link time.
+func BuildCommit() string { return buildCommit }
+
+// BuildDate returns the build date string embedded at link time.
+func BuildDate() string { return buildDate }

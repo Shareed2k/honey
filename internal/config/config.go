@@ -16,74 +16,74 @@ import (
 
 // File is the optional honey YAML configuration.
 type File struct {
-	Version  int      `yaml:"version"`
-	Defaults Defaults `yaml:"defaults"`
-	Backends Backends `yaml:"backends"`
+	Version  int      `yaml:"version" json:"version"`
+	Defaults Defaults `yaml:"defaults" json:"defaults"`
+	Backends Backends `yaml:"backends" json:"backends"`
 }
 
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
-	SSHUser       string `yaml:"ssh_user"`
-	CacheTTL      string `yaml:"cache_ttl"` // e.g. "5m", "1h"
-	K8sMode       string `yaml:"k8s_mode"`
-	K8sDebugImage string `yaml:"k8s_debug_image"`
-	CacheDir      string `yaml:"cache_dir"`
-	Output        string `yaml:"output"` // e.g. "table", "json", "tui" (default)
-	Name          string `yaml:"name"`
-	NameRegex     string `yaml:"name_regex"`
+	SSHUser       string `yaml:"ssh_user" json:"ssh_user"`
+	CacheTTL      string `yaml:"cache_ttl" json:"cache_ttl"` // e.g. "5m", "1h"
+	K8sMode       string `yaml:"k8s_mode" json:"k8s_mode"`
+	K8sDebugImage string `yaml:"k8s_debug_image" json:"k8s_debug_image"`
+	CacheDir      string `yaml:"cache_dir" json:"cache_dir"`
+	Output        string `yaml:"output" json:"output"` // e.g. "table", "json", "tui" (default)
+	Name          string `yaml:"name" json:"name"`
+	NameRegex     string `yaml:"name_regex" json:"name_regex"`
 }
 
 // Backends lists optional multiple instances per provider type.
 // If a slice is nil or omitted, that provider is not defined by the file (use CLI defaults).
 // If a slice is non-empty, one backend is created per element.
 type Backends struct {
-	GCP        []GCPBackend        `yaml:"gcp"`
-	AWS        []AWSBackend        `yaml:"aws"`
-	Kubernetes []KubernetesBackend `yaml:"kubernetes"`
-	Consul     []ConsulBackend     `yaml:"consul"`
-	Proxmox    []ProxmoxBackend    `yaml:"proxmox"`
+	GCP        []GCPBackend        `yaml:"gcp" json:"gcp"`
+	AWS        []AWSBackend        `yaml:"aws" json:"aws"`
+	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes"`
+	Consul     []ConsulBackend     `yaml:"consul" json:"consul"`
+	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox"`
 }
 
 // GCPBackend configures one Google Cloud Compute Engine listing.
 type GCPBackend struct {
-	Name    string `yaml:"name"`
-	Project string `yaml:"project"`
-	Zone    string `yaml:"zone"`
+	Name    string `yaml:"name" json:"name"`
+	Project string `yaml:"project" json:"project"`
+	Zone    string `yaml:"zone" json:"zone"`
 }
 
 // AWSBackend configures one Amazon EC2 listing.
 type AWSBackend struct {
-	Name    string `yaml:"name"`
-	Profile string `yaml:"profile"`
-	Region  string `yaml:"region"`
+	Name    string `yaml:"name" json:"name"`
+	Profile string `yaml:"profile" json:"profile"`
+	Region  string `yaml:"region" json:"region"`
 }
 
 // KubernetesBackend configures one Kubernetes nodes/pods listing.
 type KubernetesBackend struct {
-	Name       string `yaml:"name"`
-	Context    string `yaml:"context"`
-	Kubeconfig string `yaml:"kubeconfig"`
-	Mode       string `yaml:"mode"`
-	DebugImage string `yaml:"debug_image"`
+	Name       string `yaml:"name" json:"name"`
+	Context    string `yaml:"context" json:"context"`
+	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig"`
+	Mode       string `yaml:"mode" json:"mode"`
+	DebugImage string `yaml:"debug_image" json:"debug_image"`
 }
 
 // ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
-	Name       string `yaml:"name"`
-	Addr       string `yaml:"addr"`
-	Datacenter string `yaml:"datacenter"`
-	Token      string `yaml:"token"`
+	Name       string `yaml:"name" json:"name"`
+	Addr       string `yaml:"addr" json:"addr"`
+	Datacenter string `yaml:"datacenter" json:"datacenter"`
+	Token      string `yaml:"token" json:"token"`
 }
 
 // ProxmoxBackend configures one Proxmox VE listing.
 type ProxmoxBackend struct {
-	Name        string `yaml:"name"`
-	URL         string `yaml:"url"`
-	User        string `yaml:"user"`
-	Password    string `yaml:"password"`
-	TokenID     string `yaml:"token_id"`
-	TokenSecret string `yaml:"token_secret"`
-	Insecure    bool   `yaml:"insecure"`
+	Name        string `yaml:"name" json:"name"`
+	URL         string `yaml:"url" json:"url"`
+	User        string `yaml:"user" json:"user"`
+	Password    string `yaml:"password" json:"password"`
+	TokenID     string `yaml:"token_id" json:"token_id"`
+	TokenSecret string `yaml:"token_secret" json:"token_secret"`
+	Insecure    bool   `yaml:"insecure" json:"insecure"`
 }
 
 // Save serializes the config and writes it to path.
@@ -114,6 +114,15 @@ func Load(path string) (*File, error) {
 	var f File
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	return &f, nil
+}
+
+// ParseYAML parses a honey config document from memory (used by web API PUT validation).
+func ParseYAML(b []byte) (*File, error) {
+	var f File
+	if err := yaml.Unmarshal(b, &f); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	return &f, nil
 }
