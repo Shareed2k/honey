@@ -25,6 +25,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Build web UI (embed static)
+        run: make webui
+
       - name: Go test
         run: go test ./... -count=1
 
@@ -38,6 +45,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Build web UI (embed static)
+        run: make webui
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -55,6 +69,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Build web UI (embed static)
+        run: make webui
 
       - name: govulncheck
         run: |
@@ -99,6 +120,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Build web UI (embed static)
+        run: make webui
 
       - name: Build binary
         shell: bash

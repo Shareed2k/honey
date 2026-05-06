@@ -1,4 +1,8 @@
-# honey
+---
+id: index
+title: Honey Documentation
+slug: /
+---
 
 CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), **Consul** catalog nodes, and **Proxmox VE** instances **in parallel**, optionally cache results, then use a **terminal UI** to SSH or open an **SSH local forward** (`-L`) via the system `ssh` binary.
 
@@ -256,6 +260,10 @@ When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `honey` p
 
 If a provider is unreachable, the command fails (use `--provider` to narrow scope).
 
+## Embedded web UI (`honey web`)
+
+Loopback HTTP server with bearer token auth (see the repository **README** for `make webui`, listen address, and `HONEY_WEB_TOKEN`). The bundled UI covers search (with provider/backend dropdowns), raw YAML config, structured **backends** JSON CRUD under `/api/v1/config/backends/…`, and a WebSocket terminal on `/ws/ssh` for **SSH** hosts and **Kubernetes pods** (ephemeral container exec). REST path segments use YAML keys such as **`kubernetes`**; search filters still use the provider id **`k8s`**.
+
 ## Layout
 
 - `cmd/honey` — CLI entrypoint (`search`, `backends`, `mcp`, …)
@@ -266,23 +274,8 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `internal/hosts` — `Record`, `Query`, cache, parallel orchestration
 - `internal/provider/*` — GCP, AWS, k8s, Consul integrations
 - `internal/ui` — Bubble Tea table + SSH actions
+- `internal/webserver` — embedded `honey web` UI (static SPA + REST + WebSocket terminal)
 - `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
-
-## Web UI (`honey web`)
-
-Embedded **loopback-only** web server with a random bearer token (override with `HONEY_WEB_TOKEN`). Serves a React UI for backends list, search, provider/backend filters (dropdowns), YAML config edit, structured **backends** CRUD (JSON REST mirroring `backends.*` in YAML), browser terminal over WebSocket (**SSH** nodes and **Kubernetes pods** via ephemeral exec TTY), and drag-and-drop SFTP upload.
-
-```bash
-# One-time: build UI assets into internal/webserver/static (CI runs this automatically)
-make webui
-
-go build -o honey ./cmd/honey
-./honey web --listen 127.0.0.1:8765 --config ~/.config/honey/config.yaml
-```
-
-Open the **URL printed on stderr** (includes `?token=…`). API routes: `/api/v1/meta`, `GET /api/v1/providers` (search provider ids, e.g. `k8s`), `GET /api/v1/backends`, `POST /api/v1/search`, `GET`/`PUT /api/v1/config` (raw YAML), `GET`/`POST`/`PUT`/`DELETE /api/v1/config/backends/…` (structured backends: path segment **`kubernetes`** matches YAML, while search uses provider id **`k8s`**), `POST /api/v1/upload`, WebSocket `GET /ws/ssh?token=…` (SSH or k8s pod TTY).
-
-**Local UI dev** (Vite proxies to the Go server): run `honey web` on `8765`, then `cd webui && npm install && npm run dev` and open Vite’s URL.
 
 ## Tests
 
