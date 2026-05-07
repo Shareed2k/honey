@@ -43,9 +43,10 @@ type recipeViewResponse struct {
 }
 
 type execRequest struct {
-	SSHUser string         `json:"ssh_user"`
-	Command string         `json:"command"`
-	Records []hosts.Record `json:"records"`
+	SSHUser       string         `json:"ssh_user"`
+	Command       string         `json:"command"`
+	Records       []hosts.Record `json:"records"`
+	RecordSession bool           `json:"record_session"`
 }
 
 type execResponse struct {
@@ -53,11 +54,12 @@ type execResponse struct {
 }
 
 type cueExecRequest struct {
-	RecipePath string         `json:"recipe_path"`
-	Execute    bool           `json:"execute"`
-	SSHUser    string         `json:"ssh_user"`
-	Records    []hosts.Record `json:"records"`
-	Env        []string       `json:"env,omitempty"`
+	RecipePath    string         `json:"recipe_path"`
+	Execute       bool           `json:"execute"`
+	SSHUser       string         `json:"ssh_user"`
+	Records       []hosts.Record `json:"records"`
+	Env           []string       `json:"env,omitempty"`
+	RecordSession bool           `json:"record_session"`
 }
 
 type cueExecDryRunResponse struct {
@@ -149,7 +151,7 @@ func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(recipeViewResponse{Content: string(raw)})
 }
 
-func (*Server) handleExec(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -185,19 +187,49 @@ func (*Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("no connectable hosts in selection (need IP or k8s pod)"), http.StatusBadRequest)
 		return
 	}
+	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
+
 	if r.URL.Query().Get("stream") == "1" {
+		var rec *ui.SessionRecorder
+		if wantRec {
+			var err error
+			rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-exec", user, len(jobs))
+			if err != nil {
+				httpError(w, err, http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = rec.Close() }()
+		}
 		ch := make(chan ui.HostExecResult, len(jobs))
 		go func() {
 			defer close(ch)
 			_ = ui.StreamSSHParallel(user, jobs, func(_ hosts.Record) string { return cmd }, 0, ch, nil)
 		}()
-		streamHostExecNDJSON(w, ch)
+		streamHostExecNDJSON(w, ch, rec)
 		return
+	}
+	var rec *ui.SessionRecorder
+	if wantRec {
+		var err error
+		rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-exec", user, len(jobs))
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = rec.Close() }()
 	}
 	results, err := ui.ExecuteSSHParallel(user, jobs, func(_ hosts.Record) string { return cmd }, 0)
 	if err != nil {
+		if rec != nil {
+			rec.RecordError(err)
+		}
 		httpError(w, err, http.StatusInternalServerError)
 		return
+	}
+	if rec != nil {
+		for i := range results {
+			rec.RecordHostExecResult(results[i])
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(execResponse{Results: results})
@@ -213,12 +245,15 @@ func filterConnectableRecords(recs []hosts.Record) []hosts.Record {
 	return out
 }
 
-func streamHostExecNDJSON(w http.ResponseWriter, ch <-chan ui.HostExecResult) {
+func streamHostExecNDJSON(w http.ResponseWriter, ch <-chan ui.HostExecResult, rec *ui.SessionRecorder) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	fl, _ := w.(http.Flusher)
 	for res := range ch {
+		if rec != nil {
+			rec.RecordHostExecResult(res)
+		}
 		if err := enc.Encode(res); err != nil {
 			return
 		}
@@ -243,7 +278,7 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 	}
 }
 
-func (*Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -299,18 +334,51 @@ func (*Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		user = os.Getenv("USER")
 	}
 	recipeDir := filepath.Dir(cp)
+	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
 
 	if !body.Execute {
 		var buf bytes.Buffer
-		if err := ui.RunCueRecipeSteps(&buf, recipe, recipeDir, jobs, user, false, cliEnv); err != nil {
-			httpError(w, err, http.StatusBadRequest)
+		runErr := ui.RunCueRecipeSteps(&buf, recipe, recipeDir, jobs, user, false, cliEnv)
+		var rec *ui.SessionRecorder
+		if wantRec {
+			var err error
+			rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec-dry", user, len(jobs))
+			if err != nil {
+				httpError(w, err, http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = rec.Close() }()
+		}
+		if runErr != nil {
+			if rec != nil {
+				rec.RecordError(runErr)
+			}
+			httpError(w, runErr, http.StatusBadRequest)
 			return
+		}
+		if rec != nil {
+			plan := buf.String()
+			if strings.TrimSpace(plan) == "" {
+				rec.RecordData("plan", []byte("(empty plan)"))
+			} else {
+				rec.RecordData("plan", []byte(plan))
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(cueExecDryRunResponse{Plan: buf.String()})
 		return
 	}
 	if r.URL.Query().Get("stream") == "1" {
+		var rec *ui.SessionRecorder
+		if wantRec {
+			var err error
+			rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec", user, len(jobs))
+			if err != nil {
+				httpError(w, err, http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = rec.Close() }()
+		}
 		ch := make(chan ui.HostExecResult, cueExecChannelCap)
 		go func() {
 			defer close(ch)
@@ -323,10 +391,20 @@ func (*Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}()
-		streamHostExecNDJSON(w, ch)
+		streamHostExecNDJSON(w, ch, rec)
 		return
 	}
 
+	var rec *ui.SessionRecorder
+	if wantRec {
+		var err error
+		rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec", user, len(jobs))
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = rec.Close() }()
+	}
 	ch := make(chan ui.HostExecResult, cueExecChannelCap)
 	errCh := make(chan error, 1)
 	go func() {
@@ -335,9 +413,15 @@ func (*Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	}()
 	var results []ui.HostExecResult
 	for res := range ch {
+		if rec != nil {
+			rec.RecordHostExecResult(res)
+		}
 		results = append(results, res)
 	}
 	if err := <-errCh; err != nil {
+		if rec != nil {
+			rec.RecordError(err)
+		}
 		httpError(w, err, http.StatusBadGateway)
 		return
 	}

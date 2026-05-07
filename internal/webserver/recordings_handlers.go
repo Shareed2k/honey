@@ -40,13 +40,14 @@ type recordingsPlayRequest struct {
 }
 
 type recordingEvent struct {
-	TimeMS    int64  `json:"time_ms"`
-	Type      string `json:"type"`
-	Direction string `json:"direction,omitempty"`
-	DataB64   string `json:"data_b64,omitempty"`
-	Cols      int    `json:"cols,omitempty"`
-	Rows      int    `json:"rows,omitempty"`
-	Message   string `json:"message,omitempty"`
+	TimeMS    int64           `json:"time_ms"`
+	Type      string          `json:"type"`
+	Direction string          `json:"direction,omitempty"`
+	DataB64   string          `json:"data_b64,omitempty"`
+	Cols      int             `json:"cols,omitempty"`
+	Rows      int             `json:"rows,omitempty"`
+	Message   string          `json:"message,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
 }
 
 type recordingsPlayResponse struct {

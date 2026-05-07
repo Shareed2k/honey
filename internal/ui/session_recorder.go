@@ -20,6 +20,8 @@ type SessionRecorderOptions struct {
 	HostName string
 	HostIP   string
 	User     string
+	// HostSegment, when set, is used for the filename segment instead of HostName/IP (e.g. batch-12).
+	HostSegment string
 }
 
 type SessionRecorder struct {
@@ -31,13 +33,14 @@ type SessionRecorder struct {
 }
 
 type sessionRecordEvent struct {
-	TimeMS    int64  `json:"time_ms"`
-	Type      string `json:"type"`
-	Direction string `json:"direction,omitempty"`
-	DataB64   string `json:"data_b64,omitempty"`
-	Cols      int    `json:"cols,omitempty"`
-	Rows      int    `json:"rows,omitempty"`
-	Message   string `json:"message,omitempty"`
+	TimeMS    int64           `json:"time_ms"`
+	Type      string          `json:"type"`
+	Direction string          `json:"direction,omitempty"`
+	DataB64   string          `json:"data_b64,omitempty"`
+	Cols      int             `json:"cols,omitempty"`
+	Rows      int             `json:"rows,omitempty"`
+	Message   string          `json:"message,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
 }
 
 func NewSessionRecorder(opts SessionRecorderOptions) (*SessionRecorder, error) {
@@ -49,7 +52,10 @@ func NewSessionRecorder(opts SessionRecorderOptions) (*SessionRecorder, error) {
 		return nil, err
 	}
 
-	safeHost := sanitizeRecorderPart(opts.HostName)
+	safeHost := sanitizeRecorderPart(opts.HostSegment)
+	if safeHost == "" {
+		safeHost = sanitizeRecorderPart(opts.HostName)
+	}
 	if safeHost == "" {
 		safeHost = sanitizeRecorderPart(opts.HostIP)
 	}
@@ -96,11 +102,43 @@ func NewSessionRecorder(opts SessionRecorderOptions) (*SessionRecorder, error) {
 	return r, nil
 }
 
+// NewBatchSessionRecorder creates a recorder for one parallel exec or CUE batch run (one file per invocation).
+func NewBatchSessionRecorder(dir, trigger, user string, jobCount int) (*SessionRecorder, error) {
+	hostLabel := "batch-0"
+	if jobCount > 0 {
+		hostLabel = fmt.Sprintf("batch-%d", jobCount)
+	}
+	return NewSessionRecorder(SessionRecorderOptions{
+		Dir:         dir,
+		Trigger:     trigger,
+		Mode:        "batch",
+		Provider:    "mixed",
+		HostName:    hostLabel,
+		HostIP:      "",
+		User:        user,
+		HostSegment: hostLabel,
+	})
+}
+
 func (r *SessionRecorder) Path() string {
 	if r == nil {
 		return ""
 	}
 	return r.path
+}
+
+func (r *SessionRecorder) RecordHostExecResult(res HostExecResult) {
+	if r == nil {
+		return
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		return
+	}
+	r.recordEvent(sessionRecordEvent{
+		Type:   "result",
+		Result: json.RawMessage(b),
+	})
 }
 
 func (r *SessionRecorder) RecordData(direction string, payload []byte) {

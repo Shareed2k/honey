@@ -6,6 +6,19 @@ import (
 )
 
 func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
+	if m.batchRecorder != nil {
+		_ = m.batchRecorder.Close()
+		m.batchRecorder = nil
+	}
+	if m.recordEnabled && m.recordDir != "" {
+		trigger := "tui-exec"
+		if msg.isCue {
+			trigger = "tui-cue-exec"
+		}
+		if rec, err := NewBatchSessionRecorder(m.recordDir, trigger, m.sshUser, msg.totalJobs); err == nil {
+			m.batchRecorder = rec
+		}
+	}
 	m.mode = "execresults"
 	m.execCmdLine = msg.cmdLine
 	m.execTargetNote = msg.targetNote
@@ -26,6 +39,9 @@ func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleStreamResultMsg(msg streamResultMsg) (tea.Model, tea.Cmd) {
+	if m.batchRecorder != nil {
+		m.batchRecorder.RecordHostExecResult(msg.res)
+	}
 	m.execResults = append(m.execResults, msg.res)
 
 	// If cursor is at the bottom and a new item arrives, follow it if we are at the end
@@ -46,6 +62,10 @@ func (m *model) handleStreamResultMsg(msg streamResultMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m *model) handleStreamDoneMsg(_ streamDoneMsg) (tea.Model, tea.Cmd) {
+	if m.batchRecorder != nil {
+		_ = m.batchRecorder.Close()
+		m.batchRecorder = nil
+	}
 	m.execDone = true
 	m.execResults = SortHostExecForUI(m.execResults)
 	m.clampExecScroll()
@@ -53,6 +73,14 @@ func (m *model) handleStreamDoneMsg(_ streamDoneMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleParallelExecDoneMsg(msg parallelExecDoneMsg) (tea.Model, tea.Cmd) {
+	if m.recordEnabled && m.recordDir != "" {
+		if rec, err := NewBatchSessionRecorder(m.recordDir, "tui-exec", m.sshUser, len(msg.results)); err == nil {
+			for i := range msg.results {
+				rec.RecordHostExecResult(msg.results[i])
+			}
+			_ = rec.Close()
+		}
+	}
 	m.cueResultBody = ""
 	m.cueResultTitle = "Parallel SSH results"
 	m.execResults = SortHostExecForUI(msg.results)

@@ -9,6 +9,7 @@ import {
   execOnHostsStream,
   fetchConfigSchema,
   fetchRecordingsForHost,
+  fetchRecordingsList,
   fetchRecipeContent,
   fetchRecipes,
   getToken,
@@ -358,9 +359,10 @@ export function App() {
     try {
       await execOnHostsStream(
         {
-        ssh_user: sshUser.trim(),
-        command: cmd,
-        records: selectedRecords,
+          ssh_user: sshUser.trim(),
+          command: cmd,
+          records: selectedRecords,
+          record_session: !!(recordWebSession && meta?.session_recording_available),
         },
         (row) => setExecResults((prev) => [...(prev || []), row]),
       );
@@ -400,6 +402,7 @@ export function App() {
         execute: false,
         ssh_user: sshUser.trim(),
         records: selectedRecords,
+        record_session: !!(recordWebSession && meta?.session_recording_available),
       });
       setCuePlanText(plan ?? '');
     } catch (e) {
@@ -428,10 +431,11 @@ export function App() {
     try {
       await cueExecStream(
         {
-        recipe_path: recipePath,
-        execute: true,
-        ssh_user: sshUser.trim(),
-        records: selectedRecords,
+          recipe_path: recipePath,
+          execute: true,
+          ssh_user: sshUser.trim(),
+          records: selectedRecords,
+          record_session: !!(recordWebSession && meta?.session_recording_available),
         },
         (row) => setCueExecResults((prev) => [...(prev || []), row]),
       );
@@ -593,6 +597,22 @@ export function App() {
     }
   };
 
+  const openReplayAllRecordings = async () => {
+    const placeholder: HostRecord = { provider: '', name: 'All recordings', primary_ip: '' };
+    setReplayErr(null);
+    setReplayRecord(placeholder);
+    setReplayItems([]);
+    try {
+      const items = await fetchRecordingsList();
+      setReplayItems(items);
+      if (items.length === 0) {
+        setReplayErr('No files in record-dir yet.');
+      }
+    } catch (e) {
+      setReplayErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const namedBackends = backends.filter((b) => b.name.trim() !== '');
 
   const providerSelectSize = Math.min(10, Math.max(3, providerIds.length || 1));
@@ -733,7 +753,7 @@ export function App() {
               }}
               title={
                 meta?.session_recording_available
-                  ? 'Record web SSH/K8s terminal sessions for new terminal windows.'
+                  ? 'When checked, record new SSH/K8s terminal sessions, parallel command runs, and CUE recipe runs (dry-run and execute) to the server record-dir.'
                   : 'Recording unavailable: start honey web with --record-dir to enable.'
               }
             >
@@ -743,7 +763,7 @@ export function App() {
                 disabled={!meta?.session_recording_available}
                 onChange={(e) => setRecordWebSession(e.target.checked)}
               />
-              Record terminal session
+              Record sessions
             </label>
             <button type="button" className="primary" disabled={searching} onClick={() => void runSearch()}>
               {searching ? 'Searching…' : 'Search'}
@@ -823,6 +843,11 @@ export function App() {
                 </div>
               ) : null}
             </div>
+            {meta?.session_recording_available ? (
+              <button type="button" onClick={() => void openReplayAllRecordings()}>
+                Browse recordings
+              </button>
+            ) : null}
           </div>
 
           {searchErr ? <p style={{ color: '#f66' }}>{searchErr}</p> : null}

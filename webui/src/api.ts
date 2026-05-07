@@ -83,6 +83,8 @@ export type RecordingEvent = {
   cols?: number;
   rows?: number;
   message?: string;
+  /** Batch exec / CUE: JSON object matching HostExecResultRow when type is "result". */
+  result?: HostExecResultRow;
 };
 
 export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer';
@@ -142,22 +144,42 @@ export async function fetchRecipeContent(path: string): Promise<string> {
   return j.content ?? '';
 }
 
-export async function fetchRecordingsForHost(params: {
-  provider: string;
-  host_name: string;
-  host_ip: string;
+/** List recordings; omit filters to return everything in record-dir (e.g. batch exec files use host_name batch-N). */
+export async function fetchRecordingsList(filters?: {
+  provider?: string;
+  host_name?: string;
+  host_ip?: string;
 }): Promise<RecordingListEntry[]> {
-  const q = new URLSearchParams({
-    provider: params.provider,
-    host_name: params.host_name,
-    host_ip: params.host_ip,
-  });
-  const r = await apiGet(`/api/v1/recordings?${q.toString()}`);
+  const q = new URLSearchParams();
+  if (filters?.provider?.trim()) {
+    q.set('provider', filters.provider.trim());
+  }
+  if (filters?.host_name?.trim()) {
+    q.set('host_name', filters.host_name.trim());
+  }
+  if (filters?.host_ip?.trim()) {
+    q.set('host_ip', filters.host_ip.trim());
+  }
+  const qs = q.toString();
+  const path = qs ? `/api/v1/recordings?${qs}` : '/api/v1/recordings';
+  const r = await apiGet(path);
   const j = (await r.json().catch(() => ({}))) as { items?: RecordingListEntry[]; error?: string };
   if (!r.ok) {
     throw new Error(j.error || r.statusText);
   }
   return j.items || [];
+}
+
+export async function fetchRecordingsForHost(params: {
+  provider: string;
+  host_name: string;
+  host_ip: string;
+}): Promise<RecordingListEntry[]> {
+  return fetchRecordingsList({
+    provider: params.provider,
+    host_name: params.host_name,
+    host_ip: params.host_ip,
+  });
 }
 
 export async function fetchRecordingEvents(fileName: string): Promise<RecordingEvent[]> {
@@ -173,6 +195,7 @@ export async function execOnHosts(body: {
   ssh_user: string;
   command: string;
   records: unknown[];
+  record_session?: boolean;
 }): Promise<HostExecResultRow[]> {
   const r = await apiPost('/api/v1/exec', body);
   const j = (await r.json().catch(() => ({}))) as { results?: HostExecResultRow[]; error?: string };
@@ -215,7 +238,7 @@ async function readNDJSON(
 }
 
 export async function execOnHostsStream(
-  body: { ssh_user: string; command: string; records: unknown[] },
+  body: { ssh_user: string; command: string; records: unknown[]; record_session?: boolean },
   onRow: (row: HostExecResultRow) => void,
 ): Promise<void> {
   const r = await fetch('/api/v1/exec?stream=1', {
@@ -236,6 +259,7 @@ export async function cueExec(body: {
   ssh_user: string;
   records: unknown[];
   env?: string[];
+  record_session?: boolean;
 }): Promise<{ plan?: string; results?: HostExecResultRow[] }> {
   const r = await apiPost('/api/v1/cue-exec', body);
   const j = (await r.json().catch(() => ({}))) as {
@@ -256,6 +280,7 @@ export async function cueExecStream(
     ssh_user: string;
     records: unknown[];
     env?: string[];
+    record_session?: boolean;
   },
   onRow: (row: HostExecResultRow) => void,
 ): Promise<void> {

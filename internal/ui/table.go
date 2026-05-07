@@ -92,6 +92,8 @@ type model struct {
 
 	recordDir     string
 	recordEnabled bool
+	// batchRecorder is non-nil while streaming parallel exec or CUE execute results when recording is on.
+	batchRecorder *SessionRecorder
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -362,7 +364,7 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			targets, note := m.parallelExecTargets()
 			m.ti.Blur()
-			return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute)
+			return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute, m.recordDir, m.recordEnabled)
 		}
 		if m.mode == "filter" {
 			m.mode = "table"
@@ -992,7 +994,7 @@ func isCueKeyword(word string) bool {
 	}
 }
 
-func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool) tea.Cmd {
+func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool, recordDir string, recordEnabled bool) tea.Cmd {
 	title := "CUE recipe (dry-run)"
 	if execute {
 		title = "CUE recipe (execute)"
@@ -1022,6 +1024,21 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		if !execute {
 			var buf bytes.Buffer
 			runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute, nil)
+			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
+				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
+					if runErr != nil {
+						rec.RecordError(runErr)
+					} else {
+						plan := buf.String()
+						if strings.TrimSpace(plan) == "" {
+							rec.RecordData("plan", []byte("(empty plan)"))
+						} else {
+							rec.RecordData("plan", []byte(plan))
+						}
+					}
+					_ = rec.Close()
+				}
+			}
 			body := targetNote + "\n\n" + buf.String()
 			if runErr != nil {
 				body += "\nError: " + runErr.Error()
