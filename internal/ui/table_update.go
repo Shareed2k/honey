@@ -124,10 +124,8 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = "cueexecinput"
 		if len(m.availableRecipes) > 0 {
 			m.recipeCursor = 0
-			m.ti.SetValue(m.availableRecipes[0])
-		} else {
-			m.ti.Reset()
 		}
+		m.ti.Reset()
 		m.ti.Placeholder = "path/to/recipe.cue (! = execute) — * rows only, or all w/ IP if none marked"
 		m.ti.Focus()
 		return m, textinput.Blink

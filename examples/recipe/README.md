@@ -5,6 +5,7 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 ## Files
 
 - `example.cue`: The fully documented recipe that demonstrates global defaults, variable injection, using the injected `hosts` variable list for dynamic step generation, and different step kinds (`command`, `put`, `get`, `script`).
+- `clean_filesystem.cue`: Maintenance recipe for systemd journal usage/vacuum and snap (remove disabled revisions, clear `/var/lib/snapd/cache`); read the file header for destructive journal behavior and `sudo -n` requirements.
 - `assets/index.html`: A dummy file used to demonstrate the `put` (upload) step.
 - `scripts/setup.sh`: A shell script used to demonstrate the `script` (upload and execute) step.
 - `downloads/`: An empty folder to receive files retrieved by the `get` step.

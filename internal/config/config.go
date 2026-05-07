@@ -23,67 +23,67 @@ type File struct {
 
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
-	SSHUser       string `yaml:"ssh_user" json:"ssh_user"`
-	CacheTTL      string `yaml:"cache_ttl" json:"cache_ttl"` // e.g. "5m", "1h"
-	K8sMode       string `yaml:"k8s_mode" json:"k8s_mode"`
-	K8sDebugImage string `yaml:"k8s_debug_image" json:"k8s_debug_image"`
-	CacheDir      string `yaml:"cache_dir" json:"cache_dir"`
-	Output        string `yaml:"output" json:"output"` // e.g. "table", "json", "tui" (default)
-	Name          string `yaml:"name" json:"name"`
-	NameRegex     string `yaml:"name_regex" json:"name_regex"`
+	SSHUser       string `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
+	CacheTTL      string `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL"` // e.g. "5m", "1h"
+	K8sMode       string `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
+	K8sDebugImage string `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
+	CacheDir      string `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
+	Output        string `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
+	Name          string `yaml:"name" json:"name" honey:"label=Name filter"`
+	NameRegex     string `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
 }
 
 // Backends lists optional multiple instances per provider type.
 // If a slice is nil or omitted, that provider is not defined by the file (use CLI defaults).
 // If a slice is non-empty, one backend is created per element.
 type Backends struct {
-	GCP        []GCPBackend        `yaml:"gcp" json:"gcp"`
-	AWS        []AWSBackend        `yaml:"aws" json:"aws"`
-	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes"`
-	Consul     []ConsulBackend     `yaml:"consul" json:"consul"`
-	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox"`
+	GCP        []GCPBackend        `yaml:"gcp" json:"gcp" honey:"label=Google Cloud;order=10"`
+	AWS        []AWSBackend        `yaml:"aws" json:"aws" honey:"label=AWS;order=20"`
+	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes" honey:"label=Kubernetes;order=30"`
+	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40"`
+	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50"`
 }
 
 // GCPBackend configures one Google Cloud Compute Engine listing.
 type GCPBackend struct {
-	Name    string `yaml:"name" json:"name"`
-	Project string `yaml:"project" json:"project"`
-	Zone    string `yaml:"zone" json:"zone"`
+	Name    string `yaml:"name" json:"name" honey:"label=Name"`
+	Project string `yaml:"project" json:"project" honey:"label=Project"`
+	Zone    string `yaml:"zone" json:"zone" honey:"label=Zone"`
 }
 
 // AWSBackend configures one Amazon EC2 listing.
 type AWSBackend struct {
-	Name    string `yaml:"name" json:"name"`
-	Profile string `yaml:"profile" json:"profile"`
-	Region  string `yaml:"region" json:"region"`
+	Name    string `yaml:"name" json:"name" honey:"label=Name"`
+	Profile string `yaml:"profile" json:"profile" honey:"label=Profile"`
+	Region  string `yaml:"region" json:"region" honey:"label=Region"`
 }
 
 // KubernetesBackend configures one Kubernetes nodes/pods listing.
 type KubernetesBackend struct {
-	Name       string `yaml:"name" json:"name"`
-	Context    string `yaml:"context" json:"context"`
-	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig"`
-	Mode       string `yaml:"mode" json:"mode"`
-	DebugImage string `yaml:"debug_image" json:"debug_image"`
+	Name       string `yaml:"name" json:"name" honey:"label=Name"`
+	Context    string `yaml:"context" json:"context" honey:"label=Context"`
+	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig" honey:"label=Kubeconfig path"`
+	Mode       string `yaml:"mode" json:"mode" honey:"label=Mode;enum=nodes|pods;enum_as_warning;default=nodes"`
+	DebugImage string `yaml:"debug_image" json:"debug_image" honey:"label=Debug image"`
 }
 
 // ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
-	Name       string `yaml:"name" json:"name"`
-	Addr       string `yaml:"addr" json:"addr"`
-	Datacenter string `yaml:"datacenter" json:"datacenter"`
-	Token      string `yaml:"token" json:"token"`
+	Name       string `yaml:"name" json:"name" honey:"label=Name"`
+	Addr       string `yaml:"addr" json:"addr" honey:"label=Address"`
+	Datacenter string `yaml:"datacenter" json:"datacenter" honey:"label=Datacenter"`
+	Token      string `yaml:"token" json:"token" honey:"label=Token;secret"`
 }
 
 // ProxmoxBackend configures one Proxmox VE listing.
 type ProxmoxBackend struct {
-	Name        string `yaml:"name" json:"name"`
-	URL         string `yaml:"url" json:"url"`
-	User        string `yaml:"user" json:"user"`
-	Password    string `yaml:"password" json:"password"`
-	TokenID     string `yaml:"token_id" json:"token_id"`
-	TokenSecret string `yaml:"token_secret" json:"token_secret"`
-	Insecure    bool   `yaml:"insecure" json:"insecure"`
+	Name        string `yaml:"name" json:"name" honey:"label=Name"`
+	URL         string `yaml:"url" json:"url" honey:"label=URL"`
+	User        string `yaml:"user" json:"user" honey:"label=User"`
+	Password    string `yaml:"password" json:"password" honey:"label=Password;secret"`
+	TokenID     string `yaml:"token_id" json:"token_id" honey:"label=Token ID"`
+	TokenSecret string `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret"`
+	Insecure    bool   `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
 }
 
 // Save serializes the config and writes it to path.

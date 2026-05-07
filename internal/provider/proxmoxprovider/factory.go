@@ -67,3 +67,7 @@ func (proxmoxFactory) BackendRows(cfg *config.File) []config.BackendRow {
 	}
 	return rows
 }
+
+func (proxmoxFactory) BackendKind() string { return "proxmox" }
+
+func (proxmoxFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Proxmox }

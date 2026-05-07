@@ -64,6 +64,45 @@ export type HostExecResultRow = {
 
 export type RecipeListEntry = { name: string; path: string };
 
+export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer';
+
+export type ConfigSchemaFieldSpec = {
+  key: string;
+  label: string;
+  type: ConfigSchemaFieldType;
+  required?: boolean;
+  secret?: boolean;
+  enum?: string[];
+  enum_as_warning?: boolean;
+  default?: unknown;
+};
+
+export type ConfigBackendSchema = {
+  label: string;
+  fields: ConfigSchemaFieldSpec[];
+};
+
+export type ConfigUISchema = {
+  top_level_keys: string[];
+  defaults: ConfigSchemaFieldSpec[];
+  backends: Record<string, ConfigBackendSchema>;
+  backend_order: string[];
+};
+
+export type ConfigSchemaResponse = {
+  json_schema: Record<string, unknown>;
+  ui_schema: ConfigUISchema;
+};
+
+export async function fetchConfigSchema(): Promise<ConfigSchemaResponse> {
+  const r = await apiGet('/api/v1/config/schema');
+  const j = (await r.json().catch(() => ({}))) as ConfigSchemaResponse & { error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j;
+}
+
 export async function fetchRecipes(): Promise<RecipeListEntry[]> {
   const r = await apiGet('/api/v1/recipes');
   const j = (await r.json().catch(() => ({}))) as { recipes?: RecipeListEntry[]; error?: string };

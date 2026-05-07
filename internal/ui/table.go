@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -74,6 +76,8 @@ type model struct {
 	// CUE dropdown
 	availableRecipes []string
 	recipeCursor     int
+	cuePreviewOpen   bool
+	cuePreviewScroll int
 
 	// Tunnel popup state
 	tunnelLocalPort  textinput.Model
@@ -260,6 +264,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleParallelExecDoneMsg(msg)
 	case cueRecipeDoneMsg:
 		return m.handleCueRecipeDoneMsg(msg)
+	case tea.PasteMsg:
+		// On macOS terminals, Cmd+V often arrives as bracketed paste, not KeyMsg.
+		if m.mode == "execinput" || m.mode == "cueexecinput" {
+			m.applyPastedText(msg.Content)
+			return m, nil
+		}
 	case tea.WindowSizeMsg:
 		return m.handleWindowSizeMsg(msg)
 	case tea.KeyMsg:
@@ -281,14 +291,37 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mode == "cueexecinput" && m.cuePreviewOpen {
+		return m.updateCuePreviewKeys(msg)
+	}
+
 	switch msg.String() {
+	case "ctrl+v", "shift+insert", "cmd+v", "meta+v", "super+v":
+		if m.mode == "execinput" || m.mode == "cueexecinput" {
+			if clip, err := clipboard.ReadAll(); err == nil {
+				m.applyPastedText(clip)
+			}
+			return m, nil
+		}
+	case "tab":
+		if m.mode == "cueexecinput" && len(m.availableRecipes) > 0 {
+			m.selectCurrentDefaultRecipe()
+			return m, nil
+		}
+	case "v":
+		if m.mode == "cueexecinput" && len(m.availableRecipes) > 0 {
+			m.cuePreviewOpen = !m.cuePreviewOpen
+			if !m.cuePreviewOpen {
+				m.cuePreviewScroll = 0
+			}
+			return m, nil
+		}
 	case "up", "k", "ctrl+p":
 		if m.mode == "cueexecinput" && len(m.availableRecipes) > 0 {
 			m.recipeCursor--
 			if m.recipeCursor < 0 {
 				m.recipeCursor = len(m.availableRecipes) - 1
 			}
-			m.ti.SetValue(m.availableRecipes[m.recipeCursor])
 			return m, nil
 		}
 	case "down", "j", "ctrl+n":
@@ -297,7 +330,6 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.recipeCursor >= len(m.availableRecipes) {
 				m.recipeCursor = 0
 			}
-			m.ti.SetValue(m.availableRecipes[m.recipeCursor])
 			return m, nil
 		}
 	case "esc":
@@ -344,6 +376,84 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+func (m *model) applyPastedText(raw string) {
+	paste := normalizePastedInput(m.mode, raw)
+	if paste == "" {
+		return
+	}
+	cur := m.ti.Value()
+	if cur == "" {
+		m.ti.SetValue(paste)
+		return
+	}
+	sep := ""
+	if !strings.HasSuffix(cur, " ") && !strings.HasPrefix(paste, " ") {
+		sep = " "
+	}
+	m.ti.SetValue(cur + sep + paste)
+}
+
+func (m *model) selectCurrentDefaultRecipe() {
+	if len(m.availableRecipes) == 0 {
+		return
+	}
+	if m.recipeCursor < 0 || m.recipeCursor >= len(m.availableRecipes) {
+		m.recipeCursor = 0
+	}
+	m.ti.SetValue(m.availableRecipes[m.recipeCursor])
+}
+
+func (m *model) updateCuePreviewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	lines := m.selectedDefaultRecipePreviewLines(0)
+	vis := m.visibleCuePreviewLines()
+	maxScroll := 0
+	if len(lines) > vis {
+		maxScroll = len(lines) - vis
+	}
+
+	switch msg.String() {
+	case "esc", "enter", "v":
+		m.cuePreviewOpen = false
+		m.cuePreviewScroll = 0
+	case "up", "k":
+		if m.cuePreviewScroll > 0 {
+			m.cuePreviewScroll--
+		}
+	case "down", "j":
+		if m.cuePreviewScroll < maxScroll {
+			m.cuePreviewScroll++
+		}
+	case "pgup", "b":
+		m.cuePreviewScroll -= vis / 2
+		if m.cuePreviewScroll < 0 {
+			m.cuePreviewScroll = 0
+		}
+	case "pgdown", "f":
+		m.cuePreviewScroll += vis / 2
+		if m.cuePreviewScroll > maxScroll {
+			m.cuePreviewScroll = maxScroll
+		}
+	case "home", "g":
+		m.cuePreviewScroll = 0
+	case "end", "G":
+		m.cuePreviewScroll = maxScroll
+	}
+
+	return m, nil
+}
+
+func normalizePastedInput(mode, raw string) string {
+	s := strings.ReplaceAll(raw, "\r\n", "\n")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if mode == "cueexecinput" {
+		return strings.TrimSpace(strings.Split(s, "\n")[0])
+	}
+	return strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
 }
 
 func (m *model) updateExecResultsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -559,7 +669,7 @@ func (m *model) View() tea.View {
 	case "tunnel":
 		box = m.viewTunnel(helpStyle)
 	case "execinput":
-		help := helpStyle.Render("enter: run   esc: back   q: quit")
+		help := helpStyle.Render(fmt.Sprintf("enter: run   %s: paste   esc: back   q: quit", pasteShortcutHelp()))
 		_, scope := m.parallelExecTargets()
 		box = lipgloss.JoinVertical(
 			lipgloss.Left,
@@ -571,16 +681,38 @@ func (m *model) View() tea.View {
 	case "cueexecinput":
 		helpStr := "enter: run   esc: back   q: quit"
 		if len(m.availableRecipes) > 0 {
-			helpStr = "enter: run   esc: back   ↑/↓: cycle built-in recipes   q: quit"
+			helpStr = fmt.Sprintf("enter: run   %s: paste   tab: use selected default   v: preview popup   esc: back   ↑/↓: move defaults   q: quit", pasteShortcutHelp())
+		} else {
+			helpStr = fmt.Sprintf("enter: run   %s: paste   esc: back   q: quit", pasteShortcutHelp())
 		}
 		help := helpStyle.Render(helpStr)
 		_, scope := m.parallelExecTargets()
-		box = lipgloss.JoinVertical(
+		left := lipgloss.JoinVertical(
 			lipgloss.Left,
 			"CUE recipe (selected hosts only):",
 			helpStyle.Render(scope),
 			m.ti.View(),
 		)
+		if len(m.availableRecipes) > 0 {
+			right := m.viewDefaultRecipesPanel()
+			if m.winW >= 100 {
+				box = lipgloss.JoinHorizontal(
+					lipgloss.Top,
+					lipgloss.NewStyle().Width((m.winW*2)/3).Render(left),
+					"  ",
+					lipgloss.NewStyle().Width((m.winW/3)-6).Render(right),
+				)
+			} else {
+				box = lipgloss.JoinVertical(
+					lipgloss.Left,
+					left,
+					"",
+					right,
+				)
+			}
+		} else {
+			box = left
+		}
 		box = baseStyle.Render(box) + "\n" + help
 	case "execresults":
 		box = m.viewExecResults(helpStyle)
@@ -596,8 +728,250 @@ func (m *model) View() tea.View {
 	}
 
 	view := tea.NewView(box)
+	if m.mode == "cueexecinput" && m.cuePreviewOpen {
+		view = tea.NewView(m.viewCueRecipePreviewPopup(helpStyle))
+	}
 	view.AltScreen = true
 	return view
+}
+
+func pasteShortcutHelp() string {
+	if runtime.GOOS == "darwin" {
+		return "cmd+v"
+	}
+	return "ctrl+v/shift+insert"
+}
+
+func (m *model) viewDefaultRecipesPanel() string {
+	var rows []string
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Render("Default recipes"))
+	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("↑/↓ move, tab inserts, v opens popup"))
+	rows = append(rows, "")
+
+	for i, recipe := range m.availableRecipes {
+		displayName := filepath.Base(recipe)
+		if displayName == "." || displayName == string(filepath.Separator) || displayName == "" {
+			displayName = recipe
+		}
+		prefix := "  "
+		if i == m.recipeCursor {
+			prefix = "> "
+			displayName = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Render(displayName)
+		}
+		rows = append(rows, prefix+displayName)
+	}
+	return strings.Join(rows, "\n")
+}
+
+func (m *model) selectedDefaultRecipePath() string {
+	if len(m.availableRecipes) == 0 {
+		return ""
+	}
+	if m.recipeCursor < 0 || m.recipeCursor >= len(m.availableRecipes) {
+		return m.availableRecipes[0]
+	}
+	return m.availableRecipes[m.recipeCursor]
+}
+
+func (m *model) selectedDefaultRecipePreviewLines(maxLines int) []string {
+	recipePath := m.selectedDefaultRecipePath()
+	if recipePath == "" {
+		return []string{"(no recipe selected)"}
+	}
+
+	raw, err := safepath.ReadFile(recipePath)
+	if err != nil {
+		absPath, absErr := filepath.Abs(recipePath)
+		if absErr == nil {
+			raw, err = safepath.ReadFile(absPath)
+		}
+	}
+	if err != nil {
+		return []string{fmt.Sprintf("(failed to read recipe: %v)", err)}
+	}
+
+	text := strings.TrimRight(string(raw), "\n")
+	if strings.TrimSpace(text) == "" {
+		return []string{"(empty recipe file)"}
+	}
+
+	lines := strings.Split(text, "\n")
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = append(lines[:maxLines], fmt.Sprintf("... (%d more lines)", len(lines)-maxLines))
+	}
+	return lines
+}
+
+func (m *model) visibleCuePreviewLines() int {
+	vis := m.winH - 12
+	if vis < 8 {
+		vis = 8
+	}
+	return vis
+}
+
+func (m *model) viewCueRecipePreviewPopup(helpStyle lipgloss.Style) string {
+	lines := m.selectedDefaultRecipePreviewLines(0)
+	vis := m.visibleCuePreviewLines()
+	start := m.cuePreviewScroll
+	if start < 0 {
+		start = 0
+	}
+	if start > len(lines) {
+		start = len(lines)
+	}
+	end := start + vis
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	scrollNote := ""
+	if len(lines) > vis && end > 0 {
+		scrollNote = fmt.Sprintf("lines %d-%d of %d", start+1, end, len(lines))
+	}
+
+	previewBody := "(empty preview)"
+	if end > start {
+		previewBody = strings.Join(highlightCueLines(lines[start:end]), "\n")
+	}
+
+	recipeName := filepath.Base(m.selectedDefaultRecipePath())
+	title := "Recipe Preview"
+	if recipeName != "" {
+		title = "Recipe Preview: " + recipeName
+	}
+	popupWidth := m.winW - 8
+	if popupWidth < 50 {
+		popupWidth = 50
+	}
+	popup := lipgloss.JoinVertical(
+		lipgloss.Left,
+		lipgloss.NewStyle().Bold(true).Render(title),
+		baseStyle.Width(popupWidth).Render(previewBody),
+		helpStyle.Render(scrollNote),
+		helpStyle.Render("esc/v/enter: close   ↑/k ↓/j   pgup/pgdn   home/end"),
+	)
+	return lipgloss.Place(m.winW, m.winH, lipgloss.Center, lipgloss.Center, popup)
+}
+
+func highlightCueLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, highlightCueLine(line))
+	}
+	return out
+}
+
+func highlightCueLine(line string) string {
+	commentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	stringStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("221"))
+	keywordStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+
+	commentIdx := cueLineCommentIndex(line)
+	codePart := line
+	commentPart := ""
+	if commentIdx >= 0 {
+		codePart = line[:commentIdx]
+		commentPart = line[commentIdx:]
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(codePart); {
+		ch := codePart[i]
+		if ch == '"' {
+			j := i + 1
+			escaped := false
+			for j < len(codePart) {
+				if escaped {
+					escaped = false
+					j++
+					continue
+				}
+				if codePart[j] == '\\' {
+					escaped = true
+					j++
+					continue
+				}
+				if codePart[j] == '"' {
+					j++
+					break
+				}
+				j++
+			}
+			b.WriteString(stringStyle.Render(codePart[i:j]))
+			i = j
+			continue
+		}
+		if isCueWordStart(ch) {
+			j := i + 1
+			for j < len(codePart) && isCueWordChar(codePart[j]) {
+				j++
+			}
+			word := codePart[i:j]
+			if isCueKeyword(word) {
+				b.WriteString(keywordStyle.Render(word))
+			} else {
+				b.WriteString(word)
+			}
+			i = j
+			continue
+		}
+		b.WriteByte(ch)
+		i++
+	}
+
+	if commentPart != "" {
+		b.WriteString(commentStyle.Render(commentPart))
+	}
+
+	return b.String()
+}
+
+func cueLineCommentIndex(line string) int {
+	inString := false
+	escaped := false
+	for i := 0; i < len(line)-1; i++ {
+		ch := line[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			continue
+		}
+		if ch == '/' && line[i+1] == '/' {
+			return i
+		}
+	}
+	return -1
+}
+
+func isCueWordStart(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+}
+
+func isCueWordChar(ch byte) bool {
+	return isCueWordStart(ch) || (ch >= '0' && ch <= '9')
+}
+
+func isCueKeyword(word string) bool {
+	switch word {
+	case "package", "import", "let", "for", "if", "in", "true", "false", "null":
+		return true
+	default:
+		return false
+	}
 }
 
 func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool) tea.Cmd {

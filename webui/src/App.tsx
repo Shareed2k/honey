@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   apiGet,
   apiPost,
@@ -7,12 +7,13 @@ import {
   cueExecStream,
   execOnHosts,
   execOnHostsStream,
+  fetchConfigSchema,
   fetchRecipeContent,
   fetchRecipes,
   getToken,
   uploadFormDataWithProgress,
 } from './api';
-import type { HostExecResultRow, RecipeListEntry } from './api';
+import type { ConfigUISchema, HostExecResultRow, RecipeListEntry } from './api';
 import { ConfigBackendsSection } from './ConfigBackendsSection';
 import { TerminalModal } from './TerminalModal';
 
@@ -29,6 +30,8 @@ type HostRecord = {
 };
 
 type Tab = 'search' | 'backends' | 'config';
+const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
+const RawYamlEditor = lazy(async () => import('./RawYamlEditor').then((m) => ({ default: m.RawYamlEditor })));
 
 function recordKey(rec: HostRecord): string {
   return `${rec.provider}\x1e${rec.name}\x1e${rec.primary_ip}`;
@@ -52,6 +55,34 @@ function recordIndex(records: HostRecord[], rec: HostRecord): number {
   return records.findIndex((r) => recordKey(r) === k);
 }
 
+function detectCodeLanguage(fileName: string): 'cue' | 'yaml' {
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.endsWith('.yaml') || lowerName.endsWith('.yml')) {
+    return 'yaml';
+  }
+  return 'cue';
+}
+
+function CodeLoadingFallback({ code }: { code: string }) {
+  return (
+    <pre
+      style={{
+        margin: 0,
+        fontSize: '0.78rem',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        overflow: 'auto',
+        padding: '0.65rem',
+        border: '1px solid #2a3140',
+        borderRadius: 6,
+        background: '#0f1115',
+      }}
+    >
+      {code}
+    </pre>
+  );
+}
+
 export function App() {
   const [tab, setTab] = useState<Tab>('search');
   const [tokenMsg, setTokenMsg] = useState('');
@@ -69,8 +100,11 @@ export function App() {
   const [searching, setSearching] = useState(false);
 
   const [yaml, setYaml] = useState('');
+  const [yamlHasLintIssue, setYamlHasLintIssue] = useState(false);
   const [cfgErr, setCfgErr] = useState<string | null>(null);
   const [cfgPath, setCfgPath] = useState<string | null>(null);
+  const [cfgSchema, setCfgSchema] = useState<ConfigUISchema | null>(null);
+  const [cfgSchemaErr, setCfgSchemaErr] = useState<string | null>(null);
 
   const [termRecord, setTermRecord] = useState<HostRecord | null>(null);
   const [sshUser, setSshUser] = useState(() => '');
@@ -191,11 +225,23 @@ export function App() {
     setYaml(await r.text());
   }, []);
 
+  const loadConfigSchema = useCallback(async () => {
+    setCfgSchemaErr(null);
+    try {
+      const schema = await fetchConfigSchema();
+      setCfgSchema(schema.ui_schema);
+    } catch (e) {
+      setCfgSchema(null);
+      setCfgSchemaErr(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
   useEffect(() => {
     if (tab === 'config') {
       void loadConfig();
+      void loadConfigSchema();
     }
-  }, [tab, loadConfig]);
+  }, [tab, loadConfig, loadConfigSchema]);
 
   useEffect(() => {
     setUploadTargetIdx((i) => {
@@ -1026,18 +1072,47 @@ export function App() {
       {tab === 'config' ? (
         <section>
           {cfgErr ? <p style={{ color: '#f66' }}>{cfgErr}</p> : null}
+          {cfgSchemaErr ? <p style={{ color: '#f5a623' }}>Schema warning: {cfgSchemaErr}</p> : null}
           {cfgPath ? <p style={{ fontSize: '0.85rem' }}>Path: {cfgPath}</p> : null}
           <h2 style={{ fontSize: '1.1rem' }}>Raw YAML</h2>
-          <textarea style={{ width: '100%', minHeight: '420px', fontFamily: 'monospace', fontSize: '0.85rem' }} value={yaml} onChange={(e) => setYaml(e.target.value)} />
+          <Suspense
+            fallback={
+              <textarea
+                style={{ width: '100%', minHeight: '420px', fontFamily: 'monospace', fontSize: '0.85rem' }}
+                value={yaml}
+                onChange={(e) => setYaml(e.target.value)}
+              />
+            }
+          >
+            <RawYamlEditor
+              value={yaml}
+              onChange={setYaml}
+              schema={cfgSchema}
+              onSave={() => {
+                if (!yamlHasLintIssue) {
+                  void saveConfig();
+                }
+              }}
+              onLintStateChange={setYamlHasLintIssue}
+            />
+          </Suspense>
           <div style={{ marginTop: '0.5rem' }}>
-            <button type="button" className="primary" onClick={() => void saveConfig()}>
+            <button type="button" className="primary" disabled={yamlHasLintIssue} onClick={() => void saveConfig()}>
               Save YAML
             </button>
             <button type="button" style={{ marginLeft: '0.5rem' }} onClick={() => void loadConfig()}>
               Reload
             </button>
+            <button type="button" style={{ marginLeft: '0.5rem' }} onClick={() => void loadConfigSchema()}>
+              Reload schema
+            </button>
           </div>
-          <ConfigBackendsSection onSaved={() => void loadConfig()} />
+          {yamlHasLintIssue ? (
+            <p style={{ color: '#f5a623', marginTop: '0.4rem' }}>
+              Fix YAML diagnostics (warnings and errors) before saving.
+            </p>
+          ) : null}
+          <ConfigBackendsSection schema={cfgSchema} onSaved={() => void loadConfig()} />
         </section>
       ) : null}
 
@@ -1055,19 +1130,13 @@ export function App() {
                 Close
               </button>
             </header>
-            <pre
-              style={{
-                margin: 0,
-                fontSize: '0.78rem',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                overflow: 'auto',
-                flex: 1,
-                minHeight: 0,
-              }}
-            >
-              {recipePreview.content}
-            </pre>
+            <Suspense fallback={<CodeLoadingFallback code={recipePreview.content} />}>
+              <HighlightedCode
+                className="recipe-preview-code"
+                code={recipePreview.content}
+                language={detectCodeLanguage(recipePreview.title)}
+              />
+            </Suspense>
           </div>
         </div>
       ) : null}

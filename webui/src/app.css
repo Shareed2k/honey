@@ -93,6 +93,34 @@ tr:nth-child(even) {
   align-items: center;
   margin-bottom: 0.5rem;
 }
+.code-highlight {
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+  overflow: auto;
+}
+.code-highlight pre {
+  margin: 0 !important;
+  padding: 0.65rem !important;
+  min-height: 100%;
+  white-space: pre-wrap !important;
+  word-break: break-word;
+  font-size: 0.78rem;
+}
+.recipe-preview-code {
+  flex: 1;
+  min-height: 0;
+}
+.code-preview-box {
+  max-height: 340px;
+}
+.raw-yaml-editor {
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.raw-yaml-editor .cm-editor {
+  font-size: 0.85rem;
+}
 .term-wrap {
   position: relative;
   flex: 1;

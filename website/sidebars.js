@@ -3,6 +3,7 @@ const sidebars = {
   tutorialSidebar: [
     'index',
     'web-ui',
+    'add-new-backend',
     {
       type: 'category',
       label: 'CLI Reference',

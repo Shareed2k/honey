@@ -56,6 +56,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/config/backends/{kind}", s.withAuth(s.handleConfigBackendsPost))
 	s.mux.HandleFunc("PUT /api/v1/config/backends/{kind}/{index}", s.withAuth(s.handleConfigBackendsPut))
 	s.mux.HandleFunc("DELETE /api/v1/config/backends/{kind}/{index}", s.withAuth(s.handleConfigBackendsDelete))
+	s.mux.HandleFunc("GET /api/v1/config/schema", s.withAuth(s.handleConfigSchema))
 	s.mux.HandleFunc("GET /api/v1/config", s.withAuth(s.handleConfigGet))
 	s.mux.HandleFunc("PUT /api/v1/config", s.withAuth(s.handleConfigPut))
 	s.mux.HandleFunc("POST /api/v1/upload", s.withAuth(s.handleUpload))

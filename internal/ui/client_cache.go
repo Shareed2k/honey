@@ -2,14 +2,22 @@ package ui
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/shareed2k/honey/internal/hosts"
+	"go.uber.org/zap"
 )
 
 // ClientCache maintains a pool of open HostClient connections for reuse across steps.
 type ClientCache struct {
 	mu      sync.Mutex
 	clients map[string]HostClient
+
+	hits         int64
+	misses       int64
+	raceHits     int64
+	dialAttempts int64
+	dialErrors   int64
 }
 
 // NewClientCache creates a new initialized ClientCache.
@@ -32,12 +40,28 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	c.mu.Unlock()
 
 	if exists {
+		atomic.AddInt64(&c.hits, 1)
+		zap.L().Debug("ssh client cache hit",
+			zap.String("provider", r.Provider),
+			zap.String("host_name", r.Name),
+			zap.String("host_ip", r.PrimaryIP),
+			zap.String("user", user),
+		)
 		return client, nil
 	}
+	atomic.AddInt64(&c.misses, 1)
+	atomic.AddInt64(&c.dialAttempts, 1)
+	zap.L().Debug("ssh client cache miss (dialing new client)",
+		zap.String("provider", r.Provider),
+		zap.String("host_name", r.Name),
+		zap.String("host_ip", r.PrimaryIP),
+		zap.String("user", user),
+	)
 
 	// Dial outside the lock so parallel connections don't block each other
 	client, err := GetExecutor(r).Dial(user, r)
 	if err != nil {
+		atomic.AddInt64(&c.dialErrors, 1)
 		return nil, err
 	}
 
@@ -46,10 +70,23 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	if existing, exists := c.clients[key]; exists {
 		c.mu.Unlock()
 		_ = client.Close()
+		atomic.AddInt64(&c.raceHits, 1)
+		zap.L().Debug("ssh client cache race-hit (reusing existing client)",
+			zap.String("provider", r.Provider),
+			zap.String("host_name", r.Name),
+			zap.String("host_ip", r.PrimaryIP),
+			zap.String("user", user),
+		)
 		return existing, nil
 	}
 	c.clients[key] = client
 	c.mu.Unlock()
+	zap.L().Debug("ssh client cached new connection",
+		zap.String("provider", r.Provider),
+		zap.String("host_name", r.Name),
+		zap.String("host_ip", r.PrimaryIP),
+		zap.String("user", user),
+	)
 
 	return client, nil
 }
@@ -61,8 +98,17 @@ func (c *ClientCache) CloseAll() {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	cachedConnections := len(c.clients)
 	for _, client := range c.clients {
 		_ = client.Close()
 	}
 	c.clients = make(map[string]HostClient)
+	zap.L().Debug("ssh client cache summary",
+		zap.Int64("cache_hits", atomic.LoadInt64(&c.hits)),
+		zap.Int64("cache_misses", atomic.LoadInt64(&c.misses)),
+		zap.Int64("cache_race_hits", atomic.LoadInt64(&c.raceHits)),
+		zap.Int64("dial_attempts", atomic.LoadInt64(&c.dialAttempts)),
+		zap.Int64("dial_errors", atomic.LoadInt64(&c.dialErrors)),
+		zap.Int("closed_cached_connections", cachedConnections),
+	)
 }

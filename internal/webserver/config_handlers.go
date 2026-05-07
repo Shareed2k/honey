@@ -11,6 +11,14 @@ import (
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
+func (s *Server) handleConfigSchema(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"json_schema": config.BuildJSONSchema(),
+		"ui_schema":   config.BuildUISchema(),
+	})
+}
+
 func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, err := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	if err != nil {

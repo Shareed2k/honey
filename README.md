@@ -267,6 +267,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `internal/provider/*` — GCP, AWS, k8s, Consul integrations
 - `internal/ui` — Bubble Tea table + SSH actions
 - `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
+- `docs/add-new-backend.md` — contributor guide for adding a new backend end-to-end
 
 ## Web UI (`honey web`)
 
