@@ -89,7 +89,12 @@ function CodeLoadingFallback({ code }: { code: string }) {
 export function App() {
   const [tab, setTab] = useState<Tab>('search');
   const [tokenMsg, setTokenMsg] = useState('');
-  const [meta, setMeta] = useState<{ version: string; config_path: string; session_recording_available?: boolean } | null>(null);
+  const [meta, setMeta] = useState<{
+    version: string;
+    config_path: string;
+    session_recording_available?: boolean;
+    terminal_assist_available?: boolean;
+  } | null>(null);
   const [backends, setBackends] = useState<BackendRow[]>([]);
   const [backErr, setBackErr] = useState<string | null>(null);
 
@@ -179,7 +184,12 @@ export function App() {
       setMeta(null);
       return;
     }
-    const j = (await r.json()) as { version: string; config_path: string; session_recording_available?: boolean };
+    const j = (await r.json()) as {
+      version: string;
+      config_path: string;
+      session_recording_available?: boolean;
+      terminal_assist_available?: boolean;
+    };
     setMeta(j);
   }, []);
 
@@ -1234,6 +1244,7 @@ export function App() {
           record={termRecord}
           sshUser={sshUser}
           recordSession={recordWebSession && !!meta?.session_recording_available}
+          assistAvailable={!!meta?.terminal_assist_available}
           onClose={() => setTermRecord(null)}
         />
       ) : null}

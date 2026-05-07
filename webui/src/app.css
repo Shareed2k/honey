@@ -87,6 +87,55 @@ tr:nth-child(even) {
   flex-direction: column;
   padding: 0.5rem;
 }
+.modal.modal-terminal-split {
+  width: min(1120px, 98vw);
+  height: min(720px, 88vh);
+}
+.modal-terminal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.modal-terminal-body > .term-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.term-assist-panel {
+  width: min(300px, 32vw);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  border: 1px solid #2a3140;
+  border-radius: 8px;
+  padding: 0.5rem;
+  background: #14171c;
+  overflow: auto;
+  font-size: 0.85rem;
+}
+.term-assist-panel textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 3.5rem;
+}
+.term-assist-panel input[type='number'] {
+  width: 100%;
+}
+.term-assist-reply {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 0.4rem 0.45rem;
+  background: #0f1115;
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+  line-height: 1.35;
+}
 .modal header {
   display: flex;
   justify-content: space-between;

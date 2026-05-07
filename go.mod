@@ -20,6 +20,7 @@ require (
 	github.com/melbahja/goph v1.5.0
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 	github.com/olekukonko/tablewriter v1.1.4
+	github.com/sashabaranov/go-openai v1.41.2
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.50.0

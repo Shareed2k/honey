@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { getToken } from './api';
+import { apiGet, apiPost, getToken } from './api';
 
 type HostRecord = {
   provider: string;
@@ -14,14 +14,139 @@ type Props = {
   record: HostRecord;
   sshUser: string;
   recordSession: boolean;
+  /** When true, server has OPENAI_API_KEY; show assist side panel. */
+  assistAvailable?: boolean;
   onClose: () => void;
 };
 
-export function TerminalModal({ record, sshUser, recordSession, onClose }: Props) {
+const defaultScrollbackLines = 200;
+
+function collectScrollback(term: Terminal, maxLines: number): string {
+  const buf = term.buffer.active;
+  const len = buf.length;
+  const n = Math.min(Math.max(1, maxLines), 500);
+  const start = Math.max(0, len - n);
+  const out: string[] = [];
+  for (let i = start; i < len; i++) {
+    const line = buf.getLine(i);
+    out.push(line ? line.translateToString(true) : '');
+  }
+  return out.join('\n');
+}
+
+export function TerminalModal({ record, sshUser, recordSession, assistAvailable, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const [showConnectOverlay, setShowConnectOverlay] = useState(true);
+
+  const [assistPrompt, setAssistPrompt] = useState('');
+  const [assistLines, setAssistLines] = useState(defaultScrollbackLines);
+  const [assistBusy, setAssistBusy] = useState(false);
+  const [assistErr, setAssistErr] = useState<string | null>(null);
+  const [assistReply, setAssistReply] = useState('');
+  const [assistClipped, setAssistClipped] = useState(false);
+
+  const [assistModels, setAssistModels] = useState<string[]>([]);
+  const [assistModelsLoading, setAssistModelsLoading] = useState(false);
+  const [assistModelsErr, setAssistModelsErr] = useState<string | null>(null);
+  const [assistSelectedModel, setAssistSelectedModel] = useState('');
+
+  useEffect(() => {
+    if (!assistAvailable) {
+      return undefined;
+    }
+    let cancelled = false;
+    setAssistModelsLoading(true);
+    setAssistModelsErr(null);
+    void (async () => {
+      try {
+        const r = await apiGet('/api/v1/terminal-assist/models');
+        const j = (await r.json().catch(() => ({}))) as {
+          models?: string[];
+          error?: string;
+        };
+        if (cancelled) {
+          return;
+        }
+        if (!r.ok) {
+          setAssistModels([]);
+          setAssistSelectedModel('');
+          setAssistModelsErr(j.error || r.statusText || 'Could not load models');
+          return;
+        }
+        const list = Array.isArray(j.models) ? j.models : [];
+        setAssistModels(list);
+        if (list.length > 0) {
+          setAssistSelectedModel(list[0]);
+          setAssistModelsErr(null);
+        } else {
+          setAssistSelectedModel('');
+          setAssistModelsErr('No models returned by the provider. Check OPENAI_BASE_URL and that /v1/models works.');
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setAssistModels([]);
+          setAssistSelectedModel('');
+          setAssistModelsErr(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled) {
+          setAssistModelsLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assistAvailable]);
+
+  const assistCanAsk = assistModels.length > 0 && assistSelectedModel.trim() !== '' && !assistModelsLoading;
+
+  const runAssist = useCallback(async () => {
+    const term = termRef.current;
+    if (!term) {
+      setAssistErr('Terminal is not ready yet.');
+      return;
+    }
+    if (!assistCanAsk) {
+      setAssistErr('Pick a model from the list (models must load from the server).');
+      return;
+    }
+    setAssistBusy(true);
+    setAssistErr(null);
+    setAssistReply('');
+    setAssistClipped(false);
+    try {
+      const scrollback = collectScrollback(term, assistLines);
+      if (!scrollback.trim()) {
+        setAssistErr('No scrollback to send yet.');
+        setAssistBusy(false);
+        return;
+      }
+      const model = assistSelectedModel.trim();
+      const r = await apiPost('/api/v1/terminal-assist', {
+        user_prompt: assistPrompt.trim(),
+        scrollback,
+        max_lines: assistLines,
+        model,
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        reply?: string;
+        scrollback_clipped?: boolean;
+      };
+      if (!r.ok) {
+        setAssistErr(j.error || r.statusText || 'Request failed');
+        return;
+      }
+      setAssistReply((j.reply || '').trim());
+      setAssistClipped(!!j.scrollback_clipped);
+    } catch (e) {
+      setAssistErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAssistBusy(false);
+    }
+  }, [assistCanAsk, assistLines, assistPrompt, assistSelectedModel]);
 
   useEffect(() => {
     const el = ref.current;
@@ -60,8 +185,6 @@ export function TerminalModal({ record, sshUser, recordSession, onClose }: Props
     u.protocol = proto;
     const ws = new WebSocket(u.toString());
     ws.binaryType = 'arraybuffer';
-    wsRef.current = ws;
-
     ws.onopen = () => {
       fit.fit();
       const cols = term.cols;
@@ -137,13 +260,31 @@ export function TerminalModal({ record, sshUser, recordSession, onClose }: Props
       ws.close();
       term.dispose();
       termRef.current = null;
-      wsRef.current = null;
     };
-  }, [record, recordSession, sshUser]);
+  }, [assistAvailable, record, recordSession, sshUser]);
+
+  const connectOverlay = showConnectOverlay ? (
+    <div className="term-connect-overlay" aria-live="polite" aria-atomic="true">
+      <div className="term-spinner" role="status" />
+      <span className="sr-only">Connecting…</span>
+    </div>
+  ) : null;
+
+  const termArea = (
+    <div className="term-wrap">
+      <div className="term-xterm-host" ref={ref} />
+      {connectOverlay}
+    </div>
+  );
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <div className="modal" role="dialog" aria-busy={showConnectOverlay} aria-label={`Terminal: ${record.name}`}>
+      <div
+        className={`modal${assistAvailable ? ' modal-terminal-split' : ''}`}
+        role="dialog"
+        aria-busy={showConnectOverlay}
+        aria-label={`Terminal: ${record.name}`}
+      >
         <header>
           <strong>
             {record.name} ({record.primary_ip})
@@ -152,15 +293,78 @@ export function TerminalModal({ record, sshUser, recordSession, onClose }: Props
             Close
           </button>
         </header>
-        <div className="term-wrap">
-          <div className="term-xterm-host" ref={ref} />
-          {showConnectOverlay ? (
-            <div className="term-connect-overlay" aria-live="polite" aria-atomic="true">
-              <div className="term-spinner" role="status" />
-              <span className="sr-only">Connecting…</span>
-            </div>
-          ) : null}
-        </div>
+        {assistAvailable ? (
+          <div className="modal-terminal-body">
+            {termArea}
+            <aside className="term-assist-panel" aria-label="Terminal assistant">
+              <strong style={{ fontSize: '0.9rem' }}>Assistant</strong>
+              <small>
+                Sends the last lines of scrollback plus your question using a model from the provider list. Terminal data may
+                be sensitive—only send what you are allowed to share.
+              </small>
+              {assistModelsLoading ? (
+                <small style={{ color: '#9aa4b2' }}>Loading models…</small>
+              ) : null}
+              {assistModelsErr ? (
+                <small style={{ color: '#f5a623' }}>{assistModelsErr}</small>
+              ) : null}
+              {assistModels.length > 0 ? (
+                <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  Model
+                  <select value={assistSelectedModel} onChange={(e) => setAssistSelectedModel(e.target.value)}>
+                    {assistModels.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : !assistModelsLoading ? (
+                <small style={{ color: '#9aa4b2' }}>No models to choose from.</small>
+              ) : null}
+              <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Scrollback lines
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={assistLines}
+                  onChange={(e) => setAssistLines(Number(e.target.value) || defaultScrollbackLines)}
+                />
+              </label>
+              <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Your question (optional)
+                <textarea
+                  value={assistPrompt}
+                  onChange={(e) => setAssistPrompt(e.target.value)}
+                  placeholder="e.g. Why did this command fail?"
+                  rows={3}
+                />
+              </label>
+              <button
+                type="button"
+                className="primary"
+                disabled={assistBusy || !assistCanAsk}
+                onClick={() => void runAssist()}
+              >
+                {assistBusy ? 'Thinking…' : 'Ask assistant'}
+              </button>
+              {assistErr ? (
+                <p style={{ color: '#f66', margin: 0, fontSize: '0.85rem' }}>{assistErr}</p>
+              ) : null}
+              {assistClipped ? (
+                <small style={{ color: '#f5a623' }}>Some scrollback was clipped by server limits.</small>
+              ) : null}
+              {assistReply ? (
+                <div className="term-assist-reply" role="region" aria-label="Assistant reply">
+                  {assistReply}
+                </div>
+              ) : null}
+            </aside>
+          </div>
+        ) : (
+          termArea
+        )}
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -31,8 +32,13 @@ type Options struct {
 
 // Server is the honey web UI HTTP server.
 type Server struct {
-	opts Options
-	mux  *http.ServeMux
+	opts     Options
+	mux      *http.ServeMux
+	assistRL *slidingRL
+
+	assistModelsMu   sync.Mutex
+	assistModelIDs   []string
+	assistModelsExp  time.Time
 }
 
 // NewServer builds handlers with the given auth token.
@@ -43,7 +49,7 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.MaxUploadSize <= 0 {
 		opts.MaxUploadSize = 100 << 20
 	}
-	s := &Server{opts: opts, mux: http.NewServeMux()}
+	s := &Server{opts: opts, mux: http.NewServeMux(), assistRL: newSlidingRL()}
 	s.routes()
 	return s, nil
 }
@@ -67,6 +73,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/recordings/play", s.withAuth(s.handleRecordingsPlay))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
 	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
+	s.mux.HandleFunc("POST /api/v1/terminal-assist", s.withAuth(s.handleTerminalAssist))
+	s.mux.HandleFunc("GET /api/v1/terminal-assist/models", s.withAuth(s.handleTerminalAssistModels))
 	s.mux.HandleFunc("GET /ws/ssh", s.handleWebSSH)
 
 	static, err := fs.Sub(staticFS, "static")
@@ -126,6 +134,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 		"date":                        s.opts.Date,
 		"config_path":                 cfgPath,
 		"session_recording_available": strings.TrimSpace(s.opts.RecordDir) != "",
+		"terminal_assist_available":   terminalAssistConfigured(),
 	})
 }
 
