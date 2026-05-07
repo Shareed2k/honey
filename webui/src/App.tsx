@@ -8,13 +8,15 @@ import {
   execOnHosts,
   execOnHostsStream,
   fetchConfigSchema,
+  fetchRecordingsForHost,
   fetchRecipeContent,
   fetchRecipes,
   getToken,
   uploadFormDataWithProgress,
 } from './api';
-import type { ConfigUISchema, HostExecResultRow, RecipeListEntry } from './api';
+import type { ConfigUISchema, HostExecResultRow, RecipeListEntry, RecordingListEntry } from './api';
 import { ConfigBackendsSection } from './ConfigBackendsSection';
+import { SessionReplayModal } from './SessionReplayModal';
 import { TerminalModal } from './TerminalModal';
 
 type BackendRow = { kind: string; name: string; hint: string };
@@ -86,7 +88,7 @@ function CodeLoadingFallback({ code }: { code: string }) {
 export function App() {
   const [tab, setTab] = useState<Tab>('search');
   const [tokenMsg, setTokenMsg] = useState('');
-  const [meta, setMeta] = useState<{ version: string; config_path: string } | null>(null);
+  const [meta, setMeta] = useState<{ version: string; config_path: string; session_recording_available?: boolean } | null>(null);
   const [backends, setBackends] = useState<BackendRow[]>([]);
   const [backErr, setBackErr] = useState<string | null>(null);
 
@@ -107,6 +109,10 @@ export function App() {
   const [cfgSchemaErr, setCfgSchemaErr] = useState<string | null>(null);
 
   const [termRecord, setTermRecord] = useState<HostRecord | null>(null);
+  const [replayRecord, setReplayRecord] = useState<HostRecord | null>(null);
+  const [replayItems, setReplayItems] = useState<RecordingListEntry[]>([]);
+  const [replayErr, setReplayErr] = useState<string | null>(null);
+  const [recordWebSession, setRecordWebSession] = useState(false);
   const [sshUser, setSshUser] = useState(() => '');
 
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -172,9 +178,15 @@ export function App() {
       setMeta(null);
       return;
     }
-    const j = (await r.json()) as { version: string; config_path: string };
+    const j = (await r.json()) as { version: string; config_path: string; session_recording_available?: boolean };
     setMeta(j);
   }, []);
+
+  useEffect(() => {
+    if (!meta?.session_recording_available) {
+      setRecordWebSession(false);
+    }
+  }, [meta?.session_recording_available]);
 
   useEffect(() => {
     void loadMeta();
@@ -562,6 +574,25 @@ export function App() {
     void runUpload(rec, f, `/tmp/${f.name}`, sshUser.trim());
   };
 
+  const openReplayModal = async (rec: HostRecord) => {
+    setReplayErr(null);
+    setReplayRecord(rec);
+    setReplayItems([]);
+    try {
+      const items = await fetchRecordingsForHost({
+        provider: rec.provider,
+        host_name: rec.name,
+        host_ip: rec.primary_ip,
+      });
+      setReplayItems(items);
+      if (items.length === 0) {
+        setReplayErr('No recordings found for this host.');
+      }
+    } catch (e) {
+      setReplayErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const namedBackends = backends.filter((b) => b.name.trim() !== '');
 
   const providerSelectSize = Math.min(10, Math.max(3, providerIds.length || 1));
@@ -690,6 +721,30 @@ export function App() {
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem', alignItems: 'flex-start' }}>
             <input placeholder="Name contains" value={name} onChange={(e) => setName(e.target.value)} />
             <input placeholder="SSH user for terminal/upload" value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                paddingTop: '0.35rem',
+                fontSize: '0.85rem',
+                opacity: meta?.session_recording_available ? 1 : 0.65,
+                cursor: meta?.session_recording_available ? 'pointer' : 'not-allowed',
+              }}
+              title={
+                meta?.session_recording_available
+                  ? 'Record web SSH/K8s terminal sessions for new terminal windows.'
+                  : 'Recording unavailable: start honey web with --record-dir to enable.'
+              }
+            >
+              <input
+                type="checkbox"
+                checked={recordWebSession}
+                disabled={!meta?.session_recording_available}
+                onChange={(e) => setRecordWebSession(e.target.checked)}
+              />
+              Record terminal session
+            </label>
             <button type="button" className="primary" disabled={searching} onClick={() => void runSearch()}>
               {searching ? 'Searching…' : 'Search'}
             </button>
@@ -933,6 +988,14 @@ export function App() {
                       <button type="button" onClick={() => openUploadModal(rec)}>
                         Upload
                       </button>
+                      {meta?.session_recording_available ? (
+                        <>
+                          {' '}
+                          <button type="button" onClick={() => void openReplayModal(rec)}>
+                            Play
+                          </button>
+                        </>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -1142,7 +1205,29 @@ export function App() {
       ) : null}
 
       {termRecord ? (
-        <TerminalModal record={termRecord} sshUser={sshUser} onClose={() => setTermRecord(null)} />
+        <TerminalModal
+          record={termRecord}
+          sshUser={sshUser}
+          recordSession={recordWebSession && !!meta?.session_recording_available}
+          onClose={() => setTermRecord(null)}
+        />
+      ) : null}
+      {replayRecord ? (
+        replayItems.length > 0 ? (
+          <SessionReplayModal record={replayRecord} recordings={replayItems} onClose={() => setReplayRecord(null)} />
+        ) : (
+          <div className="modal-backdrop" role="presentation">
+            <div className="modal" role="dialog" style={{ height: 'auto', width: 'min(520px, 94vw)' }}>
+              <header>
+                <strong>Session replay</strong>
+                <button type="button" onClick={() => setReplayRecord(null)}>
+                  Close
+                </button>
+              </header>
+              <p style={{ color: replayErr ? '#f66' : 'inherit' }}>{replayErr || 'No recordings found.'}</p>
+            </div>
+          </div>
+        )
       ) : null}
       {uploadModal}
     </main>

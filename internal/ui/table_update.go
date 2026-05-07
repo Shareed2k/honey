@@ -103,6 +103,11 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		m.clearParallelMarks()
 		return m, nil
+	case "R":
+		if m.recordDir != "" {
+			m.recordEnabled = !m.recordEnabled
+		}
+		return m, nil
 	case "enter":
 		m.lastAction = actSSH
 		return m, tea.Quit

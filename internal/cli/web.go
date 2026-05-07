@@ -16,6 +16,7 @@ import (
 var (
 	webListen string
 	webConfig string
+	webRecord string
 )
 
 var webCmd = &cobra.Command{
@@ -28,6 +29,7 @@ var webCmd = &cobra.Command{
 func init() {
 	webCmd.Flags().StringVar(&webListen, "listen", "127.0.0.1:8765", "Listen address (host:port); must be loopback for safe default")
 	webCmd.Flags().StringVar(&webConfig, "config", "", "Path to honey YAML (optional; same as honey search)")
+	webCmd.Flags().StringVar(&webRecord, "record-dir", "", "Directory to store web SSH/K8s terminal session recordings")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -43,6 +45,7 @@ func runWeb(_ *cobra.Command, _ []string) error {
 		ListenAddr: webListen,
 		Token:      token,
 		ConfigPath: webConfig,
+		RecordDir:  webRecord,
 		Version:    BuildVersion(),
 		Commit:     BuildCommit(),
 		Date:       BuildDate(),

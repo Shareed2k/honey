@@ -624,7 +624,7 @@ func parseLocalForward(spec string) (localPort, remoteHost, remotePort string, e
 }
 
 // runSSHInteractive opens a login shell over crypto/ssh (respects ~/.ssh/config).
-func runSSHInteractive(user string, r hosts.Record) error {
+func runSSHInteractive(user string, r hosts.Record, recorder *SessionRecorder) error {
 	host := r.PrimaryIP
 	if strings.TrimSpace(host) == "" {
 		return fmt.Errorf("no IP for selected host")
@@ -635,10 +635,10 @@ func runSSHInteractive(user string, r hosts.Record) error {
 	}
 	defer cleanup()
 
-	return runSSHTerminal(client, r)
+	return runSSHTerminal(client, r, recorder)
 }
 
-func runSSHTerminal(client *ssh.Client, r hosts.Record) error {
+func runSSHTerminal(client *ssh.Client, r hosts.Record, recorder *SessionRecorder) error {
 	fd := int(os.Stdin.Fd())
 	if !termIsTerminal(fd) {
 		return fmt.Errorf("stdin is not a terminal")
@@ -677,23 +677,34 @@ func runSSHTerminal(client *ssh.Client, r hosts.Record) error {
 	if err := sess.RequestPty("xterm-256color", h, w, modes); err != nil {
 		return err
 	}
-	sess.Stdin = os.Stdin
-	sess.Stdout = os.Stdout
-	sess.Stderr = os.Stderr
+	stdin := WrapRecordingReader(os.Stdin, recorder, "stdin")
+	stdout := WrapRecordingWriter(os.Stdout, recorder, "stdout")
+	stderr := WrapRecordingWriter(os.Stderr, recorder, "stderr")
+	sess.Stdin = stdin
+	sess.Stdout = stdout
+	sess.Stderr = stderr
 
-	stopResize := startPTYResizeForwarding(fd, sess)
+	stopResize := startPTYResizeForwarding(fd, sess, func(cols, rows int) {
+		recorder.RecordResize(cols, rows)
+	})
 	defer stopResize()
 
 	if shellCmd != "" {
 		if err := sess.Start(shellCmd); err != nil {
+			recorder.RecordError(err)
 			return err
 		}
 	} else {
 		if err := sess.Shell(); err != nil {
+			recorder.RecordError(err)
 			return err
 		}
 	}
-	return sess.Wait()
+	waitErr := sess.Wait()
+	if waitErr != nil {
+		recorder.RecordError(waitErr)
+	}
+	return waitErr
 }
 
 // runTunnelGo listens on 127.0.0.1:<localPort> and forwards to remoteHost:remotePort via the SSH server (host).

@@ -22,6 +22,7 @@ type Options struct {
 	ListenAddr    string // e.g. 127.0.0.1:8765
 	Token         string
 	ConfigPath    string // optional explicit --config
+	RecordDir     string // optional session recording output dir
 	Version       string
 	Commit        string
 	Date          string
@@ -62,6 +63,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.withAuth(s.handleUpload))
 	s.mux.HandleFunc("GET /api/v1/recipes", s.withAuth(s.handleRecipesList))
 	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
+	s.mux.HandleFunc("GET /api/v1/recordings", s.withAuth(s.handleRecordingsList))
+	s.mux.HandleFunc("POST /api/v1/recordings/play", s.withAuth(s.handleRecordingsPlay))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
 	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
 	s.mux.HandleFunc("GET /ws/ssh", s.handleWebSSH)
@@ -117,11 +120,12 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"version":     s.opts.Version,
-		"commit":      s.opts.Commit,
-		"date":        s.opts.Date,
-		"config_path": cfgPath,
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"version":                     s.opts.Version,
+		"commit":                      s.opts.Commit,
+		"date":                        s.opts.Date,
+		"config_path":                 cfgPath,
+		"session_recording_available": strings.TrimSpace(s.opts.RecordDir) != "",
 	})
 }
 

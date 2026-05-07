@@ -63,6 +63,27 @@ export type HostExecResultRow = {
 };
 
 export type RecipeListEntry = { name: string; path: string };
+export type RecordingListEntry = {
+  file_name: string;
+  modified_unix_ms: number;
+  size_bytes: number;
+  trigger?: string;
+  mode?: string;
+  provider?: string;
+  host_name?: string;
+  host_ip?: string;
+  user?: string;
+};
+
+export type RecordingEvent = {
+  time_ms: number;
+  type: string;
+  direction?: string;
+  data_b64?: string;
+  cols?: number;
+  rows?: number;
+  message?: string;
+};
 
 export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer';
 
@@ -119,6 +140,33 @@ export async function fetchRecipeContent(path: string): Promise<string> {
     throw new Error(j.error || r.statusText);
   }
   return j.content ?? '';
+}
+
+export async function fetchRecordingsForHost(params: {
+  provider: string;
+  host_name: string;
+  host_ip: string;
+}): Promise<RecordingListEntry[]> {
+  const q = new URLSearchParams({
+    provider: params.provider,
+    host_name: params.host_name,
+    host_ip: params.host_ip,
+  });
+  const r = await apiGet(`/api/v1/recordings?${q.toString()}`);
+  const j = (await r.json().catch(() => ({}))) as { items?: RecordingListEntry[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.items || [];
+}
+
+export async function fetchRecordingEvents(fileName: string): Promise<RecordingEvent[]> {
+  const r = await apiPost('/api/v1/recordings/play', { file_name: fileName });
+  const j = (await r.json().catch(() => ({}))) as { events?: RecordingEvent[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.events || [];
 }
 
 export async function execOnHosts(body: {

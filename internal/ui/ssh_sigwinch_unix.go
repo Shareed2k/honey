@@ -13,7 +13,7 @@ import (
 )
 
 // startPTYResizeForwarding sends SIGWINCH-driven size updates to the remote PTY.
-func startPTYResizeForwarding(fd int, sess *ssh.Session) (stop func()) {
+func startPTYResizeForwarding(fd int, sess *ssh.Session, onResize func(cols, rows int)) (stop func()) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGWINCH)
 	done := make(chan struct{})
@@ -30,6 +30,9 @@ func startPTYResizeForwarding(fd int, sess *ssh.Session) (stop func()) {
 					continue
 				}
 				_ = sess.WindowChange(h, w)
+				if onResize != nil {
+					onResize(w, h)
+				}
 			}
 		}
 	}()

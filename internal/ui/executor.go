@@ -29,7 +29,7 @@ func (e defaultSSHExecutor) Dial(user string, r hosts.Record) (HostClient, error
 }
 
 func (e defaultSSHExecutor) RunInteractive(user string, r hosts.Record) error {
-	return runSSHInteractive(user, r)
+	return runSSHInteractive(user, r, nil)
 }
 
 func (e defaultSSHExecutor) RunTunnel(user string, r hosts.Record, localFwd string) error {

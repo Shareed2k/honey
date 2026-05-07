@@ -13,10 +13,11 @@ type HostRecord = {
 type Props = {
   record: HostRecord;
   sshUser: string;
+  recordSession: boolean;
   onClose: () => void;
 };
 
-export function TerminalModal({ record, sshUser, onClose }: Props) {
+export function TerminalModal({ record, sshUser, recordSession, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -71,6 +72,7 @@ export function TerminalModal({ record, sshUser, onClose }: Props) {
           record,
           cols,
           rows,
+          record_session: recordSession,
         }),
       );
       requestAnimationFrame(() => {
@@ -137,7 +139,7 @@ export function TerminalModal({ record, sshUser, onClose }: Props) {
       termRef.current = null;
       wsRef.current = null;
     };
-  }, [record, sshUser]);
+  }, [record, recordSession, sshUser]);
 
   return (
     <div className="modal-backdrop" role="presentation">

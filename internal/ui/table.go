@@ -41,6 +41,11 @@ type cueRecipeDoneMsg struct {
 	body  string
 }
 
+type RunTableOptions struct {
+	RecordDir     string
+	RecordEnabled bool
+}
+
 type model struct {
 	recs    []hosts.Record
 	tbl     table.Model
@@ -84,6 +89,9 @@ type model struct {
 	tunnelRemoteHost textinput.Model
 	tunnelRemotePort textinput.Model
 	tunnelFocusIndex int
+
+	recordDir     string
+	recordEnabled bool
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -92,13 +100,13 @@ var baseStyle = lipgloss.NewStyle().
 
 // RunTable shows an interactive table and optionally execs ssh.
 // After SSH/Tunnel disconnects, it returns to the UI.
-func RunTable(records []hosts.Record, sshUser string) error {
+func RunTable(records []hosts.Record, sshUser string, opts RunTableOptions) error {
 	if len(records) == 0 {
 		fmt.Fprintln(os.Stderr, "no matching hosts")
 		return nil
 	}
 
-	m := newModel(records, sshUser)
+	m := newModel(records, sshUser, opts)
 
 	for {
 		p := tea.NewProgram(m)
@@ -127,7 +135,7 @@ func RunTable(records []hosts.Record, sshUser string) error {
 
 		switch lastAction {
 		case actSSH:
-			err = runSSH(fm.sshUser, r)
+			err = runSSHWithRecording(fm.sshUser, r, fm.recordingOptions("tui", "interactive"))
 			if err != nil {
 				// Avoid "ExitError" halting the TUI when users just type 'exit 1' or Ctrl+C
 				_, isSSHExitErr := err.(*ssh.ExitError)
@@ -180,7 +188,7 @@ func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{})
 	return rows
 }
 
-func newModel(records []hosts.Record, sshUser string) *model {
+func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *model {
 	sel := make(map[int]struct{})
 	vis := make([]int, len(records))
 	for i := range records {
@@ -245,6 +253,8 @@ func newModel(records []hosts.Record, sshUser string) *model {
 		tunnelRemoteHost: tunHost,
 		tunnelRemotePort: tunRemote,
 		tunnelFocusIndex: 0,
+		recordDir:        strings.TrimSpace(opts.RecordDir),
+		recordEnabled:    strings.TrimSpace(opts.RecordDir) != "" && opts.RecordEnabled,
 	}
 }
 
@@ -717,7 +727,15 @@ func (m *model) View() tea.View {
 	case "execresults":
 		box = m.viewExecResults(helpStyle)
 	default:
-		help := helpStyle.Render("enter: ssh (k8s: exec)   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks   q: quit")
+		recHint := ""
+		if m.recordDir != "" {
+			recState := "off"
+			if m.recordEnabled {
+				recState = "on"
+			}
+			recHint = "   R: record " + recState
+		}
+		help := helpStyle.Render("enter: ssh (k8s: exec)   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
@@ -1192,12 +1210,45 @@ func (m *model) clearParallelMarks() {
 	m.refreshTableRows(m.tbl.Cursor())
 }
 
-func runSSH(user string, r hosts.Record) error {
+func (m *model) recordingOptions(trigger, mode string) *SessionRecorderOptions {
+	if !m.recordEnabled || strings.TrimSpace(m.recordDir) == "" {
+		return nil
+	}
+	row := m.tbl.Cursor()
+	if row < 0 || row >= len(m.visible) {
+		return nil
+	}
+	realIdx := m.visible[row]
+	r := m.recs[realIdx]
+	return &SessionRecorderOptions{
+		Dir:      m.recordDir,
+		Trigger:  trigger,
+		Mode:     mode,
+		Provider: r.Provider,
+		HostName: r.Name,
+		HostIP:   r.PrimaryIP,
+		User:     m.sshUser,
+	}
+}
+
+func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorderOptions) error {
 	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") {
 		return fmt.Errorf("no IP for selected host")
 	}
-	executor := GetExecutor(r)
-	return executor.RunInteractive(user, r)
+	var recorder *SessionRecorder
+	if recordOpts != nil {
+		rec, err := NewSessionRecorder(*recordOpts)
+		if err == nil {
+			recorder = rec
+		}
+	}
+	if recorder != nil {
+		defer recorder.Close()
+	}
+	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
+		return runK8sInteractiveWithRecorder(user, r, recorder)
+	}
+	return runSSHInteractive(user, r, recorder)
 }
 
 func runTunnel(user string, r hosts.Record, localFwd string) error {

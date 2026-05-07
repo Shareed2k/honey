@@ -4,6 +4,6 @@ package ui
 
 import "golang.org/x/crypto/ssh"
 
-func startPTYResizeForwarding(_ int, _ *ssh.Session) (stop func()) {
+func startPTYResizeForwarding(_ int, _ *ssh.Session, _ func(cols, rows int)) (stop func()) {
 	return func() {}
 }

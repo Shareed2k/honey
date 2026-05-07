@@ -221,23 +221,33 @@ func (k k8sPodExecutor) Dial(_ string, r hosts.Record) (HostClient, error) {
 }
 
 func (k k8sPodExecutor) RunInteractive(user string, r hosts.Record) error {
-	client, err := k.Dial(user, r)
+	return runK8sInteractiveWithRecorder(user, r, nil)
+}
+
+func runK8sInteractiveWithRecorder(user string, r hosts.Record, recorder *SessionRecorder) error {
+	client, err := k8sPodExecutor{}.Dial(user, r)
 	if err != nil {
+		recorder.RecordError(err)
 		return err
 	}
 	defer func() { _ = client.Close() }()
 
 	podClient, ok := client.(*k8sNativeClient)
 	if !ok {
-		return fmt.Errorf("unexpected client type %T", client)
+		err := fmt.Errorf("unexpected client type %T", client)
+		recorder.RecordError(err)
+		return err
 	}
 
 	fd := int(os.Stdin.Fd())
 	if !termIsTerminal(fd) {
-		return fmt.Errorf("stdin is not a terminal")
+		err := fmt.Errorf("stdin is not a terminal")
+		recorder.RecordError(err)
+		return err
 	}
 	oldState, err := termMakeRaw(fd)
 	if err != nil {
+		recorder.RecordError(err)
 		return err
 	}
 	defer func() { _ = termRestore(fd, oldState) }()
@@ -247,5 +257,12 @@ func (k k8sPodExecutor) RunInteractive(user string, r hosts.Record) error {
 	cmd, _ := cuetry.ShellExportPrefixForRemote(env, "sh")
 
 	// Start standard sh for interactive session
-	return podClient.execInPod(context.Background(), []string{"sh", "-c", cmd}, os.Stdin, os.Stdout, os.Stderr, true, nil)
+	stdin := WrapRecordingReader(os.Stdin, recorder, "stdin")
+	stdout := WrapRecordingWriter(os.Stdout, recorder, "stdout")
+	stderr := WrapRecordingWriter(os.Stderr, recorder, "stderr")
+	execErr := podClient.execInPod(context.Background(), []string{"sh", "-c", cmd}, stdin, stdout, stderr, true, nil)
+	if execErr != nil {
+		recorder.RecordError(execErr)
+	}
+	return execErr
 }
