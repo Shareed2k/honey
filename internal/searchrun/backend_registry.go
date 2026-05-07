@@ -26,6 +26,7 @@ func registerBackendSlice(kind string, getter func(cfg *config.File) reflect.Val
 	backendSliceByKind[kind] = getter
 }
 
+// RegisteredBackendKinds returns registered backend YAML kind names, sorted.
 func RegisteredBackendKinds() []string {
 	kinds := make([]string, 0, len(backendSliceByKind))
 	for kind := range backendSliceByKind {
@@ -51,4 +52,3 @@ func GetBackendSliceByKind(cfg *config.File, kind string) (reflect.Value, error)
 	}
 	return slice, nil
 }
-

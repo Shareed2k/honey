@@ -338,7 +338,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 
 	if !body.Execute {
 		var buf bytes.Buffer
-		runErr := ui.RunCueRecipeSteps(&buf, recipe, recipeDir, jobs, user, false, cliEnv)
+		runErr := ui.RunCueRecipeSteps(&buf, recipe, recipeDir, jobs, user, false, cliEnv, nil)
 		var rec *ui.SessionRecorder
 		if wantRec {
 			var err error

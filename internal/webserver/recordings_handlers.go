@@ -1,22 +1,16 @@
 package webserver
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/shareed2k/honey/internal/safepath"
-)
-
-const (
-	maxRecordingPlayBytes  = 8 << 20
-	maxRecordingPlayEvents = 30000
+	"github.com/shareed2k/honey/internal/recordings"
 )
 
 type recordingListEntry struct {
@@ -39,20 +33,9 @@ type recordingsPlayRequest struct {
 	FileName string `json:"file_name"`
 }
 
-type recordingEvent struct {
-	TimeMS    int64           `json:"time_ms"`
-	Type      string          `json:"type"`
-	Direction string          `json:"direction,omitempty"`
-	DataB64   string          `json:"data_b64,omitempty"`
-	Cols      int             `json:"cols,omitempty"`
-	Rows      int             `json:"rows,omitempty"`
-	Message   string          `json:"message,omitempty"`
-	Result    json.RawMessage `json:"result,omitempty"`
-}
-
 type recordingsPlayResponse struct {
-	FileName string           `json:"file_name"`
-	Events   []recordingEvent `json:"events"`
+	FileName string             `json:"file_name"`
+	Events   []recordings.Event `json:"events"`
 }
 
 func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +53,14 @@ func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 	hostName := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("host_name")))
 	hostIP := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("host_ip")))
 
-	entries, err := os.ReadDir(recordDir)
+	root, err := os.OpenRoot(recordDir)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	defer root.Close()
+
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -84,8 +74,7 @@ func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(name, ".hrec.jsonl") {
 			continue
 		}
-		fullPath := filepath.Join(recordDir, name)
-		st, statErr := os.Stat(fullPath)
+		st, statErr := root.Stat(name)
 		if statErr != nil {
 			continue
 		}
@@ -94,7 +83,7 @@ func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 			ModifiedUnixMS: st.ModTime().UnixMilli(),
 			SizeBytes:      st.Size(),
 		}
-		fillRecordingMeta(&entry, readRecordingOpenMessage(fullPath))
+		fillRecordingMeta(&entry, recordings.ReadOpenMessage(root, name))
 		if provider != "" && strings.ToLower(entry.Provider) != provider {
 			continue
 		}
@@ -129,68 +118,20 @@ func (s *Server) handleRecordingsPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(body.FileName)
-	if name == "" || strings.Contains(name, "/") || strings.Contains(name, `\`) || !strings.HasSuffix(name, ".hrec.jsonl") {
-		httpError(w, fmt.Errorf("invalid recording file name"), http.StatusBadRequest)
-		return
-	}
-	fullPath := filepath.Join(recordDir, name)
-	absPath, err := filepath.Abs(filepath.Clean(fullPath))
-	if err != nil {
+	if err := recordings.ValidateBaseName(name); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	raw, err := safepath.ReadFile(absPath)
+	events, err := recordings.LoadEvents(recordDir, name)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
-	}
-	if len(raw) > maxRecordingPlayBytes {
-		httpError(w, fmt.Errorf("recording file too large (max %d bytes)", maxRecordingPlayBytes), http.StatusBadRequest)
-		return
-	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	events := make([]recordingEvent, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var evt recordingEvent
-		if err := json.Unmarshal([]byte(line), &evt); err != nil {
-			httpError(w, fmt.Errorf("invalid recording event JSON"), http.StatusBadRequest)
-			return
-		}
-		events = append(events, evt)
-		if len(events) > maxRecordingPlayEvents {
-			httpError(w, fmt.Errorf("too many recording events (max %d)", maxRecordingPlayEvents), http.StatusBadRequest)
-			return
-		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(recordingsPlayResponse{
 		FileName: name,
 		Events:   events,
 	})
-}
-
-func readRecordingOpenMessage(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	if !sc.Scan() {
-		return ""
-	}
-	var evt recordingEvent
-	if err := json.Unmarshal(sc.Bytes(), &evt); err != nil {
-		return ""
-	}
-	if evt.Type != "open" {
-		return ""
-	}
-	return evt.Message
 }
 
 func fillRecordingMeta(dst *recordingListEntry, msg string) {

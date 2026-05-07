@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -183,29 +184,50 @@ func streamCueStepScript(recipe cuetry.Recipe, recipeDir string, step cuetry.Rec
 
 // RunCueRecipeSteps executes a CUE recipe over a slice of target records without streaming.
 // cliEnv is merged into each command/script step's remote env (overrides recipe env on duplicate keys); nil is treated as empty.
-func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string) error {
+// rec, when non-nil, records a batch .hrec.jsonl (plan on dry-run, result rows on execute). Caller must Close(rec).
+func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, rec *SessionRecorder) error {
 	if len(records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
 
 	if !execute {
+		outWrite := out
+		var capture bytes.Buffer
+		if rec != nil {
+			outWrite = io.MultiWriter(out, &capture)
+		}
 		for i, step := range recipe.Steps {
-			if err := runCueRecipeStep(out, recipe, recipeDir, records, false, cliEnv, i, step); err != nil {
+			if err := runCueRecipeStep(outWrite, recipe, recipeDir, records, false, cliEnv, i, step); err != nil {
+				if rec != nil {
+					rec.RecordError(err)
+				}
 				return err
 			}
 		}
-		_, _ = fmt.Fprintln(out, "\nDry-run only. Append ! to the path in the TUI to execute, or use honey cue-exec --execute.")
+		_, _ = fmt.Fprintln(outWrite, "\nDry-run only. Append ! to the path in the TUI to execute, or use honey cue-exec --execute.")
+		if rec != nil {
+			plan := capture.String()
+			if strings.TrimSpace(plan) == "" {
+				rec.RecordData("plan", []byte("(empty plan)"))
+			} else {
+				rec.RecordData("plan", []byte(plan))
+			}
+		}
 		return nil
 	}
 
 	// Second execution path: actual execution via streaming logic
 	ch := make(chan HostExecResult)
+	errCh := make(chan error, 1)
 	go func() {
 		defer close(ch)
-		_ = StreamCueRecipeSteps(recipe, recipeDir, records, sshUser, cliEnv, ch)
+		errCh <- StreamCueRecipeSteps(recipe, recipeDir, records, sshUser, cliEnv, ch)
 	}()
 
 	for res := range ch {
+		if rec != nil {
+			rec.RecordHostExecResult(res)
+		}
 		status := "ok"
 		if !res.Success {
 			status = "FAILED"
@@ -219,6 +241,13 @@ func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, re
 		if strings.TrimSpace(res.Output) != "" {
 			_, _ = fmt.Fprintln(out, strings.TrimSpace(res.Output))
 		}
+	}
+	streamErr := <-errCh
+	if streamErr != nil {
+		if rec != nil {
+			rec.RecordError(streamErr)
+		}
+		return streamErr
 	}
 	return nil
 }

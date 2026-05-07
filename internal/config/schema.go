@@ -5,11 +5,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // SchemaFieldType describes supported primitive config field kinds.
 type SchemaFieldType string
 
+// Primitive field kinds for defaults/backends schema and JSON Schema "type".
 const (
 	SchemaFieldTypeString  SchemaFieldType = "string"
 	SchemaFieldTypeBoolean SchemaFieldType = "boolean"
@@ -150,7 +154,7 @@ func backendSchemasFromStruct(t reflect.Type) (map[string]BackendSchema, []strin
 		opts := parseHoneyTag(f.Tag.Get("honey"))
 		label := opts["label"]
 		if strings.TrimSpace(label) == "" {
-			label = strings.Title(kind)
+			label = cases.Title(language.English).String(kind)
 		}
 		out[kind] = BackendSchema{
 			Label:  label,
@@ -302,4 +306,3 @@ func firstNonEmpty(v string, fallback string) string {
 	}
 	return v
 }
-

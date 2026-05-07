@@ -56,11 +56,11 @@ func hostOnly(hostPort string) string {
 }
 
 type wsHello struct {
-	SSHUser string       `json:"ssh_user"`
-	Record  hosts.Record `json:"record"`
-	Cols    int          `json:"cols"`
-	Rows    int          `json:"rows"`
-	RecordSession bool   `json:"record_session"`
+	SSHUser       string       `json:"ssh_user"`
+	Record        hosts.Record `json:"record"`
+	Cols          int          `json:"cols"`
+	Rows          int          `json:"rows"`
+	RecordSession bool         `json:"record_session"`
 }
 
 type wsResize struct {

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -40,7 +41,10 @@ export assignments before the shell command or sh <script> on the remote;
 step keys override defaults. Not allowed on put/get steps.
 
 Repeat -e/--env KEY=value to set remote variables from the CLI; they override
-recipe env on duplicate keys (command and script steps only).`,
+recipe env on duplicate keys (command and script steps only).
+
+With --record-dir (same flag as honey search), writes one batch .hrec.jsonl per
+invocation: dry-run records the plan text; --execute records each step result.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: runCueExec,
 	}
@@ -98,5 +102,18 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return ui.RunCueRecipeSteps(cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv)
+	var rec *ui.SessionRecorder
+	if d := strings.TrimSpace(flagRecordDir); d != "" && len(records) > 0 {
+		trigger := "cli-cue-exec-dry"
+		if flagCueExecExecute {
+			trigger = "cli-cue-exec"
+		}
+		var err error
+		rec, err = ui.NewBatchSessionRecorder(d, trigger, sshUser, len(records))
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rec.Close() }()
+	}
+	return ui.RunCueRecipeSteps(cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, rec)
 }

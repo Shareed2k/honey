@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"strings"
+
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/shareed2k/honey/internal/recordings"
 )
 
 func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
@@ -114,6 +118,9 @@ func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 
 	m.ti.SetWidth(msg.Width - 8)
 	m.clampExecScroll()
+	if m.mode == "replaypick" {
+		m.clampReplayPickScroll()
+	}
 	return m, nil
 }
 
@@ -135,6 +142,23 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.recordDir != "" {
 			m.recordEnabled = !m.recordEnabled
 		}
+		return m, nil
+	case "p":
+		if strings.TrimSpace(m.recordDir) == "" {
+			return m, nil
+		}
+		names, err := recordings.ListHrecBasenames(m.recordDir)
+		if err != nil {
+			m.replayListErr = err.Error()
+			m.replayFiles = nil
+		} else {
+			m.replayListErr = ""
+			m.replayFiles = names
+		}
+		m.replayCursor = 0
+		m.replayPickScroll = 0
+		m.mode = "replaypick"
+		m.clampReplayPickScroll()
 		return m, nil
 	case "enter":
 		m.lastAction = actSSH
@@ -173,4 +197,52 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.tbl, cmd = m.tbl.Update(msg)
 	return m, cmd
+}
+
+func (m *model) updateReplayPickKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.mode = "table"
+		m.replayFiles = nil
+		m.replayListErr = ""
+		m.replayPickScroll = 0
+		return m, nil
+	case "enter":
+		if len(m.replayFiles) == 0 {
+			return m, nil
+		}
+		m.replayFileName = m.replayFiles[m.replayCursor]
+		m.lastAction = actReplay
+		m.mode = "table"
+		m.replayFiles = nil
+		m.replayListErr = ""
+		m.replayPickScroll = 0
+		return m, tea.Quit
+	case "up", "k":
+		if m.replayCursor > 0 {
+			m.replayCursor--
+		}
+		m.clampReplayPickScroll()
+		return m, nil
+	case "down", "j":
+		if m.replayCursor < len(m.replayFiles)-1 {
+			m.replayCursor++
+		}
+		m.clampReplayPickScroll()
+		return m, nil
+	case "pgup", "b":
+		vis := m.replayPickVisibleLines()
+		m.replayPickScroll -= vis
+		if m.replayPickScroll < 0 {
+			m.replayPickScroll = 0
+		}
+		m.clampReplayPickScroll()
+		return m, nil
+	case "pgdown", "f":
+		vis := m.replayPickVisibleLines()
+		m.replayPickScroll += vis
+		m.clampReplayPickScroll()
+		return m, nil
+	}
+	return m, nil
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// SessionRecorderOptions configures filename segments and metadata for a new session recording.
 type SessionRecorderOptions struct {
 	Dir      string
 	Trigger  string
@@ -24,6 +25,7 @@ type SessionRecorderOptions struct {
 	HostSegment string
 }
 
+// SessionRecorder appends JSONL events to a single .hrec.jsonl file (TTY data, resize, errors, close).
 type SessionRecorder struct {
 	mu    sync.Mutex
 	file  *os.File
@@ -43,6 +45,7 @@ type sessionRecordEvent struct {
 	Result    json.RawMessage `json:"result,omitempty"`
 }
 
+// NewSessionRecorder creates a recorder writing to opts.Dir with a timestamped filename.
 func NewSessionRecorder(opts SessionRecorderOptions) (*SessionRecorder, error) {
 	dir := strings.TrimSpace(opts.Dir)
 	if dir == "" {
@@ -83,11 +86,17 @@ func NewSessionRecorder(opts SessionRecorderOptions) (*SessionRecorder, error) {
 		provider,
 		safeHost,
 	)
-	path := filepath.Join(dir, fileName)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
+	defer root.Close()
+
+	f, err := root.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, fileName)
 
 	r := &SessionRecorder{
 		file:  f,
@@ -120,6 +129,7 @@ func NewBatchSessionRecorder(dir, trigger, user string, jobCount int) (*SessionR
 	})
 }
 
+// Path returns the absolute path of the recording file, or empty if r is nil.
 func (r *SessionRecorder) Path() string {
 	if r == nil {
 		return ""
@@ -127,6 +137,7 @@ func (r *SessionRecorder) Path() string {
 	return r.path
 }
 
+// RecordHostExecResult writes one structured "result" event (parallel exec / batch output).
 func (r *SessionRecorder) RecordHostExecResult(res HostExecResult) {
 	if r == nil {
 		return
@@ -141,6 +152,7 @@ func (r *SessionRecorder) RecordHostExecResult(res HostExecResult) {
 	})
 }
 
+// RecordData writes a base64-encoded payload for the given direction (e.g. in/out).
 func (r *SessionRecorder) RecordData(direction string, payload []byte) {
 	if r == nil || len(payload) == 0 {
 		return
@@ -152,6 +164,7 @@ func (r *SessionRecorder) RecordData(direction string, payload []byte) {
 	})
 }
 
+// RecordResize records a terminal resize event.
 func (r *SessionRecorder) RecordResize(cols, rows int) {
 	if r == nil {
 		return
@@ -163,6 +176,7 @@ func (r *SessionRecorder) RecordResize(cols, rows int) {
 	})
 }
 
+// RecordError records a non-fatal error message on the session.
 func (r *SessionRecorder) RecordError(err error) {
 	if r == nil || err == nil {
 		return
@@ -173,6 +187,7 @@ func (r *SessionRecorder) RecordError(err error) {
 	})
 }
 
+// Close writes a "close" event and closes the underlying file.
 func (r *SessionRecorder) Close() error {
 	if r == nil {
 		return nil
@@ -189,11 +204,11 @@ func (r *SessionRecorder) Close() error {
 }
 
 func (r *SessionRecorder) recordEvent(evt sessionRecordEvent) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r == nil || r.file == nil {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	evt.TimeMS = time.Since(r.start).Milliseconds()
 	_ = r.enc.Encode(evt)
 }
@@ -226,6 +241,7 @@ func (w *recordingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// WrapRecordingReader returns a Reader that tees reads into recorder when non-nil.
 func WrapRecordingReader(inner io.Reader, recorder *SessionRecorder, direction string) io.Reader {
 	if recorder == nil || inner == nil {
 		return inner
@@ -233,6 +249,7 @@ func WrapRecordingReader(inner io.Reader, recorder *SessionRecorder, direction s
 	return &recordingReader{inner: inner, recorder: recorder, direction: direction}
 }
 
+// WrapRecordingWriter returns a Writer that tees writes into recorder when non-nil.
 func WrapRecordingWriter(inner io.Writer, recorder *SessionRecorder, direction string) io.Writer {
 	if recorder == nil || inner == nil {
 		return inner

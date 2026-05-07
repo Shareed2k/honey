@@ -740,7 +740,7 @@ export function App() {
         <section>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem', alignItems: 'flex-start' }}>
             <input placeholder="Name contains" value={name} onChange={(e) => setName(e.target.value)} />
-            <input placeholder="SSH user for terminal/upload" value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+            <input placeholder="SSH user" value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
             <label
               style={{
                 display: 'inline-flex',
