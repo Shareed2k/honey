@@ -13,10 +13,19 @@ import {
   fetchRecipeContent,
   fetchRecipes,
   getToken,
+  startAgentTransferStream,
   recipeAssist,
   uploadFormDataWithProgress,
 } from './api';
-import type { ConfigUISchema, HostExecResultRow, RecipeListEntry, RecordingListEntry } from './api';
+import type {
+  AgentTransferBackendRef,
+  AgentTransferCloud,
+  AgentTransferEvent,
+  ConfigUISchema,
+  HostExecResultRow,
+  RecipeListEntry,
+  RecordingListEntry,
+} from './api';
 import { ConfigBackendsSection } from './ConfigBackendsSection';
 import { SessionReplayModal } from './SessionReplayModal';
 import { TerminalModal } from './TerminalModal';
@@ -33,7 +42,7 @@ type HostRecord = {
   meta?: Record<string, string>;
 };
 
-type Tab = 'search' | 'backends' | 'config';
+type Tab = 'search' | 'files' | 'backends' | 'config';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const RawYamlEditor = lazy(async () => import('./RawYamlEditor').then((m) => ({ default: m.RawYamlEditor })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
@@ -163,6 +172,25 @@ export function App() {
   const [recipeAssistErr, setRecipeAssistErr] = useState<string | null>(null);
   const [recipeAssistReply, setRecipeAssistReply] = useState('');
 
+  const [transferSourceHostKey, setTransferSourceHostKey] = useState('');
+  const [transferDestHostKey, setTransferDestHostKey] = useState('');
+  const [transferSourcePath, setTransferSourcePath] = useState('/tmp/source.bin');
+  const [transferDestPath, setTransferDestPath] = useState('/tmp/dest.bin');
+  const [transferCloud, setTransferCloud] = useState<AgentTransferCloud>({
+    provider: 's3',
+    bucket: '',
+    prefix: 'honey-transfer',
+    object: '',
+    region: '',
+    endpoint: '',
+  });
+  const [transferBackendRefValue, setTransferBackendRefValue] = useState('');
+  const [transferKeepObject, setTransferKeepObject] = useState(false);
+  const [transferMaxRetries, setTransferMaxRetries] = useState(2);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferErr, setTransferErr] = useState<string | null>(null);
+  const [transferEvents, setTransferEvents] = useState<AgentTransferEvent[]>([]);
+
   useEffect(() => {
     if (!getToken()) {
       setTokenMsg('Add ?token=… to the URL (printed when you start honey web).');
@@ -243,7 +271,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (tab === 'backends' || tab === 'search') {
+    if (tab === 'backends' || tab === 'search' || tab === 'files') {
       void loadBackends();
     }
   }, [tab, loadBackends]);
@@ -318,6 +346,45 @@ export function App() {
     () => records.filter((r) => selectedKeys[recordKey(r)]),
     [records, selectedKeys],
   );
+
+  const transferHostOptions = useMemo(() => records.filter((r) => !!r.primary_ip.trim()), [records]);
+  const transferBackendKind = transferCloud.provider === 'googlecloudstorage' ? 'gcp' : 'aws';
+  const transferBackendOptions = useMemo(
+    () =>
+      backends.filter((b) => b.kind.toLowerCase() === transferBackendKind && b.name.trim() !== ''),
+    [backends, transferBackendKind],
+  );
+
+  useEffect(() => {
+    if (transferHostOptions.length === 0) {
+      setTransferSourceHostKey('');
+      setTransferDestHostKey('');
+      return;
+    }
+    if (!transferSourceHostKey) {
+      setTransferSourceHostKey(recordKey(transferHostOptions[0]));
+    }
+    if (!transferDestHostKey) {
+      const second = transferHostOptions[1] ?? transferHostOptions[0];
+      setTransferDestHostKey(recordKey(second));
+    }
+  }, [transferHostOptions, transferSourceHostKey, transferDestHostKey]);
+
+  useEffect(() => {
+    if (transferBackendOptions.length === 0) {
+      setTransferBackendRefValue('');
+      return;
+    }
+    if (transferBackendRefValue === '') {
+      // Keep explicit "None" selection in Honey-managed credential mode.
+      return;
+    }
+    const stillValid = transferBackendOptions.some((b) => `${b.kind}:${b.name}` === transferBackendRefValue);
+    if (!stillValid) {
+      const first = transferBackendOptions[0];
+      setTransferBackendRefValue(`${first.kind}:${first.name}`);
+    }
+  }, [transferBackendOptions, transferBackendRefValue]);
 
   const loadRecipes = useCallback(async () => {
     setRecipesErr(null);
@@ -410,6 +477,64 @@ export function App() {
     setCueErr(null);
     setCuePlanText(null);
     setCueExecResults(null);
+  };
+
+  const submitAgentTransfer = async () => {
+    const sourceHost = transferHostOptions.find((r) => recordKey(r) === transferSourceHostKey);
+    const destHost = transferHostOptions.find((r) => recordKey(r) === transferDestHostKey);
+    if (!sourceHost || !destHost) {
+      setTransferErr('Select both source and destination hosts.');
+      return;
+    }
+    if (!transferSourcePath.trim() || !transferDestPath.trim()) {
+      setTransferErr('Source path and destination path are required.');
+      return;
+    }
+    if (!transferCloud.provider.trim() || !transferCloud.bucket.trim()) {
+      setTransferErr('Cloud provider and bucket are required.');
+      return;
+    }
+    let backendRef: AgentTransferBackendRef | undefined;
+    if (transferBackendRefValue) {
+      const split = transferBackendRefValue.split(':');
+      if (split.length >= 2) {
+        const kind = split[0]?.trim();
+        const name = split.slice(1).join(':').trim();
+        if (kind && name) {
+          backendRef = { kind, name };
+        }
+      }
+    }
+    setTransferBusy(true);
+    setTransferErr(null);
+    setTransferEvents([]);
+    try {
+      await startAgentTransferStream(
+        {
+          ssh_user: sshUser.trim(),
+          source_record: sourceHost,
+          source_path: transferSourcePath.trim(),
+          dest_record: destHost,
+          dest_path: transferDestPath.trim(),
+          cloud: {
+            provider: transferCloud.provider.trim(),
+            bucket: transferCloud.bucket.trim(),
+            prefix: transferCloud.prefix?.trim() || undefined,
+            object: transferCloud.object?.trim() || undefined,
+            region: transferCloud.region?.trim() || undefined,
+            endpoint: transferCloud.endpoint?.trim() || undefined,
+          },
+          cloud_backend_ref: backendRef,
+          keep_object: transferKeepObject,
+          max_retries: transferMaxRetries,
+        },
+        (ev) => setTransferEvents((prev) => [...prev, ev]),
+      );
+    } catch (e) {
+      setTransferErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTransferBusy(false);
+    }
   };
 
   const runParallelExec = async () => {
@@ -830,6 +955,9 @@ export function App() {
         <button type="button" className={tab === 'search' ? 'active' : ''} onClick={() => setTab('search')}>
           Search
         </button>
+        <button type="button" className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>
+          Files
+        </button>
         <button type="button" className={tab === 'backends' ? 'active' : ''} onClick={() => setTab('backends')}>
           Backends
         </button>
@@ -1237,6 +1365,173 @@ export function App() {
             Use row <strong>Upload</strong> for the file dialog. Drop a file on a row to upload to <code>/tmp/&lt;filename&gt;</code>{' '}
             (opens progress in the upload window).
           </p>
+        </section>
+      ) : null}
+
+      {tab === 'files' ? (
+        <section>
+          <div
+            style={{
+              border: '1px solid #2a3140',
+              borderRadius: 8,
+              padding: '0.75rem',
+              background: '#14171c',
+              display: 'grid',
+              gap: '0.6rem',
+            }}
+          >
+            <small style={{ color: '#9aa4b2' }}>
+              Transfer path: source host uploads to cloud object, destination host downloads from cloud using ephemeral agent over SSH control-plane.
+              Cloud credentials are resolved only on Honey, and remotes receive encrypted short-lived credential envelopes.
+            </small>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(260px, 1fr))', gap: '0.55rem' }}>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Source host
+                <select value={transferSourceHostKey} onChange={(e) => setTransferSourceHostKey(e.target.value)}>
+                  {transferHostOptions.map((r) => (
+                    <option key={recordKey(r)} value={recordKey(r)}>
+                      {r.name} ({r.primary_ip})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Destination host
+                <select value={transferDestHostKey} onChange={(e) => setTransferDestHostKey(e.target.value)}>
+                  {transferHostOptions.map((r) => (
+                    <option key={recordKey(r)} value={recordKey(r)}>
+                      {r.name} ({r.primary_ip})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(260px, 1fr))', gap: '0.55rem' }}>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Source path on source host
+                <input value={transferSourcePath} onChange={(e) => setTransferSourcePath(e.target.value)} />
+              </label>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Destination path on destination host
+                <input value={transferDestPath} onChange={(e) => setTransferDestPath(e.target.value)} />
+              </label>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(180px, 1fr))', gap: '0.55rem' }}>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Cloud provider
+                <select
+                  value={transferCloud.provider}
+                  onChange={(e) => setTransferCloud((prev) => ({ ...prev, provider: e.target.value }))}
+                >
+                  <option value="s3">s3</option>
+                  <option value="googlecloudstorage">googlecloudstorage</option>
+                </select>
+              </label>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Bucket
+                <input
+                  value={transferCloud.bucket}
+                  onChange={(e) => setTransferCloud((prev) => ({ ...prev, bucket: e.target.value }))}
+                />
+              </label>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Prefix
+                <input
+                  value={transferCloud.prefix || ''}
+                  onChange={(e) => setTransferCloud((prev) => ({ ...prev, prefix: e.target.value }))}
+                />
+              </label>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Object key (optional)
+                <input
+                  value={transferCloud.object || ''}
+                  onChange={(e) => setTransferCloud((prev) => ({ ...prev, object: e.target.value }))}
+                />
+              </label>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Region (optional)
+                <input
+                  value={transferCloud.region || ''}
+                  onChange={(e) => setTransferCloud((prev) => ({ ...prev, region: e.target.value }))}
+                />
+              </label>
+              <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Endpoint (optional)
+                <input
+                  value={transferCloud.endpoint || ''}
+                  onChange={(e) => setTransferCloud((prev) => ({ ...prev, endpoint: e.target.value }))}
+                />
+              </label>
+            </div>
+            <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              Honey credential source (for encrypted envelopes)
+              <select value={transferBackendRefValue} onChange={(e) => setTransferBackendRefValue(e.target.value)}>
+                <option value="">None (use Honey server default SDK auth chain)</option>
+                {transferBackendOptions.map((b) => (
+                  <option key={`${b.kind}:${b.name}`} value={`${b.kind}:${b.name}`}>
+                    {b.kind}: {b.name} {b.hint ? `(${b.hint})` : ''}
+                  </option>
+                ))}
+              </select>
+              {transferBackendOptions.length === 0 ? (
+                <small style={{ color: '#9aa4b2' }}>
+                  No named {transferBackendKind} backend found in config. Honey will use its default SDK credential chain.
+                </small>
+              ) : null}
+            </label>
+            <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                <input
+                  type="checkbox"
+                  checked={transferKeepObject}
+                  onChange={(e) => setTransferKeepObject(e.target.checked)}
+                />
+                Keep cloud object after transfer
+              </label>
+              <label style={{ fontSize: '0.85rem' }}>
+                Retries{' '}
+                <input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={transferMaxRetries}
+                  onChange={(e) => setTransferMaxRetries(Number(e.target.value) || 1)}
+                  style={{ width: 72 }}
+                />
+              </label>
+              <label style={{ fontSize: '0.85rem' }}>
+                SSH user{' '}
+                <input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+              </label>
+              <button
+                type="button"
+                className="primary"
+                disabled={transferBusy || transferHostOptions.length === 0}
+                onClick={() => void submitAgentTransfer()}
+              >
+                {transferBusy ? 'Transferring…' : 'Start A -> cloud -> B transfer'}
+              </button>
+            </div>
+            {transferErr ? <p style={{ color: '#f66', margin: 0 }}>{transferErr}</p> : null}
+          </div>
+          <div style={{ marginTop: '0.6rem', border: '1px solid #2a3140', borderRadius: 8, background: '#0f1115', padding: '0.55rem' }}>
+            <strong style={{ fontSize: '0.9rem' }}>Transfer events</strong>
+            <div style={{ maxHeight: '38vh', overflow: 'auto', marginTop: '0.4rem', fontFamily: 'monospace', fontSize: '0.78rem' }}>
+              {transferEvents.length === 0 ? (
+                <div style={{ color: '#9aa4b2' }}>No events yet.</div>
+              ) : (
+                transferEvents.map((ev, i) => (
+                  <div key={`${ev.timestamp}-${i}`} style={{ color: ev.success ? '#d8dee9' : '#f66', marginBottom: 3 }}>
+                    [{ev.timestamp}] {ev.stage}
+                    {ev.host ? ` @ ${ev.host}` : ''} :: {ev.success ? 'ok' : 'failed'}
+                    {ev.attempt ? ` (attempt ${ev.attempt})` : ''}
+                    {ev.message ? ` :: ${ev.message}` : ''}
+                    {ev.error ? ` :: ${ev.error}` : ''}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </section>
       ) : null}
 

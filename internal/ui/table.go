@@ -53,7 +53,7 @@ type model struct {
 	tbl     table.Model
 	ti      textinput.Model
 	sshUser string
-	mode    string // table | tunnel | execinput | execresults | filter | replaypick
+	mode    string // table | tunnel | execinput | execresults | filter | replaypick | filebrowse
 	filter  string
 	visible []int // indexes of recs visible when filtered
 
@@ -103,6 +103,17 @@ type model struct {
 	replayFileName   string
 	replayCursor     int
 	replayPickScroll int
+
+	// filebrowse: dual-pane local/remote file browser for selected host row.
+	fileFocus         string
+	fileLocalPath     string
+	fileRemotePath    string
+	fileLocalEntries  []LocalFileEntry
+	fileRemoteEntries []RemoteFileEntry
+	fileLocalCursor   int
+	fileRemoteCursor  int
+	fileStatus        string
+	fileClientCache   *ClientCache
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -118,6 +129,7 @@ func RunTable(records []hosts.Record, sshUser string, opts RunTableOptions) erro
 	}
 
 	m := newModel(records, sshUser, opts)
+	defer m.fileClientCache.CloseAll()
 
 	for {
 		p := tea.NewProgram(m)
@@ -274,6 +286,10 @@ func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *mod
 		tunnelFocusIndex: 0,
 		recordDir:        strings.TrimSpace(opts.RecordDir),
 		recordEnabled:    strings.TrimSpace(opts.RecordDir) != "" && opts.RecordEnabled,
+		fileFocus:        "local",
+		fileLocalPath:    DefaultLocalFilesRoot(),
+		fileRemotePath:   ".",
+		fileClientCache:  NewClientCache(),
 	}
 }
 
@@ -293,6 +309,33 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleParallelExecDoneMsg(msg)
 	case cueRecipeDoneMsg:
 		return m.handleCueRecipeDoneMsg(msg)
+	case fileBrowseLoadedMsg:
+		if msg.err != "" {
+			m.fileStatus = "load failed: " + msg.err
+			return m, nil
+		}
+		m.fileLocalPath = msg.localPath
+		m.fileRemotePath = msg.remotePath
+		m.fileLocalEntries = msg.local
+		m.fileRemoteEntries = msg.remote
+		if m.fileLocalCursor >= len(m.fileLocalEntries) {
+			m.fileLocalCursor = 0
+		}
+		if m.fileRemoteCursor >= len(m.fileRemoteEntries) {
+			m.fileRemoteCursor = 0
+		}
+		m.fileStatus = fmt.Sprintf("local=%d entries, remote=%d entries", len(msg.local), len(msg.remote))
+		return m, nil
+	case fileBrowseCopyDoneMsg:
+		if msg.err != "" {
+			m.fileStatus = "copy failed: " + msg.err
+			return m, nil
+		}
+		m.fileStatus = msg.msg
+		if rec, ok := m.fileBrowseTarget(); ok {
+			return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, m.fileRemotePath, m.fileClientCache)
+		}
+		return m, nil
 	case tea.PasteMsg:
 		// On macOS terminals, Cmd+V often arrives as bracketed paste, not KeyMsg.
 		if m.mode == "execinput" || m.mode == "cueexecinput" {
@@ -304,6 +347,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.mode == "replaypick" {
 			return m.updateReplayPickKeys(msg)
+		}
+		if m.mode == "filebrowse" {
+			return m.updateFileBrowse(msg)
 		}
 		if m.mode == "execresults" {
 			return m.updateExecResultsKeys(msg)
@@ -768,6 +814,8 @@ func (m *model) View() tea.View {
 		box = baseStyle.Render(box) + "\n" + help
 	case "execresults":
 		box = m.viewExecResults(helpStyle)
+	case "filebrowse":
+		box = m.viewFileBrowse(helpStyle)
 	case "replaypick":
 		box = m.viewReplayPick(helpStyle)
 	default:
@@ -779,7 +827,7 @@ func (m *model) View() tea.View {
 			}
 			recHint = "   R: record " + recState + "   p: play recording"
 		}
-		help := helpStyle.Render("enter: ssh (k8s: exec)   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
+		help := helpStyle.Render("enter: ssh (k8s: exec)   f: dual-pane files   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {

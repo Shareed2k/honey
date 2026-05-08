@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/kevinburke/ssh_config"
 	"github.com/melbahja/goph"
+	"github.com/pkg/sftp"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -258,11 +260,20 @@ func collectKnownHostsPaths(alias string) []string {
 type HoneyClient struct {
 	*goph.Client
 	parents []*ssh.Client
+
+	sftpMu sync.Mutex
+	sftp   *sftp.Client
 }
 
 // Close closes the target session transport, then any bastion SSH clients (reverse order).
 func (h *HoneyClient) Close() error {
 	var err error
+	h.sftpMu.Lock()
+	if h.sftp != nil {
+		_ = h.sftp.Close()
+		h.sftp = nil
+	}
+	h.sftpMu.Unlock()
 	if h.Client != nil && h.Client.Client != nil {
 		err = h.Client.Close()
 	}
@@ -272,6 +283,201 @@ func (h *HoneyClient) Close() error {
 		}
 	}
 	return err
+}
+
+func (h *HoneyClient) sftpClient() (*sftp.Client, error) {
+	h.sftpMu.Lock()
+	defer h.sftpMu.Unlock()
+	if h.sftp != nil {
+		return h.sftp, nil
+	}
+	if h.Client == nil || h.Client.Client == nil {
+		return nil, fmt.Errorf("ssh client is not connected")
+	}
+	c, err := sftp.NewClient(h.Client.Client)
+	if err != nil {
+		return nil, err
+	}
+	h.sftp = c
+	return c, nil
+}
+
+func (h *HoneyClient) Upload(localPath, remotePath string) error {
+	localPath = strings.TrimSpace(localPath)
+	remotePath = strings.TrimSpace(remotePath)
+	if localPath == "" || remotePath == "" {
+		return fmt.Errorf("upload: empty local or remote path")
+	}
+	sftpClient, err := h.sftpClient()
+	if err != nil {
+		return err
+	}
+	in, err := os.Open(localPath) // #nosec G304 -- caller controls local path in CLI/web flows.
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	if err := sftpClient.MkdirAll(filepath.ToSlash(filepath.Dir(remotePath))); err != nil {
+		return err
+	}
+	out, err := sftpClient.Create(remotePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *HoneyClient) Download(remotePath, localPath string) error {
+	remotePath = strings.TrimSpace(remotePath)
+	localPath = strings.TrimSpace(localPath)
+	if localPath == "" || remotePath == "" {
+		return fmt.Errorf("download: empty local or remote path")
+	}
+	sftpClient, err := h.sftpClient()
+	if err != nil {
+		return err
+	}
+	in, err := sftpClient.Open(remotePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o640) // #nosec G304 -- caller controls destination.
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *HoneyClient) ListRemoteDir(path string) ([]RemoteFileEntry, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "."
+	}
+	sftpClient, err := h.sftpClient()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := sftpClient.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RemoteFileEntry, 0, len(entries))
+	for _, ent := range entries {
+		if ent == nil {
+			continue
+		}
+		out = append(out, RemoteFileEntry{
+			Name:       ent.Name(),
+			Path:       filepath.ToSlash(filepath.Join(path, ent.Name())),
+			IsDir:      ent.IsDir(),
+			Size:       ent.Size(),
+			Mode:       ent.Mode().String(),
+			ModifiedAt: ent.ModTime(),
+		})
+	}
+	slices.SortFunc(out, func(a, b RemoteFileEntry) int {
+		if a.IsDir != b.IsDir {
+			if a.IsDir {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+	return out, nil
+}
+
+func (h *HoneyClient) StatRemote(path string) (RemoteFileEntry, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return RemoteFileEntry{}, fmt.Errorf("empty path")
+	}
+	sftpClient, err := h.sftpClient()
+	if err != nil {
+		return RemoteFileEntry{}, err
+	}
+	ent, err := sftpClient.Stat(path)
+	if err != nil {
+		return RemoteFileEntry{}, err
+	}
+	return RemoteFileEntry{
+		Name:       filepath.Base(path),
+		Path:       filepath.ToSlash(path),
+		IsDir:      ent.IsDir(),
+		Size:       ent.Size(),
+		Mode:       ent.Mode().String(),
+		ModifiedAt: ent.ModTime(),
+	}, nil
+}
+
+func (h *HoneyClient) MkdirAllRemote(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("empty path")
+	}
+	sftpClient, err := h.sftpClient()
+	if err != nil {
+		return err
+	}
+	return sftpClient.MkdirAll(path)
+}
+
+func (h *HoneyClient) RemoveRemote(path string, recursive bool) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("empty path")
+	}
+	sftpClient, err := h.sftpClient()
+	if err != nil {
+		return err
+	}
+	if !recursive {
+		return sftpClient.Remove(path)
+	}
+	w := sftpClient.Walk(path)
+	var files []string
+	var dirs []string
+	for w.Step() {
+		if w.Err() != nil {
+			return w.Err()
+		}
+		p := w.Path()
+		if p == "." || p == "" {
+			continue
+		}
+		info := w.Stat()
+		if info == nil {
+			continue
+		}
+		if info.IsDir() {
+			dirs = append(dirs, p)
+		} else {
+			files = append(files, p)
+		}
+	}
+	for _, filePath := range files {
+		if err := sftpClient.Remove(filePath); err != nil {
+			return err
+		}
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := sftpClient.RemoveDirectory(dirs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func expandSSHPath(p string) (string, error) {

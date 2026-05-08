@@ -160,6 +160,27 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = "replaypick"
 		m.clampReplayPickScroll()
 		return m, nil
+	case "f":
+		row := m.tbl.Cursor()
+		if row < 0 || row >= len(m.visible) {
+			return m, nil
+		}
+		target := m.recs[m.visible[row]]
+		if strings.TrimSpace(target.PrimaryIP) == "" {
+			m.execResults = []HostExecResult{{
+				Name:     target.Name,
+				Provider: target.Provider,
+				Success:  false,
+				ErrMsg:   "file browser requires a host with PrimaryIP",
+			}}
+			m.execDone = true
+			m.mode = "execresults"
+			return m, nil
+		}
+		m.mode = "filebrowse"
+		m.fileFocus = "local"
+		m.fileStatus = "loading directories..."
+		return m, loadFileBrowseCmd(m.sshUser, target, m.fileLocalPath, m.fileRemotePath, m.fileClientCache)
 	case "enter":
 		m.lastAction = actSSH
 		return m, tea.Quit

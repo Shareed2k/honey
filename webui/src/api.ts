@@ -89,6 +89,40 @@ export type RecordingEvent = {
 
 export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer';
 
+export type FileBrowserEntry = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  mode: string;
+  modified_at: string;
+};
+
+export type AgentTransferCloud = {
+  provider: string;
+  bucket: string;
+  prefix?: string;
+  object?: string;
+  region?: string;
+  endpoint?: string;
+};
+
+export type AgentTransferBackendRef = {
+  kind: string;
+  name?: string;
+  index?: number;
+};
+
+export type AgentTransferEvent = {
+  stage: string;
+  host?: string;
+  success: boolean;
+  message?: string;
+  error?: string;
+  attempt?: number;
+  timestamp: string;
+};
+
 export type ConfigSchemaFieldSpec = {
   key: string;
   label: string;
@@ -124,6 +158,67 @@ export async function fetchConfigSchema(): Promise<ConfigSchemaResponse> {
     throw new Error(j.error || r.statusText);
   }
   return j;
+}
+
+export async function listLocalFiles(path: string): Promise<{ root: string; path: string; entries: FileBrowserEntry[] }> {
+  const r = await apiPost('/api/v1/files/local/list', { path });
+  const j = (await r.json().catch(() => ({}))) as {
+    root?: string;
+    path?: string;
+    entries?: FileBrowserEntry[];
+    error?: string;
+  };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return { root: j.root || '', path: j.path || '', entries: j.entries || [] };
+}
+
+export async function listRemoteFiles(body: {
+  ssh_user: string;
+  record: unknown;
+  path: string;
+}): Promise<{ path: string; entries: FileBrowserEntry[] }> {
+  const r = await apiPost('/api/v1/files/remote/list', body);
+  const j = (await r.json().catch(() => ({}))) as { path?: string; entries?: FileBrowserEntry[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return { path: j.path || '', entries: j.entries || [] };
+}
+
+export async function copyFiles(body: {
+  direction: 'local_to_remote' | 'remote_to_local';
+  ssh_user: string;
+  record: unknown;
+  local_path: string;
+  remote_path: string;
+}): Promise<{ status: string; local: string; remote: string }> {
+  const r = await apiPost('/api/v1/files/copy', body);
+  const j = (await r.json().catch(() => ({}))) as { status?: string; local?: string; remote?: string; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return { status: j.status || 'ok', local: j.local || '', remote: j.remote || '' };
+}
+
+export async function startAgentTransfer(body: {
+  ssh_user?: string;
+  source_record: unknown;
+  source_path: string;
+  dest_record: unknown;
+  dest_path: string;
+  cloud: AgentTransferCloud;
+  cloud_backend_ref?: AgentTransferBackendRef;
+  keep_object?: boolean;
+  max_retries?: number;
+}): Promise<AgentTransferEvent[]> {
+  const r = await apiPost('/api/v1/files/agent-transfer', body);
+  const j = (await r.json().catch(() => ({}))) as { events?: AgentTransferEvent[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.events || [];
 }
 
 export async function fetchRecipes(): Promise<RecipeListEntry[]> {
@@ -220,9 +315,9 @@ export async function execOnHosts(body: {
   return j.results || [];
 }
 
-async function readNDJSON(
+async function readNDJSON<T>(
   response: Response,
-  onRow: (row: HostExecResultRow) => void,
+  onRow: (row: T) => void,
 ): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -243,12 +338,12 @@ async function readNDJSON(
       if (!trimmed) {
         continue;
       }
-      onRow(JSON.parse(trimmed) as HostExecResultRow);
+      onRow(JSON.parse(trimmed) as T);
     }
   }
   const tail = buffer.trim();
   if (tail) {
-    onRow(JSON.parse(tail) as HostExecResultRow);
+    onRow(JSON.parse(tail) as T);
   }
 }
 
@@ -265,7 +360,7 @@ export async function execOnHostsStream(
     const j = (await r.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error || r.statusText);
   }
-  await readNDJSON(r, onRow);
+  await readNDJSON<HostExecResultRow>(r, onRow);
 }
 
 export async function cueExec(body: {
@@ -308,7 +403,33 @@ export async function cueExecStream(
     const j = (await r.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error || r.statusText);
   }
-  await readNDJSON(r, onRow);
+  await readNDJSON<HostExecResultRow>(r, onRow);
+}
+
+export async function startAgentTransferStream(
+  body: {
+    ssh_user?: string;
+    source_record: unknown;
+    source_path: string;
+    dest_record: unknown;
+    dest_path: string;
+    cloud: AgentTransferCloud;
+    cloud_backend_ref?: AgentTransferBackendRef;
+    keep_object?: boolean;
+    max_retries?: number;
+  },
+  onEvent: (event: AgentTransferEvent) => void,
+): Promise<void> {
+  const r = await fetch('/api/v1/files/agent-transfer?stream=1', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  await readNDJSON<AgentTransferEvent>(r, onEvent);
 }
 
 /** POST multipart FormData with upload progress (bytes to this origin only). Resolves parsed JSON body. */

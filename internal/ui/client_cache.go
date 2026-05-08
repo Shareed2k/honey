@@ -91,6 +91,31 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	return client, nil
 }
 
+// Evict removes the cached client for this host (if any) and closes it so the
+// next GetOrDial establishes a fresh connection.
+func (c *ClientCache) Evict(user string, r hosts.Record) {
+	if c == nil {
+		return
+	}
+	key := r.Provider + "\x00" + r.PrimaryIP + "\x00" + r.Name + "\x00" + user
+	c.mu.Lock()
+	client, ok := c.clients[key]
+	if ok {
+		delete(c.clients, key)
+	}
+	c.mu.Unlock()
+	if !ok || client == nil {
+		return
+	}
+	_ = client.Close()
+	zap.L().Debug("ssh client cache evicted",
+		zap.String("provider", r.Provider),
+		zap.String("host_name", r.Name),
+		zap.String("host_ip", r.PrimaryIP),
+		zap.String("user", user),
+	)
+}
+
 // CloseAll closes all cached connections and clears the cache.
 func (c *ClientCache) CloseAll() {
 	if c == nil {

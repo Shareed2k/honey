@@ -14,9 +14,12 @@ import (
 )
 
 var (
-	webListen string
-	webConfig string
-	webRecord string
+	webListen             string
+	webConfig             string
+	webRecord             string
+	webFilesRoot          string
+	webAgentBin           string
+	webAgentBuildCacheDir string
 )
 
 var webCmd = &cobra.Command{
@@ -30,6 +33,9 @@ func init() {
 	webCmd.Flags().StringVar(&webListen, "listen", "127.0.0.1:8765", "Listen address (host:port); must be loopback for safe default")
 	webCmd.Flags().StringVar(&webConfig, "config", "", "Path to honey YAML (optional; same as honey search)")
 	webCmd.Flags().StringVar(&webRecord, "record-dir", "", "Directory to store web SSH/K8s terminal session recordings")
+	webCmd.Flags().StringVar(&webFilesRoot, "files-root", "", "Local filesystem root exposed to web/TUI file browser (default: $HONEY_FILES_ROOT or $HOME)")
+	webCmd.Flags().StringVar(&webAgentBin, "agent-bin", "", "Explicit path to honey-transfer-agent binary (optional)")
+	webCmd.Flags().StringVar(&webAgentBuildCacheDir, "agent-build-cache-dir", "", "Directory used to cache auto-built honey-transfer-agent binary")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -42,13 +48,16 @@ func runWeb(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	srv, err := webserver.NewServer(webserver.Options{
-		ListenAddr: webListen,
-		Token:      token,
-		ConfigPath: webConfig,
-		RecordDir:  webRecord,
-		Version:    BuildVersion(),
-		Commit:     BuildCommit(),
-		Date:       BuildDate(),
+		ListenAddr:         webListen,
+		Token:              token,
+		ConfigPath:         webConfig,
+		RecordDir:          webRecord,
+		LocalFilesRoot:     webFilesRoot,
+		AgentBinaryPath:    webAgentBin,
+		AgentBuildCacheDir: webAgentBuildCacheDir,
+		Version:            BuildVersion(),
+		Commit:             BuildCommit(),
+		Date:               BuildDate(),
 	})
 	if err != nil {
 		return err

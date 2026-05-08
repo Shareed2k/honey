@@ -16,18 +16,22 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/ui"
 )
 
 // Options configures the embedded web server.
 type Options struct {
-	ListenAddr    string // e.g. 127.0.0.1:8765
-	Token         string
-	ConfigPath    string // optional explicit --config
-	RecordDir     string // optional session recording output dir
-	Version       string
-	Commit        string
-	Date          string
-	MaxUploadSize int64 // default 100 << 20
+	ListenAddr         string // e.g. 127.0.0.1:8765
+	Token              string
+	ConfigPath         string // optional explicit --config
+	RecordDir          string // optional session recording output dir
+	LocalFilesRoot     string // optional root for local file browser/upload/download
+	AgentBinaryPath    string // optional explicit honey-transfer-agent binary path
+	AgentBuildCacheDir string // optional cache dir for auto-built agent binary
+	Version            string
+	Commit             string
+	Date               string
+	MaxUploadSize      int64 // default 100 << 20
 }
 
 // Server is the honey web UI HTTP server.
@@ -36,9 +40,13 @@ type Server struct {
 	mux      *http.ServeMux
 	assistRL *slidingRL
 
-	assistModelsMu   sync.Mutex
-	assistModelIDs   []string
-	assistModelsExp  time.Time
+	assistModelsMu  sync.Mutex
+	assistModelIDs  []string
+	assistModelsExp time.Time
+
+	fileClientCache   *ui.ClientCache
+	agentResolveMu    sync.Mutex
+	agentResolvedPath map[string]string
 }
 
 // NewServer builds handlers with the given auth token.
@@ -49,7 +57,13 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.MaxUploadSize <= 0 {
 		opts.MaxUploadSize = 100 << 20
 	}
-	s := &Server{opts: opts, mux: http.NewServeMux(), assistRL: newSlidingRL()}
+	s := &Server{
+		opts:              opts,
+		mux:               http.NewServeMux(),
+		assistRL:          newSlidingRL(),
+		fileClientCache:   ui.NewClientCache(),
+		agentResolvedPath: map[string]string{},
+	}
 	s.routes()
 	return s, nil
 }
@@ -67,6 +81,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/config", s.withAuth(s.handleConfigGet))
 	s.mux.HandleFunc("PUT /api/v1/config", s.withAuth(s.handleConfigPut))
 	s.mux.HandleFunc("POST /api/v1/upload", s.withAuth(s.handleUpload))
+	s.mux.HandleFunc("POST /api/v1/files/local/list", s.withAuth(s.handleFilesLocalList))
+	s.mux.HandleFunc("POST /api/v1/files/remote/list", s.withAuth(s.handleFilesRemoteList))
+	s.mux.HandleFunc("POST /api/v1/files/copy", s.withAuth(s.handleFilesCopy))
+	s.mux.HandleFunc("POST /api/v1/files/agent-transfer", s.withAuth(s.handleFilesAgentTransfer))
 	s.mux.HandleFunc("GET /api/v1/recipes", s.withAuth(s.handleRecipesList))
 	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
 	s.mux.HandleFunc("POST /api/v1/recipes/assist", s.withAuth(s.handleRecipesAssist))
@@ -110,6 +128,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 	select {
 	case <-ctx.Done():
+		if s.fileClientCache != nil {
+			s.fileClientCache.CloseAll()
+		}
 		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shCtx)

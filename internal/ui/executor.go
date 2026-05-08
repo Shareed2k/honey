@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -11,7 +12,21 @@ type HostClient interface {
 	Run(cmd string) ([]byte, error)
 	Upload(localPath, remotePath string) error
 	Download(remotePath, localPath string) error
+	ListRemoteDir(path string) ([]RemoteFileEntry, error)
+	StatRemote(path string) (RemoteFileEntry, error)
+	MkdirAllRemote(path string) error
+	RemoveRemote(path string, recursive bool) error
 	Close() error
+}
+
+// RemoteFileEntry describes one filesystem object on the remote host.
+type RemoteFileEntry struct {
+	Name       string    `json:"name"`
+	Path       string    `json:"path"`
+	IsDir      bool      `json:"is_dir"`
+	Size       int64     `json:"size"`
+	Mode       string    `json:"mode"`
+	ModifiedAt time.Time `json:"modified_at"`
 }
 
 // Executor defines the interface for creating HostClients and running interactive sessions.

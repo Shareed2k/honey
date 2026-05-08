@@ -174,6 +174,22 @@ func (c *k8sNativeClient) Download(remotePath, localPath string) error {
 	return fmt.Errorf("file not found in remote archive")
 }
 
+func (c *k8sNativeClient) ListRemoteDir(_ string) ([]RemoteFileEntry, error) {
+	return nil, fmt.Errorf("k8s pod file listing is not supported in this view")
+}
+
+func (c *k8sNativeClient) StatRemote(_ string) (RemoteFileEntry, error) {
+	return RemoteFileEntry{}, fmt.Errorf("k8s pod file stat is not supported in this view")
+}
+
+func (c *k8sNativeClient) MkdirAllRemote(_ string) error {
+	return fmt.Errorf("k8s pod directory create is not supported in this view")
+}
+
+func (c *k8sNativeClient) RemoveRemote(_ string, _ bool) error {
+	return fmt.Errorf("k8s pod file remove is not supported in this view")
+}
+
 func (k k8sPodExecutor) Dial(_ string, r hosts.Record) (HostClient, error) {
 	zap.L().Debug("dialing k8s pod executor", zap.String("record", r.Name))
 	namespace := r.Meta["namespace"]
