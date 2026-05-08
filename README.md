@@ -268,10 +268,13 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `internal/ui` — Bubble Tea table + SSH actions
 - `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
 - `docs/add-new-backend.md` — contributor guide for adding a new backend end-to-end
+- `docs/web-ui.md` — web UI, API, session recording, file transfer, and AI assist (`OPENAI_API_KEY`, optional `OPENAI_BASE_URL`)
 
 ## Web UI (`honey web`)
 
-Embedded **loopback-only** web server with a random bearer token (override with `HONEY_WEB_TOKEN`). Serves a React UI for backends list, search, provider/backend filters (dropdowns), YAML config edit, structured **backends** CRUD (JSON REST mirroring `backends.*` in YAML), browser terminal over WebSocket (**SSH** nodes and **Kubernetes pods** via ephemeral exec TTY), and drag-and-drop SFTP upload.
+Embedded **loopback-only** web server with a random bearer token (override with `HONEY_WEB_TOKEN`). Serves a React UI for backends list, search, provider/backend filters, YAML config edit, structured **backends** CRUD, browser terminal (**SSH** and **Kubernetes** exec TTY), optional **session recording** (`--record-dir`), local/remote **file browser** and **agent-based** cloud transfer (`honey-transfer-agent`), **CUE recipe** run/view, and optional **AI assist** for the terminal and recipes when **`OPENAI_API_KEY`** is set (optional **`OPENAI_BASE_URL`** for compatible gateways or local inference).
+
+**Full documentation:** [docs/web-ui.md](docs/web-ui.md) (mirror on the doc site: *Web UI & AI assist*).
 
 ```bash
 # One-time: build UI assets into internal/webserver/static (CI runs this automatically)
@@ -281,7 +284,9 @@ go build -o honey ./cmd/honey
 ./honey web --listen 127.0.0.1:8765 --config ~/.config/honey/config.yaml
 ```
 
-Open the **URL printed on stderr** (includes `?token=…`). API routes: `/api/v1/meta`, `GET /api/v1/providers` (search provider ids, e.g. `k8s`), `GET /api/v1/backends`, `POST /api/v1/search`, `GET`/`PUT /api/v1/config` (raw YAML), `GET`/`POST`/`PUT`/`DELETE /api/v1/config/backends/…` (structured backends: path segment **`kubernetes`** matches YAML, while search uses provider id **`k8s`**), `POST /api/v1/upload`, WebSocket `GET /ws/ssh?token=…` (SSH or k8s pod TTY).
+Optional flags include `--record-dir` (session recordings), `--files-root` (file browser root; defaults to `$HONEY_FILES_ROOT` or `$HOME`), and `--agent-bin` / `--agent-build-cache-dir` for the transfer agent.
+
+Open the **URL printed on stderr** (includes `?token=…`). Notable API routes: `GET /api/v1/meta` (includes `terminal_assist_available`, `session_recording_available`), `POST /api/v1/search`, `GET`/`PUT /api/v1/config`, structured backends under `/api/v1/config/backends/…` (path segment **`kubernetes`** matches YAML; search uses provider id **`k8s`**), `POST /api/v1/upload`, **`GET /api/v1/terminal-assist/models`** and **`POST /api/v1/terminal-assist`** (terminal AI), **`POST /api/v1/recipes/assist`** (recipe AI), recordings under `/api/v1/recordings`, WebSocket **`GET /ws/ssh?token=…`**. Authenticate with `Authorization: Bearer <token>` or `X-Honey-Token`.
 
 **Local UI dev** (Vite proxies to the Go server): run `honey web` on `8765`, then `cd webui && npm install && npm run dev` and open Vite’s URL.
 

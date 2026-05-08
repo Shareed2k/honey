@@ -53,7 +53,7 @@ type model struct {
 	tbl     table.Model
 	ti      textinput.Model
 	sshUser string
-	mode    string // table | tunnel | execinput | execresults | filter | replaypick | filebrowse
+	mode    string // table | tunnel | execinput | execresults | filter | replaypick | filebrowse | agenttransferform
 	filter  string
 	visible []int // indexes of recs visible when filtered
 
@@ -104,7 +104,7 @@ type model struct {
 	replayCursor     int
 	replayPickScroll int
 
-	// filebrowse: dual-pane local/remote file browser for selected host row.
+	// filebrowse: local/remote file browser for selected host row (stacked panes).
 	fileFocus         string
 	fileLocalPath     string
 	fileRemotePath    string
@@ -114,6 +114,16 @@ type model struct {
 	fileRemoteCursor  int
 	fileStatus        string
 	fileClientCache   *ClientCache
+
+	// A → cloud → B agent transfer wizard (key a).
+	agentPick       string // "source" | "dest" | ""
+	agentSrc        hosts.Record
+	agentDst        hosts.Record
+	agentFormStep   int
+	agentFormValues [9]string
+	agentStorageIdx int // 0 = s3, 1 = googlecloudstorage (step 2 picker)
+	agentAwaitKeep  bool
+	agentKeepObject bool
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -297,6 +307,12 @@ func (m *model) Init() tea.Cmd {
 	return nil
 }
 
+// pasteMsgUpdatesTextInput reports whether bracketed paste should update the text field (not the table).
+func (m *model) pasteMsgUpdatesTextInput() bool {
+	return m.mode == "execinput" || m.mode == "cueexecinput" ||
+		(m.mode == "agenttransferform" && !m.agentAwaitKeep && m.agentFormStep != 2)
+}
+
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case streamStartMsg:
@@ -309,58 +325,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleParallelExecDoneMsg(msg)
 	case cueRecipeDoneMsg:
 		return m.handleCueRecipeDoneMsg(msg)
+	case agentTransferDoneMsg:
+		return m.handleAgentTransferDoneMsg(msg)
 	case fileBrowseLoadedMsg:
-		if msg.err != "" {
-			m.fileStatus = "load failed: " + msg.err
-			return m, nil
-		}
-		m.fileLocalPath = msg.localPath
-		m.fileRemotePath = msg.remotePath
-		m.fileLocalEntries = msg.local
-		m.fileRemoteEntries = msg.remote
-		if m.fileLocalCursor >= len(m.fileLocalEntries) {
-			m.fileLocalCursor = 0
-		}
-		if m.fileRemoteCursor >= len(m.fileRemoteEntries) {
-			m.fileRemoteCursor = 0
-		}
-		m.fileStatus = fmt.Sprintf("local=%d entries, remote=%d entries", len(msg.local), len(msg.remote))
-		return m, nil
+		return m.handleFileBrowseLoadedMsg(msg)
 	case fileBrowseCopyDoneMsg:
-		if msg.err != "" {
-			m.fileStatus = "copy failed: " + msg.err
-			return m, nil
-		}
-		m.fileStatus = msg.msg
-		if rec, ok := m.fileBrowseTarget(); ok {
-			return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, m.fileRemotePath, m.fileClientCache)
-		}
-		return m, nil
+		return m.handleFileBrowseCopyDoneMsg(msg)
 	case tea.PasteMsg:
 		// On macOS terminals, Cmd+V often arrives as bracketed paste, not KeyMsg.
-		if m.mode == "execinput" || m.mode == "cueexecinput" {
+		if m.pasteMsgUpdatesTextInput() {
 			m.applyPastedText(msg.Content)
 			return m, nil
 		}
 	case tea.WindowSizeMsg:
 		return m.handleWindowSizeMsg(msg)
 	case tea.KeyMsg:
-		if m.mode == "replaypick" {
-			return m.updateReplayPickKeys(msg)
-		}
-		if m.mode == "filebrowse" {
-			return m.updateFileBrowse(msg)
-		}
-		if m.mode == "execresults" {
-			return m.updateExecResultsKeys(msg)
-		}
-		if m.mode == "tunnel" {
-			return m.updateTunnelInputs(msg)
-		}
-		if m.mode == "execinput" || m.mode == "cueexecinput" || m.mode == "filter" {
-			return m.updateTextInputMode(msg)
-		}
-		return m.handleTableKeyMsg(msg)
+		return m.dispatchKeyMsg(msg)
 	}
 
 	var cmd tea.Cmd
@@ -403,7 +383,7 @@ func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) tryClipboardPasteInTextInput(msg tea.KeyMsg) (tea.Model, bool) {
 	switch msg.String() {
 	case "ctrl+v", "shift+insert", "cmd+v", "meta+v", "super+v":
-		if m.mode == "execinput" || m.mode == "cueexecinput" {
+		if m.pasteMsgUpdatesTextInput() {
 			if clip, err := clipboard.ReadAll(); err == nil {
 				m.applyPastedText(clip)
 			}
@@ -793,25 +773,18 @@ func (m *model) View() tea.View {
 		)
 		if len(m.availableRecipes) > 0 {
 			right := m.viewDefaultRecipesPanel()
-			if m.winW >= 100 {
-				box = lipgloss.JoinHorizontal(
-					lipgloss.Top,
-					lipgloss.NewStyle().Width((m.winW*2)/3).Render(left),
-					"  ",
-					lipgloss.NewStyle().Width((m.winW/3)-6).Render(right),
-				)
-			} else {
-				box = lipgloss.JoinVertical(
-					lipgloss.Left,
-					left,
-					"",
-					right,
-				)
-			}
+			box = lipgloss.JoinVertical(
+				lipgloss.Left,
+				left,
+				"",
+				right,
+			)
 		} else {
 			box = left
 		}
 		box = baseStyle.Render(box) + "\n" + help
+	case "agenttransferform":
+		box = baseStyle.Render(m.viewAgentTransferForm(helpStyle))
 	case "execresults":
 		box = m.viewExecResults(helpStyle)
 	case "filebrowse":
@@ -827,14 +800,21 @@ func (m *model) View() tea.View {
 			}
 			recHint = "   R: record " + recState + "   p: play recording"
 		}
-		help := helpStyle.Render("enter: ssh (k8s: exec)   f: dual-pane files   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
+		help := helpStyle.Render("enter: ssh (k8s: exec)   f: files   a: A→cloud→B   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
 			sub = helpStyle.Render(fmt.Sprintf("%d row(s) marked (* for parallel SSH and CUE recipe)", nMark)) + "\n"
 		}
 		title := lipgloss.NewStyle().Bold(true).Render("honey — select a host")
-		box = title + "\n" + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
+		banner := ""
+		switch m.agentPick {
+		case "source":
+			banner = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("Pick SOURCE host for agent transfer — Enter on row   Esc cancel") + "\n\n"
+		case "dest":
+			banner = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("Pick DESTINATION host — Enter on row   Esc cancel") + "\n\n"
+		}
+		box = title + "\n" + banner + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
 	}
 
 	view := tea.NewView(box)

@@ -231,7 +231,7 @@ func (m *model) updateFileBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) viewFileBrowse(helpStyle lipgloss.Style) string {
-	title := lipgloss.NewStyle().Bold(true).Render("File browser (dual pane)")
+	title := lipgloss.NewStyle().Bold(true).Render("File browser (local + remote)")
 	leftLines := []string{lipgloss.NewStyle().Bold(m.fileFocus == "local").Render("Local"), m.fileLocalPath, ""}
 	if len(m.fileLocalEntries) == 0 {
 		leftLines = append(leftLines, "(empty)")
@@ -265,11 +265,11 @@ func (m *model) viewFileBrowse(helpStyle lipgloss.Style) string {
 	}
 	left := strings.Join(leftLines, "\n")
 	right := strings.Join(rightLines, "\n")
-	panes := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		lipgloss.NewStyle().Width((m.winW/2)-4).Render(left),
-		"  ",
-		lipgloss.NewStyle().Width((m.winW/2)-4).Render(right),
+	panes := lipgloss.JoinVertical(
+		lipgloss.Left,
+		left,
+		"",
+		right,
 	)
 	status := m.fileStatus
 	if strings.TrimSpace(status) == "" {

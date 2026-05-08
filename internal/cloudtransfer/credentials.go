@@ -1,4 +1,5 @@
-package webserver
+// Package cloudtransfer resolves short-lived cloud credentials for staging (S3 / GCS).
+package cloudtransfer
 
 import (
 	"context"
@@ -11,23 +12,44 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/compute/v1"
-
-	"github.com/shareed2k/honey/internal/ui"
 )
 
-type cloudSigningHints struct {
+// CloudBackend identifies a cloud object location for transfers.
+type CloudBackend struct {
+	Provider string
+	Bucket   string
+	Prefix   string
+	Object   string
+	Region   string
+	Endpoint string
+}
+
+// SigningHints optionally scopes AWS/GCP credential loading (profiles, regions, project).
+type SigningHints struct {
 	AWSProfile string
 	AWSRegion  string
 	GCPProject string
 }
 
-type transferCredentialMaterial struct {
+// CredentialMaterial is returned for minting JWE envelopes on remote agents.
+type CredentialMaterial struct {
 	Provider  string
 	Env       map[string]string
 	ExpiresAt time.Time
 }
 
-func resolveGCPProjectHint(ctx context.Context, hint string) string {
+// NormalizeProvider maps common aliases to canonical provider ids used by the transfer agent.
+func NormalizeProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "gcs":
+		return "googlecloudstorage"
+	default:
+		return strings.ToLower(strings.TrimSpace(provider))
+	}
+}
+
+// ResolveGCPProjectHint returns an explicit hint or the best-effort default project id.
+func ResolveGCPProjectHint(ctx context.Context, hint string) string {
 	if p := strings.TrimSpace(hint); p != "" {
 		return p
 	}
@@ -43,8 +65,9 @@ func resolveGCPProjectHint(ctx context.Context, hint string) string {
 	return ""
 }
 
-func (s *Server) resolveTransferCredentialMaterial(ctx context.Context, cloud ui.AgentCloudBackend, hints cloudSigningHints) (transferCredentialMaterial, error) {
-	provider := normalizeTransferCloudProvider(cloud.Provider)
+// ResolveCredentialMaterial loads cloud SDK credentials into a flat env map for the transfer agent.
+func ResolveCredentialMaterial(ctx context.Context, cloud CloudBackend, hints SigningHints) (CredentialMaterial, error) {
+	provider := NormalizeProvider(cloud.Provider)
 	switch provider {
 	case "s3":
 		region := strings.TrimSpace(cloud.Region)
@@ -62,11 +85,11 @@ func (s *Server) resolveTransferCredentialMaterial(ctx context.Context, cloud ui
 		}
 		cfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
 		if err != nil {
-			return transferCredentialMaterial{}, err
+			return CredentialMaterial{}, err
 		}
 		creds, err := cfg.Credentials.Retrieve(ctx)
 		if err != nil {
-			return transferCredentialMaterial{}, err
+			return CredentialMaterial{}, err
 		}
 		env := map[string]string{
 			"AWS_ACCESS_KEY_ID":     strings.TrimSpace(creds.AccessKeyID),
@@ -74,7 +97,7 @@ func (s *Server) resolveTransferCredentialMaterial(ctx context.Context, cloud ui
 			"AWS_SESSION_TOKEN":     strings.TrimSpace(creds.SessionToken),
 			"AWS_REGION":            region,
 		}
-		return transferCredentialMaterial{
+		return CredentialMaterial{
 			Provider:  provider,
 			Env:       env,
 			ExpiresAt: creds.Expires,
@@ -82,25 +105,25 @@ func (s *Server) resolveTransferCredentialMaterial(ctx context.Context, cloud ui
 	case "googlecloudstorage":
 		tokenSource, err := google.DefaultTokenSource(ctx, storage.ScopeReadWrite)
 		if err != nil {
-			return transferCredentialMaterial{}, err
+			return CredentialMaterial{}, err
 		}
 		tok, err := tokenSource.Token()
 		if err != nil {
-			return transferCredentialMaterial{}, err
+			return CredentialMaterial{}, err
 		}
 		env := map[string]string{
 			"GOOGLE_OAUTH_ACCESS_TOKEN": strings.TrimSpace(tok.AccessToken),
 		}
-		project := strings.TrimSpace(resolveGCPProjectHint(ctx, hints.GCPProject))
+		project := strings.TrimSpace(ResolveGCPProjectHint(ctx, hints.GCPProject))
 		if project != "" {
 			env["GOOGLE_CLOUD_PROJECT"] = project
 		}
-		return transferCredentialMaterial{
+		return CredentialMaterial{
 			Provider:  provider,
 			Env:       env,
 			ExpiresAt: tok.Expiry,
 		}, nil
 	default:
-		return transferCredentialMaterial{}, fmt.Errorf("unsupported cloud provider %q for credential resolution", cloud.Provider)
+		return CredentialMaterial{}, fmt.Errorf("unsupported cloud provider %q for credential resolution", cloud.Provider)
 	}
 }

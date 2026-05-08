@@ -155,9 +155,7 @@ func instanceToRecord(inst *computepb.Instance, q hosts.Query) (hosts.Record, bo
 	if len(internalIPs) > 0 {
 		primary = internalIPs[0]
 		extras = append(extras, natIPs...)
-		for _, ip := range internalIPs[1:] {
-			extras = append(extras, ip)
-		}
+		extras = append(extras, internalIPs[1:]...)
 	} else if len(natIPs) > 0 {
 		primary = natIPs[0]
 		extras = natIPs[1:]

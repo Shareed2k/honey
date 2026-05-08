@@ -28,7 +28,7 @@ func Register(f ProviderFactory) {
 		registerBackendSlice(r.BackendKind(), func(cfg *config.File) reflect.Value {
 			ptr := r.BackendSlicePtr(cfg)
 			v := reflect.ValueOf(ptr)
-			if !v.IsValid() || v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Slice {
+			if !v.IsValid() || v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Slice {
 				return reflect.Value{}
 			}
 			return v.Elem()

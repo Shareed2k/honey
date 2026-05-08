@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,6 +33,24 @@ func StreamCueRecipeSteps(recipe cuetry.Recipe, recipeDir string, records []host
 	return nil
 }
 
+// cueStepAllTargetsTransientTransportFailed reports whether every host result for
+// the step looks like a transient SSH/transport failure (so continuing the recipe
+// would likely repeat the same outage).
+func cueStepAllTargetsTransientTransportFailed(results []HostExecResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, r := range results {
+		if r.Success {
+			return false
+		}
+		if !IsSSHConnTransientError(errors.New(r.ErrMsg)) {
+			return false
+		}
+	}
+	return true
+}
+
 func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, i int, step cuetry.RecipeStep, out chan<- HostExecResult, cache *ClientCache) error {
 	targets, err := cuetry.ExpandStepHosts(step.Host, records)
 	if err != nil {
@@ -46,8 +65,10 @@ func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts
 	// Create an intermediate channel to prefix the results with the step number
 	ch := make(chan HostExecResult, len(targets))
 	done := make(chan struct{})
+	var stepResults []HostExecResult
 	go func() {
 		for res := range ch {
+			stepResults = append(stepResults, res)
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 			out <- res
 		}
@@ -76,7 +97,13 @@ func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts
 
 	close(ch)
 	<-done
-	return stepErr
+	if stepErr != nil {
+		return stepErr
+	}
+	if len(targets) > 0 && len(stepResults) == len(targets) && cueStepAllTargetsTransientTransportFailed(stepResults) {
+		return fmt.Errorf("step %d: all %d targets failed with transient transport errors; aborting recipe", i+1, len(targets))
+	}
+	return nil
 }
 
 func streamCueStepCommand(recipe cuetry.Recipe, step cuetry.RecipeStep, cliEnv map[string]string, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, cache *ClientCache) error {

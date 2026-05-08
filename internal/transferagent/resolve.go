@@ -1,4 +1,6 @@
-package webserver
+// Package transferagent resolves and cross-builds honey-transfer-agent binaries
+// for target GOOS/GOARCH and optional cloud flavor (S3/GCS/full).
+package transferagent
 
 import (
 	"fmt"
@@ -7,9 +9,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
+)
+
+var (
+	resolveMu     sync.Mutex
+	resolvedByKey = map[string]string{}
 )
 
 func ensureExecutable(path string) error {
@@ -29,7 +37,8 @@ func ensureExecutable(path string) error {
 	return nil
 }
 
-func normalizeTargetRuntime(goos, goarch string) (string, string, error) {
+// NormalizeTargetRuntime maps uname-style values to GOOS/GOARCH used for cross-builds.
+func NormalizeTargetRuntime(goos, goarch string) (string, string, error) {
 	goos = strings.ToLower(strings.TrimSpace(goos))
 	goarch = strings.ToLower(strings.TrimSpace(goarch))
 	if goos == "" || goarch == "" {
@@ -54,7 +63,7 @@ func repoRootFromSource() (string, error) {
 	if !ok {
 		return "", fmt.Errorf("could not resolve source path for build root")
 	}
-	// internal/webserver/<this file> -> repo root is two levels up from internal/webserver.
+	// internal/transferagent/<this file> -> repo root is two levels up.
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	return root, nil
 }
@@ -69,7 +78,7 @@ func shouldUseUPX() bool {
 }
 
 func packBinaryWithUPX(path string) error {
-	// #nosec G204 -- path is the resolved transfer-agent binary under the server-controlled cache dir.
+	// #nosec G204 -- path is the resolved transfer-agent binary under a cache dir.
 	cmd := exec.Command("upx", "--best", "--lzma", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -138,8 +147,10 @@ func isAgentBinaryFresh(binPath string, sourceStamp time.Time) bool {
 	return !st.ModTime().Before(sourceStamp)
 }
 
-func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, targetOS, targetArch, provider string) (string, error) {
-	targetOS, targetArch, err := normalizeTargetRuntime(targetOS, targetArch)
+// ResolveBinary returns a path to honey-transfer-agent for the given target OS/arch and cloud flavor.
+// overridePath wins if set; else preferredPath (e.g. server default binary); else cross-build into cacheDir.
+func ResolveBinary(overridePath, preferredPath, cacheDir, targetOS, targetArch, cloudProvider string) (string, error) {
+	targetOS, targetArch, err := NormalizeTargetRuntime(targetOS, targetArch)
 	if err != nil {
 		return "", err
 	}
@@ -149,17 +160,17 @@ func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, ta
 		}
 		return p, nil
 	}
-	if p := strings.TrimSpace(s.opts.AgentBinaryPath); p != "" {
+	if p := strings.TrimSpace(preferredPath); p != "" {
 		if err := ensureExecutable(p); err != nil {
 			return "", err
 		}
 		return p, nil
 	}
 
-	s.agentResolveMu.Lock()
-	defer s.agentResolveMu.Unlock()
+	resolveMu.Lock()
+	defer resolveMu.Unlock()
 	useUPX := shouldUseUPX()
-	flavor := normalizeAgentProviderFlavor(provider)
+	flavor := normalizeAgentProviderFlavor(cloudProvider)
 	cacheKey := targetOS + "/" + targetArch + "/" + flavor
 	if useUPX {
 		cacheKey += "/upx"
@@ -172,7 +183,7 @@ func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, ta
 	if err != nil {
 		return "", err
 	}
-	if p := strings.TrimSpace(s.agentResolvedPath[cacheKey]); p != "" {
+	if p := strings.TrimSpace(resolvedByKey[cacheKey]); p != "" {
 		if err := ensureExecutable(p); err == nil && isAgentBinaryFresh(p, sourceStamp) {
 			zap.L().Debug("transfer agent binary cache hit",
 				zap.String("target", targetOS+"/"+targetArch),
@@ -183,8 +194,7 @@ func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, ta
 		}
 	}
 
-	cacheDir := strings.TrimSpace(s.opts.AgentBuildCacheDir)
-	if cacheDir == "" {
+	if strings.TrimSpace(cacheDir) == "" {
 		cacheDir = filepath.Join(os.TempDir(), "honey-transfer-agent-cache")
 	}
 	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
@@ -201,7 +211,7 @@ func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, ta
 			zap.String("provider_flavor", flavor),
 			zap.String("path", binPath),
 		)
-		s.agentResolvedPath[cacheKey] = binPath
+		resolvedByKey[cacheKey] = binPath
 		return binPath, nil
 	}
 	if err := buildTransferAgentBinary(root, binPath, targetOS, targetArch); err != nil {
@@ -222,7 +232,6 @@ func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, ta
 				zap.String("provider_flavor", flavor),
 				zap.Error(err),
 			)
-			// Fallback to non-packed path for this target.
 			cacheKey = targetOS + "/" + targetArch + "/" + flavor
 			binName = fmt.Sprintf("honey-transfer-agent-%s-%s-%s", targetOS, targetArch, flavor)
 			binPath = filepath.Join(cacheDir, binName)
@@ -240,6 +249,6 @@ func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, ta
 			)
 		}
 	}
-	s.agentResolvedPath[cacheKey] = binPath
+	resolvedByKey[cacheKey] = binPath
 	return binPath, nil
 }

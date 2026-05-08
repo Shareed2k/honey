@@ -236,6 +236,8 @@ func runHoneyTransferAgentSession(
 	return mintedJWE, nil
 }
 
+// evictOnTransientRetry is optional; when non-nil it is called with the failed attempt
+// index before the next attempt after a failure classified as IsSSHConnTransientError.
 func runAgentSessionWithRetries(
 	stage, host string,
 	attempts int,
@@ -243,6 +245,7 @@ func runAgentSessionWithRetries(
 	emit func(AgentTransferEvent),
 	redactions []string,
 	fn func() error,
+	evictOnTransientRetry func(failedAttempt int),
 ) error {
 	if attempts <= 0 {
 		attempts = 1
@@ -298,6 +301,9 @@ func runAgentSessionWithRetries(
 			zap.Error(runErr),
 		)
 		stageEvent(out, emit, redactions, stage, host, false, "", runErr, i)
+		if i < attempts && evictOnTransientRetry != nil && IsSSHConnTransientError(runErr) {
+			evictOnTransientRetry(i)
+		}
 	}
 	return lastErr
 }

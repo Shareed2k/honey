@@ -6,4 +6,3 @@ website/.npm-cache/
 website/.npm-tmp/
 
 webui/node_modules/
-internal/webserver/static

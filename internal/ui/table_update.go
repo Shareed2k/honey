@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -124,7 +125,96 @@ func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+func (m *model) handleAgentTransferDoneMsg(msg agentTransferDoneMsg) (tea.Model, tea.Cmd) {
+	m.cueResultTitle = msg.title
+	if msg.err != "" {
+		if strings.TrimSpace(msg.body) != "" {
+			m.cueResultBody = msg.body + "\n\nERROR: " + msg.err
+		} else {
+			m.cueResultBody = "ERROR: " + msg.err
+		}
+	} else {
+		m.cueResultBody = msg.body
+	}
+	m.execResults = nil
+	m.execScroll = 0
+	m.execDone = true
+	m.resetAgentTransfer()
+	m.mode = "execresults"
+	return m, nil
+}
+
+func (m *model) handleFileBrowseLoadedMsg(msg fileBrowseLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != "" {
+		m.fileStatus = "load failed: " + msg.err
+		return m, nil
+	}
+	m.fileLocalPath = msg.localPath
+	m.fileRemotePath = msg.remotePath
+	m.fileLocalEntries = msg.local
+	m.fileRemoteEntries = msg.remote
+	if m.fileLocalCursor >= len(m.fileLocalEntries) {
+		m.fileLocalCursor = 0
+	}
+	if m.fileRemoteCursor >= len(m.fileRemoteEntries) {
+		m.fileRemoteCursor = 0
+	}
+	m.fileStatus = fmt.Sprintf("local=%d entries, remote=%d entries", len(msg.local), len(msg.remote))
+	return m, nil
+}
+
+func (m *model) handleFileBrowseCopyDoneMsg(msg fileBrowseCopyDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.err != "" {
+		m.fileStatus = "copy failed: " + msg.err
+		return m, nil
+	}
+	m.fileStatus = msg.msg
+	if rec, ok := m.fileBrowseTarget(); ok {
+		return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, m.fileRemotePath, m.fileClientCache)
+	}
+	return m, nil
+}
+
+func (m *model) dispatchKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mode == "replaypick" {
+		return m.updateReplayPickKeys(msg)
+	}
+	if m.mode == "filebrowse" {
+		return m.updateFileBrowse(msg)
+	}
+	if m.mode == "execresults" {
+		return m.updateExecResultsKeys(msg)
+	}
+	if m.mode == "tunnel" {
+		return m.updateTunnelInputs(msg)
+	}
+	if m.mode == "agenttransferform" {
+		return m.updateAgentTransferFormKeys(msg)
+	}
+	if m.mode == "execinput" || m.mode == "cueexecinput" || m.mode == "filter" {
+		return m.updateTextInputMode(msg)
+	}
+	return m.handleTableKeyMsg(msg)
+}
+
 func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.agentPick != "" {
+		switch msg.String() {
+		case "esc":
+			m.resetAgentTransfer()
+			return m, nil
+		case "q", "ctrl+c":
+			m.resetAgentTransfer()
+			m.lastAction = actNone
+			return m, tea.Quit
+		case "enter":
+			return m.agentPickEnter()
+		default:
+			var cmd tea.Cmd
+			m.tbl, cmd = m.tbl.Update(msg)
+			return m, cmd
+		}
+	}
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.lastAction = actNone
@@ -184,6 +274,10 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		m.lastAction = actSSH
 		return m, tea.Quit
+	case "a":
+		m.resetAgentTransfer()
+		m.agentPick = "source"
+		return m, nil
 	case "t":
 		m.mode = "tunnel"
 		m.tunnelLocalPort.Reset()

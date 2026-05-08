@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shareed2k/honey/internal/cloudtransfer"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/ui"
@@ -216,31 +217,27 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	if len(req.Credentials) > 0 {
 		zap.L().Warn("ignoring direct credentials in honey-managed credential mode", zap.Int("count", len(req.Credentials)))
 	}
-	credMaterial, err := s.resolveTransferCredentialMaterial(r.Context(), req.Cloud, signingHints)
+	job, err := ui.BuildAgentTransferJob(
+		r.Context(),
+		s.fileClientCache,
+		req.SSHUser,
+		strings.TrimSpace(req.AgentLocalPath),
+		strings.TrimSpace(s.opts.AgentBinaryPath),
+		strings.TrimSpace(s.opts.AgentBuildCacheDir),
+		strings.TrimSpace(req.AgentRemoteDir),
+		req.SourceRecord,
+		req.DestRecord,
+		req.SourcePath,
+		req.DestPath,
+		req.Cloud,
+		req.KeepObject,
+		req.MaxRetries,
+		signingHints,
+	)
 	if err != nil {
-		httpError(w, fmt.Errorf("resolve transfer credentials: %w", err), http.StatusBadGateway)
+		httpError(w, fmt.Errorf("prepare agent transfer: %w", err), http.StatusBadGateway)
 		return
 	}
-	job := ui.AgentTransferJob{
-		SSHUser:        strings.TrimSpace(req.SSHUser),
-		AgentLocalPath: strings.TrimSpace(req.AgentLocalPath),
-		AgentRemoteDir: strings.TrimSpace(req.AgentRemoteDir),
-		Source: ui.AgentTransferEndpoint{
-			Record: req.SourceRecord,
-			Path:   strings.TrimSpace(req.SourcePath),
-		},
-		Destination: ui.AgentTransferEndpoint{
-			Record: req.DestRecord,
-			Path:   strings.TrimSpace(req.DestPath),
-		},
-		Cloud:                   req.Cloud,
-		CredentialProvider:      credMaterial.Provider,
-		CredentialEnv:           credMaterial.Env,
-		CredentialExpiresAtUnix: credMaterial.ExpiresAt.Unix(),
-		KeepObject:              req.KeepObject,
-		MaxRetries:              req.MaxRetries,
-	}
-	job.Cloud.Object = transferObjectKey(req.Cloud, req.SourceRecord, req.DestRecord)
 	zap.L().Debug("web agent transfer request received",
 		zap.String("source_name", job.Source.Record.Name),
 		zap.String("source_provider", job.Source.Record.Provider),
@@ -251,36 +248,6 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		zap.Bool("signed_url_mode", false),
 		zap.Bool("credential_envelope_mode", true),
 		zap.Int("credential_env_count", len(job.CredentialEnv)),
-	)
-	sourceOS, sourceArch, err := s.detectTransferTargetRuntime(job.SSHUser, job.Source.Record)
-	if err != nil {
-		httpError(w, fmt.Errorf("detect source target runtime: %w", err), http.StatusBadGateway)
-		return
-	}
-	destOS, destArch, err := s.detectTransferTargetRuntime(job.SSHUser, job.Destination.Record)
-	if err != nil {
-		httpError(w, fmt.Errorf("detect destination target runtime: %w", err), http.StatusBadGateway)
-		return
-	}
-	cloudProvider := normalizeTransferCloudProvider(job.Cloud.Provider)
-	sourceAgentPath, err := s.resolveTransferAgentBinaryForTargetAndProvider(job.AgentLocalPath, sourceOS, sourceArch, cloudProvider)
-	if err != nil {
-		httpError(w, fmt.Errorf("resolve source transfer agent: %w", err), http.StatusInternalServerError)
-		return
-	}
-	destAgentPath, err := s.resolveTransferAgentBinaryForTargetAndProvider(job.AgentLocalPath, destOS, destArch, cloudProvider)
-	if err != nil {
-		httpError(w, fmt.Errorf("resolve destination transfer agent: %w", err), http.StatusInternalServerError)
-		return
-	}
-	job.AgentLocalPath = sourceAgentPath
-	job.SourceAgentLocalPath = sourceAgentPath
-	job.DestAgentLocalPath = destAgentPath
-	zap.L().Debug("web agent transfer binaries resolved",
-		zap.String("source_runtime", sourceOS+"/"+sourceArch),
-		zap.String("destination_runtime", destOS+"/"+destArch),
-		zap.String("source_agent_path", sourceAgentPath),
-		zap.String("destination_agent_path", destAgentPath),
 	)
 
 	if r.URL.Query().Get("stream") == "1" {
@@ -319,105 +286,8 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(filesAgentTransferResponse{Events: events})
 }
 
-func (s *Server) detectTransferTargetRuntime(sshUser string, rec hosts.Record) (string, string, error) {
-	user := strings.TrimSpace(sshUser)
-	if user == "" {
-		user = strings.TrimSpace(os.Getenv("USER"))
-	}
-	if user == "" {
-		user = "root"
-	}
-	const maxAttempts = 3
-	var raw []byte
-	var err error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		var client ui.HostClient
-		client, err = s.fileClientCache.GetOrDial(user, rec)
-		if err != nil {
-			if attempt < maxAttempts && ui.IsSSHConnTransientError(err) {
-				s.fileClientCache.Evict(user, rec)
-				time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
-				continue
-			}
-			return "", "", err
-		}
-		raw, err = client.Run("uname -s; uname -m")
-		if err != nil {
-			if attempt < maxAttempts && ui.IsSSHConnTransientError(err) {
-				s.fileClientCache.Evict(user, rec)
-				time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
-				continue
-			}
-			return "", "", err
-		}
-		break
-	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) < 2 {
-		return "", "", fmt.Errorf("unexpected uname output: %q", strings.TrimSpace(string(raw)))
-	}
-	goos := strings.ToLower(strings.TrimSpace(lines[0]))
-	goarch := strings.ToLower(strings.TrimSpace(lines[1]))
-	switch goos {
-	case "linux", "darwin":
-	default:
-		return "", "", fmt.Errorf("unsupported target os: %q", goos)
-	}
-	switch goarch {
-	case "x86_64":
-		goarch = "amd64"
-	case "aarch64":
-		goarch = "arm64"
-	case "amd64", "arm64":
-	default:
-		return "", "", fmt.Errorf("unsupported target arch: %q", goarch)
-	}
-	zap.L().Debug("detected transfer target runtime",
-		zap.String("host_name", rec.Name),
-		zap.String("provider", rec.Provider),
-		zap.String("goos", goos),
-		zap.String("goarch", goarch),
-	)
-	return goos, goarch, nil
-}
-
-func transferObjectKey(cloud ui.AgentCloudBackend, src, dst hosts.Record) string {
-	if strings.TrimSpace(cloud.Object) != "" {
-		return strings.TrimSpace(cloud.Object)
-	}
-	prefix := strings.Trim(strings.TrimSpace(cloud.Prefix), "/")
-	source := strings.ReplaceAll(strings.TrimSpace(src.Name), " ", "_")
-	if source == "" {
-		source = strings.ReplaceAll(strings.TrimSpace(src.PrimaryIP), " ", "_")
-	}
-	dest := strings.ReplaceAll(strings.TrimSpace(dst.Name), " ", "_")
-	if dest == "" {
-		dest = strings.ReplaceAll(strings.TrimSpace(dst.PrimaryIP), " ", "_")
-	}
-	if source == "" {
-		source = "source"
-	}
-	if dest == "" {
-		dest = "destination"
-	}
-	base := fmt.Sprintf("%s_to_%s_%d", source, dest, time.Now().UTC().UnixNano())
-	if prefix == "" {
-		return base
-	}
-	return prefix + "/" + base
-}
-
-func normalizeTransferCloudProvider(provider string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "gcs":
-		return "googlecloudstorage"
-	default:
-		return strings.ToLower(strings.TrimSpace(provider))
-	}
-}
-
-func (s *Server) resolveTransferCloudSigningHints(cloud ui.AgentCloudBackend, ref *filesCloudBackendRef) (cloudSigningHints, error) {
-	var hints cloudSigningHints
+func (s *Server) resolveTransferCloudSigningHints(cloud ui.AgentCloudBackend, ref *filesCloudBackendRef) (cloudtransfer.SigningHints, error) {
+	var hints cloudtransfer.SigningHints
 	if ref == nil {
 		return hints, nil
 	}
@@ -436,7 +306,7 @@ func (s *Server) resolveTransferCloudSigningHints(cloud ui.AgentCloudBackend, re
 	if err != nil {
 		return hints, fmt.Errorf("load config: %w", err)
 	}
-	provider := normalizeTransferCloudProvider(cloud.Provider)
+	provider := cloudtransfer.NormalizeProvider(cloud.Provider)
 	switch kind {
 	case "aws":
 		if provider != "" && provider != "s3" {

@@ -397,6 +397,11 @@ func isK8sPodRecord(r hosts.Record) bool {
 	return r.Provider == "k8s" && strings.EqualFold(r.Meta["kind"], "pod")
 }
 
+// HostConnectableForTransfer reports whether a record can be dialed for SSH or Kubernetes pod exec.
+func HostConnectableForTransfer(r hosts.Record) bool {
+	return strings.TrimSpace(r.PrimaryIP) != "" || isK8sPodRecord(r)
+}
+
 func validateAgentTransferJob(job AgentTransferJob) error {
 	if strings.TrimSpace(job.Source.Record.PrimaryIP) == "" && !isK8sPodRecord(job.Source.Record) {
 		return newAgentTransferValidationError("source record has no connectable target")
@@ -556,6 +561,13 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 		retries = 2
 	}
 
+	evictSource := func(failedAttempt int) {
+		evictCachedSSHClient(cache, user, job.Source.Record, failedAttempt)
+	}
+	evictDestination := func(failedAttempt int) {
+		evictCachedSSHClient(cache, user, job.Destination.Record, failedAttempt)
+	}
+
 	cloudBase := agentSessionHostMsg{
 		Provider: job.Cloud.Provider,
 		Bucket:   job.Cloud.Bucket,
@@ -577,7 +589,11 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	}
 	// Do not run cloud cleanup inside the source session: destination must download first.
 	sourceSessionFn := func() error {
-		jwe, e := runHoneyTransferAgentSession(srcClient, agentRemotePath, mintSrcJWE, srcOps)
+		c, dialErr := cache.GetOrDial(user, job.Source.Record)
+		if dialErr != nil {
+			return dialErr
+		}
+		jwe, e := runHoneyTransferAgentSession(c, agentRemotePath, mintSrcJWE, srcOps)
 		if e != nil {
 			return e
 		}
@@ -587,7 +603,7 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 		}
 		return nil
 	}
-	if err := runAgentSessionWithRetries("transfer_session_source", srcHost, retries, &events, emit, redactions, sourceSessionFn); err != nil {
+	if err := runAgentSessionWithRetries("transfer_session_source", srcHost, retries, &events, emit, redactions, sourceSessionFn, evictSource); err != nil {
 		return events, err
 	}
 
@@ -597,7 +613,11 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	}
 	dstOps = append(dstOps, mergeCloudOp(cloudBase, agentSessionHostMsg{Op: "download", Path: strings.TrimSpace(job.Destination.Path)}))
 	destSessionFn := func() error {
-		jwe, e := runHoneyTransferAgentSession(dstClient, agentRemotePath, mintDstJWE, dstOps)
+		c, dialErr := cache.GetOrDial(user, job.Destination.Record)
+		if dialErr != nil {
+			return dialErr
+		}
+		jwe, e := runHoneyTransferAgentSession(c, agentRemotePath, mintDstJWE, dstOps)
 		if e != nil {
 			return e
 		}
@@ -607,7 +627,7 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 		}
 		return nil
 	}
-	if err := runAgentSessionWithRetries("transfer_session_destination", dstHost, retries, &events, emit, redactions, destSessionFn); err != nil {
+	if err := runAgentSessionWithRetries("transfer_session_destination", dstHost, retries, &events, emit, redactions, destSessionFn, evictDestination); err != nil {
 		return events, err
 	}
 
@@ -616,7 +636,11 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 			mergeCloudOp(cloudBase, agentSessionHostMsg{Op: "cleanup"}),
 		}
 		cleanupSessionFn := func() error {
-			jwe, e := runHoneyTransferAgentSession(srcClient, agentRemotePath, mintSrcJWE, cleanupOps)
+			c, dialErr := cache.GetOrDial(user, job.Source.Record)
+			if dialErr != nil {
+				return dialErr
+			}
+			jwe, e := runHoneyTransferAgentSession(c, agentRemotePath, mintSrcJWE, cleanupOps)
 			if e != nil {
 				return e
 			}
@@ -626,7 +650,7 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 			return nil
 		}
 		// Match legacy behavior: best-effort delete of the staged object from the source side.
-		_ = runAgentSessionWithRetries("cleanup_object", srcHost, 1, &events, emit, redactions, cleanupSessionFn)
+		_ = runAgentSessionWithRetries("cleanup_object", srcHost, 1, &events, emit, redactions, cleanupSessionFn, evictSource)
 	}
 
 	zap.L().Debug("agent transfer credential envelopes minted",
@@ -635,8 +659,12 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 		zap.Bool("has_destination_jwe", strings.TrimSpace(dstJWE) != ""),
 	)
 
-	_, _ = srcClient.Run("rm -f " + shellQuote(agentRemotePath))
-	_, _ = dstClient.Run("rm -f " + shellQuote(agentRemotePath))
+	if c, err := cache.GetOrDial(user, job.Source.Record); err == nil {
+		_, _ = c.Run("rm -f " + shellQuote(agentRemotePath))
+	}
+	if c, err := cache.GetOrDial(user, job.Destination.Record); err == nil {
+		_, _ = c.Run("rm -f " + shellQuote(agentRemotePath))
+	}
 	stageEvent(&events, emit, redactions, "cleanup_agent", srcHost, true, "removed ephemeral agent", nil, 1)
 	if dstHost != srcHost {
 		stageEvent(&events, emit, redactions, "cleanup_agent", dstHost, true, "removed ephemeral agent", nil, 1)

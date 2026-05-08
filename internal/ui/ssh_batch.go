@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/shareed2k/honey/internal/hosts"
 
@@ -15,7 +16,26 @@ import (
 const (
 	defaultSSHBatchConcurrency = 32
 	maxOutputPerHost           = 6000
+	sshTransientOpAttempts     = 3
 )
+
+func sshTransientBackoff(attempt int) {
+	time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
+}
+
+// evictCachedSSHClient removes a dead pooled client (if any) and pauses before redial.
+func evictCachedSSHClient(cache *ClientCache, user string, r hosts.Record, attempt int) {
+	if cache != nil {
+		cache.Evict(user, r)
+	}
+	sshTransientBackoff(attempt)
+}
+
+func closeSSHIfEphemeral(cache *ClientCache, client HostClient) {
+	if cache == nil && client != nil {
+		_ = client.Close()
+	}
+}
 
 // HostExecResult is the outcome of one non-interactive ssh run.
 type HostExecResult struct {
@@ -89,39 +109,53 @@ func runOneRemoteSSH(user string, r hosts.Record, remoteCmd string, cache *Clien
 		IP:       r.PrimaryIP,
 		Provider: r.Provider,
 	}
-	client, err := cache.GetOrDial(user, r)
-	if err != nil {
-		res.Success = false
-		res.ErrMsg = err.Error()
-		return res
-	}
-	if cache == nil {
-		defer func() { _ = client.Close() }()
-	}
-
-	raw, err := client.Run(remoteCmd)
-	out := strings.TrimSpace(string(raw))
-	if len(out) > maxOutputPerHost {
-		out = out[:maxOutputPerHost] + "\n…(truncated)"
-	}
-	res.Output = out
-
-	if err != nil {
-		var ee *ssh.ExitError
-		if errors.As(err, &ee) {
-			res.ExitCode = ee.ExitStatus()
-			res.Success = false
-			if res.ExitCode != 0 {
-				res.ErrMsg = fmt.Sprintf("exit %d", res.ExitCode)
+	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
+		client, dialErr := cache.GetOrDial(user, r)
+		if dialErr != nil {
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
 			}
+			res.Success = false
+			res.ErrMsg = dialErr.Error()
 			return res
 		}
-		res.Success = false
-		res.ErrMsg = err.Error()
+
+		raw, runErr := client.Run(remoteCmd)
+		out := strings.TrimSpace(string(raw))
+		if len(out) > maxOutputPerHost {
+			out = out[:maxOutputPerHost] + "\n…(truncated)"
+		}
+		res.Output = out
+
+		if runErr != nil {
+			var ee *ssh.ExitError
+			if errors.As(runErr, &ee) {
+				closeSSHIfEphemeral(cache, client)
+				res.ExitCode = ee.ExitStatus()
+				res.Success = false
+				if res.ExitCode != 0 {
+					res.ErrMsg = fmt.Sprintf("exit %d", res.ExitCode)
+				}
+				return res
+			}
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(runErr) {
+				closeSSHIfEphemeral(cache, client)
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
+			}
+			closeSSHIfEphemeral(cache, client)
+			res.Success = false
+			res.ErrMsg = runErr.Error()
+			return res
+		}
+		closeSSHIfEphemeral(cache, client)
+		res.Success = true
+		res.ExitCode = 0
 		return res
 	}
-	res.Success = true
-	res.ExitCode = 0
+	res.Success = false
+	res.ErrMsg = "ssh: exceeded transient retry attempts"
 	return res
 }
 
@@ -280,23 +314,37 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 
 func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string, cache *ClientCache) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := cache.GetOrDial(user, r)
-	if err != nil {
-		res.Success = false
-		res.ErrMsg = err.Error()
+	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
+		client, dialErr := cache.GetOrDial(user, r)
+		if dialErr != nil {
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
+			}
+			res.Success = false
+			res.ErrMsg = dialErr.Error()
+			return res
+		}
+		upErr := client.Upload(localAbs, remotePath)
+		if upErr != nil {
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(upErr) {
+				closeSSHIfEphemeral(cache, client)
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
+			}
+			closeSSHIfEphemeral(cache, client)
+			res.Success = false
+			res.ErrMsg = upErr.Error()
+			return res
+		}
+		closeSSHIfEphemeral(cache, client)
+		res.Success = true
+		res.ExitCode = 0
+		res.Output = "put " + localAbs + " → " + remotePath
 		return res
 	}
-	if cache == nil {
-		defer func() { _ = client.Close() }()
-	}
-	if err := client.Upload(localAbs, remotePath); err != nil {
-		res.Success = false
-		res.ErrMsg = err.Error()
-		return res
-	}
-	res.Success = true
-	res.ExitCode = 0
-	res.Output = "put " + localAbs + " → " + remotePath
+	res.Success = false
+	res.ErrMsg = "sftp put: exceeded transient retry attempts"
 	return res
 }
 
@@ -328,68 +376,102 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 
 func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, remoteCmd string, cache *ClientCache) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := cache.GetOrDial(user, r)
-	if err != nil {
-		res.Success = false
-		res.ErrMsg = err.Error()
-		return res
-	}
-	if cache == nil {
-		defer func() { _ = client.Close() }()
-	}
-
-	if err := client.Upload(localAbs, remotePath); err != nil {
-		res.Success = false
-		res.ErrMsg = "upload: " + err.Error()
-		return res
-	}
-
-	raw, err := client.Run(remoteCmd)
-	out := strings.TrimSpace(string(raw))
-	if len(out) > maxOutputPerHost {
-		out = out[:maxOutputPerHost] + "\n…(truncated)"
-	}
-	res.Output = "script put → " + remotePath + "\n" + out
-
-	if err != nil {
-		var ee *ssh.ExitError
-		if errors.As(err, &ee) {
-			res.ExitCode = ee.ExitStatus()
-			res.Success = false
-			if res.ExitCode != 0 {
-				res.ErrMsg = fmt.Sprintf("run: exit %d", res.ExitCode)
+	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
+		client, dialErr := cache.GetOrDial(user, r)
+		if dialErr != nil {
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
 			}
+			res.Success = false
+			res.ErrMsg = dialErr.Error()
 			return res
 		}
-		res.Success = false
-		res.ErrMsg = "run: " + err.Error()
+
+		if upErr := client.Upload(localAbs, remotePath); upErr != nil {
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(upErr) {
+				closeSSHIfEphemeral(cache, client)
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
+			}
+			closeSSHIfEphemeral(cache, client)
+			res.Success = false
+			res.ErrMsg = "upload: " + upErr.Error()
+			return res
+		}
+
+		raw, runErr := client.Run(remoteCmd)
+		out := strings.TrimSpace(string(raw))
+		if len(out) > maxOutputPerHost {
+			out = out[:maxOutputPerHost] + "\n…(truncated)"
+		}
+		res.Output = "script put → " + remotePath + "\n" + out
+
+		if runErr != nil {
+			var ee *ssh.ExitError
+			if errors.As(runErr, &ee) {
+				closeSSHIfEphemeral(cache, client)
+				res.ExitCode = ee.ExitStatus()
+				res.Success = false
+				if res.ExitCode != 0 {
+					res.ErrMsg = fmt.Sprintf("run: exit %d", res.ExitCode)
+				}
+				return res
+			}
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(runErr) {
+				closeSSHIfEphemeral(cache, client)
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
+			}
+			closeSSHIfEphemeral(cache, client)
+			res.Success = false
+			res.ErrMsg = "run: " + runErr.Error()
+			return res
+		}
+		closeSSHIfEphemeral(cache, client)
+		res.Success = true
+		res.ExitCode = 0
 		return res
 	}
-	res.Success = true
-	res.ExitCode = 0
+	res.Success = false
+	res.ErrMsg = "script step: exceeded transient retry attempts"
 	return res
 }
 
 func runOneSFTPDownload(user string, j SFTPDownloadJob, cache *ClientCache) HostExecResult {
 	r := j.Record
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
-	client, err := cache.GetOrDial(user, r)
-	if err != nil {
-		res.Success = false
-		res.ErrMsg = err.Error()
+	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
+		client, dialErr := cache.GetOrDial(user, r)
+		if dialErr != nil {
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
+			}
+			res.Success = false
+			res.ErrMsg = dialErr.Error()
+			return res
+		}
+		dlErr := client.Download(j.RemotePath, j.LocalAbs)
+		if dlErr != nil {
+			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dlErr) {
+				closeSSHIfEphemeral(cache, client)
+				evictCachedSSHClient(cache, user, r, attempt)
+				continue
+			}
+			closeSSHIfEphemeral(cache, client)
+			res.Success = false
+			res.ErrMsg = dlErr.Error()
+			return res
+		}
+		closeSSHIfEphemeral(cache, client)
+		res.Success = true
+		res.ExitCode = 0
+		res.Output = "get " + j.RemotePath + " → " + j.LocalAbs
 		return res
 	}
-	if cache == nil {
-		defer func() { _ = client.Close() }()
-	}
-	if err := client.Download(j.RemotePath, j.LocalAbs); err != nil {
-		res.Success = false
-		res.ErrMsg = err.Error()
-		return res
-	}
-	res.Success = true
-	res.ExitCode = 0
-	res.Output = "get " + j.RemotePath + " → " + j.LocalAbs
+	res.Success = false
+	res.ErrMsg = "sftp get: exceeded transient retry attempts"
 	return res
 }
 

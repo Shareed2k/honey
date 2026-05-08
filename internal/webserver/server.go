@@ -44,9 +44,7 @@ type Server struct {
 	assistModelIDs  []string
 	assistModelsExp time.Time
 
-	fileClientCache   *ui.ClientCache
-	agentResolveMu    sync.Mutex
-	agentResolvedPath map[string]string
+	fileClientCache *ui.ClientCache
 }
 
 // NewServer builds handlers with the given auth token.
@@ -58,11 +56,10 @@ func NewServer(opts Options) (*Server, error) {
 		opts.MaxUploadSize = 100 << 20
 	}
 	s := &Server{
-		opts:              opts,
-		mux:               http.NewServeMux(),
-		assistRL:          newSlidingRL(),
-		fileClientCache:   ui.NewClientCache(),
-		agentResolvedPath: map[string]string{},
+		opts:            opts,
+		mux:             http.NewServeMux(),
+		assistRL:        newSlidingRL(),
+		fileClientCache: ui.NewClientCache(),
 	}
 	s.routes()
 	return s, nil
