@@ -87,6 +87,13 @@ func (c *k8sNativeClient) Run(cmd string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+func (c *k8sNativeClient) RunWithStreams(cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	return c.execInPod(context.Background(), []string{"sh", "-c", cmd}, stdin, stdout, stderr, false, nil)
+}
+
 func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
 	localFile, err := os.Open(localPath) // #nosec G304 -- CLI tool, user explicitly provides the local path for upload
 	if err != nil {

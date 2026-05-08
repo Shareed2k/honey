@@ -1,7 +1,8 @@
+// Package main implements the honey-transfer-agent: upload/download cloud objects with
+// short-lived credentials (JWE or env), optional interactive setup, and a JSON session mode.
 package main
 
 import (
-	cloudstorage "cloud.google.com/go/storage"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -21,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	cloudstorage "cloud.google.com/go/storage"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -168,6 +170,10 @@ func loadPrivateKey(pathValue string) (*ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseECPrivateKeyPEM(raw)
+}
+
+func parseECPrivateKeyPEM(raw []byte) (*ecdsa.PrivateKey, error) {
 	block, _ := pem.Decode(raw)
 	if block == nil {
 		return nil, fmt.Errorf("invalid pem private key")
@@ -179,16 +185,15 @@ func loadPrivateKey(pathValue string) (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
-func decryptClaims(a transferArgs) (*credentialClaims, error) {
-	if err := require(a.CredsJWE, "creds_jwe"); err != nil {
+func decryptClaimsWithKey(priv *ecdsa.PrivateKey, credsJWE string) (*credentialClaims, error) {
+	if err := require(credsJWE, "creds_jwe"); err != nil {
 		return nil, err
 	}
-	priv, err := loadPrivateKey(a.KeyFile)
-	if err != nil {
-		return nil, err
+	if priv == nil {
+		return nil, fmt.Errorf("missing private key")
 	}
 	obj, err := jose.ParseEncrypted(
-		strings.TrimSpace(a.CredsJWE),
+		strings.TrimSpace(credsJWE),
 		[]jose.KeyAlgorithm{jose.ECDH_ES},
 		[]jose.ContentEncryption{jose.A256GCM},
 	)
@@ -214,6 +219,17 @@ func decryptClaims(a transferArgs) (*credentialClaims, error) {
 		return nil, fmt.Errorf("credential envelope not active yet")
 	}
 	return &claims, nil
+}
+
+func decryptClaims(a transferArgs) (*credentialClaims, error) {
+	if err := require(a.CredsJWE, "creds_jwe"); err != nil {
+		return nil, err
+	}
+	priv, err := loadPrivateKey(a.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	return decryptClaimsWithKey(priv, a.CredsJWE)
 }
 
 type cloudClient interface {
@@ -293,7 +309,7 @@ func (c *awsClient) Download(ctx context.Context, a transferArgs) error {
 	if err := os.MkdirAll(filepath.Dir(a.Path), 0o750); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Clean(a.Path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640) // #nosec G304
+	f, err := os.OpenFile(filepath.Clean(a.Path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304
 	if err != nil {
 		return err
 	}
@@ -374,7 +390,7 @@ func (c *gcpClient) Download(ctx context.Context, a transferArgs) error {
 	if err := os.MkdirAll(filepath.Dir(a.Path), 0o750); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Clean(a.Path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640) // #nosec G304
+	f, err := os.OpenFile(filepath.Clean(a.Path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304
 	if err != nil {
 		return err
 	}
@@ -537,7 +553,7 @@ func runChecksum(a transferArgs) error {
 }
 
 func usage() {
-	_, _ = fmt.Fprintf(os.Stderr, "usage: honey-transfer-agent <keygen|upload|download|cleanup|probe|checksum> [flags]\n")
+	_, _ = fmt.Fprintf(os.Stderr, "usage: honey-transfer-agent <keygen|session|upload|download|cleanup|probe|checksum> [flags]\n")
 }
 
 func main() {
@@ -556,6 +572,8 @@ func main() {
 	switch op {
 	case "keygen":
 		err = runKeygen(args)
+	case "session":
+		err = runSession(ctx)
 	case "upload":
 		err = runUpload(ctx, args)
 	case "download":

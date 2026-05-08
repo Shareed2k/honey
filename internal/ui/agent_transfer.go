@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -70,8 +71,8 @@ func (e *AgentTransferValidationError) Error() string {
 	return e.msg
 }
 
-func newAgentTransferValidationError(format string, args ...any) error {
-	return &AgentTransferValidationError{msg: fmt.Sprintf(format, args...)}
+func newAgentTransferValidationError(msg string) error {
+	return &AgentTransferValidationError{msg: msg}
 }
 
 func targetLabel(r hosts.Record) string {
@@ -86,25 +87,6 @@ func targetLabel(r hosts.Record) string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func envPrefix(env map[string]string) string {
-	if len(env) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for k, v := range env {
-		k = strings.TrimSpace(k)
-		if k == "" {
-			continue
-		}
-		b.WriteString("export ")
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(shellQuote(v))
-		b.WriteString("; ")
-	}
-	return b.String()
 }
 
 func remoteAgentPath(remoteDir string) string {
@@ -237,6 +219,15 @@ func stageEvent(out *[]AgentTransferEvent, emit func(AgentTransferEvent), redact
 	}
 }
 
+// stageEventMaybeLocked is like stageEvent but serializes appends when eventMu is non-nil (parallel staging).
+func stageEventMaybeLocked(eventMu *sync.Mutex, out *[]AgentTransferEvent, emit func(AgentTransferEvent), redactions []string, stage, host string, ok bool, msg string, err error, attempt int) {
+	if eventMu != nil {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+	}
+	stageEvent(out, emit, redactions, stage, host, ok, msg, err, attempt)
+}
+
 func agentCompressionMode(agentPath string) string {
 	if strings.Contains(strings.ToLower(strings.TrimSpace(agentPath)), "-upx") {
 		return "upx"
@@ -254,31 +245,6 @@ func agentProviderFlavor(agentPath string) string {
 	default:
 		return "full"
 	}
-}
-
-func buildAgentCommand(agentPath, operation string, args map[string]string, env map[string]string) string {
-	var b strings.Builder
-	b.WriteString(envPrefix(env))
-	b.WriteString(shellQuote(agentPath))
-	b.WriteByte(' ')
-	b.WriteString(shellQuote(operation))
-	for k, v := range args {
-		if strings.TrimSpace(v) == "" {
-			continue
-		}
-		b.WriteByte(' ')
-		b.WriteString("--")
-		b.WriteString(k)
-		b.WriteByte(' ')
-		b.WriteString(shellQuote(v))
-	}
-	return b.String()
-}
-
-type agentKeygenResult struct {
-	KID            string `json:"kid"`
-	PublicJWK      string `json:"public_jwk"`
-	PrivateKeyFile string `json:"private_key_file"`
 }
 
 func mintCredentialJWE(publicJWK string, scope string, provider string, creds map[string]string, expiresAtUnix int64) (string, error) {
@@ -331,78 +297,6 @@ func mintCredentialJWE(publicJWK string, scope string, provider string, creds ma
 	return compact, nil
 }
 
-func runWithRetries(client HostClient, stage, host string, attempts int, out *[]AgentTransferEvent, emit func(AgentTransferEvent), redactions []string, cmd string) error {
-	if attempts <= 0 {
-		attempts = 1
-	}
-	var lastErr error
-	for i := 1; i <= attempts; i++ {
-		attemptStart := time.Now()
-		zap.L().Debug("agent transfer command attempt start",
-			zap.String("stage", stage),
-			zap.String("host", host),
-			zap.Int("attempt", i),
-			zap.Int("max_attempts", attempts),
-		)
-		stageEvent(out, emit, redactions, stage+"_start", host, true, "starting", nil, i)
-		type runResult struct {
-			raw []byte
-			err error
-		}
-		resCh := make(chan runResult, 1)
-		go func() {
-			raw, err := client.Run(cmd)
-			resCh <- runResult{raw: raw, err: err}
-		}()
-		ticker := time.NewTicker(5 * time.Second)
-		var res runResult
-		running := true
-		for running {
-			select {
-			case res = <-resCh:
-				running = false
-			case <-ticker.C:
-				zap.L().Debug("agent transfer command attempt progress",
-					zap.String("stage", stage),
-					zap.String("host", host),
-					zap.Int("attempt", i),
-					zap.Duration("elapsed", time.Since(attemptStart)),
-				)
-				stageEvent(out, emit, redactions, stage+"_progress", host, true, "still running", nil, i)
-			}
-		}
-		ticker.Stop()
-		raw, err := res.raw, res.err
-		if err == nil {
-			msg := strings.TrimSpace(string(raw))
-			if msg == "" {
-				msg = "ok"
-			}
-			zap.L().Debug("agent transfer command attempt success",
-				zap.String("stage", stage),
-				zap.String("host", host),
-				zap.Int("attempt", i),
-				zap.Duration("elapsed", time.Since(attemptStart)),
-				zap.Int("output_len", len(msg)),
-			)
-			stageEvent(out, emit, redactions, stage, host, true, msg, nil, i)
-			return nil
-		}
-		lastErr = err
-		msg := strings.TrimSpace(string(raw))
-		zap.L().Warn("agent transfer command attempt failed",
-			zap.String("stage", stage),
-			zap.String("host", host),
-			zap.Int("attempt", i),
-			zap.Duration("elapsed", time.Since(attemptStart)),
-			zap.Int("output_len", len(msg)),
-			zap.Error(err),
-		)
-		stageEvent(out, emit, redactions, stage, host, false, msg, err, i)
-	}
-	return lastErr
-}
-
 func runUploadWithHeartbeat(
 	out *[]AgentTransferEvent,
 	emit func(AgentTransferEvent),
@@ -411,6 +305,7 @@ func runUploadWithHeartbeat(
 	host string,
 	attempt int,
 	uploadFn func() error,
+	eventMu *sync.Mutex,
 ) error {
 	uploadStart := time.Now()
 	zap.L().Debug("agent transfer upload start",
@@ -418,7 +313,7 @@ func runUploadWithHeartbeat(
 		zap.String("host", host),
 		zap.Int("attempt", attempt),
 	)
-	stageEvent(out, emit, redactions, stage+"_start", host, true, "starting", nil, attempt)
+	stageEventMaybeLocked(eventMu, out, emit, redactions, stage+"_start", host, true, "starting", nil, attempt)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- uploadFn()
@@ -452,9 +347,137 @@ func runUploadWithHeartbeat(
 				zap.Int("attempt", attempt),
 				zap.Duration("elapsed", time.Since(uploadStart)),
 			)
-			stageEvent(out, emit, redactions, stage+"_progress", host, true, "still uploading", nil, attempt)
+			stageEventMaybeLocked(eventMu, out, emit, redactions, stage+"_progress", host, true, "still uploading", nil, attempt)
 		}
 	}
+}
+
+// stageAgentBinary checks whether the agent binary must be uploaded and uploads it with heartbeats.
+// eventMu may be nil when only one goroutine emits transfer events.
+func stageAgentBinary(
+	eventMu *sync.Mutex,
+	out *[]AgentTransferEvent,
+	emit func(AgentTransferEvent),
+	redactions []string,
+	stage string,
+	host string,
+	client HostClient,
+	localPath, remotePath string,
+) error {
+	needsUpload, reason, err := shouldUploadAgent(client, localPath, remotePath)
+	if err != nil {
+		stageEventMaybeLocked(eventMu, out, emit, redactions, stage, host, false, "", err, 1)
+		return err
+	}
+	if needsUpload {
+		zap.L().Debug("agent transfer stage requires upload",
+			zap.String("stage", stage),
+			zap.String("host", host),
+			zap.String("reason", reason),
+		)
+		if err := runUploadWithHeartbeat(out, emit, redactions, stage, host, 1, func() error {
+			return client.Upload(localPath, remotePath)
+		}, eventMu); err != nil {
+			stageEventMaybeLocked(eventMu, out, emit, redactions, stage, host, false, "", err, 1)
+			return err
+		}
+		stageEventMaybeLocked(eventMu, out, emit, redactions, stage, host, true, remotePath, nil, 1)
+		return nil
+	}
+	zap.L().Debug("agent transfer stage skipped upload",
+		zap.String("stage", stage),
+		zap.String("host", host),
+		zap.String("reason", reason),
+	)
+	stageEventMaybeLocked(eventMu, out, emit, redactions, stage, host, true, reason, nil, 1)
+	return nil
+}
+
+func isK8sPodRecord(r hosts.Record) bool {
+	return r.Provider == "k8s" && strings.EqualFold(r.Meta["kind"], "pod")
+}
+
+func validateAgentTransferJob(job AgentTransferJob) error {
+	if strings.TrimSpace(job.Source.Record.PrimaryIP) == "" && !isK8sPodRecord(job.Source.Record) {
+		return newAgentTransferValidationError("source record has no connectable target")
+	}
+	if strings.TrimSpace(job.Destination.Record.PrimaryIP) == "" && !isK8sPodRecord(job.Destination.Record) {
+		return newAgentTransferValidationError("destination record has no connectable target")
+	}
+	if strings.TrimSpace(job.AgentLocalPath) == "" {
+		return newAgentTransferValidationError("agent_local_path is required")
+	}
+	if strings.TrimSpace(job.Source.Path) == "" {
+		return newAgentTransferValidationError("source.path is required")
+	}
+	if strings.TrimSpace(job.Destination.Path) == "" {
+		return newAgentTransferValidationError("destination.path is required")
+	}
+	if strings.TrimSpace(job.CredentialProvider) == "" {
+		return newAgentTransferValidationError("credential_provider is required")
+	}
+	if len(job.CredentialEnv) == 0 {
+		return newAgentTransferValidationError("credential_env is required")
+	}
+	if strings.TrimSpace(job.Cloud.Provider) == "" || strings.TrimSpace(job.Cloud.Bucket) == "" {
+		return newAgentTransferValidationError("cloud.provider and cloud.bucket are required")
+	}
+	if strings.TrimSpace(job.Cloud.Object) == "" {
+		return newAgentTransferValidationError("cloud.object is required")
+	}
+	return nil
+}
+
+func agentTransferEndpointsMismatch(job AgentTransferJob, srcHost, dstHost string) bool {
+	return srcHost != dstHost ||
+		job.Source.Record.PrimaryIP != job.Destination.Record.PrimaryIP ||
+		job.Source.Record.Provider != job.Destination.Record.Provider
+}
+
+func stageSourceDestinationAgents(
+	job AgentTransferJob,
+	events *[]AgentTransferEvent,
+	emit func(AgentTransferEvent),
+	redactions []string,
+	srcHost, dstHost string,
+	srcClient, dstClient HostClient,
+	srcAgentPath, dstAgentPath, agentRemotePath string,
+) error {
+	if !agentTransferEndpointsMismatch(job, srcHost, dstHost) {
+		if err := stageAgentBinary(nil, events, emit, redactions, "stage_agent_source", srcHost, srcClient, srcAgentPath, agentRemotePath); err != nil {
+			return err
+		}
+		stageEvent(events, emit, redactions, "stage_agent_destination", dstHost, true, "same host as source; skipped duplicate stage", nil, 1)
+		return nil
+	}
+	var eventMu sync.Mutex
+	type stageOutcome struct {
+		role string
+		err  error
+	}
+	outcomes := make(chan stageOutcome, 2)
+	go func() {
+		err := stageAgentBinary(&eventMu, events, emit, redactions, "stage_agent_source", srcHost, srcClient, srcAgentPath, agentRemotePath)
+		outcomes <- stageOutcome{role: "source", err: err}
+	}()
+	go func() {
+		err := stageAgentBinary(&eventMu, events, emit, redactions, "stage_agent_destination", dstHost, dstClient, dstAgentPath, agentRemotePath)
+		outcomes <- stageOutcome{role: "destination", err: err}
+	}()
+	var srcStageErr, dstStageErr error
+	for range 2 {
+		o := <-outcomes
+		switch o.role {
+		case "source":
+			srcStageErr = o.err
+		case "destination":
+			dstStageErr = o.err
+		}
+	}
+	if srcStageErr != nil {
+		return srcStageErr
+	}
+	return dstStageErr
 }
 
 // ExecuteAgentCloudTransfer orchestrates source upload and destination download using
@@ -467,40 +490,16 @@ func ExecuteAgentCloudTransfer(job AgentTransferJob, cache *ClientCache) ([]Agen
 func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache, emit func(AgentTransferEvent)) ([]AgentTransferEvent, error) {
 	var events []AgentTransferEvent
 	transferStart := time.Now()
+	if err := validateAgentTransferJob(job); err != nil {
+		return events, err
+	}
+	objectKey := strings.TrimSpace(job.Cloud.Object)
 	user := strings.TrimSpace(job.SSHUser)
 	if user == "" {
 		user = strings.TrimSpace(os.Getenv("USER"))
 	}
 	if user == "" {
 		user = "root"
-	}
-	if strings.TrimSpace(job.Source.Record.PrimaryIP) == "" && !(job.Source.Record.Provider == "k8s" && strings.EqualFold(job.Source.Record.Meta["kind"], "pod")) {
-		return events, newAgentTransferValidationError("source record has no connectable target")
-	}
-	if strings.TrimSpace(job.Destination.Record.PrimaryIP) == "" && !(job.Destination.Record.Provider == "k8s" && strings.EqualFold(job.Destination.Record.Meta["kind"], "pod")) {
-		return events, newAgentTransferValidationError("destination record has no connectable target")
-	}
-	if strings.TrimSpace(job.AgentLocalPath) == "" {
-		return events, newAgentTransferValidationError("agent_local_path is required")
-	}
-	if strings.TrimSpace(job.Source.Path) == "" {
-		return events, newAgentTransferValidationError("source.path is required")
-	}
-	if strings.TrimSpace(job.Destination.Path) == "" {
-		return events, newAgentTransferValidationError("destination.path is required")
-	}
-	if strings.TrimSpace(job.CredentialProvider) == "" {
-		return events, newAgentTransferValidationError("credential_provider is required")
-	}
-	if len(job.CredentialEnv) == 0 {
-		return events, newAgentTransferValidationError("credential_env is required")
-	}
-	if strings.TrimSpace(job.Cloud.Provider) == "" || strings.TrimSpace(job.Cloud.Bucket) == "" {
-		return events, newAgentTransferValidationError("cloud.provider and cloud.bucket are required")
-	}
-	objectKey := strings.TrimSpace(job.Cloud.Object)
-	if objectKey == "" {
-		return events, newAgentTransferValidationError("cloud.object is required")
 	}
 	redactions := transferRedactionsForCredentialMode(job.CredentialEnv)
 	ownCache := false
@@ -545,198 +544,99 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	}
 	stageEvent(&events, emit, redactions, "agent_binary_source", srcHost, true, fmt.Sprintf("%s (provider=%s compression=%s)", srcAgentPath, agentProviderFlavor(srcAgentPath), agentCompressionMode(srcAgentPath)), nil, 1)
 	stageEvent(&events, emit, redactions, "agent_binary_destination", dstHost, true, fmt.Sprintf("%s (provider=%s compression=%s)", dstAgentPath, agentProviderFlavor(dstAgentPath), agentCompressionMode(dstAgentPath)), nil, 1)
-	srcNeedsUpload, srcReason, err := shouldUploadAgent(srcClient, srcAgentPath, agentRemotePath)
-	if err != nil {
-		stageEvent(&events, emit, redactions, "stage_agent_source", srcHost, false, "", err, 1)
+
+	if err := stageSourceDestinationAgents(job, &events, emit, redactions, srcHost, dstHost, srcClient, dstClient, srcAgentPath, dstAgentPath, agentRemotePath); err != nil {
 		return events, err
-	}
-	if srcNeedsUpload {
-		zap.L().Debug("agent transfer source stage requires upload",
-			zap.String("host", srcHost),
-			zap.String("reason", srcReason),
-		)
-		if err := runUploadWithHeartbeat(&events, emit, redactions, "stage_agent_source", srcHost, 1, func() error {
-			return srcClient.Upload(srcAgentPath, agentRemotePath)
-		}); err != nil {
-			stageEvent(&events, emit, redactions, "stage_agent_source", srcHost, false, "", err, 1)
-			return events, err
-		}
-		stageEvent(&events, emit, redactions, "stage_agent_source", srcHost, true, agentRemotePath, nil, 1)
-	} else {
-		zap.L().Debug("agent transfer source stage skipped upload",
-			zap.String("host", srcHost),
-			zap.String("reason", srcReason),
-		)
-		stageEvent(&events, emit, redactions, "stage_agent_source", srcHost, true, srcReason, nil, 1)
-	}
-	if srcHost != dstHost || job.Source.Record.PrimaryIP != job.Destination.Record.PrimaryIP || job.Source.Record.Provider != job.Destination.Record.Provider {
-		dstNeedsUpload, dstReason, err := shouldUploadAgent(dstClient, dstAgentPath, agentRemotePath)
-		if err != nil {
-			stageEvent(&events, emit, redactions, "stage_agent_destination", dstHost, false, "", err, 1)
-			return events, err
-		}
-		if dstNeedsUpload {
-			zap.L().Debug("agent transfer destination stage requires upload",
-				zap.String("host", dstHost),
-				zap.String("reason", dstReason),
-			)
-			if err := runUploadWithHeartbeat(&events, emit, redactions, "stage_agent_destination", dstHost, 1, func() error {
-				return dstClient.Upload(dstAgentPath, agentRemotePath)
-			}); err != nil {
-				stageEvent(&events, emit, redactions, "stage_agent_destination", dstHost, false, "", err, 1)
-				return events, err
-			}
-			stageEvent(&events, emit, redactions, "stage_agent_destination", dstHost, true, agentRemotePath, nil, 1)
-		} else {
-			zap.L().Debug("agent transfer destination stage skipped upload",
-				zap.String("host", dstHost),
-				zap.String("reason", dstReason),
-			)
-			stageEvent(&events, emit, redactions, "stage_agent_destination", dstHost, true, dstReason, nil, 1)
-		}
-	}
-	if srcHost == dstHost && job.Source.Record.PrimaryIP == job.Destination.Record.PrimaryIP && job.Source.Record.Provider == job.Destination.Record.Provider {
-		stageEvent(&events, emit, redactions, "stage_agent_destination", dstHost, true, "same host as source; skipped duplicate stage", nil, 1)
 	}
 	_, _ = srcClient.Run("chmod +x " + shellQuote(agentRemotePath))
 	_, _ = dstClient.Run("chmod +x " + shellQuote(agentRemotePath))
 
-	baseEnv := map[string]string{
-		"HONEY_TRANSFER_PROVIDER": job.Cloud.Provider,
-		"HONEY_TRANSFER_BUCKET":   job.Cloud.Bucket,
-		"HONEY_TRANSFER_OBJECT":   objectKey,
-		"HONEY_TRANSFER_REGION":   job.Cloud.Region,
-		"HONEY_TRANSFER_ENDPOINT": job.Cloud.Endpoint,
-	}
-	keygenCmd := buildAgentCommand(agentRemotePath, "keygen", map[string]string{
-		"key_dir": strings.TrimSpace(job.AgentRemoteDir),
-	}, nil)
-	sourceKeyRaw, err := srcClient.Run(keygenCmd)
-	if err != nil {
-		stageEvent(&events, emit, redactions, "keygen_source", srcHost, false, "", err, 1)
-		return events, err
-	}
-	var sourceKey agentKeygenResult
-	if err := json.Unmarshal(sourceKeyRaw, &sourceKey); err != nil {
-		stageEvent(&events, emit, redactions, "keygen_source", srcHost, false, "", err, 1)
-		return events, fmt.Errorf("parse source keygen: %w", err)
-	}
-	stageEvent(&events, emit, redactions, "keygen_source", srcHost, true, "ok", nil, 1)
-	destKey := sourceKey
-	if srcHost != dstHost || job.Source.Record.PrimaryIP != job.Destination.Record.PrimaryIP || job.Source.Record.Provider != job.Destination.Record.Provider {
-		destKeyRaw, derr := dstClient.Run(keygenCmd)
-		if derr != nil {
-			stageEvent(&events, emit, redactions, "keygen_destination", dstHost, false, "", derr, 1)
-			return events, derr
-		}
-		if err := json.Unmarshal(destKeyRaw, &destKey); err != nil {
-			stageEvent(&events, emit, redactions, "keygen_destination", dstHost, false, "", err, 1)
-			return events, fmt.Errorf("parse destination keygen: %w", err)
-		}
-		stageEvent(&events, emit, redactions, "keygen_destination", dstHost, true, "ok", nil, 1)
-	} else {
-		stageEvent(&events, emit, redactions, "keygen_destination", dstHost, true, "same host as source; key reused", nil, 1)
-	}
-	srcJWE, err := mintCredentialJWE(sourceKey.PublicJWK, "source", job.CredentialProvider, job.CredentialEnv, job.CredentialExpiresAtUnix)
-	if err != nil {
-		stageEvent(&events, emit, redactions, "encrypt_credentials_source", srcHost, false, "", err, 1)
-		return events, err
-	}
-	dstJWE, err := mintCredentialJWE(destKey.PublicJWK, "destination", job.CredentialProvider, job.CredentialEnv, job.CredentialExpiresAtUnix)
-	if err != nil {
-		stageEvent(&events, emit, redactions, "encrypt_credentials_destination", dstHost, false, "", err, 1)
-		return events, err
-	}
-	redactions = append(redactions, transferRedactionsForCredentialMode(job.CredentialEnv, srcJWE, dstJWE)...)
-	zap.L().Debug("agent transfer environment prepared",
-		zap.String("credential_provider", strings.TrimSpace(job.CredentialProvider)),
-		zap.Bool("has_source_jwe", strings.TrimSpace(srcJWE) != ""),
-		zap.Bool("has_destination_jwe", strings.TrimSpace(dstJWE) != ""),
-	)
 	retries := job.MaxRetries
 	if retries <= 0 {
 		retries = 2
 	}
-	srcEnv := map[string]string{}
-	for k, v := range baseEnv {
-		srcEnv[k] = v
-	}
-	srcEnv["HONEY_TRANSFER_CREDS_JWE"] = srcJWE
-	srcEnv["HONEY_TRANSFER_KEY_FILE"] = strings.TrimSpace(sourceKey.PrivateKeyFile)
-	dstEnv := map[string]string{}
-	for k, v := range baseEnv {
-		dstEnv[k] = v
-	}
-	dstEnv["HONEY_TRANSFER_CREDS_JWE"] = dstJWE
-	dstEnv["HONEY_TRANSFER_KEY_FILE"] = strings.TrimSpace(destKey.PrivateKeyFile)
 
-	cloudProbeSourceCmd := buildAgentCommand(agentRemotePath, "probe", map[string]string{
-		"probe_access": "write",
-		"provider":     job.Cloud.Provider,
-		"bucket":       job.Cloud.Bucket,
-		"object":       objectKey,
-		"region":       job.Cloud.Region,
-		"endpoint":     job.Cloud.Endpoint,
-	}, srcEnv)
-	if err := runWithRetries(srcClient, "cloud_probe_source", srcHost, 1, &events, emit, redactions, cloudProbeSourceCmd); err != nil {
-		return events, err
+	cloudBase := agentSessionHostMsg{
+		Provider: job.Cloud.Provider,
+		Bucket:   job.Cloud.Bucket,
+		Object:   objectKey,
+		Region:   job.Cloud.Region,
+		Endpoint: job.Cloud.Endpoint,
 	}
-	if srcHost != dstHost || job.Source.Record.PrimaryIP != job.Destination.Record.PrimaryIP || job.Source.Record.Provider != job.Destination.Record.Provider {
-		cloudProbeDestinationCmd := buildAgentCommand(agentRemotePath, "probe", map[string]string{
-			"probe_access": "read",
-			"provider":     job.Cloud.Provider,
-			"bucket":       job.Cloud.Bucket,
-			"object":       objectKey,
-			"region":       job.Cloud.Region,
-			"endpoint":     job.Cloud.Endpoint,
-		}, dstEnv)
-		if err := runWithRetries(dstClient, "cloud_probe_destination", dstHost, 1, &events, emit, redactions, cloudProbeDestinationCmd); err != nil {
-			return events, err
+	mintSrcJWE := func(publicJWK string) (string, error) {
+		return mintCredentialJWE(publicJWK, "source", job.CredentialProvider, job.CredentialEnv, job.CredentialExpiresAtUnix)
+	}
+	mintDstJWE := func(publicJWK string) (string, error) {
+		return mintCredentialJWE(publicJWK, "destination", job.CredentialProvider, job.CredentialEnv, job.CredentialExpiresAtUnix)
+	}
+
+	var srcJWE, dstJWE string
+	srcOps := []agentSessionHostMsg{
+		mergeCloudOp(cloudBase, agentSessionHostMsg{Op: "probe", ProbeAccess: "write"}),
+		mergeCloudOp(cloudBase, agentSessionHostMsg{Op: "upload", Path: strings.TrimSpace(job.Source.Path)}),
+	}
+	// Do not run cloud cleanup inside the source session: destination must download first.
+	sourceSessionFn := func() error {
+		jwe, e := runHoneyTransferAgentSession(srcClient, agentRemotePath, mintSrcJWE, srcOps)
+		if e != nil {
+			return e
 		}
+		if strings.TrimSpace(jwe) != "" {
+			srcJWE = jwe
+			redactions = append(redactions, transferRedactionsForCredentialMode(nil, jwe)...)
+		}
+		return nil
 	}
-
-	uploadCmd := buildAgentCommand(agentRemotePath, "upload", map[string]string{
-		"path":     strings.TrimSpace(job.Source.Path),
-		"provider": job.Cloud.Provider,
-		"bucket":   job.Cloud.Bucket,
-		"object":   objectKey,
-		"region":   job.Cloud.Region,
-		"endpoint": job.Cloud.Endpoint,
-	}, srcEnv)
-	if err := runWithRetries(srcClient, "upload", srcHost, retries, &events, emit, redactions, uploadCmd); err != nil {
+	if err := runAgentSessionWithRetries("transfer_session_source", srcHost, retries, &events, emit, redactions, sourceSessionFn); err != nil {
 		return events, err
 	}
 
-	downloadCmd := buildAgentCommand(agentRemotePath, "download", map[string]string{
-		"path":     strings.TrimSpace(job.Destination.Path),
-		"provider": job.Cloud.Provider,
-		"bucket":   job.Cloud.Bucket,
-		"object":   objectKey,
-		"region":   job.Cloud.Region,
-		"endpoint": job.Cloud.Endpoint,
-	}, dstEnv)
-	if err := runWithRetries(dstClient, "download", dstHost, retries, &events, emit, redactions, downloadCmd); err != nil {
+	var dstOps []agentSessionHostMsg
+	if agentTransferEndpointsMismatch(job, srcHost, dstHost) {
+		dstOps = append(dstOps, mergeCloudOp(cloudBase, agentSessionHostMsg{Op: "probe", ProbeAccess: "read"}))
+	}
+	dstOps = append(dstOps, mergeCloudOp(cloudBase, agentSessionHostMsg{Op: "download", Path: strings.TrimSpace(job.Destination.Path)}))
+	destSessionFn := func() error {
+		jwe, e := runHoneyTransferAgentSession(dstClient, agentRemotePath, mintDstJWE, dstOps)
+		if e != nil {
+			return e
+		}
+		if strings.TrimSpace(jwe) != "" {
+			dstJWE = jwe
+			redactions = append(redactions, transferRedactionsForCredentialMode(nil, jwe)...)
+		}
+		return nil
+	}
+	if err := runAgentSessionWithRetries("transfer_session_destination", dstHost, retries, &events, emit, redactions, destSessionFn); err != nil {
 		return events, err
 	}
 
 	if !job.KeepObject {
-		cleanupObjectCmd := buildAgentCommand(agentRemotePath, "cleanup", map[string]string{
-			"provider": job.Cloud.Provider,
-			"bucket":   job.Cloud.Bucket,
-			"object":   objectKey,
-			"region":   job.Cloud.Region,
-			"endpoint": job.Cloud.Endpoint,
-		}, srcEnv)
-		_ = runWithRetries(srcClient, "cleanup_object", srcHost, 1, &events, emit, redactions, cleanupObjectCmd)
+		cleanupOps := []agentSessionHostMsg{
+			mergeCloudOp(cloudBase, agentSessionHostMsg{Op: "cleanup"}),
+		}
+		cleanupSessionFn := func() error {
+			jwe, e := runHoneyTransferAgentSession(srcClient, agentRemotePath, mintSrcJWE, cleanupOps)
+			if e != nil {
+				return e
+			}
+			if strings.TrimSpace(jwe) != "" {
+				redactions = append(redactions, transferRedactionsForCredentialMode(nil, jwe)...)
+			}
+			return nil
+		}
+		// Match legacy behavior: best-effort delete of the staged object from the source side.
+		_ = runAgentSessionWithRetries("cleanup_object", srcHost, 1, &events, emit, redactions, cleanupSessionFn)
 	}
+
+	zap.L().Debug("agent transfer credential envelopes minted",
+		zap.String("credential_provider", strings.TrimSpace(job.CredentialProvider)),
+		zap.Bool("has_source_jwe", strings.TrimSpace(srcJWE) != ""),
+		zap.Bool("has_destination_jwe", strings.TrimSpace(dstJWE) != ""),
+	)
+
 	_, _ = srcClient.Run("rm -f " + shellQuote(agentRemotePath))
 	_, _ = dstClient.Run("rm -f " + shellQuote(agentRemotePath))
-	if strings.TrimSpace(sourceKey.PrivateKeyFile) != "" {
-		_, _ = srcClient.Run("rm -f " + shellQuote(sourceKey.PrivateKeyFile))
-	}
-	if strings.TrimSpace(destKey.PrivateKeyFile) != "" && (srcHost != dstHost || sourceKey.PrivateKeyFile != destKey.PrivateKeyFile) {
-		_, _ = dstClient.Run("rm -f " + shellQuote(destKey.PrivateKeyFile))
-	}
 	stageEvent(&events, emit, redactions, "cleanup_agent", srcHost, true, "removed ephemeral agent", nil, 1)
 	if dstHost != srcHost {
 		stageEvent(&events, emit, redactions, "cleanup_agent", dstHost, true, "removed ephemeral agent", nil, 1)
@@ -750,6 +650,7 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	return events, nil
 }
 
+// IsAgentTransferValidationError reports whether err is an AgentTransferValidationError (HTTP 400 class input).
 func IsAgentTransferValidationError(err error) bool {
 	var ve *AgentTransferValidationError
 	return errors.As(err, &ve)

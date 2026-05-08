@@ -69,6 +69,7 @@ func shouldUseUPX() bool {
 }
 
 func packBinaryWithUPX(path string) error {
+	// #nosec G204 -- path is the resolved transfer-agent binary under the server-controlled cache dir.
 	cmd := exec.Command("upx", "--best", "--lzma", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -77,28 +78,22 @@ func packBinaryWithUPX(path string) error {
 	return nil
 }
 
-func (s *Server) resolveTransferAgentBinary(overridePath string) (string, error) {
-	return s.resolveTransferAgentBinaryForTargetAndProvider(overridePath, runtime.GOOS, runtime.GOARCH, "")
-}
-
-func (s *Server) resolveTransferAgentBinaryForTarget(overridePath, targetOS, targetArch string) (string, error) {
-	return s.resolveTransferAgentBinaryForTargetAndProvider(overridePath, targetOS, targetArch, "")
-}
-
-func normalizeAgentProviderFlavor(provider string) (string, string) {
+func normalizeAgentProviderFlavor(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "s3":
-		return "s3", ""
+		return "s3"
 	case "googlecloudstorage", "gcs":
-		return "gcs", ""
+		return "gcs"
 	default:
-		return "full", ""
+		return "full"
 	}
 }
 
 func buildTransferAgentBinary(root, binPath, targetOS, targetArch string) error {
-	args := []string{"build", "-trimpath", "-ldflags", "-s -w"}
+	args := make([]string, 0, 7)
+	args = append(args, "build", "-trimpath", "-ldflags", "-s -w")
 	args = append(args, "-o", binPath, "./cmd/honey-transfer-agent")
+	// #nosec G204 -- fixed "go build" argv; -o points at cache under repo root from runtime.Caller.
 	cmd := exec.Command("go", args...)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),
@@ -164,7 +159,7 @@ func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, ta
 	s.agentResolveMu.Lock()
 	defer s.agentResolveMu.Unlock()
 	useUPX := shouldUseUPX()
-	flavor, _ := normalizeAgentProviderFlavor(provider)
+	flavor := normalizeAgentProviderFlavor(provider)
 	cacheKey := targetOS + "/" + targetArch + "/" + flavor
 	if useUPX {
 		cacheKey += "/upx"
@@ -228,7 +223,6 @@ func (s *Server) resolveTransferAgentBinaryForTargetAndProvider(overridePath, ta
 				zap.Error(err),
 			)
 			// Fallback to non-packed path for this target.
-			useUPX = false
 			cacheKey = targetOS + "/" + targetArch + "/" + flavor
 			binName = fmt.Sprintf("honey-transfer-agent-%s-%s-%s", targetOS, targetArch, flavor)
 			binPath = filepath.Join(cacheDir, binName)

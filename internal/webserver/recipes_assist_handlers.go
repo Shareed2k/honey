@@ -190,7 +190,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = b.WriteString("\n\n--- Dry-run ---\n")
 	_, _ = b.WriteString(planNote)
-	_, _ = b.WriteString(fmt.Sprintf("\n\n--- Selection ---\n%d connectable host(s) used for parse/dry-run (capped at %d).\n", len(jobs), maxRecipeAssistRecords))
+	_, _ = fmt.Fprintf(&b, "\n\n--- Selection ---\n%d connectable host(s) used for parse/dry-run (capped at %d).\n", len(jobs), maxRecipeAssistRecords)
 
 	userContent := b.String()
 	reply, err := assistCreateChatCompletion(r.Context(), chatModel, recipeAssistSystemPrompt, userContent)

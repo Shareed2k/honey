@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/shareed2k/honey/internal/hosts"
@@ -10,6 +11,9 @@ import (
 // HostClient defines the interface for executing commands and transferring files on a host.
 type HostClient interface {
 	Run(cmd string) ([]byte, error)
+	// RunWithStreams runs a remote command with stdin/stdout/stderr wired through.
+	// stderr may be nil to discard remote stderr.
+	RunWithStreams(cmd string, stdin io.Reader, stdout, stderr io.Writer) error
 	Upload(localPath, remotePath string) error
 	Download(remotePath, localPath string) error
 	ListRemoteDir(path string) ([]RemoteFileEntry, error)

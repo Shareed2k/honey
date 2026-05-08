@@ -37,8 +37,8 @@ type terminalAssistRequest struct {
 }
 
 type terminalAssistResponse struct {
-	Reply            string `json:"reply"`
-	ScrollbackClipped bool  `json:"scrollback_clipped"`
+	Reply             string `json:"reply"`
+	ScrollbackClipped bool   `json:"scrollback_clipped"`
 }
 
 func assistAPIKey() string {
@@ -115,7 +115,7 @@ func newSlidingRL() *slidingRL {
 	return &slidingRL{m: make(map[string][]time.Time)}
 }
 
-func (r *slidingRL) allow(key string, max int, window time.Duration) bool {
+func (r *slidingRL) allow(key string, limit int, window time.Duration) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
@@ -126,9 +126,9 @@ func (r *slidingRL) allow(key string, max int, window time.Duration) bool {
 		i++
 	}
 	times = times[i:]
-	if len(times) >= max {
+	if len(times) >= limit {
 		r.m[key] = times
-		zap.L().Debug("terminal assist rate limit window full", zap.String("key", key), zap.Int("max", max))
+		zap.L().Debug("terminal assist rate limit window full", zap.String("key", key), zap.Int("limit", limit))
 		return false
 	}
 	times = append(times, now)

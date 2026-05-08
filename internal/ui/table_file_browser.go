@@ -90,6 +90,107 @@ func (m *model) fileBrowseTarget() (hosts.Record, bool) {
 	return m.recs[realIdx], true
 }
 
+func (m *model) fileBrowseMoveCursorVert(delta int) {
+	clamp := func(cur, n int) int {
+		next := cur + delta
+		if next < 0 {
+			return 0
+		}
+		hi := n - 1
+		if hi < 0 {
+			hi = 0
+		}
+		if next > hi {
+			return hi
+		}
+		return next
+	}
+	if m.fileFocus == "local" {
+		m.fileLocalCursor = clamp(m.fileLocalCursor, len(m.fileLocalEntries))
+		return
+	}
+	m.fileRemoteCursor = clamp(m.fileRemoteCursor, len(m.fileRemoteEntries))
+}
+
+func (m *model) fileBrowseGoParent() (tea.Model, tea.Cmd) {
+	rec, ok := m.fileBrowseTarget()
+	if !ok {
+		return m, nil
+	}
+	if m.fileFocus == "local" {
+		next := filepath.Dir(m.fileLocalPath)
+		return m, loadFileBrowseCmd(m.sshUser, rec, next, m.fileRemotePath, m.fileClientCache)
+	}
+	return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, remoteParentDir(m.fileRemotePath), m.fileClientCache)
+}
+
+func (m *model) fileBrowseEnterDir() (tea.Model, tea.Cmd) {
+	rec, ok := m.fileBrowseTarget()
+	if !ok {
+		return m, nil
+	}
+	if m.fileFocus == "local" {
+		if len(m.fileLocalEntries) == 0 {
+			return m, nil
+		}
+		selected := m.fileLocalEntries[m.fileLocalCursor]
+		if !selected.IsDir {
+			return m, nil
+		}
+		return m, loadFileBrowseCmd(m.sshUser, rec, selected.Path, m.fileRemotePath, m.fileClientCache)
+	}
+	if len(m.fileRemoteEntries) == 0 {
+		return m, nil
+	}
+	selected := m.fileRemoteEntries[m.fileRemoteCursor]
+	if !selected.IsDir {
+		return m, nil
+	}
+	return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, selected.Path, m.fileClientCache)
+}
+
+func (m *model) fileBrowseUploadSelection() (tea.Model, tea.Cmd) {
+	rec, ok := m.fileBrowseTarget()
+	if !ok {
+		return m, nil
+	}
+	if len(m.fileLocalEntries) == 0 {
+		return m, nil
+	}
+	selected := m.fileLocalEntries[m.fileLocalCursor]
+	if selected.IsDir {
+		m.fileStatus = "select a local file (not directory) to upload"
+		return m, nil
+	}
+	targetRemote := path.Join(m.fileRemotePath, selected.Name)
+	return m, copyLocalToRemoteCmd(m.sshUser, rec, selected.Path, targetRemote, m.fileClientCache)
+}
+
+func (m *model) fileBrowseDownloadSelection() (tea.Model, tea.Cmd) {
+	rec, ok := m.fileBrowseTarget()
+	if !ok {
+		return m, nil
+	}
+	if len(m.fileRemoteEntries) == 0 {
+		return m, nil
+	}
+	selected := m.fileRemoteEntries[m.fileRemoteCursor]
+	if selected.IsDir {
+		m.fileStatus = "select a remote file (not directory) to download"
+		return m, nil
+	}
+	targetLocal := filepath.Join(m.fileLocalPath, selected.Name)
+	return m, copyRemoteToLocalCmd(m.sshUser, rec, selected.Path, targetLocal, m.fileClientCache)
+}
+
+func (m *model) fileBrowseRefresh() (tea.Model, tea.Cmd) {
+	rec, ok := m.fileBrowseTarget()
+	if !ok {
+		return m, nil
+	}
+	return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, m.fileRemotePath, m.fileClientCache)
+}
+
 func (m *model) updateFileBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
@@ -109,91 +210,21 @@ func (m *model) updateFileBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.fileFocus = "remote"
 		return m, nil
 	case "up", "k":
-		if m.fileFocus == "local" {
-			if m.fileLocalCursor > 0 {
-				m.fileLocalCursor--
-			}
-		} else {
-			if m.fileRemoteCursor > 0 {
-				m.fileRemoteCursor--
-			}
-		}
+		m.fileBrowseMoveCursorVert(-1)
 		return m, nil
 	case "down", "j":
-		if m.fileFocus == "local" {
-			if m.fileLocalCursor < len(m.fileLocalEntries)-1 {
-				m.fileLocalCursor++
-			}
-		} else {
-			if m.fileRemoteCursor < len(m.fileRemoteEntries)-1 {
-				m.fileRemoteCursor++
-			}
-		}
+		m.fileBrowseMoveCursorVert(1)
 		return m, nil
 	case "backspace", "u":
-		if rec, ok := m.fileBrowseTarget(); ok {
-			if m.fileFocus == "local" {
-				next := filepath.Dir(m.fileLocalPath)
-				return m, loadFileBrowseCmd(m.sshUser, rec, next, m.fileRemotePath, m.fileClientCache)
-			}
-			return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, remoteParentDir(m.fileRemotePath), m.fileClientCache)
-		}
-		return m, nil
+		return m.fileBrowseGoParent()
 	case "enter":
-		if rec, ok := m.fileBrowseTarget(); ok {
-			if m.fileFocus == "local" {
-				if len(m.fileLocalEntries) == 0 {
-					return m, nil
-				}
-				selected := m.fileLocalEntries[m.fileLocalCursor]
-				if !selected.IsDir {
-					return m, nil
-				}
-				return m, loadFileBrowseCmd(m.sshUser, rec, selected.Path, m.fileRemotePath, m.fileClientCache)
-			}
-			if len(m.fileRemoteEntries) == 0 {
-				return m, nil
-			}
-			selected := m.fileRemoteEntries[m.fileRemoteCursor]
-			if !selected.IsDir {
-				return m, nil
-			}
-			return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, selected.Path, m.fileClientCache)
-		}
-		return m, nil
+		return m.fileBrowseEnterDir()
 	case ">":
-		if rec, ok := m.fileBrowseTarget(); ok {
-			if len(m.fileLocalEntries) == 0 {
-				return m, nil
-			}
-			selected := m.fileLocalEntries[m.fileLocalCursor]
-			if selected.IsDir {
-				m.fileStatus = "select a local file (not directory) to upload"
-				return m, nil
-			}
-			targetRemote := path.Join(m.fileRemotePath, selected.Name)
-			return m, copyLocalToRemoteCmd(m.sshUser, rec, selected.Path, targetRemote, m.fileClientCache)
-		}
-		return m, nil
+		return m.fileBrowseUploadSelection()
 	case "<":
-		if rec, ok := m.fileBrowseTarget(); ok {
-			if len(m.fileRemoteEntries) == 0 {
-				return m, nil
-			}
-			selected := m.fileRemoteEntries[m.fileRemoteCursor]
-			if selected.IsDir {
-				m.fileStatus = "select a remote file (not directory) to download"
-				return m, nil
-			}
-			targetLocal := filepath.Join(m.fileLocalPath, selected.Name)
-			return m, copyRemoteToLocalCmd(m.sshUser, rec, selected.Path, targetLocal, m.fileClientCache)
-		}
-		return m, nil
+		return m.fileBrowseDownloadSelection()
 	case "r":
-		if rec, ok := m.fileBrowseTarget(); ok {
-			return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, m.fileRemotePath, m.fileClientCache)
-		}
-		return m, nil
+		return m.fileBrowseRefresh()
 	default:
 		return m, nil
 	}

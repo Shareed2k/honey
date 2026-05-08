@@ -190,6 +190,7 @@ export function App() {
   const [transferBusy, setTransferBusy] = useState(false);
   const [transferErr, setTransferErr] = useState<string | null>(null);
   const [transferEvents, setTransferEvents] = useState<AgentTransferEvent[]>([]);
+  const transferAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -197,6 +198,13 @@ export function App() {
     } else {
       setTokenMsg('');
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      transferAbortRef.current?.abort();
+      transferAbortRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -508,6 +516,8 @@ export function App() {
     setTransferBusy(true);
     setTransferErr(null);
     setTransferEvents([]);
+    const abortController = new AbortController();
+    transferAbortRef.current = abortController;
     try {
       await startAgentTransferStream(
         {
@@ -529,12 +539,29 @@ export function App() {
           max_retries: transferMaxRetries,
         },
         (ev) => setTransferEvents((prev) => [...prev, ev]),
+        abortController.signal,
       );
     } catch (e) {
-      setTransferErr(e instanceof Error ? e.message : String(e));
+      if (e instanceof Error && e.name === 'AbortError') {
+        setTransferErr('Transfer aborted by user.');
+      } else {
+        setTransferErr(e instanceof Error ? e.message : String(e));
+      }
     } finally {
+      if (transferAbortRef.current === abortController) {
+        transferAbortRef.current = null;
+      }
       setTransferBusy(false);
     }
+  };
+
+  const abortAgentTransfer = () => {
+    const ctrl = transferAbortRef.current;
+    if (!ctrl) {
+      return;
+    }
+    ctrl.abort();
+    transferAbortRef.current = null;
   };
 
   const runParallelExec = async () => {
@@ -1510,6 +1537,9 @@ export function App() {
                 onClick={() => void submitAgentTransfer()}
               >
                 {transferBusy ? 'Transferring…' : 'Start A -> cloud -> B transfer'}
+              </button>
+              <button type="button" disabled={!transferBusy} onClick={() => abortAgentTransfer()}>
+                Abort
               </button>
             </div>
             {transferErr ? <p style={{ color: '#f66', margin: 0 }}>{transferErr}</p> : null}

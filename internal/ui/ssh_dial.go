@@ -302,6 +302,7 @@ func (h *HoneyClient) sftpClient() (*sftp.Client, error) {
 	return c, nil
 }
 
+// Upload copies a local file to the remote path over SFTP.
 func (h *HoneyClient) Upload(localPath, remotePath string) error {
 	localPath = strings.TrimSpace(localPath)
 	remotePath = strings.TrimSpace(remotePath)
@@ -331,6 +332,7 @@ func (h *HoneyClient) Upload(localPath, remotePath string) error {
 	return nil
 }
 
+// Download copies a remote file to a local path over SFTP.
 func (h *HoneyClient) Download(remotePath, localPath string) error {
 	remotePath = strings.TrimSpace(remotePath)
 	localPath = strings.TrimSpace(localPath)
@@ -349,7 +351,7 @@ func (h *HoneyClient) Download(remotePath, localPath string) error {
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o640) // #nosec G304 -- caller controls destination.
+	out, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600) // #nosec G304 -- caller controls destination.
 	if err != nil {
 		return err
 	}
@@ -360,6 +362,7 @@ func (h *HoneyClient) Download(remotePath, localPath string) error {
 	return nil
 }
 
+// ListRemoteDir returns sorted directory entries for the given remote path.
 func (h *HoneyClient) ListRemoteDir(path string) ([]RemoteFileEntry, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -399,6 +402,7 @@ func (h *HoneyClient) ListRemoteDir(path string) ([]RemoteFileEntry, error) {
 	return out, nil
 }
 
+// StatRemote returns metadata for a single remote filesystem object.
 func (h *HoneyClient) StatRemote(path string) (RemoteFileEntry, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -422,6 +426,7 @@ func (h *HoneyClient) StatRemote(path string) (RemoteFileEntry, error) {
 	}, nil
 }
 
+// MkdirAllRemote creates a remote directory tree via SFTP.
 func (h *HoneyClient) MkdirAllRemote(path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -434,6 +439,7 @@ func (h *HoneyClient) MkdirAllRemote(path string) error {
 	return sftpClient.MkdirAll(path)
 }
 
+// RemoveRemote deletes a remote file or directory (recursive walks children first).
 func (h *HoneyClient) RemoveRemote(path string, recursive bool) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -478,6 +484,31 @@ func (h *HoneyClient) RemoveRemote(path string, recursive bool) error {
 		}
 	}
 	return nil
+}
+
+// RunWithStreams runs cmd on the remote (non-interactive session) with stdin/stdout/stderr attached.
+// stderr may be nil to discard remote stderr.
+func (h *HoneyClient) RunWithStreams(cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return fmt.Errorf("empty remote command")
+	}
+	if h.Client == nil || h.Client.Client == nil {
+		return fmt.Errorf("ssh client is not connected")
+	}
+	sess, err := h.NewSession()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sess.Close() }()
+	sess.Stdin = stdin
+	sess.Stdout = stdout
+	if stderr != nil {
+		sess.Stderr = stderr
+	} else {
+		sess.Stderr = io.Discard
+	}
+	return sess.Run(cmd)
 }
 
 func expandSSHPath(p string) (string, error) {

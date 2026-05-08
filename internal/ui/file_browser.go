@@ -22,6 +22,7 @@ type LocalFileEntry struct {
 	ModifiedAt time.Time `json:"modified_at"`
 }
 
+// DefaultLocalFilesRoot returns the configured or home-directory root for local file browser paths.
 func DefaultLocalFilesRoot() string {
 	if env := strings.TrimSpace(os.Getenv("HONEY_FILES_ROOT")); env != "" {
 		return env
@@ -33,6 +34,7 @@ func DefaultLocalFilesRoot() string {
 	return "."
 }
 
+// ResolveLocalPathUnderRoot resolves requested against root and ensures the result stays under root.
 func ResolveLocalPathUnderRoot(root, requested string) (string, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
@@ -62,6 +64,7 @@ func ResolveLocalPathUnderRoot(root, requested string) (string, error) {
 	return candidateAbs, nil
 }
 
+// ListLocalDirUnderRoot lists a directory under the resolved root path.
 func ListLocalDirUnderRoot(root, requested string) (string, []LocalFileEntry, error) {
 	resolvedPath, err := ResolveLocalPathUnderRoot(root, requested)
 	if err != nil {
@@ -98,6 +101,7 @@ func ListLocalDirUnderRoot(root, requested string) (string, []LocalFileEntry, er
 	return resolvedPath, out, nil
 }
 
+// RemoteListDir lists a directory on the remote host using a cached SSH/k8s client.
 func RemoteListDir(user string, record hosts.Record, remotePath string, cache *ClientCache) ([]RemoteFileEntry, error) {
 	if strings.TrimSpace(record.PrimaryIP) == "" {
 		return nil, fmt.Errorf("record has no IP")
@@ -112,6 +116,7 @@ func RemoteListDir(user string, record hosts.Record, remotePath string, cache *C
 	return client.ListRemoteDir(remotePath)
 }
 
+// RemoteCopyLocalToRemote uploads a local file to the remote path.
 func RemoteCopyLocalToRemote(user string, record hosts.Record, localPath, remotePath string, cache *ClientCache) error {
 	client, err := cache.GetOrDial(user, record)
 	if err != nil {
@@ -123,6 +128,7 @@ func RemoteCopyLocalToRemote(user string, record hosts.Record, localPath, remote
 	return client.Upload(localPath, remotePath)
 }
 
+// RemoteCopyRemoteToLocal downloads a remote file to a local path.
 func RemoteCopyRemoteToLocal(user string, record hosts.Record, remotePath, localPath string, cache *ClientCache) error {
 	client, err := cache.GetOrDial(user, record)
 	if err != nil {

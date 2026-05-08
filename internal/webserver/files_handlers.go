@@ -163,30 +163,31 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("empty remote_path"), http.StatusBadRequest)
 		return
 	}
+	var copyErr error
 	switch strings.TrimSpace(req.Direction) {
 	case "local_to_remote":
-		st, err := os.Stat(localAbs) // #nosec G304 -- localAbs is validated under configured root.
-		if err != nil {
-			httpError(w, fmt.Errorf("local path stat: %w", err), http.StatusBadRequest)
+		st, stErr := os.Stat(localAbs) // #nosec G304 -- localAbs is validated under configured root.
+		if stErr != nil {
+			httpError(w, fmt.Errorf("local path stat: %w", stErr), http.StatusBadRequest)
 			return
 		}
 		if st.IsDir() {
 			httpError(w, fmt.Errorf("directory upload is not supported in this action"), http.StatusBadRequest)
 			return
 		}
-		err = ui.RemoteCopyLocalToRemote(user, req.Record, localAbs, remotePath, s.fileClientCache)
+		copyErr = ui.RemoteCopyLocalToRemote(user, req.Record, localAbs, remotePath, s.fileClientCache)
 	case "remote_to_local":
-		if err := os.MkdirAll(filepath.Dir(localAbs), 0o750); err != nil {
-			httpError(w, err, http.StatusInternalServerError)
+		if mkErr := os.MkdirAll(filepath.Dir(localAbs), 0o750); mkErr != nil {
+			httpError(w, mkErr, http.StatusInternalServerError)
 			return
 		}
-		err = ui.RemoteCopyRemoteToLocal(user, req.Record, remotePath, localAbs, s.fileClientCache)
+		copyErr = ui.RemoteCopyRemoteToLocal(user, req.Record, remotePath, localAbs, s.fileClientCache)
 	default:
 		httpError(w, fmt.Errorf("invalid direction: %q", req.Direction), http.StatusBadRequest)
 		return
 	}
-	if err != nil {
-		httpError(w, err, http.StatusBadGateway)
+	if copyErr != nil {
+		httpError(w, copyErr, http.StatusBadGateway)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -378,6 +379,32 @@ func (s *Server) detectTransferTargetRuntime(sshUser string, rec hosts.Record) (
 		zap.String("goarch", goarch),
 	)
 	return goos, goarch, nil
+}
+
+func transferObjectKey(cloud ui.AgentCloudBackend, src, dst hosts.Record) string {
+	if strings.TrimSpace(cloud.Object) != "" {
+		return strings.TrimSpace(cloud.Object)
+	}
+	prefix := strings.Trim(strings.TrimSpace(cloud.Prefix), "/")
+	source := strings.ReplaceAll(strings.TrimSpace(src.Name), " ", "_")
+	if source == "" {
+		source = strings.ReplaceAll(strings.TrimSpace(src.PrimaryIP), " ", "_")
+	}
+	dest := strings.ReplaceAll(strings.TrimSpace(dst.Name), " ", "_")
+	if dest == "" {
+		dest = strings.ReplaceAll(strings.TrimSpace(dst.PrimaryIP), " ", "_")
+	}
+	if source == "" {
+		source = "source"
+	}
+	if dest == "" {
+		dest = "destination"
+	}
+	base := fmt.Sprintf("%s_to_%s_%d", source, dest, time.Now().UTC().UnixNano())
+	if prefix == "" {
+		return base
+	}
+	return prefix + "/" + base
 }
 
 func normalizeTransferCloudProvider(provider string) string {
