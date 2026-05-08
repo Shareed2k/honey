@@ -51,6 +51,15 @@ function recordKey(rec: HostRecord): string {
   return `${rec.provider}\x1e${rec.name}\x1e${rec.primary_ip}`;
 }
 
+/** Detached copy so detail state never shares mutable arrays/maps with `records`. */
+function cloneHostRecord(rec: HostRecord): HostRecord {
+  return {
+    ...rec,
+    extra_ips: rec.extra_ips?.length ? [...rec.extra_ips] : undefined,
+    meta: rec.meta ? { ...rec.meta } : undefined,
+  };
+}
+
 function recordHaystack(rec: HostRecord): string {
   const parts = [rec.provider, rec.name, rec.primary_ip, rec.zone || '', rec.region || ''];
   if (rec.extra_ips?.length) {
@@ -146,6 +155,8 @@ export function App() {
   const backendMenuRef = useRef<HTMLDivElement>(null);
 
   const [selectedKeys, setSelectedKeys] = useState<Record<string, boolean>>({});
+  /** Row click (outside actions/checkbox) shows primary + extra IPs in the panel below the table. */
+  const [hostDetailRecord, setHostDetailRecord] = useState<HostRecord | null>(null);
   const [pageSize, setPageSize] = useState(25);
   const [currentPage, setCurrentPage] = useState(1);
   const [execCommand, setExecCommand] = useState('');
@@ -206,6 +217,19 @@ export function App() {
       transferAbortRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    setHostDetailRecord((prev) => {
+      if (!prev) {
+        return null;
+      }
+      const match = records.find((r) => recordKey(r) === recordKey(prev));
+      if (!match) {
+        return null;
+      }
+      return cloneHostRecord(match);
+    });
+  }, [records]);
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
@@ -1242,48 +1266,136 @@ export function App() {
                 </tr>
               </thead>
               <tbody>
-                {pagedRecords.map((rec) => (
-                  <tr
-                    key={recordKey(rec)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      onDropUpload(rec, e.dataTransfer.files);
-                    }}
-                  >
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={!!selectedKeys[recordKey(rec)]}
-                        onChange={() => toggleRowSelected(rec)}
-                        aria-label={`Select ${rec.name}`}
-                      />
-                    </td>
-                    <td>{rec.provider}</td>
-                    <td>{rec.name}</td>
-                    <td>{rec.primary_ip}</td>
-                    <td>{rec.zone || ''}</td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      <button type="button" onClick={() => setTermRecord(rec)}>
-                        Terminal
-                      </button>{' '}
-                      <button type="button" onClick={() => openUploadModal(rec)}>
-                        Upload
-                      </button>
-                      {meta?.session_recording_available ? (
-                        <>
-                          {' '}
-                          <button type="button" onClick={() => void openReplayModal(rec)}>
-                            Play
-                          </button>
-                        </>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
+                {pagedRecords.map((rec) => {
+                  const detailOpen = !!hostDetailRecord && recordKey(hostDetailRecord) === recordKey(rec);
+                  return (
+                    <tr
+                      key={recordKey(rec)}
+                      style={{
+                        cursor: 'pointer',
+                        background: detailOpen ? 'rgba(100, 149, 237, 0.12)' : undefined,
+                      }}
+                      onClick={(e) => {
+                        const el = e.target as HTMLElement;
+                        if (el.closest('button, input, a, textarea, select, label')) {
+                          return;
+                        }
+                        setHostDetailRecord((prev) =>
+                          prev && recordKey(prev) === recordKey(rec) ? null : cloneHostRecord(rec),
+                        );
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        onDropUpload(rec, e.dataTransfer.files);
+                      }}
+                    >
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={!!selectedKeys[recordKey(rec)]}
+                          onChange={() => toggleRowSelected(rec)}
+                          aria-label={`Select ${rec.name}`}
+                        />
+                      </td>
+                      <td>{rec.provider}</td>
+                      <td>{rec.name}</td>
+                      <td>{rec.primary_ip}</td>
+                      <td>{rec.zone || ''}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button type="button" onClick={() => setTermRecord(rec)}>
+                          Terminal
+                        </button>{' '}
+                        <button type="button" onClick={() => openUploadModal(rec)}>
+                          Upload
+                        </button>
+                        {meta?.session_recording_available ? (
+                          <>
+                            {' '}
+                            <button type="button" onClick={() => void openReplayModal(rec)}>
+                              Play
+                            </button>
+                          </>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+
+          {hostDetailRecord ? (
+            <div
+              style={{
+                marginTop: '0.65rem',
+                padding: '0.65rem 0.75rem',
+                borderRadius: 8,
+                border: '1px solid #3d4a63',
+                background: '#141922',
+                fontSize: '0.85rem',
+              }}
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0.5rem 1rem', marginBottom: 4 }}>
+                <strong>Selected host</strong>
+                <span style={{ opacity: 0.85 }}>
+                  {hostDetailRecord.provider} / {hostDetailRecord.name}
+                </span>
+                <button type="button" style={{ marginLeft: 'auto' }} onClick={() => setHostDetailRecord(null)}>
+                  Dismiss
+                </button>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <span style={{ opacity: 0.75 }}>Primary IP</span>{' '}
+                <code style={{ fontSize: '0.9em' }}>{hostDetailRecord.primary_ip || '—'}</code>
+              </div>
+              {hostDetailRecord.meta?.kind === 'pod' && hostDetailRecord.meta.node ? (
+                <div style={{ marginTop: 8, opacity: 0.9 }}>
+                  <span style={{ opacity: 0.75 }}>Node</span>{' '}
+                  <code style={{ fontSize: '0.9em' }}>{hostDetailRecord.meta.node}</code>
+                  {hostDetailRecord.meta.node_ip ? (
+                    <>
+                      {' · '}
+                      <span style={{ opacity: 0.75 }}>node IP</span>{' '}
+                      <code style={{ fontSize: '0.9em' }}>{hostDetailRecord.meta.node_ip}</code>
+                      {hostDetailRecord.meta.node_extra_ips ? (
+                        <>
+                          {' '}
+                          <span style={{ opacity: 0.65, fontSize: '0.78rem' }}>
+                            (also {hostDetailRecord.meta.node_extra_ips})
+                          </span>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+              {hostDetailRecord.extra_ips && hostDetailRecord.extra_ips.length > 0 ? (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ opacity: 0.75, marginBottom: 4 }}>Extras</div>
+                  <p style={{ margin: '0 0 6px', opacity: 0.65, fontSize: '0.78rem' }}>
+                    Secondary IPs; for Kubernetes pods this includes the node name and that node&apos;s IP
+                    addresses when the cluster allows listing nodes.
+                  </p>
+                  <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+                    {hostDetailRecord.extra_ips.map((ip, i) => (
+                      <li key={`${i}:${ip}`}>
+                        <code style={{ fontSize: '0.9em' }}>{ip}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p style={{ margin: '8px 0 0', opacity: 0.65, fontSize: '0.8rem' }}>No extras on this record.</p>
+              )}
+              {(hostDetailRecord.region || hostDetailRecord.zone) && (
+                <div style={{ marginTop: 8, opacity: 0.85 }}>
+                  {hostDetailRecord.region ? <span>Region: {hostDetailRecord.region} </span> : null}
+                  {hostDetailRecord.zone ? <span>Zone: {hostDetailRecord.zone}</span> : null}
+                </div>
+              )}
+            </div>
+          ) : null}
 
           <details style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}>
             <summary style={{ cursor: 'pointer', fontWeight: 600 }}>CUE recipes (default config dirs)</summary>

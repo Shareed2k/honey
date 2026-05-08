@@ -105,18 +105,22 @@ func instanceToRecord(inst types.Instance, q hosts.Query) (hosts.Record, bool, e
 		return hosts.Record{}, false, nil
 	}
 
-	var ips []string
-	var primary string
-	if inst.PublicIpAddress != nil && aws.ToString(inst.PublicIpAddress) != "" {
-		primary = aws.ToString(inst.PublicIpAddress)
-		ips = append(ips, primary)
+	var public, private string
+	if inst.PublicIpAddress != nil {
+		public = strings.TrimSpace(aws.ToString(inst.PublicIpAddress))
 	}
-	if inst.PrivateIpAddress != nil && aws.ToString(inst.PrivateIpAddress) != "" {
-		pip := aws.ToString(inst.PrivateIpAddress)
-		ips = append(ips, pip)
-		if primary == "" {
-			primary = pip
+	if inst.PrivateIpAddress != nil {
+		private = strings.TrimSpace(aws.ToString(inst.PrivateIpAddress))
+	}
+	var primary string
+	var extras []string
+	if private != "" {
+		primary = private
+		if public != "" {
+			extras = append(extras, public)
 		}
+	} else if public != "" {
+		primary = public
 	}
 	if primary == "" {
 		return hosts.Record{}, false, nil
@@ -137,7 +141,7 @@ func instanceToRecord(inst types.Instance, q hosts.Query) (hosts.Record, bool, e
 		Provider:  "aws",
 		Name:      name,
 		PrimaryIP: primary,
-		ExtraIPs:  ips,
+		ExtraIPs:  extras,
 		Zone:      az,
 		Region:    region,
 		Meta:      meta,
