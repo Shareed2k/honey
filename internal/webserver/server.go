@@ -69,6 +69,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.withAuth(s.handleUpload))
 	s.mux.HandleFunc("GET /api/v1/recipes", s.withAuth(s.handleRecipesList))
 	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
+	s.mux.HandleFunc("POST /api/v1/recipes/assist", s.withAuth(s.handleRecipesAssist))
 	s.mux.HandleFunc("GET /api/v1/recordings", s.withAuth(s.handleRecordingsList))
 	s.mux.HandleFunc("POST /api/v1/recordings/play", s.withAuth(s.handleRecordingsPlay))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))

@@ -128,13 +128,126 @@ tr:nth-child(even) {
   flex: 1;
   min-height: 120px;
   overflow: auto;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
   padding: 0.4rem 0.45rem;
   background: #0f1115;
   border: 1px solid #2a3140;
   border-radius: 6px;
   line-height: 1.35;
+}
+
+/* AI assistant replies (terminal + recipe): GFM prose + Shiki blocks */
+.ai-markdown {
+  color: #e6e6e6;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.ai-markdown > *:first-child {
+  margin-top: 0;
+}
+.ai-markdown > *:last-child {
+  margin-bottom: 0;
+}
+.ai-markdown p {
+  margin: 0.35em 0;
+}
+.ai-markdown h1,
+.ai-markdown h2,
+.ai-markdown h3 {
+  color: #f0f2f5;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0.75em 0 0.35em;
+}
+.ai-markdown h1 {
+  font-size: 1.05rem;
+}
+.ai-markdown h2 {
+  font-size: 0.98rem;
+}
+.ai-markdown h3 {
+  font-size: 0.92rem;
+}
+.ai-markdown ul,
+.ai-markdown ol {
+  margin: 0.35em 0;
+  padding-left: 1.35rem;
+}
+.ai-markdown li {
+  margin: 0.2em 0;
+}
+.ai-markdown blockquote {
+  margin: 0.5em 0;
+  padding: 0.35rem 0.55rem;
+  border-left: 3px solid #4a6fa5;
+  background: #14171c;
+  color: #c8ced8;
+}
+.ai-markdown hr {
+  border: none;
+  border-top: 1px solid #2a3140;
+  margin: 0.75rem 0;
+}
+.ai-markdown table {
+  width: 100%;
+  font-size: 0.78rem;
+  margin: 0.5em 0;
+}
+.ai-markdown th,
+.ai-markdown td {
+  border-color: #2a3140;
+}
+.ai-markdown th {
+  background: #1a1d24;
+}
+.ai-markdown a {
+  color: #7eb3ff;
+  text-decoration: none;
+}
+.ai-markdown a:hover {
+  text-decoration: underline;
+}
+.ai-markdown-link-stub {
+  color: #9aa4b2;
+  cursor: default;
+}
+.ai-markdown-inline-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  background: #1a1d24;
+  border: 1px solid #2a3140;
+  border-radius: 4px;
+  padding: 0.08em 0.28em;
+}
+.ai-markdown-plain-pre {
+  margin: 0.5em 0;
+  padding: 0.55rem 0.65rem;
+  background: #14171c;
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.78rem;
+}
+.ai-markdown-plain-pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.ai-markdown-pre-host {
+  margin: 0.5em 0;
+}
+.ai-markdown-fenced {
+  margin: 0;
+}
+.term-assist-reply .ai-markdown-suspense-fallback,
+.recipe-assist-reply .ai-markdown-suspense-fallback {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: inherit;
+  line-height: inherit;
 }
 .modal header {
   display: flex;

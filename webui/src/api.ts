@@ -135,6 +135,21 @@ export async function fetchRecipes(): Promise<RecipeListEntry[]> {
   return j.recipes || [];
 }
 
+export async function recipeAssist(body: {
+  recipe_path: string;
+  model: string;
+  user_prompt?: string;
+  ssh_user?: string;
+  records?: unknown[];
+}): Promise<{ reply: string }> {
+  const r = await apiPost('/api/v1/recipes/assist', body);
+  const j = (await r.json().catch(() => ({}))) as { reply?: string; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return { reply: (j.reply || '').trim() };
+}
+
 export async function fetchRecipeContent(path: string): Promise<string> {
   const r = await apiPost('/api/v1/recipes/view', { path });
   const j = (await r.json().catch(() => ({}))) as { content?: string; error?: string };

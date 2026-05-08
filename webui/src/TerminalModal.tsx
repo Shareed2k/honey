@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { apiGet, apiPost, getToken } from './api';
@@ -20,6 +20,8 @@ type Props = {
 };
 
 const defaultScrollbackLines = 200;
+
+const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
 function collectScrollback(term: Terminal, maxLines: number): string {
   const buf = term.buffer.active;
@@ -357,7 +359,11 @@ export function TerminalModal({ record, sshUser, recordSession, assistAvailable,
               ) : null}
               {assistReply ? (
                 <div className="term-assist-reply" role="region" aria-label="Assistant reply">
-                  {assistReply}
+                  <Suspense
+                    fallback={<pre className="ai-markdown-suspense-fallback">{assistReply}</pre>}
+                  >
+                    <AiMarkdown content={assistReply} />
+                  </Suspense>
                 </div>
               ) : null}
             </aside>

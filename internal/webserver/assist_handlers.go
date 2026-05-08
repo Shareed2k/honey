@@ -217,7 +217,7 @@ func assistExtractAssistantReply(resp openai.ChatCompletionResponse) (string, er
 	return "", fmt.Errorf("empty reply from model (finish_reason=%q)", ch.FinishReason)
 }
 
-const assistSystemPrompt = `You are a concise assistant helping someone who is using an SSH terminal session in a web UI.
+const assistSystemPrompt = `You are a DevOps assistant helping someone who is using an SSH terminal session in a web UI.
 They may paste recent terminal output (scrollback) and a short question.
 Rules:
 - Prefer actionable shell commands, explanations of errors, or next diagnostic steps.
@@ -293,11 +293,6 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 		zap.Bool("user_prompt_defaulted", strings.TrimSpace(req.UserPrompt) == ""),
 	)
 
-	client := assistNewOpenAIClient()
-
-	ctx, cancel := context.WithTimeout(r.Context(), assistUpstreamTimeout())
-	defer cancel()
-
 	userContent := fmt.Sprintf("User question:\n%s\n\n--- Terminal scrollback (tail) ---\n%s", user, scroll)
 	zap.L().Debug("terminal assist calling CreateChatCompletion",
 		zap.String("model", chatModel),
@@ -306,36 +301,14 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 		zap.Int("user_message_runes", utf8.RuneCountInString(userContent)),
 	)
 
-	resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-		Model: chatModel,
-		Messages: []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: assistSystemPrompt},
-			{Role: openai.ChatMessageRoleUser, Content: userContent},
-		},
-		MaxTokens:   assistMaxTokens(),
-		Temperature: 0.2,
-	})
+	reply, err := assistCreateChatCompletion(r.Context(), chatModel, assistSystemPrompt, userContent)
 	if err != nil {
 		zap.L().Warn("terminal assist upstream error", zap.Error(err))
 		httpError(w, fmt.Errorf("upstream error: %v", err), http.StatusBadGateway)
 		return
 	}
-	reply, extractErr := assistExtractAssistantReply(resp)
-	if extractErr != nil {
-		zap.L().Warn("terminal assist could not read assistant reply",
-			zap.Error(extractErr),
-			zap.String("request_model", chatModel),
-			zap.String("response_id", resp.ID),
-			zap.String("response_model", resp.Model),
-			zap.Int("choices", len(resp.Choices)),
-		)
-		httpError(w, extractErr, http.StatusBadGateway)
-		return
-	}
-	reply = strings.TrimSpace(reply)
 	zap.L().Debug("terminal assist completion ok",
 		zap.String("model", chatModel),
-		zap.Int("choices", len(resp.Choices)),
 		zap.Int("reply_runes", utf8.RuneCountInString(reply)),
 		zap.Bool("scrollback_clipped_response", clippedLines || clippedRunes),
 	)

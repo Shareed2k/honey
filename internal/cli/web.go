@@ -54,7 +54,7 @@ func runWeb(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(os.Stderr, "\nHoney Web UI (Ctrl+C to stop)\n  URL:   http://%s/?token=%s\n  API:   Authorization: Bearer <token>  or  X-Honey-Token: <token>\n  WS:    /ws/ssh?token=<token>\n  Assist: OPENAI_API_KEY (+ optional OPENAI_BASE_URL); models come from provider /v1/models (terminal UI dropdown)\n\n", webListen, token)
+	_, _ = fmt.Fprintf(os.Stderr, "\nHoney Web UI (Ctrl+C to stop)\n  URL:   http://%s/?token=%s\n  API:   Authorization: Bearer <token>  or  X-Honey-Token: <token>\n  WS:    /ws/ssh?token=<token>\n  Assist: OPENAI_API_KEY (+ optional OPENAI_BASE_URL)\n\n", webListen, token)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
