@@ -64,6 +64,20 @@ Open the **URL** in your browser (the query string includes the token).
 - Browse **local** paths under `--files-root` and **remote** paths on connected hosts.
 - **Agent-based transfer** (`honey-transfer-agent`): copies between local, remote, and cloud storage using the separate agent binary (paths via `--agent-bin` / build cache).
 
+**Prebuilt agents (no local checkout):** CI publishes `honey-transfer-agent-<goos>-<goarch>` assets (see `.github/workflows/honey-transfer-agent.yml`), built static then **compressed with UPX** (`--best --lzma`). When a local `go build` is not possible or fails, Honey **downloads** a prebuilt binary. **No env is required by default:** the URL uses the **same release tag as the running `honey` binary** (the link-time version from `honey --version`):
+
+`https://github.com/shareed2k/honey/releases/download/<vTAG>/honey-transfer-agent-<goos>-<goarch>`
+
+If the embedded version is empty or `0.0.0-dev`, Honey falls back to **`…/releases/latest/download/…`** so local builds still work.
+
+| Variable | Description |
+|----------|-------------|
+| `HONEY_TRANSFER_AGENT_DOWNLOAD_BASE` | Optional override: base URL with **no** trailing slash (e.g. a pinned tag `…/releases/download/v1.2.3` or a mirror). Honey appends `/honey-transfer-agent-<goos>-<goarch>`. |
+| `HONEY_TRANSFER_AGENT_DOWNLOAD_URL` | Optional **full URL template** (wins over base). Placeholders: `{os}`, `{arch}`, `{GOOS}`, `{GOARCH}`. |
+| `HONEY_TRANSFER_AGENT_DOWNLOAD_DISABLE_DEFAULT` | Set to `1` / `true` to **turn off** the default GitHub-latest URL (e.g. air-gapped); then you must supply `DOWNLOAD_BASE` / `DOWNLOAD_URL` or `HONEY_TRANSFER_AGENT`. |
+
+Download runs **after** a failed local build (or when the module root cannot be found). It is **not** used when `upx` packing is enabled for the agent cache (`HONEY_TRANSFER_AGENT_DISABLE_UPX` unset and `upx` on `PATH`). You can still set **`HONEY_TRANSFER_AGENT`** to a local binary to skip both build and download.
+
 ### CUE recipes
 
 - Open and run recipes from the UI (same semantics as `honey cue-exec`).

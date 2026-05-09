@@ -59,11 +59,13 @@ func NormalizeTargetRuntime(goos, goarch string) (string, string, error) {
 }
 
 func repoRootFromSource() (string, error) {
-	_, file, _, ok := runtime.Caller(0)
+	// skip=0 is runtime.Caller's own frame (GOROOT/src/runtime); skip=1 is our direct caller
+	// (e.g. ResolveBinary in this file), so file is always under internal/transferagent/.
+	_, file, _, ok := runtime.Caller(1)
 	if !ok {
 		return "", fmt.Errorf("could not resolve source path for build root")
 	}
-	// internal/transferagent/<this file> -> repo root is two levels up.
+	// internal/transferagent/<caller>.go -> repo root is two levels up.
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	return root, nil
 }
@@ -77,9 +79,15 @@ func shouldUseUPX() bool {
 	return err == nil
 }
 
-func packBinaryWithUPX(path string) error {
+func packBinaryWithUPX(path, targetGOOS string) error {
 	// #nosec G204 -- path is the resolved transfer-agent binary under a cache dir.
-	cmd := exec.Command("upx", "--best", "--lzma", path)
+	// UPX on Linux cannot pack Mach-O without --force-macos (matches CI ghaction-upx args).
+	args := []string{"--best", "--lzma"}
+	if strings.EqualFold(strings.TrimSpace(targetGOOS), "darwin") {
+		args = append(args, "--force-macos")
+	}
+	args = append(args, path)
+	cmd := exec.Command("upx", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("upx pack failed: %w: %s", err, strings.TrimSpace(string(out)))
@@ -102,7 +110,7 @@ func buildTransferAgentBinary(root, binPath, targetOS, targetArch string) error 
 	args := make([]string, 0, 7)
 	args = append(args, "build", "-trimpath", "-ldflags", "-s -w")
 	args = append(args, "-o", binPath, "./cmd/honey-transfer-agent")
-	// #nosec G204 -- fixed "go build" argv; -o points at cache under repo root from runtime.Caller.
+	// #nosec G204 -- fixed "go build" argv; -o points at cache under repo root from repoRootFromSource.
 	cmd := exec.Command("go", args...)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),
@@ -134,7 +142,7 @@ func transferAgentSourceStamp(root string) (time.Time, error) {
 		}
 	}
 	if latest.IsZero() {
-		return time.Time{}, fmt.Errorf("unable to determine transfer-agent source stamp")
+		return time.Time{}, fmt.Errorf("unable to determine transfer-agent source stamp under repo root %q (need cmd/honey-transfer-agent/*.go and go.mod)", root)
 	}
 	return latest, nil
 }
@@ -175,22 +183,25 @@ func ResolveBinary(overridePath, preferredPath, cacheDir, targetOS, targetArch, 
 	if useUPX {
 		cacheKey += "/upx"
 	}
-	root, err := repoRootFromSource()
-	if err != nil {
-		return "", err
+
+	root, rootErr := repoRootFromSource()
+	var sourceStamp time.Time
+	var stampErr error
+	if rootErr == nil {
+		sourceStamp, stampErr = transferAgentSourceStamp(root)
 	}
-	sourceStamp, err := transferAgentSourceStamp(root)
-	if err != nil {
-		return "", err
-	}
-	if p := strings.TrimSpace(resolvedByKey[cacheKey]); p != "" {
-		if err := ensureExecutable(p); err == nil && isAgentBinaryFresh(p, sourceStamp) {
-			zap.L().Debug("transfer agent binary cache hit",
-				zap.String("target", targetOS+"/"+targetArch),
-				zap.String("provider_flavor", flavor),
-				zap.String("path", p),
-			)
-			return p, nil
+	stampOK := rootErr == nil && stampErr == nil
+
+	if stampOK {
+		if p := strings.TrimSpace(resolvedByKey[cacheKey]); p != "" {
+			if err := ensureExecutable(p); err == nil && isAgentBinaryFresh(p, sourceStamp) {
+				zap.L().Debug("transfer agent binary cache hit",
+					zap.String("target", targetOS+"/"+targetArch),
+					zap.String("provider_flavor", flavor),
+					zap.String("path", p),
+				)
+				return p, nil
+			}
 		}
 	}
 
@@ -205,50 +216,56 @@ func ResolveBinary(overridePath, preferredPath, cacheDir, targetOS, targetArch, 
 		binName += "-upx"
 	}
 	binPath := filepath.Join(cacheDir, binName)
-	if err := ensureExecutable(binPath); err == nil && isAgentBinaryFresh(binPath, sourceStamp) {
-		zap.L().Debug("transfer agent binary cache file hit",
-			zap.String("target", targetOS+"/"+targetArch),
-			zap.String("provider_flavor", flavor),
-			zap.String("path", binPath),
-		)
-		resolvedByKey[cacheKey] = binPath
-		return binPath, nil
-	}
-	if err := buildTransferAgentBinary(root, binPath, targetOS, targetArch); err != nil {
-		return "", err
-	}
-	if err := ensureExecutable(binPath); err != nil {
-		return "", err
-	}
-	zap.L().Debug("transfer agent binary built",
-		zap.String("target", targetOS+"/"+targetArch),
-		zap.String("provider_flavor", flavor),
-		zap.String("path", binPath),
-	)
-	if useUPX {
-		if err := packBinaryWithUPX(binPath); err != nil {
-			zap.L().Warn("transfer agent upx packing failed, using uncompressed binary",
-				zap.String("path", binPath),
-				zap.String("provider_flavor", flavor),
-				zap.Error(err),
-			)
-			cacheKey = targetOS + "/" + targetArch + "/" + flavor
-			binName = fmt.Sprintf("honey-transfer-agent-%s-%s-%s", targetOS, targetArch, flavor)
-			binPath = filepath.Join(cacheDir, binName)
-			if err := buildTransferAgentBinary(root, binPath, targetOS, targetArch); err != nil {
-				return "", fmt.Errorf("rebuild uncompressed honey-transfer-agent: %w", err)
-			}
-			if err := ensureExecutable(binPath); err != nil {
-				return "", err
-			}
-		} else {
-			zap.L().Debug("transfer agent binary packed with upx",
+
+	if stampOK {
+		if err := ensureExecutable(binPath); err == nil && isAgentBinaryFresh(binPath, sourceStamp) {
+			zap.L().Debug("transfer agent binary cache file hit",
 				zap.String("target", targetOS+"/"+targetArch),
 				zap.String("provider_flavor", flavor),
 				zap.String("path", binPath),
 			)
+			resolvedByKey[cacheKey] = binPath
+			return binPath, nil
 		}
 	}
-	resolvedByKey[cacheKey] = binPath
-	return binPath, nil
+
+	var buildErr error
+	if rootErr == nil {
+		outPath, outKey, berr := buildAgentMaybeUPX(root, cacheDir, useUPX, targetOS, targetArch, flavor, binPath, cacheKey)
+		if berr == nil {
+			resolvedByKey[outKey] = outPath
+			return outPath, nil
+		}
+		buildErr = berr
+	}
+
+	if !useUPX {
+		if u, ok := transferAgentDownloadURL(targetOS, targetArch); ok {
+			dlErr := fetchAgentBinary(u, binPath)
+			if dlErr == nil && ensureExecutable(binPath) == nil {
+				zap.L().Debug("transfer agent binary downloaded",
+					zap.String("target", targetOS+"/"+targetArch),
+					zap.String("provider_flavor", flavor),
+					zap.String("url", u),
+					zap.String("path", binPath),
+				)
+				resolvedByKey[cacheKey] = binPath
+				return binPath, nil
+			}
+			if dlErr != nil {
+				zap.L().Debug("transfer agent download failed", zap.String("url", u), zap.Error(dlErr))
+			}
+		}
+	}
+
+	if buildErr != nil {
+		return "", fmt.Errorf("build honey-transfer-agent: %w (prebuilt: same release tag as honey by default; disable %s; override %s or %s)", buildErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
+	}
+	if rootErr != nil {
+		return "", fmt.Errorf("no checkout for local build: %w (set HONEY_TRANSFER_AGENT, or prebuilt download for same honey version unless %s; override %s or %s)", rootErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
+	}
+	if stampErr != nil {
+		return "", fmt.Errorf("transfer agent stamp: %w (set HONEY_TRANSFER_AGENT, or prebuilt download for same honey version unless %s; override %s or %s)", stampErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
+	}
+	return "", fmt.Errorf("transfer agent: could not build or download binary for %s/%s", targetOS, targetArch)
 }

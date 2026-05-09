@@ -267,14 +267,14 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `internal/provider/*` — GCP, AWS, k8s, Consul integrations
 - `internal/ui` — Bubble Tea table + SSH actions
 - `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
-- `docs/add-new-backend.md` — contributor guide for adding a new backend end-to-end
-- `docs/web-ui.md` — web UI, API, session recording, file transfer, and AI assist (`OPENAI_API_KEY`, optional `OPENAI_BASE_URL`)
+- `website/docs/add-new-backend.md` — contributor guide for adding a new backend (Docusaurus source)
+- `website/docs/web-ui.md` — web UI, API, session recording, file transfer, AI assist, and prebuilt transfer agent downloads (Docusaurus source)
 
 ## Web UI (`honey web`)
 
 Embedded **loopback-only** web server with a random bearer token (override with `HONEY_WEB_TOKEN`). Serves a React UI for backends list, search, provider/backend filters, YAML config edit, structured **backends** CRUD, browser terminal (**SSH** and **Kubernetes** exec TTY), optional **session recording** (`--record-dir`), local/remote **file browser** and **agent-based** cloud transfer (`honey-transfer-agent`), **CUE recipe** run/view, and optional **AI assist** for the terminal and recipes when **`OPENAI_API_KEY`** is set (optional **`OPENAI_BASE_URL`** for compatible gateways or local inference).
 
-**Full documentation:** [docs/web-ui.md](docs/web-ui.md) (mirror on the doc site: *Web UI & AI assist*).
+**Full documentation:** published site [Web UI & AI assist](https://honey.shareed2k.win/web-ui) (built from [`website/docs/web-ui.md`](https://github.com/shareed2k/honey/blob/main/website/docs/web-ui.md)).
 
 ```bash
 # One-time: build UI assets into internal/webserver/static (CI runs this automatically)
@@ -284,7 +284,7 @@ go build -o honey ./cmd/honey
 ./honey web --listen 127.0.0.1:8765 --config ~/.config/honey/config.yaml
 ```
 
-Optional flags include `--record-dir` (session recordings), `--files-root` (file browser root; defaults to `$HONEY_FILES_ROOT` or `$HOME`), and `--agent-bin` / `--agent-build-cache-dir` for the transfer agent.
+Optional flags include `--record-dir` (session recordings), `--files-root` (file browser root; defaults to `$HONEY_FILES_ROOT` or `$HOME`), and `--agent-bin` / `--agent-build-cache-dir` for the transfer agent. When the server cannot `go build` the agent (no checkout), Honey **downloads** prebuilt `honey-transfer-agent` from the **same GitHub release tag as this `honey` binary** (`…/releases/download/<vTAG>/honey-transfer-agent-<goos>-<goarch>`; dev builds use `…/latest/download/…`). Override with **`HONEY_TRANSFER_AGENT_DOWNLOAD_BASE`** or **`HONEY_TRANSFER_AGENT_DOWNLOAD_URL`**, or disable the default with **`HONEY_TRANSFER_AGENT_DOWNLOAD_DISABLE_DEFAULT=1`** (see `website/docs/web-ui.md`).
 
 Open the **URL printed on stderr** (includes `?token=…`). Notable API routes: `GET /api/v1/meta` (includes `terminal_assist_available`, `session_recording_available`), `POST /api/v1/search`, `GET`/`PUT /api/v1/config`, structured backends under `/api/v1/config/backends/…` (path segment **`kubernetes`** matches YAML; search uses provider id **`k8s`**), `POST /api/v1/upload`, **`GET /api/v1/terminal-assist/models`** and **`POST /api/v1/terminal-assist`** (terminal AI), **`POST /api/v1/recipes/assist`** (recipe AI), recordings under `/api/v1/recordings`, WebSocket **`GET /ws/ssh?token=…`**. Authenticate with `Authorization: Bearer <token>` or `X-Honey-Token`.
 
