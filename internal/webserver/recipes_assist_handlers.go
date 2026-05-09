@@ -52,7 +52,9 @@ func capRecipeAssistRecords(recs []hosts.Record) []hosts.Record {
 
 const recipeAssistSystemPrompt = `You help operators understand Honey "remote recipe" CUE files used from the web UI.
 A recipe is CUE with a top-level "recipe" object: name, optional defaults (run_as, env, k8s_debug_image), and steps[].
-Each step has host (selector), optional run_as, and one of: command, put{local,remote}, get{local,remote}, script{local,remote}, plus optional env for command/script.
+Each step has host (selector), optional run_as, and one of: command, put{local,remote}, get{local,remote}, script{local,remote},
+agent_transfer{dest_host, source_path, dest_path, cloud{provider,bucket,...}, optional cloud_backend_ref, keep_object, max_retries, agent_remote_dir},
+plus optional env for command/script only.
 
 Rules:
 - Base explanations ONLY on the recipe source, parser/validator messages, and dry-run plan/error text provided in the user message. Do not invent steps, hosts, or commands that are not implied there.
@@ -154,7 +156,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			}
 			recipeDir := filepath.Dir(cp)
 			var buf bytes.Buffer
-			runErr := ui.RunCueRecipeSteps(&buf, recipe, recipeDir, jobs, user, false, nil, nil)
+			runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, nil)
 			plan := buf.String()
 			if runErr != nil {
 				planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))

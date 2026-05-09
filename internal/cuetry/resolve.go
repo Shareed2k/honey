@@ -128,3 +128,25 @@ func ResolveHostFromRecords(host string, records []hosts.Record) (hosts.Record, 
 		return hosts.Record{}, fmt.Errorf("ambiguous host name %q: %d matches", host, len(matches))
 	}
 }
+
+// CountRecipeStreamResults returns how many HostExecResult values a streaming recipe run would emit
+// for the given host rows (one per expanded target per step, or one per agent_transfer step).
+func CountRecipeStreamResults(recipe Recipe, records []hosts.Record) (int, error) {
+	var total int
+	for _, step := range recipe.Steps {
+		kind, err := ClassifyStep(step)
+		if err != nil {
+			return 0, err
+		}
+		if kind == StepKindAgentTransfer {
+			total++
+			continue
+		}
+		targets, err := ExpandStepHosts(step.Host, records)
+		if err != nil {
+			return 0, err
+		}
+		total += len(targets)
+	}
+	return total, nil
+}

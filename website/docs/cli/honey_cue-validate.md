@@ -5,13 +5,13 @@ title: honey cue-validate
 
 ## honey cue-validate
 
-Validate a CUE remote recipe (commands and/or SFTP put/get steps)
+Validate a CUE remote recipe (commands, SFTP put/get/script, and optional agent_transfer)
 
 ### Synopsis
 
 Parses a .cue file and checks that the top-level "recipe" field matches
 the built-in schema: name (string) and steps (each step has host and exactly one
-of command, put, get, or script \{local, remote\}; optional run_as on command/script steps).
+of command, put, get, script \{local, remote\}, or agent_transfer; optional run_as on command/script steps).
 
 ```
 honey cue-validate &lt;file.cue&gt; [flags]

@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shareed2k/honey/internal/cloudtransfer"
-	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/ui"
 	"go.uber.org/zap"
@@ -36,24 +34,18 @@ type filesCopyRequest struct {
 }
 
 type filesAgentTransferRequest struct {
-	SSHUser         string                `json:"ssh_user"`
-	AgentLocalPath  string                `json:"agent_local_path,omitempty"`
-	AgentRemoteDir  string                `json:"agent_remote_dir,omitempty"`
-	SourceRecord    hosts.Record          `json:"source_record"`
-	SourcePath      string                `json:"source_path"`
-	DestRecord      hosts.Record          `json:"dest_record"`
-	DestPath        string                `json:"dest_path"`
-	Cloud           ui.AgentCloudBackend  `json:"cloud"`
-	CloudBackendRef *filesCloudBackendRef `json:"cloud_backend_ref,omitempty"`
-	Credentials     map[string]string     `json:"credentials"`
-	KeepObject      bool                  `json:"keep_object,omitempty"`
-	MaxRetries      int                   `json:"max_retries,omitempty"`
-}
-
-type filesCloudBackendRef struct {
-	Kind  string `json:"kind"`
-	Name  string `json:"name,omitempty"`
-	Index *int   `json:"index,omitempty"`
+	SSHUser         string               `json:"ssh_user"`
+	AgentLocalPath  string               `json:"agent_local_path,omitempty"`
+	AgentRemoteDir  string               `json:"agent_remote_dir,omitempty"`
+	SourceRecord    hosts.Record         `json:"source_record"`
+	SourcePath      string               `json:"source_path"`
+	DestRecord      hosts.Record         `json:"dest_record"`
+	DestPath        string               `json:"dest_path"`
+	Cloud           ui.AgentCloudBackend `json:"cloud"`
+	CloudBackendRef *ui.CloudBackendRef  `json:"cloud_backend_ref,omitempty"`
+	Credentials     map[string]string    `json:"credentials"`
+	KeepObject      bool                 `json:"keep_object,omitempty"`
+	MaxRetries      int                  `json:"max_retries,omitempty"`
 }
 
 type filesLocalListResponse struct {
@@ -209,7 +201,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	signingHints, err := s.resolveTransferCloudSigningHints(req.Cloud, req.CloudBackendRef)
+	signingHints, err := ui.ResolveAgentTransferSigningHints(s.opts.ConfigPath, req.Cloud, req.CloudBackendRef)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -284,110 +276,4 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(filesAgentTransferResponse{Events: events})
-}
-
-func (s *Server) resolveTransferCloudSigningHints(cloud ui.AgentCloudBackend, ref *filesCloudBackendRef) (cloudtransfer.SigningHints, error) {
-	var hints cloudtransfer.SigningHints
-	if ref == nil {
-		return hints, nil
-	}
-	kind := strings.ToLower(strings.TrimSpace(ref.Kind))
-	if kind == "" {
-		return hints, fmt.Errorf("cloud_backend_ref.kind is required")
-	}
-	cfgPath, err := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
-	if err != nil {
-		return hints, fmt.Errorf("resolve config path: %w", err)
-	}
-	if cfgPath == "" {
-		return hints, fmt.Errorf("cloud_backend_ref requires a config file (set --config or HONEY_CONFIG)")
-	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return hints, fmt.Errorf("load config: %w", err)
-	}
-	provider := cloudtransfer.NormalizeProvider(cloud.Provider)
-	switch kind {
-	case "aws":
-		if provider != "" && provider != "s3" {
-			return hints, fmt.Errorf("cloud_backend_ref.kind=aws requires cloud.provider=s3")
-		}
-		backend, err := pickAWSBackend(cfg.Backends.AWS, ref)
-		if err != nil {
-			return hints, err
-		}
-		if p := strings.TrimSpace(backend.Profile); p != "" {
-			hints.AWSProfile = p
-		}
-		if strings.TrimSpace(cloud.Region) == "" {
-			if region := strings.TrimSpace(backend.Region); region != "" {
-				hints.AWSRegion = region
-			}
-		}
-		return hints, nil
-	case "gcp", "googlecloud":
-		if provider != "" && provider != "googlecloudstorage" {
-			return hints, fmt.Errorf("cloud_backend_ref.kind=gcp requires cloud.provider=googlecloudstorage")
-		}
-		backend, err := pickGCPBackend(cfg.Backends.GCP, ref)
-		if err != nil {
-			return hints, err
-		}
-		hints.GCPProject = strings.TrimSpace(backend.Project)
-		return hints, nil
-	default:
-		return hints, fmt.Errorf("unsupported cloud_backend_ref.kind %q (supported: aws, gcp)", ref.Kind)
-	}
-}
-
-func pickAWSBackend(backends []config.AWSBackend, ref *filesCloudBackendRef) (config.AWSBackend, error) {
-	if len(backends) == 0 {
-		return config.AWSBackend{}, fmt.Errorf("no aws backends configured")
-	}
-	if ref.Index != nil {
-		idx := *ref.Index
-		if idx < 0 || idx >= len(backends) {
-			return config.AWSBackend{}, fmt.Errorf("cloud_backend_ref.index out of range for aws backends")
-		}
-		return backends[idx], nil
-	}
-	name := strings.TrimSpace(ref.Name)
-	if name != "" {
-		for _, b := range backends {
-			if strings.EqualFold(strings.TrimSpace(b.Name), name) {
-				return b, nil
-			}
-		}
-		return config.AWSBackend{}, fmt.Errorf("aws backend %q not found", name)
-	}
-	if len(backends) == 1 {
-		return backends[0], nil
-	}
-	return config.AWSBackend{}, fmt.Errorf("multiple aws backends configured; provide cloud_backend_ref.name or index")
-}
-
-func pickGCPBackend(backends []config.GCPBackend, ref *filesCloudBackendRef) (config.GCPBackend, error) {
-	if len(backends) == 0 {
-		return config.GCPBackend{}, fmt.Errorf("no gcp backends configured")
-	}
-	if ref.Index != nil {
-		idx := *ref.Index
-		if idx < 0 || idx >= len(backends) {
-			return config.GCPBackend{}, fmt.Errorf("cloud_backend_ref.index out of range for gcp backends")
-		}
-		return backends[idx], nil
-	}
-	name := strings.TrimSpace(ref.Name)
-	if name != "" {
-		for _, b := range backends {
-			if strings.EqualFold(strings.TrimSpace(b.Name), name) {
-				return b, nil
-			}
-		}
-		return config.GCPBackend{}, fmt.Errorf("gcp backend %q not found", name)
-	}
-	if len(backends) == 1 {
-		return backends[0], nil
-	}
-	return config.GCPBackend{}, fmt.Errorf("multiple gcp backends configured; provide cloud_backend_ref.name or index")
 }

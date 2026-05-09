@@ -80,7 +80,7 @@ Download runs **after** a failed local build (or when the module root cannot be 
 
 ### CUE recipes
 
-- Open and run recipes from the UI (same semantics as `honey cue-exec`).
+- Open and run recipes from the UI (same semantics as `honey cue-exec`), including optional **`agent_transfer`** steps (A→cloud→B); the server passes its configured honey YAML path for `cloud_backend_ref` signing, like **`POST /api/v1/files/agent-transfer`**.
 - **Recipe assist** (AI): explains or debugs a recipe using the file content plus optional dry-run output for the current host selection (requires `OPENAI_API_KEY`).
 
 ## AI assist

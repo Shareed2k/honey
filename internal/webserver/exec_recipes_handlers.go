@@ -338,7 +338,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 
 	if !body.Execute {
 		var buf bytes.Buffer
-		runErr := ui.RunCueRecipeSteps(&buf, recipe, recipeDir, jobs, user, false, cliEnv, nil)
+		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, cliEnv, s.opts.ConfigPath, nil)
 		var rec *ui.SessionRecorder
 		if wantRec {
 			var err error
@@ -382,7 +382,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		ch := make(chan ui.HostExecResult, cueExecChannelCap)
 		go func() {
 			defer close(ch)
-			if err := ui.StreamCueRecipeSteps(recipe, recipeDir, jobs, user, cliEnv, ch); err != nil {
+			if err := ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, ch); err != nil {
 				ch <- ui.HostExecResult{
 					Name:     "cue-exec",
 					Provider: "web",
@@ -409,7 +409,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	errCh := make(chan error, 1)
 	go func() {
 		defer close(ch)
-		errCh <- ui.StreamCueRecipeSteps(recipe, recipeDir, jobs, user, cliEnv, ch)
+		errCh <- ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, ch)
 	}()
 	var results []ui.HostExecResult
 	for res := range ch {

@@ -30,6 +30,27 @@ const schemaSource = `
 		local:  string
 		remote: string
 	})
+	agent_transfer?: close({
+		dest_host:    string
+		source_path:  string
+		dest_path:    string
+		cloud: close({
+			provider: string
+			bucket:   string
+			prefix?:  string
+			object?:  string
+			region?:  string
+			endpoint?: string
+		})
+		cloud_backend_ref?: close({
+			kind:  string
+			name?:  string
+			index?: int
+		})
+		keep_object?:      bool
+		max_retries?:      int
+		agent_remote_dir?: string
+	})
 	env?: {[string]: string}
 })
 #Recipe: close({
@@ -111,7 +132,7 @@ func ParseRemoteRecipe(cueBytes []byte, records []hosts.Record) (Recipe, error) 
 		if err != nil {
 			return out, fmt.Errorf("cuetry: steps[%d]: %w", i, err)
 		}
-		if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet) {
+		if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer) {
 			return out, fmt.Errorf("cuetry: steps[%d]: env is only supported for command and script steps", i)
 		}
 		if len(s.Env) > 0 {
@@ -127,8 +148,56 @@ func ParseRemoteRecipe(cueBytes []byte, records []hosts.Record) (Recipe, error) 
 				return out, fmt.Errorf("cuetry: steps[%d].run_as: %w", i, err)
 			}
 		}
+		if kind == StepKindAgentTransfer {
+			if err := validateAgentTransferStep(i, s, records); err != nil {
+				return out, err
+			}
+		}
 	}
 	return out, nil
+}
+
+func validateAgentTransferStep(i int, s RecipeStep, records []hosts.Record) error {
+	at := s.AgentTransfer
+	if at == nil {
+		return fmt.Errorf("cuetry: steps[%d]: internal agent_transfer", i)
+	}
+	if err := ValidateHostField(at.DestHost); err != nil {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer.dest_host: %w", i, err)
+	}
+	if strings.TrimSpace(at.SourcePath) == "" {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer.source_path is empty", i)
+	}
+	if strings.TrimSpace(at.DestPath) == "" {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer.dest_path is empty", i)
+	}
+	if at.Cloud == nil {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer.cloud is required", i)
+	}
+	if strings.TrimSpace(at.Cloud.Provider) == "" {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer.cloud.provider is empty", i)
+	}
+	if strings.TrimSpace(at.Cloud.Bucket) == "" {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer.cloud.bucket is empty", i)
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	src, err := ExpandStepHosts(s.Host, records)
+	if err != nil {
+		return fmt.Errorf("cuetry: steps[%d].host (source): %w", i, err)
+	}
+	if len(src) != 1 {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer: need exactly one source host match, got %d (narrow host selector)", i, len(src))
+	}
+	dst, err := ExpandStepHosts(at.DestHost, records)
+	if err != nil {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer.dest_host: %w", i, err)
+	}
+	if len(dst) != 1 {
+		return fmt.Errorf("cuetry: steps[%d].agent_transfer: need exactly one destination host match, got %d (narrow dest_host)", i, len(dst))
+	}
+	return nil
 }
 
 // ValidateRemoteRecipe checks that cueBytes is valid CUE and conforms to #Recipe.

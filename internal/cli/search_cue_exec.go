@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -24,8 +25,9 @@ var (
 literal IP, exact name match, host "*" for all rows with an IP, or host "re:PATTERN"
 for a Go regexp (RE2) matched against each row's name (only rows with PrimaryIP).
 
-Each step is exactly one of: shell command, put (upload), get (download), or
-script (upload a local file then run it with sh on the same SSH connection).
+Each step is exactly one of: shell command, put (upload), get (download),
+script (upload a local file then run it with sh on the same SSH connection), or
+agent_transfer (A→cloud→B using the transfer agent; requires --config when using cloud_backend_ref).
 Relative local paths are resolved against the recipe file's directory.
 
 Then either prints a plan (--execute=false, default) or runs each step (--execute).
@@ -74,7 +76,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	records, sshUser, _, err := runSearchCore(cmd, queryArgs)
+	records, sshUser, _, cfgPath, err := runSearchCore(cmd, queryArgs)
 	if err != nil {
 		return err
 	}
@@ -115,5 +117,5 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		}
 		defer func() { _ = rec.Close() }()
 	}
-	return ui.RunCueRecipeSteps(cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, rec)
+	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, rec)
 }

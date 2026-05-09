@@ -21,14 +21,45 @@ type RecipeFileTransfer struct {
 	Remote string `json:"remote"`
 }
 
-// RecipeStep is one remote action: exactly one of Command, Put, Get, or Script.
-// Host selects targets: literal IP, exact name, "*", or "re:…" (see resolve.go).
+// RecipeAgentTransferCloud is the staging object location (S3/GCS, etc.).
+type RecipeAgentTransferCloud struct {
+	Provider string `json:"provider"`
+	Bucket   string `json:"bucket"`
+	Prefix   string `json:"prefix,omitempty"`
+	Object   string `json:"object,omitempty"`
+	Region   string `json:"region,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+}
+
+// RecipeCloudBackendRef selects a backend entry from honey YAML for signing hints (AWS profile, GCP project).
+type RecipeCloudBackendRef struct {
+	Kind  string `json:"kind"`
+	Name  string `json:"name,omitempty"`
+	Index *int   `json:"index,omitempty"`
+}
+
+// RecipeAgentTransfer is source host (top-level host) → cloud → destination (dest_host), same flow as the web UI.
+type RecipeAgentTransfer struct {
+	DestHost        string                    `json:"dest_host"`
+	SourcePath      string                    `json:"source_path"`
+	DestPath        string                    `json:"dest_path"`
+	Cloud           *RecipeAgentTransferCloud `json:"cloud"`
+	CloudBackendRef *RecipeCloudBackendRef    `json:"cloud_backend_ref,omitempty"`
+	KeepObject      bool                      `json:"keep_object,omitempty"`
+	MaxRetries      int                       `json:"max_retries,omitempty"`
+	AgentRemoteDir  string                    `json:"agent_remote_dir,omitempty"`
+}
+
+// RecipeStep is one remote action: exactly one of command, put, get, script, or agent_transfer.
+// Host selects targets: literal IP, exact name, "*", or "re:…" (see resolve.go). For agent_transfer,
+// host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
 type RecipeStep struct {
-	Host    string              `json:"host"`
-	Command string              `json:"command,omitempty"`
-	Put     *RecipeFileTransfer `json:"put,omitempty"`
-	Get     *RecipeFileTransfer `json:"get,omitempty"`
-	Script  *RecipeFileTransfer `json:"script,omitempty"`
-	RunAs   string              `json:"run_as,omitempty"`
-	Env     map[string]string   `json:"env,omitempty"`
+	Host          string               `json:"host"`
+	Command       string               `json:"command,omitempty"`
+	Put           *RecipeFileTransfer  `json:"put,omitempty"`
+	Get           *RecipeFileTransfer  `json:"get,omitempty"`
+	Script        *RecipeFileTransfer  `json:"script,omitempty"`
+	AgentTransfer *RecipeAgentTransfer `json:"agent_transfer,omitempty"`
+	RunAs         string               `json:"run_as,omitempty"`
+	Env           map[string]string    `json:"env,omitempty"`
 }

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +18,8 @@ import (
 )
 
 // StreamCueRecipeSteps executes a CUE recipe step-by-step, streaming results.
-func StreamCueRecipeSteps(recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, out chan<- HostExecResult) error {
+// configPath is the resolved honey YAML path (may be empty); agent_transfer steps with cloud_backend_ref require it.
+func StreamCueRecipeSteps(ctx context.Context, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, configPath string, out chan<- HostExecResult) error {
 	if len(records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
@@ -26,7 +28,7 @@ func StreamCueRecipeSteps(recipe cuetry.Recipe, recipeDir string, records []host
 	defer cache.CloseAll()
 
 	for i, step := range recipe.Steps {
-		if err := streamCueRecipeStep(recipe, recipeDir, records, sshUser, cliEnv, i, step, out, cache); err != nil {
+		if err := streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, i, step, out, cache); err != nil {
 			return err
 		}
 	}
@@ -51,7 +53,15 @@ func cueStepAllTargetsTransientTransportFailed(results []HostExecResult) bool {
 	return true
 }
 
-func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, i int, step cuetry.RecipeStep, out chan<- HostExecResult, cache *ClientCache) error {
+func streamCueRecipeStep(ctx context.Context, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, cliEnv map[string]string, configPath string, i int, step cuetry.RecipeStep, out chan<- HostExecResult, cache *ClientCache) error {
+	kind, classifyErr := cuetry.ClassifyStep(step)
+	if classifyErr != nil {
+		return fmt.Errorf("step %d: %w", i, classifyErr)
+	}
+	if kind == cuetry.StepKindAgentTransfer {
+		return streamCueStepAgentTransfer(ctx, records, sshUser, configPath, i, step, out, cache)
+	}
+
 	targets, err := cuetry.ExpandStepHosts(step.Host, records)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
@@ -76,23 +86,18 @@ func streamCueRecipeStep(recipe cuetry.Recipe, recipeDir string, records []hosts
 	}()
 
 	var stepErr error
-	kind, err := cuetry.ClassifyStep(step)
-	if err != nil {
-		stepErr = fmt.Errorf("step %d: %w", i, err)
-	} else {
-		switch kind {
-		case cuetry.StepKindCommand:
-			stepErr = streamCueStepCommand(recipe, step, cliEnv, sshUser, targets, ch, cache)
+	switch kind {
+	case cuetry.StepKindCommand:
+		stepErr = streamCueStepCommand(recipe, step, cliEnv, sshUser, targets, ch, cache)
 
-		case cuetry.StepKindPut:
-			stepErr = streamCueStepPut(recipeDir, step, sshUser, targets, ch, cache)
+	case cuetry.StepKindPut:
+		stepErr = streamCueStepPut(recipeDir, step, sshUser, targets, ch, cache)
 
-		case cuetry.StepKindGet:
-			stepErr = streamCueStepGet(recipeDir, step, sshUser, targets, ch, cache)
+	case cuetry.StepKindGet:
+		stepErr = streamCueStepGet(recipeDir, step, sshUser, targets, ch, cache)
 
-		case cuetry.StepKindScript:
-			stepErr = streamCueStepScript(recipe, recipeDir, step, cliEnv, sshUser, targets, ch, cache)
-		}
+	case cuetry.StepKindScript:
+		stepErr = streamCueStepScript(recipe, recipeDir, step, cliEnv, sshUser, targets, ch, cache)
 	}
 
 	close(ch)
@@ -211,8 +216,9 @@ func streamCueStepScript(recipe cuetry.Recipe, recipeDir string, step cuetry.Rec
 
 // RunCueRecipeSteps executes a CUE recipe over a slice of target records without streaming.
 // cliEnv is merged into each command/script step's remote env (overrides recipe env on duplicate keys); nil is treated as empty.
+// configPath is the resolved honey YAML path (may be empty); agent_transfer with cloud_backend_ref requires it.
 // rec, when non-nil, records a batch .hrec.jsonl (plan on dry-run, result rows on execute). Caller must Close(rec).
-func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, rec *SessionRecorder) error {
+func RunCueRecipeSteps(ctx context.Context, out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, configPath string, rec *SessionRecorder) error {
 	if len(records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
@@ -224,7 +230,7 @@ func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, re
 			outWrite = io.MultiWriter(out, &capture)
 		}
 		for i, step := range recipe.Steps {
-			if err := runCueRecipeStep(outWrite, recipe, recipeDir, records, false, cliEnv, i, step); err != nil {
+			if err := runCueRecipeStep(outWrite, recipe, recipeDir, records, sshUser, false, cliEnv, configPath, i, step); err != nil {
 				if rec != nil {
 					rec.RecordError(err)
 				}
@@ -248,7 +254,7 @@ func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, re
 	errCh := make(chan error, 1)
 	go func() {
 		defer close(ch)
-		errCh <- StreamCueRecipeSteps(recipe, recipeDir, records, sshUser, cliEnv, ch)
+		errCh <- StreamCueRecipeSteps(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, ch)
 	}()
 
 	for res := range ch {
@@ -279,13 +285,16 @@ func RunCueRecipeSteps(out io.Writer, recipe cuetry.Recipe, recipeDir string, re
 	return nil
 }
 
-func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, execute bool, cliEnv map[string]string, i int, step cuetry.RecipeStep) error {
+func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, configPath string, i int, step cuetry.RecipeStep) error {
 	zap.L().Debug("evaluating cue step", zap.Int("step_index", i), zap.String("host", step.Host))
-	targets, err := cuetry.ExpandStepHosts(step.Host, records)
+	kind, err := cuetry.ClassifyStep(step)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
 	}
-	kind, err := cuetry.ClassifyStep(step)
+	if kind == cuetry.StepKindAgentTransfer {
+		return runCueStepAgentTransferDry(out, records, sshUser, configPath, i, step)
+	}
+	targets, err := cuetry.ExpandStepHosts(step.Host, records)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
 	}
@@ -414,6 +423,179 @@ func runCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, exe
 				i, target.Name, FormatTargetForDryRun(target), target.Provider, localAbs, remotePath, runAs, remoteCmd)
 		}
 		return nil
+	}
+	return nil
+}
+
+func agentTransferCloudFromRecipe(c *cuetry.RecipeAgentTransferCloud) AgentCloudBackend {
+	if c == nil {
+		return AgentCloudBackend{}
+	}
+	return AgentCloudBackend{
+		Provider: strings.TrimSpace(c.Provider),
+		Bucket:   strings.TrimSpace(c.Bucket),
+		Prefix:   strings.TrimSpace(c.Prefix),
+		Object:   strings.TrimSpace(c.Object),
+		Region:   strings.TrimSpace(c.Region),
+		Endpoint: strings.TrimSpace(c.Endpoint),
+	}
+}
+
+func cloudBackendRefFromRecipe(r *cuetry.RecipeCloudBackendRef) *CloudBackendRef {
+	if r == nil {
+		return nil
+	}
+	return &CloudBackendRef{
+		Kind:  strings.TrimSpace(r.Kind),
+		Name:  strings.TrimSpace(r.Name),
+		Index: r.Index,
+	}
+}
+
+func summarizeAgentTransferEvents(events []AgentTransferEvent) string {
+	var b strings.Builder
+	for _, ev := range events {
+		line := ev.Stage
+		if ev.Host != "" {
+			line = fmt.Sprintf("%s@%s", ev.Stage, ev.Host)
+		}
+		if strings.TrimSpace(ev.Message) != "" {
+			line += ": " + strings.TrimSpace(ev.Message)
+		}
+		if !ev.Success && strings.TrimSpace(ev.Error) != "" {
+			line += " (" + strings.TrimSpace(ev.Error) + ")"
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(strings.TrimSpace(line))
+	}
+	s := strings.TrimSpace(b.String())
+	if s == "" {
+		return "(no events)"
+	}
+	return s
+}
+
+func runCueStepAgentTransferDry(out io.Writer, records []hosts.Record, sshUser, configPath string, i int, step cuetry.RecipeStep) error {
+	at := step.AgentTransfer
+	if at == nil {
+		return fmt.Errorf("step %d: internal: missing agent_transfer", i)
+	}
+	srcHosts, err := cuetry.ExpandStepHosts(step.Host, records)
+	if err != nil {
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	dstHosts, err := cuetry.ExpandStepHosts(at.DestHost, records)
+	if err != nil {
+		return fmt.Errorf("step %d dest_host: %w", i, err)
+	}
+	if len(srcHosts) != 1 {
+		return fmt.Errorf("step %d: agent_transfer requires exactly one source host; got %d", i, len(srcHosts))
+	}
+	if len(dstHosts) != 1 {
+		return fmt.Errorf("step %d: agent_transfer requires exactly one destination host; got %d", i, len(dstHosts))
+	}
+	cloud := agentTransferCloudFromRecipe(at.Cloud)
+	_, _ = fmt.Fprintf(out, "step %d: kind=agent_transfer ssh_user=%q\n", i, strings.TrimSpace(sshUser))
+	_, _ = fmt.Fprintf(out, "  source: name=%q %s provider=%s path=%q\n",
+		srcHosts[0].Name, FormatTargetForDryRun(srcHosts[0]), srcHosts[0].Provider, strings.TrimSpace(at.SourcePath))
+	_, _ = fmt.Fprintf(out, "  dest:   name=%q %s provider=%s path=%q\n",
+		dstHosts[0].Name, FormatTargetForDryRun(dstHosts[0]), dstHosts[0].Provider, strings.TrimSpace(at.DestPath))
+	_, _ = fmt.Fprintf(out, "  cloud: provider=%q bucket=%q prefix=%q object=%q region=%q endpoint=%q\n",
+		cloud.Provider, cloud.Bucket, cloud.Prefix, cloud.Object, cloud.Region, cloud.Endpoint)
+	if at.CloudBackendRef != nil {
+		_, _ = fmt.Fprintf(out, "  cloud_backend_ref: kind=%q name=%q index=%v\n",
+			at.CloudBackendRef.Kind, at.CloudBackendRef.Name, at.CloudBackendRef.Index)
+		if _, err := ResolveAgentTransferSigningHints(configPath, cloud, cloudBackendRefFromRecipe(at.CloudBackendRef)); err != nil {
+			return fmt.Errorf("step %d signing hints: %w", i, err)
+		}
+		_, _ = fmt.Fprintln(out, "  signing hints: resolvable (config + ref)")
+	} else {
+		_, _ = fmt.Fprintln(out, "  cloud_backend_ref: (none — empty signing hints)")
+	}
+	if at.KeepObject {
+		_, _ = fmt.Fprintln(out, "  keep_object: true")
+	}
+	if at.MaxRetries > 0 {
+		_, _ = fmt.Fprintf(out, "  max_retries: %d\n", at.MaxRetries)
+	}
+	if ard := strings.TrimSpace(at.AgentRemoteDir); ard != "" {
+		_, _ = fmt.Fprintf(out, "  agent_remote_dir: %q\n", ard)
+	}
+	return nil
+}
+
+func streamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, sshUser, configPath string, i int, step cuetry.RecipeStep, out chan<- HostExecResult, cache *ClientCache) error {
+	at := step.AgentTransfer
+	if at == nil {
+		return fmt.Errorf("step %d: internal: missing agent_transfer", i)
+	}
+	srcHosts, err := cuetry.ExpandStepHosts(step.Host, records)
+	if err != nil {
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	dstHosts, err := cuetry.ExpandStepHosts(at.DestHost, records)
+	if err != nil {
+		return fmt.Errorf("step %d dest_host: %w", i, err)
+	}
+	if len(srcHosts) != 1 || len(dstHosts) != 1 {
+		msg := fmt.Sprintf("need exactly one source and one dest host; got src=%d dst=%d", len(srcHosts), len(dstHosts))
+		out <- HostExecResult{
+			Name:    fmt.Sprintf("Step %d | agent_transfer", i+1),
+			Success: false,
+			ErrMsg:  msg,
+		}
+		return fmt.Errorf("step %d: %s", i, msg)
+	}
+	src := srcHosts[0]
+	dst := dstHosts[0]
+	cloud := agentTransferCloudFromRecipe(at.Cloud)
+	ref := cloudBackendRefFromRecipe(at.CloudBackendRef)
+	hints, err := ResolveAgentTransferSigningHints(configPath, cloud, ref)
+	if err != nil {
+		out <- HostExecResult{
+			Name:     fmt.Sprintf("Step %d | agent_transfer %s → %s", i+1, strings.TrimSpace(src.Name), strings.TrimSpace(dst.Name)),
+			IP:       strings.TrimSpace(src.PrimaryIP),
+			Provider: src.Provider,
+			Success:  false,
+			ErrMsg:   err.Error(),
+		}
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	job, err := BuildAgentTransferJob(ctx, cache, sshUser, "", "", "", strings.TrimSpace(at.AgentRemoteDir),
+		src, dst, strings.TrimSpace(at.SourcePath), strings.TrimSpace(at.DestPath),
+		cloud, at.KeepObject, at.MaxRetries, hints)
+	if err != nil {
+		out <- HostExecResult{
+			Name:     fmt.Sprintf("Step %d | agent_transfer %s → %s", i+1, strings.TrimSpace(src.Name), strings.TrimSpace(dst.Name)),
+			IP:       strings.TrimSpace(src.PrimaryIP),
+			Provider: src.Provider,
+			Success:  false,
+			ErrMsg:   err.Error(),
+		}
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	events, err := ExecuteAgentCloudTransfer(job, cache)
+	outStr := summarizeAgentTransferEvents(events)
+	resName := fmt.Sprintf("agent_transfer %s → %s", strings.TrimSpace(src.Name), strings.TrimSpace(dst.Name))
+	if err != nil {
+		out <- HostExecResult{
+			Name:     fmt.Sprintf("Step %d | %s", i+1, resName),
+			IP:       strings.TrimSpace(src.PrimaryIP),
+			Provider: src.Provider,
+			Success:  false,
+			ErrMsg:   err.Error(),
+			Output:   outStr,
+		}
+		return fmt.Errorf("step %d agent_transfer: %w", i, err)
+	}
+	out <- HostExecResult{
+		Name:     fmt.Sprintf("Step %d | %s", i+1, resName),
+		IP:       strings.TrimSpace(src.PrimaryIP),
+		Provider: src.Provider,
+		Success:  true,
+		Output:   outStr,
 	}
 	return nil
 }

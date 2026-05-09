@@ -260,6 +260,151 @@ func TestExpandStepHosts_regex(t *testing.T) {
 	}
 }
 
+func TestCountRecipeStreamResults(t *testing.T) {
+	t.Parallel()
+	recs := []hosts.Record{
+		{Name: "a", PrimaryIP: "10.0.0.1"},
+		{Name: "b", PrimaryIP: "10.0.0.2"},
+	}
+	const src = `
+recipe: {
+	name: "mix"
+	steps: [
+		{host: "*", command: "id"},
+		{host: "a", agent_transfer: {
+			dest_host: "b"
+			source_path: "/x"
+			dest_path: "/y"
+			cloud: { provider: "s3", bucket: "bk" }
+		}},
+	]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), recs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := CountRecipeStreamResults(r, recs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// step1: * → 2 hosts; step2: agent_transfer → 1
+	if n != 3 {
+		t.Fatalf("got %d want 3", n)
+	}
+}
+
+func TestParseRemoteRecipe_agentTransfer_okWithRecords(t *testing.T) {
+	t.Parallel()
+	recs := []hosts.Record{
+		{Name: "web-1", PrimaryIP: "10.0.0.1"},
+		{Name: "db-1", PrimaryIP: "10.0.0.2"},
+	}
+	const src = `
+recipe: {
+	name: "at"
+	steps: [
+		{
+			host: "web-1"
+			agent_transfer: {
+				dest_host: "db-1"
+				source_path: "/tmp/a"
+				dest_path: "/tmp/b"
+				cloud: { provider: "s3", bucket: "mybucket" }
+			}
+		},
+	]
+}
+`
+	if _, err := ParseRemoteRecipe([]byte(src), recs); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseRemoteRecipe_agentTransfer_twoSourceHostsFails(t *testing.T) {
+	t.Parallel()
+	recs := []hosts.Record{
+		{Name: "web-1", PrimaryIP: "10.0.0.1"},
+		{Name: "web-2", PrimaryIP: "10.0.0.2"},
+		{Name: "db-1", PrimaryIP: "10.0.0.3"},
+	}
+	const src = `
+recipe: {
+	name: "at"
+	steps: [
+		{
+			host: "re:^web-"
+			agent_transfer: {
+				dest_host: "db-1"
+				source_path: "/tmp/a"
+				dest_path: "/tmp/b"
+				cloud: { provider: "s3", bucket: "mybucket" }
+			}
+		},
+	]
+}
+`
+	if _, err := ParseRemoteRecipe([]byte(src), recs); err == nil {
+		t.Fatal("expected error for multiple source matches")
+	}
+}
+
+func TestParseRemoteRecipe_agentTransfer_envRejected(t *testing.T) {
+	t.Parallel()
+	recs := []hosts.Record{
+		{Name: "a", PrimaryIP: "10.0.0.1"},
+		{Name: "b", PrimaryIP: "10.0.0.2"},
+	}
+	const src = `
+recipe: {
+	name: "bad"
+	steps: [
+		{
+			host: "a"
+			env: { FOO: "bar" }
+			agent_transfer: {
+				dest_host: "b"
+				source_path: "/x"
+				dest_path: "/y"
+				cloud: { provider: "s3", bucket: "bk" }
+			}
+		},
+	]
+}
+`
+	if _, err := ParseRemoteRecipe([]byte(src), recs); err == nil {
+		t.Fatal("expected error for env on agent_transfer")
+	}
+}
+
+func TestParseRemoteRecipe_agentTransfer_runAsRejected(t *testing.T) {
+	t.Parallel()
+	recs := []hosts.Record{
+		{Name: "a", PrimaryIP: "10.0.0.1"},
+		{Name: "b", PrimaryIP: "10.0.0.2"},
+	}
+	const src = `
+recipe: {
+	name: "bad"
+	steps: [
+		{
+			host: "a"
+			run_as: "root"
+			agent_transfer: {
+				dest_host: "b"
+				source_path: "/x"
+				dest_path: "/y"
+				cloud: { provider: "s3", bucket: "bk" }
+			}
+		},
+	]
+}
+`
+	if _, err := ParseRemoteRecipe([]byte(src), recs); err == nil {
+		t.Fatal("expected error for run_as on agent_transfer")
+	}
+}
+
 func TestWrapRemoteShell(t *testing.T) {
 	out, err := WrapRemoteShell("", "hostname")
 	if err != nil || out != "hostname" {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,8 @@ type cueRecipeDoneMsg struct {
 type RunTableOptions struct {
 	RecordDir     string
 	RecordEnabled bool
+	// ConfigPath is the resolved honey YAML path (may be empty); CUE agent_transfer steps with cloud_backend_ref need it.
+	ConfigPath string
 }
 
 type model struct {
@@ -94,6 +97,7 @@ type model struct {
 
 	recordDir     string
 	recordEnabled bool
+	configPath    string
 	// batchRecorder is non-nil while streaming parallel exec or CUE execute results when recording is on.
 	batchRecorder *SessionRecorder
 
@@ -296,6 +300,7 @@ func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *mod
 		tunnelFocusIndex: 0,
 		recordDir:        strings.TrimSpace(opts.RecordDir),
 		recordEnabled:    strings.TrimSpace(opts.RecordDir) != "" && opts.RecordEnabled,
+		configPath:       strings.TrimSpace(opts.ConfigPath),
 		fileFocus:        "local",
 		fileLocalPath:    DefaultLocalFilesRoot(),
 		fileRemotePath:   ".",
@@ -440,7 +445,7 @@ func (m *model) textInputEnter() (tea.Model, tea.Cmd) {
 		}
 		targets, note := m.parallelExecTargets()
 		m.ti.Blur()
-		return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute, m.recordDir, m.recordEnabled)
+		return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute, m.recordDir, m.recordEnabled, m.configPath)
 	}
 	if m.mode == "filter" {
 		m.mode = "table"
@@ -1130,7 +1135,7 @@ func isCueKeyword(word string) bool {
 	}
 }
 
-func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool, recordDir string, recordEnabled bool) tea.Cmd {
+func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool, recordDir string, recordEnabled bool, configPath string) tea.Cmd {
 	title := "CUE recipe (dry-run)"
 	if execute {
 		title = "CUE recipe (execute)"
@@ -1159,7 +1164,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 
 		if !execute {
 			var buf bytes.Buffer
-			runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute, nil, nil)
+			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, nil)
 			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
 				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
 					if runErr != nil {
@@ -1182,12 +1187,18 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			return cueRecipeDoneMsg{title: title, body: body}
 		}
 
-		totalJobs := len(recipe.Steps) * len(targets)
+		totalJobs, cntErr := cuetry.CountRecipeStreamResults(recipe, targets)
+		if cntErr != nil {
+			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nrecipe steps: " + cntErr.Error()}
+		}
+		if totalJobs < 1 {
+			totalJobs = 1
+		}
 		ch := make(chan HostExecResult, totalJobs)
 
 		go func() {
 			defer close(ch)
-			_ = StreamCueRecipeSteps(recipe, recipeDir, targets, sshUser, nil, ch)
+			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, ch)
 		}()
 
 		return streamStartMsg{
