@@ -10,16 +10,36 @@ type HostRecord = {
   meta?: Record<string, string>;
 };
 
+/** noVNC RFB handle (minimal surface we use). */
+type NovncRfbHandle = {
+  background: string;
+  scaleViewport: boolean;
+  disconnect: () => void;
+  addEventListener: (type: string, listener: (ev: Event) => void) => void;
+};
+
+export type PveConsoleMode = 'serial' | 'vnc';
+
 type Props = {
   record: HostRecord;
   sshUser: string;
   recordSession: boolean;
-  /** When true, server has OPENAI_API_KEY; show assist side panel. */
+  /** When true, server has OPENAI_API_KEY; show assist side panel (not used for VNC). */
   assistAvailable?: boolean;
+  /** Proxmox web: `vnc` opens QEMU graphics via PVE; default `serial` uses /ws/ssh (SSH or PVE serial). */
+  pveConsole?: PveConsoleMode;
   onClose: () => void;
 };
 
 const defaultScrollbackLines = 200;
+
+const detachChar = '\x1d'; // Ctrl+] — honey closes the session; not sent to guest
+
+function isProxmoxPveSerialConsole(r: HostRecord): boolean {
+  const k = (r.meta?.kind || '').toLowerCase();
+  const m = (r.meta?.exec_mode || '').toLowerCase();
+  return r.provider === 'proxmox' && (k === 'lxc' || k === 'qemu') && (m === 'pve' || m === 'hybrid');
+}
 
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
@@ -36,9 +56,18 @@ function collectScrollback(term: Terminal, maxLines: number): string {
   return out.join('\n');
 }
 
-export function TerminalModal({ record, sshUser, recordSession, assistAvailable, onClose }: Props) {
+export function TerminalModal({
+  record,
+  sshUser,
+  recordSession,
+  assistAvailable,
+  pveConsole = 'serial',
+  onClose,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const vncHostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const rfbRef = useRef<NovncRfbHandle | null>(null);
   const [showConnectOverlay, setShowConnectOverlay] = useState(true);
 
   const [assistPrompt, setAssistPrompt] = useState('');
@@ -53,8 +82,11 @@ export function TerminalModal({ record, sshUser, recordSession, assistAvailable,
   const [assistModelsErr, setAssistModelsErr] = useState<string | null>(null);
   const [assistSelectedModel, setAssistSelectedModel] = useState('');
 
+  const isVnc = pveConsole === 'vnc';
+  const showAssist = !!assistAvailable && !isVnc;
+
   useEffect(() => {
-    if (!assistAvailable) {
+    if (!assistAvailable || isVnc) {
       return undefined;
     }
     let cancelled = false;
@@ -100,7 +132,7 @@ export function TerminalModal({ record, sshUser, recordSession, assistAvailable,
     return () => {
       cancelled = true;
     };
-  }, [assistAvailable]);
+  }, [assistAvailable, isVnc]);
 
   const assistCanAsk = assistModels.length > 0 && assistSelectedModel.trim() !== '' && !assistModelsLoading;
 
@@ -151,10 +183,14 @@ export function TerminalModal({ record, sshUser, recordSession, assistAvailable,
   }, [assistCanAsk, assistLines, assistPrompt, assistSelectedModel]);
 
   useEffect(() => {
+    if (isVnc) {
+      return undefined;
+    }
+
     const el = ref.current;
     if (!el) {
       setShowConnectOverlay(false);
-      return;
+      return undefined;
     }
 
     let connectUiDismissed = false;
@@ -241,9 +277,18 @@ export function TerminalModal({ record, sshUser, recordSession, assistAvailable,
 
     const enc = new TextEncoder();
     term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(enc.encode(data));
+      if (ws.readyState !== WebSocket.OPEN) {
+        return;
       }
+      const i = data.indexOf(detachChar);
+      if (i !== -1) {
+        if (i > 0) {
+          ws.send(enc.encode(data.slice(0, i)));
+        }
+        ws.send(JSON.stringify({ type: 'detach' }));
+        return;
+      }
+      ws.send(enc.encode(data));
     });
 
     const onResize = () => {
@@ -263,7 +308,130 @@ export function TerminalModal({ record, sshUser, recordSession, assistAvailable,
       term.dispose();
       termRef.current = null;
     };
-  }, [assistAvailable, record, recordSession, sshUser]);
+  }, [assistAvailable, isVnc, record, recordSession, sshUser]);
+
+  useEffect(() => {
+    if (!isVnc) {
+      return undefined;
+    }
+
+    const host = vncHostRef.current;
+    if (!host) {
+      setShowConnectOverlay(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    const dismissConnectOverlay = () => {
+      if (fallbackTimer !== undefined) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = undefined;
+      }
+      setShowConnectOverlay(false);
+    };
+
+    setShowConnectOverlay(true);
+    rfbRef.current = null;
+
+    const startRfb = () => {
+      void (async () => {
+        try {
+          const mod = await import('@novnc/novnc/lib/rfb');
+          if (cancelled || !vncHostRef.current) {
+            return;
+          }
+          const RFB = mod.default;
+          const token = getToken();
+          const offerResp = await apiPost('/api/v1/pve-qemu-vnc-offer', { record });
+          const offerJson = (await offerResp.json().catch(() => ({}))) as {
+            session_id?: string;
+            vnc_password?: string;
+            error?: string;
+          };
+          if (!offerResp.ok) {
+            dismissConnectOverlay();
+            host.textContent = offerJson.error || offerResp.statusText || 'VNC offer failed';
+            return;
+          }
+          if (!offerJson.session_id || !offerJson.vnc_password) {
+            dismissConnectOverlay();
+            host.textContent = offerJson.error || 'Server did not return session_id / vnc_password';
+            return;
+          }
+
+          const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const u = new URL(
+            `/ws/pve-qemu-vnc?token=${encodeURIComponent(token)}&vnc_session=${encodeURIComponent(offerJson.session_id)}`,
+            window.location.href,
+          );
+          u.protocol = proto;
+          const el = vncHostRef.current;
+          if (!el || cancelled) {
+            return;
+          }
+          const rfb = new RFB(el, u.toString(), {
+            wsProtocols: [],
+            credentials: { password: offerJson.vnc_password },
+          }) as NovncRfbHandle & {
+            resizeSession: boolean;
+          };
+          rfb.background = '#000000';
+          rfb.scaleViewport = true;
+          rfb.resizeSession = false;
+          rfbRef.current = rfb;
+          fallbackTimer = setTimeout(dismissConnectOverlay, 4000);
+          const onConn = () => {
+            dismissConnectOverlay();
+            rfb.scaleViewport = true;
+            window.dispatchEvent(new Event('resize'));
+          };
+          rfb.addEventListener('connect', onConn);
+          rfb.addEventListener('disconnect', dismissConnectOverlay);
+          rfb.addEventListener('securityfailure', (ev: Event) => {
+            dismissConnectOverlay();
+            const d = (ev as CustomEvent<{ reason?: string; status?: number }>).detail;
+            const why = d?.reason || d?.status?.toString() || 'security handshake failed';
+            el.appendChild(document.createTextNode(`VNC security failure: ${why}`));
+          });
+        } catch (e) {
+          dismissConnectOverlay();
+          const msg = e instanceof Error ? e.message : String(e);
+          host.textContent = `VNC failed to start: ${msg}`;
+        }
+      })();
+    };
+
+    // Wait two frames so the modal flex layout has non-zero size before noVNC attaches ResizeObserver.
+    let outerRaf = 0;
+    let innerRaf = 0;
+    outerRaf = requestAnimationFrame(() => {
+      innerRaf = requestAnimationFrame(() => {
+        if (!cancelled) {
+          startRfb();
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(outerRaf);
+      cancelAnimationFrame(innerRaf);
+      if (fallbackTimer !== undefined) {
+        clearTimeout(fallbackTimer);
+      }
+      const rfb = rfbRef.current;
+      rfbRef.current = null;
+      if (rfb) {
+        try {
+          rfb.disconnect();
+        } catch {
+          /* ignore */
+        }
+      }
+      host.replaceChildren();
+    };
+  }, [isVnc, record]);
 
   const connectOverlay = showConnectOverlay ? (
     <div className="term-connect-overlay" aria-live="polite" aria-atomic="true">
@@ -272,30 +440,50 @@ export function TerminalModal({ record, sshUser, recordSession, assistAvailable,
     </div>
   ) : null;
 
-  const termArea = (
+  const termArea = isVnc ? (
+    <div className="term-wrap">
+      <div className="term-vnc-host" ref={vncHostRef} tabIndex={-1} />
+      {connectOverlay}
+    </div>
+  ) : (
     <div className="term-wrap">
       <div className="term-xterm-host" ref={ref} />
       {connectOverlay}
     </div>
   );
 
+  const modalClass =
+    `modal${showAssist ? ' modal-terminal-split' : ''}${isVnc ? ' modal-pve-vnc' : ''}`.trim();
+
   return (
     <div className="modal-backdrop" role="presentation">
       <div
-        className={`modal${assistAvailable ? ' modal-terminal-split' : ''}`}
+        className={modalClass}
         role="dialog"
         aria-busy={showConnectOverlay}
-        aria-label={`Terminal: ${record.name}`}
+        aria-label={isVnc ? `VNC: ${record.name}` : `Terminal: ${record.name}`}
       >
         <header>
           <strong>
-            {record.name} ({record.primary_ip})
+            {record.name} ({record.primary_ip || '—'})
+            {isVnc ? <span style={{ fontWeight: 400, opacity: 0.85 }}> · VNC</span> : null}
           </strong>
           <button type="button" onClick={onClose}>
             Close
           </button>
         </header>
-        {assistAvailable ? (
+        {isProxmoxPveSerialConsole(record) && !isVnc ? (
+          <p className="term-pve-hint" style={{ margin: '0.35rem 1rem', fontSize: '0.82rem', color: '#9aa4b2' }}>
+            Proxmox serial console: use <kbd>Ctrl+]</kbd> to disconnect, or Close. If the guest uses autologin on tty,{' '}
+            <kbd>exit</kbd> may immediately open a new shell — that is normal on the guest.
+          </p>
+        ) : null}
+        {isVnc ? (
+          <p className="term-pve-hint" style={{ margin: '0.35rem 1rem', fontSize: '0.82rem', color: '#9aa4b2' }}>
+            QEMU graphical console via Proxmox (RFB). Close when finished; pointer and keyboard are sent to the VM.
+          </p>
+        ) : null}
+        {showAssist ? (
           <div className="modal-terminal-body">
             {termArea}
             <aside className="term-assist-panel" aria-label="Terminal assistant">

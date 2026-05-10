@@ -219,6 +219,21 @@ type recordingReader struct {
 	direction string
 }
 
+// SetReadDeadline forwards read deadlines to the underlying reader when supported (e.g. *os.File),
+// so interactive pumps can unblock stdin after the remote session ends.
+func (r *recordingReader) SetReadDeadline(t time.Time) error {
+	if r == nil {
+		return fmt.Errorf("nil recording reader")
+	}
+	type deadliner interface {
+		SetReadDeadline(time.Time) error
+	}
+	if d, ok := r.inner.(deadliner); ok {
+		return d.SetReadDeadline(t)
+	}
+	return nil
+}
+
 func (r *recordingReader) Read(p []byte) (int, error) {
 	n, err := r.inner.Read(p)
 	if n > 0 {

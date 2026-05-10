@@ -85,6 +85,9 @@ type ProxmoxBackend struct {
 	TokenID     string `yaml:"token_id" json:"token_id" honey:"label=Token ID"`
 	TokenSecret string `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret"`
 	Insecure    bool   `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
+	// ExecMode: ssh (default) = guest SSH for commands/SFTP/tunnels; pve = QEMU commands via guest agent API, LXC commands/SFTP over guest SSH (PVE has no LXC REST exec; web UI LXC console uses termproxy when token_id is set);
+	// hybrid = QEMU via guest agent + SSH for files; LXC uses guest SSH for commands and files.
+	ExecMode string `yaml:"exec_mode" json:"exec_mode" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning"`
 }
 
 // Save serializes the config and writes it to path.

@@ -5,7 +5,7 @@
 // Portions below are adapted from golang.org/x/crypto/ssh/knownhosts (host pattern
 // parsing and matching) so we can drop stale entries without invoking ssh-keygen.
 
-package ui
+package sshclient
 
 import (
 	"bufio"

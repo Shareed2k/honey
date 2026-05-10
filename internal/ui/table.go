@@ -19,6 +19,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/pvelxc"
 	"github.com/shareed2k/honey/internal/safepath"
 	k8sexec "k8s.io/client-go/util/exec"
 )
@@ -1379,7 +1380,7 @@ func (m *model) recordingOptions(trigger, mode string) *SessionRecorderOptions {
 }
 
 func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorderOptions) error {
-	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") {
+	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !pvelxc.ShouldUsePVETTY(r) {
 		return fmt.Errorf("no IP for selected host")
 	}
 	var recorder *SessionRecorder

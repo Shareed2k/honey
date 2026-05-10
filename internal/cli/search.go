@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
@@ -132,6 +133,7 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 			return nil, "", nil, cfgPath, fmt.Errorf("config: %w", err)
 		}
 	}
+	hostexec.ReconfigureFromHoneyConfig(cfg)
 
 	cacheTTL := flagCacheTTL
 	cacheDir := flagCacheDir

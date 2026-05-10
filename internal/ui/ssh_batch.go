@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/sshclient"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -315,7 +316,7 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 
 // RunOneSFTPUploadWithProgress uploads one local file to remotePath on r, like runOneSFTPUpload.
 // onProgress is optional; it receives cumulative bytes written toward the remote and the local file
-// size. Live updates are emitted for *HoneyClient (SFTP); other executors only report start/end.
+// size. Live updates are emitted for *sshclient.HoneyClient (SFTP); other executors only report start/end.
 func RunOneSFTPUploadWithProgress(user string, r hosts.Record, localAbs, remotePath string, cache *ClientCache, onProgress func(written, total int64)) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
 	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
@@ -330,7 +331,7 @@ func RunOneSFTPUploadWithProgress(user string, r hosts.Record, localAbs, remoteP
 			return res
 		}
 		var upErr error
-		if hc, ok := client.(*HoneyClient); ok && onProgress != nil {
+		if hc, ok := client.(*sshclient.HoneyClient); ok && onProgress != nil {
 			upErr = hc.UploadWithProgress(localAbs, remotePath, onProgress)
 		} else {
 			if onProgress != nil {

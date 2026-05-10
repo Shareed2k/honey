@@ -15,6 +15,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -45,6 +46,10 @@ type Server struct {
 	assistModelsExp time.Time
 
 	fileClientCache *ui.ClientCache
+
+	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
+	pveQemuVncMu   sync.Mutex
+	pveQemuVncByID map[string]pveQemuVncOfferSession
 }
 
 // NewServer builds handlers with the given auth token.
@@ -55,6 +60,20 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.MaxUploadSize <= 0 {
 		opts.MaxUploadSize = 100 << 20
 	}
+	cfgPath, err := config.ResolvePath(opts.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	if cfgPath != "" {
+		cfg, lerr := config.Load(cfgPath)
+		if lerr != nil {
+			return nil, fmt.Errorf("config: %w", lerr)
+		}
+		hostexec.ReconfigureFromHoneyConfig(cfg)
+	} else {
+		hostexec.ReconfigureFromHoneyConfig(nil)
+	}
+
 	s := &Server{
 		opts:            opts,
 		mux:             http.NewServeMux(),
@@ -91,7 +110,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
 	s.mux.HandleFunc("POST /api/v1/terminal-assist", s.withAuth(s.handleTerminalAssist))
 	s.mux.HandleFunc("GET /api/v1/terminal-assist/models", s.withAuth(s.handleTerminalAssistModels))
+	s.mux.HandleFunc("POST /api/v1/pve-qemu-vnc-offer", s.withAuth(s.handlePveQemuVncOffer))
 	s.mux.HandleFunc("GET /ws/ssh", s.handleWebSSH)
+	s.mux.HandleFunc("GET /ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {

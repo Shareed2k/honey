@@ -130,7 +130,7 @@ tr:nth-child(even) {
   overflow: auto;
   white-space: normal;
   word-break: break-word;
-  padding: 0.4rem 0.45rem;
+  padding: 5px;
   background: #0f1115;
   border: 1px solid #2a3140;
   border-radius: 6px;
@@ -293,7 +293,7 @@ tr:nth-child(even) {
   border: 1px solid #2a3140;
   border-radius: 8px;
   background: #000;
-  padding: 0;
+  padding: 5px;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -305,6 +305,32 @@ tr:nth-child(even) {
   overflow: hidden;
   background: #000;
   box-sizing: border-box;
+}
+.term-vnc-host {
+  flex: 1 1 auto;
+  min-height: min(420px, 58vh);
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  background: #000;
+  outline: none;
+  display: flex;
+  flex-direction: column;
+}
+.term-vnc-host canvas {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}
+.modal.modal-pve-vnc {
+  width: min(1200px, 98vw);
+  height: min(800px, 92vh);
+  min-height: 0;
+}
+.modal.modal-pve-vnc > .term-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Replay toolbar (file / play) — same spacing feel as modal inputs */
@@ -321,7 +347,7 @@ tr:nth-child(even) {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 10px 12px;
+  padding: 5px;
   overflow: auto;
   white-space: pre;
   word-break: normal;

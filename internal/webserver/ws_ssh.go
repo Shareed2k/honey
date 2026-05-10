@@ -113,6 +113,11 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isProxmoxSerialWebPVE(hello.Record) {
+		handleWebProxmoxPVESerialTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
+		return
+	}
+
 	client, cleanup, err := ui.DialSSHLeafForRecord(user, hello.Record)
 	if err != nil {
 		recorder.RecordError(err)
@@ -312,6 +317,8 @@ func newWebSessionRecorder(recordDir string, requestRecord bool, rec hosts.Recor
 	mode := "ssh"
 	if isK8sPodWebTerminal(rec) {
 		mode = "k8s"
+	} else if isProxmoxSerialWebPVE(rec) {
+		mode = "proxmox"
 	}
 	r, err := ui.NewSessionRecorder(ui.SessionRecorderOptions{
 		Dir:      dir,

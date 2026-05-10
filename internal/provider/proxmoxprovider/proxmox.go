@@ -22,6 +22,8 @@ type Proxmox struct {
 	TokenID     string
 	TokenSecret string
 	Insecure    bool
+	// ExecMode is one of ssh, pve, hybrid (from config; exposed in record meta for clients).
+	ExecMode string
 }
 
 // ID returns the honey backend identifier.
@@ -116,6 +118,9 @@ func (p *Proxmox) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, er
 		}
 		if p.BackendName() != "" {
 			meta["backend_name"] = p.BackendName()
+		}
+		if em := strings.TrimSpace(p.ExecMode); em != "" {
+			meta["exec_mode"] = em
 		}
 
 		out = append(out, hosts.Record{

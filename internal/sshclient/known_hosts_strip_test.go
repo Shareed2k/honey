@@ -1,4 +1,4 @@
-package ui
+package sshclient
 
 import (
 	"crypto/ed25519"

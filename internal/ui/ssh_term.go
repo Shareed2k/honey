@@ -1,10 +1,6 @@
 package ui
 
 import (
-	"context"
-	"os"
-	"os/signal"
-
 	"golang.org/x/term"
 )
 
@@ -25,8 +21,4 @@ func termRestore(fd int, state *term.State) error {
 
 func termGetSize(fd int) (width, height int, err error) {
 	return term.GetSize(fd)
-}
-
-func contextWithInterrupt() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), os.Interrupt)
 }

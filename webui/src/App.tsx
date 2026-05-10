@@ -62,6 +62,12 @@ function cloneHostRecord(rec: HostRecord): HostRecord {
   };
 }
 
+function canProxmoxQemuVnc(rec: HostRecord): boolean {
+  const k = (rec.meta?.kind || '').toLowerCase();
+  const m = (rec.meta?.exec_mode || '').toLowerCase();
+  return rec.provider === 'proxmox' && k === 'qemu' && (m === 'pve' || m === 'hybrid');
+}
+
 function recordHaystack(rec: HostRecord): string {
   const parts = [rec.provider, rec.name, rec.primary_ip, rec.zone || '', rec.region || ''];
   if (rec.extra_ips?.length) {
@@ -303,7 +309,7 @@ export function App() {
   const [cfgSchema, setCfgSchema] = useState<ConfigUISchema | null>(null);
   const [cfgSchemaErr, setCfgSchemaErr] = useState<string | null>(null);
 
-  const [termRecord, setTermRecord] = useState<HostRecord | null>(null);
+  const [termOpen, setTermOpen] = useState<{ record: HostRecord; pve: 'serial' | 'vnc' } | null>(null);
   const [replayRecord, setReplayRecord] = useState<HostRecord | null>(null);
   const [replayItems, setReplayItems] = useState<RecordingListEntry[]>([]);
   const [replayErr, setReplayErr] = useState<string | null>(null);
@@ -1525,9 +1531,17 @@ export function App() {
                       <td>{rec.primary_ip}</td>
                       <td>{rec.zone || ''}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
-                        <button type="button" onClick={() => setTermRecord(rec)}>
+                        <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'serial' })}>
                           Terminal
-                        </button>{' '}
+                        </button>
+                        {canProxmoxQemuVnc(rec) ? (
+                          <>
+                            {' '}
+                            <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'vnc' })}>
+                              VNC
+                            </button>
+                          </>
+                        ) : null}{' '}
                         <button type="button" onClick={() => openUploadModal(rec)}>
                           Upload
                         </button>
@@ -2086,13 +2100,14 @@ export function App() {
         </div>
       ) : null}
 
-      {termRecord ? (
+      {termOpen ? (
         <TerminalModal
-          record={termRecord}
+          record={termOpen.record}
           sshUser={sshUser}
           recordSession={recordWebSession && !!meta?.session_recording_available}
           assistAvailable={!!meta?.terminal_assist_available}
-          onClose={() => setTermRecord(null)}
+          pveConsole={termOpen.pve}
+          onClose={() => setTermOpen(null)}
         />
       ) : null}
       {replayRecord ? (
