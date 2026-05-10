@@ -28,6 +28,7 @@ type Defaults struct {
 	K8sMode       string `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
 	K8sDebugImage string `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
 	CacheDir      string `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
+	RecordDir     string `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory"`
 	Output        string `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
 	Name          string `yaml:"name" json:"name" honey:"label=Name filter"`
 	NameRegex     string `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
@@ -184,4 +185,51 @@ func ResolvePath(explicit string) (string, error) {
 	}
 	zap.L().Debug("no config file resolved")
 	return "", nil
+}
+
+// DefaultRecordDir returns the directory used for session recordings when --record-dir
+// is not set: <directory of config.yaml>/records (e.g. ~/.config/honey/records). If
+// configPath is empty, returns the conventional honey config directory (.../honey/records)
+// matching default config.yaml search paths.
+func DefaultRecordDir(configPath string) string {
+	configPath = strings.TrimSpace(configPath)
+	if configPath != "" {
+		if abs, err := filepath.Abs(filepath.Clean(configPath)); err == nil {
+			return filepath.Join(filepath.Dir(abs), "records")
+		}
+	}
+	if base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); base != "" {
+		if p, err := safepath.JoinUnder(base, "honey", "records"); err == nil {
+			return p
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")) == "" {
+			if p, err := safepath.JoinUnder(home, ".config", "honey", "records"); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// ResolveRecordDir returns the session recordings directory (CLI TUI, web server, cue-exec).
+// Precedence when recordDirFlagChanged is true: non-empty global --record-dir value,
+// otherwise DefaultRecordDir(configPath) (explicit empty flag keeps the default path).
+// When recordDirFlagChanged is false: defaults.record_dir from cfg if set,
+// otherwise DefaultRecordDir(configPath).
+func ResolveRecordDir(cfg *File, configPath string, recordDirFlag string, recordDirFlagChanged bool) string {
+	v := strings.TrimSpace(recordDirFlag)
+	if recordDirFlagChanged {
+		if v != "" {
+			return v
+		}
+		return strings.TrimSpace(DefaultRecordDir(configPath))
+	}
+	if cfg != nil {
+		if s := strings.TrimSpace(cfg.Defaults.RecordDir); s != "" {
+			return s
+		}
+	}
+	return strings.TrimSpace(DefaultRecordDir(configPath))
 }

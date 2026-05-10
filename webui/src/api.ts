@@ -434,11 +434,129 @@ export async function startAgentTransferStream(
   await readNDJSON<AgentTransferEvent>(r, onEvent);
 }
 
+/** Bytes sent to this origin; then server may still work (e.g. SFTP to a host). */
+export type FormDataUploadProgressEvent =
+  | { kind: 'uploading'; loaded: number; total: number | null }
+  | { kind: 'awaiting_response' };
+
+/** Server-sent upload stream after the multipart body is stored (SFTP byte progress). */
+export type UploadStreamServerEvent =
+  | { phase: 'sftp_start'; total_bytes: number }
+  | { phase: 'sftp'; sent_bytes: number; total_bytes: number }
+  | { phase: 'error'; message?: string; result?: HostExecResultRow }
+  | { phase: 'done'; results: HostExecResultRow[] };
+
+/**
+ * POST multipart to Honey with ?stream=1: XHR reports bytes to the server; response body is NDJSON
+ * with SFTP progress from the Honey process. Resolves the same result list as the non-streaming upload.
+ */
+export function uploadFormDataWithSFTPStream(
+  url: string,
+  formData: FormData,
+  opts: {
+    onHoneyProgress?: (ev: FormDataUploadProgressEvent) => void;
+    onServerEvent?: (ev: UploadStreamServerEvent) => void;
+  },
+): Promise<HostExecResultRow[]> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    const h = apiHeaders() as Record<string, string>;
+    for (const [k, v] of Object.entries(h)) {
+      xhr.setRequestHeader(k, v);
+    }
+
+    let parsePos = 0;
+    let streamErr: Error | null = null;
+    let doneResults: HostExecResultRow[] | null = null;
+
+    const drain = () => {
+      const text = xhr.responseText;
+      while (parsePos < text.length) {
+        const nl = text.indexOf('\n', parsePos);
+        if (nl < 0) {
+          break;
+        }
+        const line = text.slice(parsePos, nl).trim();
+        parsePos = nl + 1;
+        if (!line) {
+          continue;
+        }
+        let row: unknown;
+        try {
+          row = JSON.parse(line) as unknown;
+        } catch {
+          continue;
+        }
+        if (!row || typeof row !== 'object' || !('phase' in row)) {
+          continue;
+        }
+        const ev = row as UploadStreamServerEvent;
+        opts.onServerEvent?.(ev);
+        const phase = String((row as { phase: string }).phase);
+        if (phase === 'error') {
+          const msg = (row as { message?: string }).message?.trim() || 'upload failed';
+          streamErr = new Error(msg);
+        }
+        if (phase === 'done') {
+          doneResults = (row as { results?: HostExecResultRow[] }).results || [];
+        }
+      }
+    };
+
+    xhr.upload.onprogress = (ev) => {
+      opts.onHoneyProgress?.({
+        kind: 'uploading',
+        loaded: ev.loaded,
+        total: ev.lengthComputable && ev.total > 0 ? ev.total : null,
+      });
+    };
+    xhr.upload.onloadend = () => {
+      opts.onHoneyProgress?.({ kind: 'awaiting_response' });
+    };
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState >= 3) {
+        drain();
+      }
+    };
+    xhr.onprogress = () => {
+      drain();
+    };
+    xhr.onload = () => {
+      drain();
+      if (xhr.status < 200 || xhr.status >= 300) {
+        let msg = xhr.statusText || `HTTP ${xhr.status}`;
+        try {
+          const j = JSON.parse(xhr.responseText) as { error?: string };
+          if (j.error) {
+            msg = j.error;
+          }
+        } catch {
+          /* ignore */
+        }
+        reject(new Error(msg));
+        return;
+      }
+      if (streamErr) {
+        reject(streamErr);
+        return;
+      }
+      if (doneResults) {
+        resolve(doneResults);
+        return;
+      }
+      reject(new Error('upload stream ended without result'));
+    };
+    xhr.onerror = () => reject(new Error('network error'));
+    xhr.send(formData);
+  });
+}
+
 /** POST multipart FormData with upload progress (bytes to this origin only). Resolves parsed JSON body. */
 export function uploadFormDataWithProgress(
   url: string,
   formData: FormData,
-  onProgress: (percent: number) => void,
+  onProgress?: (ev: FormDataUploadProgressEvent) => void,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -448,9 +566,14 @@ export function uploadFormDataWithProgress(
       xhr.setRequestHeader(k, v);
     }
     xhr.upload.onprogress = (ev) => {
-      if (ev.lengthComputable && ev.total > 0) {
-        onProgress(Math.round((100 * ev.loaded) / ev.total));
-      }
+      onProgress?.({
+        kind: 'uploading',
+        loaded: ev.loaded,
+        total: ev.lengthComputable && ev.total > 0 ? ev.total : null,
+      });
+    };
+    xhr.upload.onloadend = () => {
+      onProgress?.({ kind: 'awaiting_response' });
     };
     xhr.onload = () => {
       let body: unknown;

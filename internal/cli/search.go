@@ -28,7 +28,6 @@ var (
 	flagNoCache            bool
 	flagRefresh            bool
 	flagCacheDir           string
-	flagRecordDir          string
 	flagGCPProject         string
 	flagGCPZone            string
 	flagAWSProfile         string
@@ -71,7 +70,6 @@ func init() {
 	searchCmd.Flags().BoolVar(&flagNoCache, "no-cache", false, "Bypass read/write cache")
 	searchCmd.Flags().BoolVar(&flagRefresh, "refresh", false, "Ignore cached entries and refresh")
 	searchCmd.Flags().StringVar(&flagCacheDir, "cache-dir", "", "Override cache directory (default: XDG_CACHE_HOME/honey)")
-	searchCmd.Flags().StringVar(&flagRecordDir, "record-dir", "", "Directory to store SSH/K8s interactive session recordings")
 
 	searchCmd.Flags().StringVar(&flagGCPProject, "gcp-project", "", "GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)")
 	searchCmd.Flags().StringVar(&flagGCPZone, "gcp-zone", "", "Limit GCP to a single zone (default: all zones)")
@@ -211,9 +209,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	case "table":
 		return ui.PrintStaticTable(records)
 	default:
+		recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
+		recordOnStart := recordDirFlagChanged(cmd) && strings.TrimSpace(flagRecordDir) != ""
 		return ui.RunTable(records, sshUser, ui.RunTableOptions{
-			RecordDir:     strings.TrimSpace(flagRecordDir),
-			RecordEnabled: strings.TrimSpace(flagRecordDir) != "",
+			RecordDir:     recordDir,
+			RecordEnabled: recordOnStart,
 			ConfigPath:    cfgPath,
 		})
 	}

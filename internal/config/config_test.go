@@ -83,6 +83,42 @@ func TestResolvePathExplicit(t *testing.T) {
 	if err != nil || got != p {
 		t.Fatalf("got %q err %v", got, err)
 	}
+	want := filepath.Join(dir, "records")
+	if g := DefaultRecordDir(p); g != want {
+		t.Fatalf("DefaultRecordDir(%q) = %q want %q", p, g, want)
+	}
+}
+
+func TestResolveRecordDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	custom := filepath.Join(dir, "my-recs")
+
+	t.Run("flag wins when changed", func(t *testing.T) {
+		cfg := &File{Defaults: Defaults{RecordDir: "/from/config"}}
+		got := ResolveRecordDir(cfg, cfgPath, "/from/flag", true)
+		if got != "/from/flag" {
+			t.Fatalf("got %q", got)
+		}
+	})
+
+	t.Run("defaults.record_dir when flag not changed", func(t *testing.T) {
+		cfg := &File{Defaults: Defaults{RecordDir: custom}}
+		got := ResolveRecordDir(cfg, cfgPath, "", false)
+		if got != custom {
+			t.Fatalf("got %q want %q", got, custom)
+		}
+	})
+
+	t.Run("DefaultRecordDir when no config field", func(t *testing.T) {
+		cfg := &File{}
+		want := filepath.Join(dir, "records")
+		got := ResolveRecordDir(cfg, cfgPath, "", false)
+		if got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
 }
 
 func TestResolvePathXDG(t *testing.T) {

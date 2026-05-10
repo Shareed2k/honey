@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -312,7 +313,10 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 	return out, nil
 }
 
-func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string, cache *ClientCache) HostExecResult {
+// RunOneSFTPUploadWithProgress uploads one local file to remotePath on r, like runOneSFTPUpload.
+// onProgress is optional; it receives cumulative bytes written toward the remote and the local file
+// size. Live updates are emitted for *HoneyClient (SFTP); other executors only report start/end.
+func RunOneSFTPUploadWithProgress(user string, r hosts.Record, localAbs, remotePath string, cache *ClientCache, onProgress func(written, total int64)) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
 	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
 		client, dialErr := cache.GetOrDial(user, r)
@@ -325,7 +329,27 @@ func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string, 
 			res.ErrMsg = dialErr.Error()
 			return res
 		}
-		upErr := client.Upload(localAbs, remotePath)
+		var upErr error
+		if hc, ok := client.(*HoneyClient); ok && onProgress != nil {
+			upErr = hc.UploadWithProgress(localAbs, remotePath, onProgress)
+		} else {
+			if onProgress != nil {
+				st, statErr := os.Stat(localAbs)
+				var t int64
+				if statErr == nil {
+					t = st.Size()
+				}
+				onProgress(0, t)
+			}
+			upErr = client.Upload(localAbs, remotePath)
+			if onProgress != nil && upErr == nil {
+				st, statErr := os.Stat(localAbs)
+				if statErr == nil {
+					t := st.Size()
+					onProgress(t, t)
+				}
+			}
+		}
 		if upErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(upErr) {
 				closeSSHIfEphemeral(cache, client)
@@ -346,6 +370,10 @@ func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string, 
 	res.Success = false
 	res.ErrMsg = "sftp put: exceeded transient retry attempts"
 	return res
+}
+
+func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string, cache *ClientCache) HostExecResult {
+	return RunOneSFTPUploadWithProgress(user, r, localAbs, remotePath, cache, nil)
 }
 
 // ExecuteScriptUploadRunParallel uploads localAbs to remotePath on each host over SFTP,

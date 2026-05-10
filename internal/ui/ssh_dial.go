@@ -6,12 +6,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kevinburke/ssh_config"
 	"github.com/melbahja/goph"
@@ -302,12 +304,59 @@ func (h *HoneyClient) sftpClient() (*sftp.Client, error) {
 	return c, nil
 }
 
+// sftpUploadProgressReader wraps the local file reader and emits throttled progress callbacks.
+type sftpUploadProgressReader struct {
+	r       io.Reader
+	total   int64
+	step    int64
+	minGap  time.Duration
+	written int64
+	last    int64
+	lastAt  time.Time
+	on      func(written, total int64)
+}
+
+func (p *sftpUploadProgressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.written += int64(n)
+		if p.on == nil {
+			return n, err
+		}
+		now := time.Now()
+		overBytes := p.written-p.last >= p.step
+		overTime := p.minGap > 0 && now.Sub(p.lastAt) >= p.minGap
+		atEnd := p.total > 0 && p.written >= p.total
+		if overBytes || overTime || atEnd {
+			p.on(p.written, p.total)
+			p.last = p.written
+			p.lastAt = now
+		}
+	}
+	return n, err
+}
+
 // Upload copies a local file to the remote path over SFTP.
 func (h *HoneyClient) Upload(localPath, remotePath string) error {
+	return h.UploadWithProgress(localPath, remotePath, nil)
+}
+
+// UploadWithProgress copies a local file to the remote path over SFTP, calling onProgress
+// with cumulative bytes written to the remote and the local file size (throttled).
+// onProgress may be nil.
+func (h *HoneyClient) UploadWithProgress(localPath, remotePath string, onProgress func(written, total int64)) error {
 	localPath = strings.TrimSpace(localPath)
 	remotePath = strings.TrimSpace(remotePath)
 	if localPath == "" || remotePath == "" {
 		return fmt.Errorf("upload: empty local or remote path")
+	}
+	// Trailing slash means "directory": use the local file's base name on the server.
+	if strings.HasSuffix(remotePath, "/") {
+		base := filepath.Base(localPath)
+		if base == "." || base == ".." || base == "/" || base == "" {
+			return fmt.Errorf("upload: need a file name inside %q (local path has no usable base name)", remotePath)
+		}
+		remotePath = path.Join(strings.TrimRight(remotePath, "/"), base)
 	}
 	sftpClient, err := h.sftpClient()
 	if err != nil {
@@ -318,16 +367,39 @@ func (h *HoneyClient) Upload(localPath, remotePath string) error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
+	st, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	total := st.Size()
+	if onProgress != nil {
+		onProgress(0, total)
+	}
 	if err := sftpClient.MkdirAll(filepath.ToSlash(filepath.Dir(remotePath))); err != nil {
 		return err
 	}
-	out, err := sftpClient.Create(remotePath)
+	// Open WRONLY+CREATE+TRUNC instead of Create (RDWR): some SFTP servers
+	// (e.g. AWS Transfer Family) reject read/write opens and return SSH_FX_FAILURE.
+	out, err := sftpClient.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = out.Close() }()
-	if _, err := io.Copy(out, in); err != nil {
+	var body io.Reader = in
+	if onProgress != nil {
+		body = &sftpUploadProgressReader{
+			r:      in,
+			total:  total,
+			step:   256 << 10,
+			minGap: 200 * time.Millisecond,
+			on:     onProgress,
+		}
+	}
+	if _, err := io.Copy(out, body); err != nil {
 		return err
+	}
+	if onProgress != nil {
+		onProgress(total, total)
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
@@ -45,8 +46,9 @@ step keys override defaults. Not allowed on put/get steps.
 Repeat -e/--env KEY=value to set remote variables from the CLI; they override
 recipe env on duplicate keys (command and script steps only).
 
-With --record-dir (same flag as honey search), writes one batch .hrec.jsonl per
-invocation: dry-run records the plan text; --execute records each step result.`,
+With global --record-dir or defaults.record_dir in config, writes one batch .hrec.jsonl per
+invocation when recording is enabled: explicit --record-dir, or record_dir set in honey YAML
+(built-in default records/ alone does not enable cue-exec batch logs). Dry-run records the plan text; --execute records each step result.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: runCueExec,
 	}
@@ -76,7 +78,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	records, sshUser, _, cfgPath, err := runSearchCore(cmd, queryArgs)
+	records, sshUser, cfg, cfgPath, err := runSearchCore(cmd, queryArgs)
 	if err != nil {
 		return err
 	}
@@ -104,14 +106,18 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
+	flagSet := recordDirFlagChanged(cmd) && strings.TrimSpace(flagRecordDir) != ""
+	yamlSet := cfg != nil && strings.TrimSpace(cfg.Defaults.RecordDir) != "" && !recordDirFlagChanged(cmd)
+	wantBatch := len(records) > 0 && (flagSet || yamlSet)
 	var rec *ui.SessionRecorder
-	if d := strings.TrimSpace(flagRecordDir); d != "" && len(records) > 0 {
+	if wantBatch {
 		trigger := "cli-cue-exec-dry"
 		if flagCueExecExecute {
 			trigger = "cli-cue-exec"
 		}
 		var err error
-		rec, err = ui.NewBatchSessionRecorder(d, trigger, sshUser, len(records))
+		rec, err = ui.NewBatchSessionRecorder(recordDir, trigger, sshUser, len(records))
 		if err != nil {
 			return err
 		}

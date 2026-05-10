@@ -15,16 +15,18 @@ import {
   getToken,
   startAgentTransferStream,
   recipeAssist,
-  uploadFormDataWithProgress,
+  uploadFormDataWithSFTPStream,
 } from './api';
 import type {
   AgentTransferBackendRef,
   AgentTransferCloud,
   AgentTransferEvent,
   ConfigUISchema,
+  FormDataUploadProgressEvent,
   HostExecResultRow,
   RecipeListEntry,
   RecordingListEntry,
+  UploadStreamServerEvent,
 } from './api';
 import { ConfigBackendsSection } from './ConfigBackendsSection';
 import { SessionReplayModal } from './SessionReplayModal';
@@ -86,6 +88,173 @@ function detectCodeLanguage(fileName: string): 'cue' | 'yaml' {
   return 'cue';
 }
 
+function formatUploadBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) {
+    return '0 B';
+  }
+  if (n < 1024) {
+    return `${Math.round(n)} B`;
+  }
+  if (n < 1024 * 1024) {
+    return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  }
+  return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+type UploadXferState = {
+  honeyLoaded: number;
+  honeyTotal: number | null;
+  /** Multipart fully sent; waiting for first streamed SFTP event from Honey. */
+  awaitingResponse: boolean;
+  sftpSent: number;
+  sftpTotal: number;
+  sftpActive: boolean;
+};
+
+function UploadProgressBar({ xfer }: { xfer: UploadXferState }) {
+  const honeyPct =
+    xfer.honeyTotal != null && xfer.honeyTotal > 0
+      ? Math.min(100, Math.round((100 * xfer.honeyLoaded) / xfer.honeyTotal))
+      : null;
+  const honeyDone =
+    xfer.sftpActive ||
+    (xfer.honeyTotal != null && xfer.honeyTotal > 0 && xfer.honeyLoaded >= xfer.honeyTotal) ||
+    (honeyPct != null && honeyPct >= 100);
+  const honeyFillClass =
+    honeyPct == null && !honeyDone
+      ? 'upload-progress-fill upload-progress-fill-indeterminate'
+      : 'upload-progress-fill';
+
+  const sftpPct =
+    xfer.sftpActive && xfer.sftpTotal > 0
+      ? Math.min(100, Math.round((100 * xfer.sftpSent) / xfer.sftpTotal))
+      : null;
+  const sftpWaiting = xfer.awaitingResponse && !xfer.sftpActive;
+  const sftpIndeterminate = xfer.sftpActive && xfer.sftpTotal <= 0;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.28rem' }}>
+        <div
+          style={{
+            fontSize: '0.8rem',
+            color: '#d8dee9',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ color: honeyDone ? '#7bdc8f' : '#9aa4b2', fontWeight: 600 }} aria-hidden>
+            {honeyDone ? '✓' : '1.'}
+          </span>
+          <span>Send file to Honey</span>
+          {honeyPct != null && !honeyDone ? (
+            <span style={{ marginLeft: 'auto', fontFamily: 'monospace', color: '#9aa4b2', fontSize: '0.76rem' }}>
+              {honeyPct}%
+            </span>
+          ) : null}
+        </div>
+        {!honeyDone ? (
+          <div
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={honeyPct ?? undefined}
+            aria-busy="true"
+            aria-label="Sending file to Honey"
+            className="upload-progress-track"
+          >
+            <div
+              className={honeyFillClass}
+              style={honeyPct != null ? { width: `${honeyPct}%` } : undefined}
+            />
+          </div>
+        ) : (
+          <div style={{ fontSize: '0.76rem', color: '#9aa4b2', paddingLeft: '1.35rem' }}>
+            {xfer.honeyTotal != null && xfer.honeyTotal > 0
+              ? `${formatUploadBytes(xfer.honeyLoaded)} / ${formatUploadBytes(xfer.honeyTotal)}`
+              : xfer.honeyLoaded > 0
+                ? `${formatUploadBytes(xfer.honeyLoaded)} sent`
+                : 'Complete'}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.28rem' }}>
+        <div
+          style={{
+            fontSize: '0.8rem',
+            color: '#d8dee9',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            flexWrap: 'wrap',
+          }}
+        >
+          <span
+            style={{
+              color: xfer.sftpActive && !sftpWaiting ? '#6eb0ff' : '#9aa4b2',
+              fontWeight: 600,
+            }}
+            aria-hidden
+          >
+            {xfer.sftpActive && !sftpWaiting && sftpPct != null && sftpPct >= 100 ? '✓' : '2.'}
+          </span>
+          <span>Write to host (SFTP)</span>
+          {xfer.sftpActive && sftpPct != null && !sftpIndeterminate ? (
+            <span style={{ marginLeft: 'auto', fontFamily: 'monospace', color: '#9aa4b2', fontSize: '0.76rem' }}>
+              {sftpPct}%
+            </span>
+          ) : null}
+        </div>
+        {sftpWaiting ? (
+          <>
+            <div className="upload-progress-track" role="presentation" aria-hidden>
+              <div className="upload-progress-fill upload-progress-fill-awaiting" style={{ width: '100%' }} />
+            </div>
+            <p style={{ margin: 0, fontSize: '0.72rem', color: '#7a8494', paddingLeft: '1.35rem' }}>
+              Waiting for Honey to start the SSH transfer…
+            </p>
+          </>
+        ) : xfer.sftpActive ? (
+          <>
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={sftpIndeterminate ? undefined : sftpPct ?? undefined}
+              aria-busy="true"
+              aria-label="SFTP upload to host"
+              className="upload-progress-track"
+            >
+              <div
+                className={
+                  sftpIndeterminate || sftpPct == null
+                    ? 'upload-progress-fill upload-progress-fill-indeterminate'
+                    : 'upload-progress-fill'
+                }
+                style={sftpPct != null && !sftpIndeterminate ? { width: `${sftpPct}%` } : undefined}
+              />
+            </div>
+            <div style={{ fontSize: '0.76rem', color: '#9aa4b2', paddingLeft: '1.35rem' }}>
+              {xfer.sftpTotal > 0
+                ? `${formatUploadBytes(xfer.sftpSent)} / ${formatUploadBytes(xfer.sftpTotal)}`
+                : xfer.sftpSent > 0
+                  ? `${formatUploadBytes(xfer.sftpSent)}`
+                  : ''}
+            </div>
+          </>
+        ) : (
+          <p style={{ margin: 0, fontSize: '0.72rem', color: '#7a8494', paddingLeft: '1.35rem' }}>
+            Starts after the file reaches Honey.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CodeLoadingFallback({ code }: { code: string }) {
   return (
     <pre
@@ -144,7 +313,7 @@ export function App() {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadTargetIdx, setUploadTargetIdx] = useState(0);
   const [uploadRemote, setUploadRemote] = useState('/tmp/');
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadXfer, setUploadXfer] = useState<UploadXferState | null>(null);
   const [uploadStatus, setUploadStatus] = useState('');
   const [uploadStatusIsError, setUploadStatusIsError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -767,7 +936,7 @@ export function App() {
 
   const closeUploadModal = () => {
     setUploadModalOpen(false);
-    setUploadProgress(null);
+    setUploadXfer(null);
     setUploadStatus('');
     setUploadStatusIsError(false);
     if (fileInputRef.current) {
@@ -775,10 +944,39 @@ export function App() {
     }
   };
 
+  const onUploadXferProgress = useCallback((ev: FormDataUploadProgressEvent) => {
+    if (ev.kind === 'uploading') {
+      setUploadXfer((prev) => ({
+        honeyLoaded: ev.loaded,
+        honeyTotal: ev.total,
+        awaitingResponse: false,
+        sftpSent: prev?.sftpSent ?? 0,
+        sftpTotal: prev?.sftpTotal ?? 0,
+        sftpActive: prev?.sftpActive ?? false,
+      }));
+    } else {
+      setUploadXfer((prev) => ({
+        honeyLoaded: prev?.honeyLoaded ?? 0,
+        honeyTotal: prev?.honeyTotal ?? null,
+        awaitingResponse: true,
+        sftpSent: prev?.sftpSent ?? 0,
+        sftpTotal: prev?.sftpTotal ?? 0,
+        sftpActive: prev?.sftpActive ?? false,
+      }));
+    }
+  }, []);
+
   const runUpload = async (rec: HostRecord, file: File, remotePath: string, user: string) => {
-    setUploadProgress(0);
+    setUploadXfer({
+      honeyLoaded: 0,
+      honeyTotal: null,
+      awaitingResponse: false,
+      sftpSent: 0,
+      sftpTotal: 0,
+      sftpActive: false,
+    });
     setUploadStatusIsError(false);
-    setUploadStatus('Uploading…');
+    setUploadStatus('');
     const fd = new FormData();
     fd.append('file', file);
     fd.append(
@@ -790,7 +988,36 @@ export function App() {
       }),
     );
     try {
-      const body = await uploadFormDataWithProgress('/api/v1/upload', fd, (pct) => setUploadProgress(pct));
+      const body = await uploadFormDataWithSFTPStream('/api/v1/upload?stream=1', fd, {
+        onHoneyProgress: onUploadXferProgress,
+        onServerEvent: (ev: UploadStreamServerEvent) => {
+          if (ev.phase === 'sftp_start') {
+            setUploadXfer((p) =>
+              p
+                ? {
+                    ...p,
+                    awaitingResponse: false,
+                    sftpTotal: ev.total_bytes,
+                    sftpSent: 0,
+                    sftpActive: true,
+                  }
+                : p,
+            );
+          } else if (ev.phase === 'sftp') {
+            setUploadXfer((p) =>
+              p
+                ? {
+                    ...p,
+                    awaitingResponse: false,
+                    sftpSent: ev.sent_bytes,
+                    sftpTotal: ev.total_bytes,
+                    sftpActive: true,
+                  }
+                : p,
+            );
+          }
+        },
+      });
       if (Array.isArray(body)) {
         const bad = body.filter(
           (r: { Success?: boolean }) => (r as { Success?: boolean }).Success === false,
@@ -803,14 +1030,14 @@ export function App() {
         }
       }
       setUploadStatus('Upload finished.');
-      setUploadProgress(100);
+      setUploadXfer(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
     } catch (e) {
       setUploadStatusIsError(true);
       setUploadStatus(e instanceof Error ? e.message : String(e));
-      setUploadProgress(null);
+      setUploadXfer(null);
     }
   };
 
@@ -836,7 +1063,7 @@ export function App() {
       setUploadTargetIdx(idx >= 0 ? idx : 0);
     }
     setUploadModalOpen(true);
-    setUploadProgress(null);
+    setUploadXfer(null);
     setUploadStatus('');
     setUploadStatusIsError(false);
   };
@@ -850,9 +1077,8 @@ export function App() {
     setUploadTargetIdx(idx >= 0 ? idx : 0);
     setUploadRemote(`/tmp/${f.name}`);
     setUploadModalOpen(true);
-    setUploadProgress(0);
     setUploadStatusIsError(false);
-    setUploadStatus('Uploading…');
+    setUploadStatus('');
     void runUpload(rec, f, `/tmp/${f.name}`, sshUser.trim());
   };
 
@@ -965,14 +1191,10 @@ export function App() {
           <p style={{ fontSize: '0.8rem', opacity: 0.8, margin: 0 }}>
             SSH user comes from the field next to Search on the main screen.
           </p>
-          <button type="button" className="primary" disabled={records.length === 0} onClick={() => onUploadSubmit()}>
+          <button type="button" className="primary" disabled={records.length === 0 || uploadXfer !== null} onClick={() => onUploadSubmit()}>
             Upload
           </button>
-          {uploadProgress !== null ? (
-            <progress value={uploadProgress} max={100} style={{ width: '100%' }}>
-              {uploadProgress}%
-            </progress>
-          ) : null}
+          {uploadXfer ? <UploadProgressBar xfer={uploadXfer} /> : null}
           {uploadStatus ? (
             <p
               style={{

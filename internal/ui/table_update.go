@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -144,43 +143,9 @@ func (m *model) handleAgentTransferDoneMsg(msg agentTransferDoneMsg) (tea.Model,
 	return m, nil
 }
 
-func (m *model) handleFileBrowseLoadedMsg(msg fileBrowseLoadedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != "" {
-		m.fileStatus = "load failed: " + msg.err
-		return m, nil
-	}
-	m.fileLocalPath = msg.localPath
-	m.fileRemotePath = msg.remotePath
-	m.fileLocalEntries = msg.local
-	m.fileRemoteEntries = msg.remote
-	if m.fileLocalCursor >= len(m.fileLocalEntries) {
-		m.fileLocalCursor = 0
-	}
-	if m.fileRemoteCursor >= len(m.fileRemoteEntries) {
-		m.fileRemoteCursor = 0
-	}
-	m.fileStatus = fmt.Sprintf("local=%d entries, remote=%d entries", len(msg.local), len(msg.remote))
-	return m, nil
-}
-
-func (m *model) handleFileBrowseCopyDoneMsg(msg fileBrowseCopyDoneMsg) (tea.Model, tea.Cmd) {
-	if msg.err != "" {
-		m.fileStatus = "copy failed: " + msg.err
-		return m, nil
-	}
-	m.fileStatus = msg.msg
-	if rec, ok := m.fileBrowseTarget(); ok {
-		return m, loadFileBrowseCmd(m.sshUser, rec, m.fileLocalPath, m.fileRemotePath, m.fileClientCache)
-	}
-	return m, nil
-}
-
 func (m *model) dispatchKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == "replaypick" {
 		return m.updateReplayPickKeys(msg)
-	}
-	if m.mode == "filebrowse" {
-		return m.updateFileBrowse(msg)
 	}
 	if m.mode == "execresults" {
 		return m.updateExecResultsKeys(msg)
@@ -250,27 +215,6 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = "replaypick"
 		m.clampReplayPickScroll()
 		return m, nil
-	case "f":
-		row := m.tbl.Cursor()
-		if row < 0 || row >= len(m.visible) {
-			return m, nil
-		}
-		target := m.recs[m.visible[row]]
-		if strings.TrimSpace(target.PrimaryIP) == "" {
-			m.execResults = []HostExecResult{{
-				Name:     target.Name,
-				Provider: target.Provider,
-				Success:  false,
-				ErrMsg:   "file browser requires a host with PrimaryIP",
-			}}
-			m.execDone = true
-			m.mode = "execresults"
-			return m, nil
-		}
-		m.mode = "filebrowse"
-		m.fileFocus = "local"
-		m.fileStatus = "loading directories..."
-		return m, loadFileBrowseCmd(m.sshUser, target, m.fileLocalPath, m.fileRemotePath, m.fileClientCache)
 	case "enter":
 		m.lastAction = actSSH
 		return m, tea.Quit

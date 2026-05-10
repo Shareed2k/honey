@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -95,6 +97,20 @@ func (c *k8sNativeClient) RunWithStreams(cmd string, stdin io.Reader, stdout, st
 }
 
 func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
+	localPath = strings.TrimSpace(localPath)
+	remotePath = strings.TrimSpace(remotePath)
+	if localPath == "" || remotePath == "" {
+		return fmt.Errorf("upload: empty local or remote path")
+	}
+	// Trailing slash means "directory" (same as SFTP): use the local file's base name in the pod.
+	if strings.HasSuffix(remotePath, "/") {
+		base := filepath.Base(localPath)
+		if base == "." || base == ".." || base == "/" || base == "" {
+			return fmt.Errorf("upload: need a file name inside %q (local path has no usable base name)", remotePath)
+		}
+		remotePath = path.Join(strings.TrimRight(remotePath, "/"), base)
+	}
+
 	localFile, err := os.Open(localPath) // #nosec G304 -- CLI tool, user explicitly provides the local path for upload
 	if err != nil {
 		return err
@@ -114,7 +130,7 @@ func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
 		defer tw.Close()
 
 		hdr := &tar.Header{
-			Name: filepath.Base(remotePath),
+			Name: path.Base(remotePath),
 			Mode: int64(stat.Mode()),
 			Size: stat.Size(),
 		}
@@ -124,7 +140,7 @@ func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
 		_, _ = io.Copy(tw, localFile)
 	}()
 
-	remoteDir := filepath.Dir(remotePath)
+	remoteDir := path.Dir(remotePath)
 	var stderr bytes.Buffer
 	// Create the directory if it doesn't exist, then extract the tar stream into it
 	cmd := []string{"sh", "-c", fmt.Sprintf("mkdir -p '%s' && tar -xf - -C '%s'", remoteDir, remoteDir)}

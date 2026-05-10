@@ -56,7 +56,7 @@ type model struct {
 	tbl     table.Model
 	ti      textinput.Model
 	sshUser string
-	mode    string // table | tunnel | execinput | execresults | filter | replaypick | filebrowse | agenttransferform
+	mode    string // table | tunnel | execinput | execresults | filter | replaypick | agenttransferform
 	filter  string
 	visible []int // indexes of recs visible when filtered
 
@@ -108,16 +108,8 @@ type model struct {
 	replayCursor     int
 	replayPickScroll int
 
-	// filebrowse: local/remote file browser for selected host row (stacked panes).
-	fileFocus         string
-	fileLocalPath     string
-	fileRemotePath    string
-	fileLocalEntries  []LocalFileEntry
-	fileRemoteEntries []RemoteFileEntry
-	fileLocalCursor   int
-	fileRemoteCursor  int
-	fileStatus        string
-	fileClientCache   *ClientCache
+	// fileClientCache is shared by agent transfer (key a) and other pooled SSH clients.
+	fileClientCache *ClientCache
 
 	// A → cloud → B agent transfer wizard (key a).
 	agentPick       string // "source" | "dest" | ""
@@ -301,9 +293,6 @@ func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *mod
 		recordDir:        strings.TrimSpace(opts.RecordDir),
 		recordEnabled:    strings.TrimSpace(opts.RecordDir) != "" && opts.RecordEnabled,
 		configPath:       strings.TrimSpace(opts.ConfigPath),
-		fileFocus:        "local",
-		fileLocalPath:    DefaultLocalFilesRoot(),
-		fileRemotePath:   ".",
 		fileClientCache:  NewClientCache(),
 	}
 }
@@ -332,10 +321,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleCueRecipeDoneMsg(msg)
 	case agentTransferDoneMsg:
 		return m.handleAgentTransferDoneMsg(msg)
-	case fileBrowseLoadedMsg:
-		return m.handleFileBrowseLoadedMsg(msg)
-	case fileBrowseCopyDoneMsg:
-		return m.handleFileBrowseCopyDoneMsg(msg)
 	case tea.PasteMsg:
 		// On macOS terminals, Cmd+V often arrives as bracketed paste, not KeyMsg.
 		if m.pasteMsgUpdatesTextInput() {
@@ -792,8 +777,6 @@ func (m *model) View() tea.View {
 		box = baseStyle.Render(m.viewAgentTransferForm(helpStyle))
 	case "execresults":
 		box = m.viewExecResults(helpStyle)
-	case "filebrowse":
-		box = m.viewFileBrowse(helpStyle)
 	case "replaypick":
 		box = m.viewReplayPick(helpStyle)
 	default:
@@ -805,7 +788,7 @@ func (m *model) View() tea.View {
 			}
 			recHint = "   R: record " + recState + "   p: play recording"
 		}
-		help := helpStyle.Render("enter: ssh (k8s: exec)   f: files   a: A→cloud→B   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
+		help := helpStyle.Render("enter: ssh (k8s: exec)   a: A→cloud→B   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
