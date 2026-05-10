@@ -1,14 +1,32 @@
 ---
-id: honey_search
-title: honey search
+id: honey_inventory
+title: honey inventory
 ---
 
-## honey search
+## honey inventory
 
-Search instances across providers in parallel
+Print Ansible-compatible JSON dynamic inventory from the same search as honey search
+
+### Synopsis
+
+Runs the same parallel discovery as honey search (all search flags apply), then prints JSON
+suitable for Ansible's script inventory plugin: with --list (or no --host), a top-level object
+with a honey group, optional honey_provider_*, honey_region_*, honey_zone_* groups, and _meta.hostvars.
+
+Each host gets ansible_host from the discovered PrimaryIP when present, ansible_user from --ssh-user
+(or config defaults.ssh_user), plus honey_* variables and honey_meta_* keys from record meta.
+
+For CI, AWX, or Ansible Tower: install the honey binary where the job runs, inject credentials the same
+way as for honey search (GCP ADC, AWS_* / profiles, KUBECONFIG, CONSUL_*, Proxmox env or HONEY_CONFIG YAML),
+then point inventory at this command, for example:
+
+  ansible-playbook -i 'honey inventory --config /path/to/honey.yaml --provider gcp --' site.yml
+
+Use a trailing -- before playbook args if needed. AWX custom inventory script: set the script to honey
+with arguments inventory --list (and optional --config / --provider / --backends as needed).
 
 ```
-honey search [name] [flags]
+honey inventory [name] [flags]
 ```
 
 ### Options
@@ -25,12 +43,14 @@ honey search [name] [flags]
       --consul-token string           Consul ACL token (or CONSUL_HTTP_TOKEN)
       --gcp-project string            GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)
       --gcp-zone string               Limit GCP to a single zone (default: all zones)
-  -h, --help                          help for search
+  -h, --help                          help for inventory
+      --host string                   Ansible script inventory: emit JSON object of host variables for this inventory name; unknown hosts print {}
       --json                          Print results as JSON (same as --output=json)
       --k8s-debug-image string        Container image used for ephemeral debug containers (default: alpine:3.23)
       --k8s-mode string               Kubernetes search mode: nodes or pods (default "nodes")
       --kube-context string           Kubernetes context override
       --kubeconfig string             Path to kubeconfig file
+      --list                          Ansible script inventory: emit full JSON (Ansible passes this; optional when not using --host)
       --name string                   Substring filter on instance/node/pod name (case-insensitive)
       --name-regex string             Regex filter on name (overrides --name substring)
       --no-cache                      Bypass read/write cache

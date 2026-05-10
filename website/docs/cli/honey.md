@@ -14,9 +14,10 @@ Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox
 ### Options
 
 ```
-      --debug-log string   Path to write debug logs (disables debug logging if empty)
-  -h, --help               help for honey
-  -v, --version            version for honey
+      --debug-log string    Path to write debug logs (disables debug logging if empty)
+  -h, --help                help for honey
+      --record-dir string   Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records
+  -v, --version             version for honey
 ```
 
 ### SEE ALSO
@@ -26,6 +27,7 @@ Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox
 * [honey config](honey_config.md)	 - Manage honey configuration
 * [honey cue-exec](honey_cue-exec.md)	 - Resolve a CUE recipe against search results and optionally run steps over SSH
 * [honey cue-validate](honey_cue-validate.md)	 - Validate a CUE remote recipe (commands and/or SFTP put/get steps)
+* [honey inventory](honey_inventory.md)	 - Print Ansible-compatible JSON dynamic inventory from the same search as honey search
 * [honey mcp](honey_mcp.md)	 - Run the Model Context Protocol (stdio) server
 * [honey search](honey_search.md)	 - Search instances across providers in parallel
 * [honey version](honey_version.md)	 - Print version, commit, date, and logo

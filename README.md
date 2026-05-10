@@ -195,6 +195,35 @@ backends:
 ./honey search --cache-ttl 5m foo
 ```
 
+### Ansible inventory (`honey inventory`)
+
+`honey inventory` runs the **same discovery** as `honey search` (all search flags: `--config`, `--provider`, `--backends`, name filters, cache flags, per-provider auth, and so on) and prints **Ansible script-style JSON**: a `honey` group, optional `honey_provider_*`, `honey_region_*`, `honey_zone_*` groups, and `_meta.hostvars`. Each host gets `ansible_host` from the discovered primary IP when present, `ansible_user` from `--ssh-user` (or `defaults.ssh_user` in YAML), plus `honey_*` fields and `honey_meta_<key>` from each record’s `meta` map.
+
+```bash
+# Full inventory JSON (Ansible’s script plugin calls this with --list)
+./honey inventory --list --config ~/.config/honey/config.yaml
+
+# Narrow providers or backends like search
+./honey inventory --list --provider gcp,aws --backends gcp-team-a
+
+# Optional name substring (same as search positional)
+./honey inventory --list web
+
+# Vars for one inventory hostname (script --host); unknown host returns {}
+./honey inventory --host web-1
+```
+
+**Local Ansible:** Ansible’s **script** inventory expects an **executable file** on disk. Use a tiny wrapper that `exec`s honey, make it executable, then pass it to `-i`, for example:
+
+```bash
+printf '%s\n' '#!/bin/sh' 'exec /path/to/honey inventory "$@"' > honey-ansible-inv && chmod +x honey-ansible-inv
+ansible-playbook -i ./honey-ansible-inv site.yml
+```
+
+Add fixed flags inside the wrapper if you want (for example `exec /path/to/honey inventory --config "$HOME/.config/honey/config.yaml" "$@"`).
+
+**CI / AWX / Ansible Tower:** install the `honey` binary on the execution environment and supply credentials the same way you would for `honey search` (for example `HONEY_CONFIG` pointing at a mounted secret, `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_PROFILE` / instance role, `KUBECONFIG`, `CONSUL_HTTP_TOKEN`, or Proxmox flags baked into the wrapper or injected via environment). Configure a **custom inventory script** (or equivalent) that runs `honey inventory` with the same arguments Ansible would pass to a dynamic inventory script (`--list` or `--host <name>`). Honey does **not** replace Tower or AWX; it only **feeds inventory JSON** from live APIs.
+
 ### CUE recipes (experimental)
 
 Validate a playbook-shaped [CUE](https://cuelang.org/) file: each step has `host` and **exactly one** of `command`, `put` (SFTP upload), `get` (SFTP download), `script` (upload `local` → `remote`, then run `sh <remote>` on the **same** SSH connection), or `agent_transfer` (source `host` → cloud object → `agent_transfer.dest_host`; same A→cloud→B flow as the web UI; optional `cloud_backend_ref` needs `--config` / `HONEY_CONFIG` like the files API). Optional `run_as` applies to `command` and `script` runs (not to SFTP-only `put`/`get` or `agent_transfer`). Optional `recipe.defaults.env` and per-step `env` are `export`’d on the remote before the command or script (step overrides duplicate keys from defaults); `env` is not supported on `put`/`get`/`agent_transfer`. **Example recipes** live under [`examples/recipe/`](https://github.com/shareed2k/honey/tree/main/examples/recipe) — see that folder’s [`README.md`](https://github.com/shareed2k/honey/blob/main/examples/recipe/README.md) for a table of files (including `file_transfer.cue`, `script_step.cue`, `with_env.cue`, `agent_transfer.cue`).
@@ -258,8 +287,9 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 
 ## Layout
 
-- `cmd/honey` — CLI entrypoint (`search`, `backends`, `mcp`, …)
+- `cmd/honey` — CLI entrypoint (`search`, `inventory`, `backends`, `mcp`, …)
 - `internal/cli` — Cobra flags and wiring
+- `internal/inventory` — Ansible JSON mapping from `hosts.Record`
 - `internal/mcpserver` — MCP tool handlers
 - `internal/searchrun` — shared search + provider wiring
 - `internal/config` — optional YAML (`backends`, `defaults`)

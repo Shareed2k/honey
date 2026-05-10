@@ -16,8 +16,7 @@ for a Go regexp (RE2) matched against each row's name (only rows with PrimaryIP)
 
 Each step is exactly one of: shell command, put (upload), get (download),
 script (upload a local file then run it with sh on the same SSH connection), or
-agent_transfer (source host to cloud to destination host; optional cloud_backend_ref
-needs `--config` / `HONEY_CONFIG` like the web files API).
+agent_transfer (A→cloud→B using the transfer agent; requires --config when using cloud_backend_ref).
 Relative local paths are resolved against the recipe file's directory.
 
 Then either prints a plan (--execute=false, default) or runs each step (--execute).
@@ -30,10 +29,14 @@ Use recipe.defaults.run_as or per-step run_as for command and script steps
 
 Optional recipe.defaults.env and per-step env (map of NAME to value) set
 export assignments before the shell command or sh &lt;script&gt; on the remote;
-step keys override defaults. Not allowed on put/get/agent_transfer steps.
+step keys override defaults. Not allowed on put/get steps.
 
 Repeat -e/--env KEY=value to set remote variables from the CLI; they override
 recipe env on duplicate keys (command and script steps only).
+
+With global --record-dir or defaults.record_dir in config, writes one batch .hrec.jsonl per
+invocation when recording is enabled: explicit --record-dir, or record_dir set in honey YAML
+(built-in default records/ alone does not enable cue-exec batch logs). Dry-run records the plan text; --execute records each step result.
 
 ```
 honey cue-exec &lt;recipe.cue&gt; [name] [flags]
@@ -80,7 +83,8 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
 ### Options inherited from parent commands
 
 ```
-      --debug-log string   Path to write debug logs (disables debug logging if empty)
+      --debug-log string    Path to write debug logs (disables debug logging if empty)
+      --record-dir string   Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records
 ```
 
 ### SEE ALSO
