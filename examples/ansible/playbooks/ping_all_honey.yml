@@ -1,0 +1,7 @@
+---
+- name: Ping all hosts in honey group
+  hosts: honey
+  gather_facts: false
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:

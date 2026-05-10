@@ -67,6 +67,18 @@ func repoRootFromSource() (string, error) {
 	}
 	// internal/transferagent/<caller>.go -> repo root is two levels up.
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	// Binaries built elsewhere embed the builder's absolute path; it often does not exist here.
+	if st, err := os.Stat(root); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("repo root from caller path does not exist or is not a directory: %s", root)
+	}
+	goMod := filepath.Join(root, "go.mod")
+	if _, err := os.Stat(goMod); err != nil {
+		return "", fmt.Errorf("repo root %q missing go.mod (not a honey checkout): %w", root, err)
+	}
+	agentDir := filepath.Join(root, "cmd", "honey-transfer-agent")
+	if st, err := os.Stat(agentDir); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("repo root %q missing cmd/honey-transfer-agent: %w", root, err)
+	}
 	return root, nil
 }
 
@@ -155,28 +167,28 @@ func isAgentBinaryFresh(binPath string, sourceStamp time.Time) bool {
 	return !st.ModTime().Before(sourceStamp)
 }
 
-// ResolveBinary returns a path to honey-transfer-agent for the given target OS/arch and cloud flavor.
-// overridePath wins if set; else preferredPath (e.g. server default binary); else cross-build into cacheDir.
-func ResolveBinary(overridePath, preferredPath, cacheDir, targetOS, targetArch, cloudProvider string) (string, error) {
-	targetOS, targetArch, err := NormalizeTargetRuntime(targetOS, targetArch)
-	if err != nil {
-		return "", err
+func resolveTransferAgentFailure(
+	buildErr, rootErr, stampErr error,
+	lastDlErr error,
+	targetOS, targetArch string,
+) error {
+	if buildErr != nil {
+		return fmt.Errorf("build honey-transfer-agent: %w (prebuilt: same release tag as honey by default; disable %s; override %s or %s)", buildErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
 	}
-	if p := strings.TrimSpace(overridePath); p != "" {
-		if err := ensureExecutable(p); err != nil {
-			return "", err
+	if rootErr != nil {
+		if lastDlErr != nil {
+			return fmt.Errorf("transfer agent prebuilt download failed: %w (no local checkout: %v; ensure a GitHub release for this honey version includes honey-transfer-agent-%s-%s; or set %s / %s / %s)", lastDlErr, rootErr, targetOS, targetArch, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
 		}
-		return p, nil
+		return fmt.Errorf("no checkout for local build: %w (set HONEY_TRANSFER_AGENT, or prebuilt download for same honey version unless %s; override %s or %s)", rootErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
 	}
-	if p := strings.TrimSpace(preferredPath); p != "" {
-		if err := ensureExecutable(p); err != nil {
-			return "", err
-		}
-		return p, nil
+	if stampErr != nil {
+		return fmt.Errorf("transfer agent stamp: %w (set HONEY_TRANSFER_AGENT, or prebuilt download for same honey version unless %s; override %s or %s)", stampErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
 	}
+	return fmt.Errorf("transfer agent: could not build or download binary for %s/%s", targetOS, targetArch)
+}
 
-	resolveMu.Lock()
-	defer resolveMu.Unlock()
+// resolveBinaryLocked runs the cache / build / download path; caller must hold resolveMu.
+func resolveBinaryLocked(cacheDir, targetOS, targetArch, cloudProvider string) (string, error) {
 	useUPX := shouldUseUPX()
 	flavor := normalizeAgentProviderFlavor(cloudProvider)
 	cacheKey := targetOS + "/" + targetArch + "/" + flavor
@@ -216,6 +228,8 @@ func ResolveBinary(overridePath, preferredPath, cacheDir, targetOS, targetArch, 
 		binName += "-upx"
 	}
 	binPath := filepath.Join(cacheDir, binName)
+	// GitHub release assets match this name (never UPX-packed).
+	dlBinPath := filepath.Join(cacheDir, fmt.Sprintf("honey-transfer-agent-%s-%s-%s", targetOS, targetArch, flavor))
 
 	if stampOK {
 		if err := ensureExecutable(binPath); err == nil && isAgentBinaryFresh(binPath, sourceStamp) {
@@ -239,33 +253,55 @@ func ResolveBinary(overridePath, preferredPath, cacheDir, targetOS, targetArch, 
 		buildErr = berr
 	}
 
-	if !useUPX {
+	// Prebuilt assets are always uncompressed. Fall back to download when there is no usable
+	// checkout, local build failed, or UPX is enabled (releases are not UPX-packed).
+	tryDownload := rootErr != nil || buildErr != nil || !useUPX
+	var lastDlErr error
+	if tryDownload {
 		if u, ok := transferAgentDownloadURL(targetOS, targetArch); ok {
-			dlErr := fetchAgentBinary(u, binPath)
-			if dlErr == nil && ensureExecutable(binPath) == nil {
+			dest := dlBinPath
+			dlErr := fetchAgentBinary(u, dest)
+			if dlErr == nil && ensureExecutable(dest) == nil {
 				zap.L().Debug("transfer agent binary downloaded",
 					zap.String("target", targetOS+"/"+targetArch),
 					zap.String("provider_flavor", flavor),
 					zap.String("url", u),
-					zap.String("path", binPath),
+					zap.String("path", dest),
 				)
-				resolvedByKey[cacheKey] = binPath
-				return binPath, nil
+				resolvedByKey[cacheKey] = dest
+				return dest, nil
 			}
 			if dlErr != nil {
+				lastDlErr = dlErr
 				zap.L().Debug("transfer agent download failed", zap.String("url", u), zap.Error(dlErr))
 			}
 		}
 	}
 
-	if buildErr != nil {
-		return "", fmt.Errorf("build honey-transfer-agent: %w (prebuilt: same release tag as honey by default; disable %s; override %s or %s)", buildErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
+	return "", resolveTransferAgentFailure(buildErr, rootErr, stampErr, lastDlErr, targetOS, targetArch)
+}
+
+// ResolveBinary returns a path to honey-transfer-agent for the given target OS/arch and cloud flavor.
+// overridePath wins if set; else preferredPath (e.g. server default binary); else cross-build into cacheDir.
+func ResolveBinary(overridePath, preferredPath, cacheDir, targetOS, targetArch, cloudProvider string) (string, error) {
+	targetOS, targetArch, err := NormalizeTargetRuntime(targetOS, targetArch)
+	if err != nil {
+		return "", err
 	}
-	if rootErr != nil {
-		return "", fmt.Errorf("no checkout for local build: %w (set HONEY_TRANSFER_AGENT, or prebuilt download for same honey version unless %s; override %s or %s)", rootErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
+	if p := strings.TrimSpace(overridePath); p != "" {
+		if err := ensureExecutable(p); err != nil {
+			return "", err
+		}
+		return p, nil
 	}
-	if stampErr != nil {
-		return "", fmt.Errorf("transfer agent stamp: %w (set HONEY_TRANSFER_AGENT, or prebuilt download for same honey version unless %s; override %s or %s)", stampErr, agentDownloadDisableDefaultEnv, agentDownloadBaseEnv, agentDownloadURLEnv)
+	if p := strings.TrimSpace(preferredPath); p != "" {
+		if err := ensureExecutable(p); err != nil {
+			return "", err
+		}
+		return p, nil
 	}
-	return "", fmt.Errorf("transfer agent: could not build or download binary for %s/%s", targetOS, targetArch)
+
+	resolveMu.Lock()
+	defer resolveMu.Unlock()
+	return resolveBinaryLocked(cacheDir, targetOS, targetArch, cloudProvider)
 }
