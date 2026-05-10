@@ -19,14 +19,14 @@ with a honey group, optional honey_provider_*, honey_region_*, honey_zone_* grou
 Each host gets ansible_host from the discovered PrimaryIP when present, ansible_user from --ssh-user
 (or config defaults.ssh_user), plus honey_* variables and honey_meta_* keys from record meta.
 
-For CI, AWX, or Ansible Tower: install the honey binary where the job runs, inject credentials the same
-way as for honey search (GCP ADC, AWS_* / profiles, KUBECONFIG, CONSUL_*, Proxmox env or HONEY_CONFIG YAML),
-then point inventory at this command, for example:
+Ansible's -i flag takes a path to an inventory file or directory (or multiple paths), not a shell command.
+For script inventory, use a small executable wrapper that runs "honey inventory ..." and forwards "$@".
 
-  ansible-playbook -i 'honey inventory --config /path/to/honey.yaml --provider gcp --' site.yml
+To avoid a wrapper, use the YAML inventory plugin in contrib/ansible/inventory_plugins/honey.py
+(see contrib/ansible/honey.gcp.example.yml and examples/ansible/README.md).
 
-Use a trailing -- before playbook args if needed. AWX custom inventory script: set the script to honey
-with arguments inventory --list (and optional --config / --provider / --backends as needed).`,
+For CI, AWX, or Ansible Tower: install honey, inject credentials like honey search, then either set
+ANSIBLE_INVENTORY_PLUGINS to that directory and use a plugin YAML with -i, or use a wrapper script.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runInventory,
 }

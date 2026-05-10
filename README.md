@@ -213,16 +213,41 @@ backends:
 ./honey inventory --host web-1
 ```
 
-**Local Ansible:** Ansible’s **script** inventory expects an **executable file** on disk. Use a tiny wrapper that `exec`s honey, make it executable, then pass it to `-i`, for example:
+**Local Ansible:** Ansible’s **script** inventory expects an **executable file** on disk. The `-i` argument must be **that file’s path**—Ansible does **not** parse a command line. This fails because the whole string is treated as one path:
+
+```bash
+# Wrong: no file literally named "/tmp/honey inventory --provider gcp --"
+ansible-playbook -i '/tmp/honey inventory --provider gcp --' play.yml
+```
+
+Use a tiny wrapper that `exec`s honey and **forwards** `"$@"` (Ansible passes `--list` or `--host <name>`), then pass **only the wrapper path** to `-i`:
 
 ```bash
 printf '%s\n' '#!/bin/sh' 'exec /path/to/honey inventory "$@"' > honey-ansible-inv && chmod +x honey-ansible-inv
 ansible-playbook -i ./honey-ansible-inv site.yml
 ```
 
-Add fixed flags inside the wrapper if you want (for example `exec /path/to/honey inventory --config "$HOME/.config/honey/config.yaml" "$@"`).
+GCP-only example (wrapper bakes in `--provider gcp`; Ansible still appends `--list` / `--host` after your fixed args—order matters: put `"$@"` last):
 
-**CI / AWX / Ansible Tower:** install the `honey` binary on the execution environment and supply credentials the same way you would for `honey search` (for example `HONEY_CONFIG` pointing at a mounted secret, `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_PROFILE` / instance role, `KUBECONFIG`, `CONSUL_HTTP_TOKEN`, or Proxmox flags baked into the wrapper or injected via environment). Configure a **custom inventory script** (or equivalent) that runs `honey inventory` with the same arguments Ansible would pass to a dynamic inventory script (`--list` or `--host <name>`). Honey does **not** replace Tower or AWX; it only **feeds inventory JSON** from live APIs.
+```bash
+printf '%s\n' '#!/bin/sh' 'exec /tmp/honey inventory --provider gcp "$@"' > /tmp/honey-inv-gcp && chmod +x /tmp/honey-inv-gcp
+ansible-playbook -i /tmp/honey-inv-gcp ansible/playbooks/restart_es_playbook.yml
+```
+
+Copy from [`examples/ansible/honey_inventory_gcp.example.sh`](https://github.com/shareed2k/honey/blob/main/examples/ansible/honey_inventory_gcp.example.sh) and adjust the `honey` path.
+
+Add other fixed flags inside the wrapper if you want (for example `exec /path/to/honey inventory --config "$HOME/.config/honey/config.yaml" --provider gcp "$@"`).
+
+**Without a shell wrapper (inventory plugin):** use the YAML-driven inventory plugin shipped in this repo ([`contrib/ansible/inventory_plugins/honey.py`](https://github.com/shareed2k/honey/blob/main/contrib/ansible/inventory_plugins/honey.py)). Install it on Ansible’s inventory plugin path, then pass `-i` a small YAML file that sets `plugin: honey` and options such as `honey_binary`, `provider`, and `config`. Example config: [`contrib/ansible/honey.gcp.example.yml`](https://github.com/shareed2k/honey/blob/main/contrib/ansible/honey.gcp.example.yml). Quick run from a clone:
+
+```bash
+export ANSIBLE_INVENTORY_PLUGINS="$PWD/contrib/ansible/inventory_plugins"
+ansible-playbook -i contrib/ansible/honey.gcp.example.yml ansible/playbooks/restart_es_playbook.yml -e cluster_name=ddd
+```
+
+Adjust `ANSIBLE_INVENTORY_PLUGINS` to your checkout path, and edit the YAML (or a copy) so `provider` / `config` match your environment. More detail: [`examples/ansible/README.md`](https://github.com/shareed2k/honey/blob/main/examples/ansible/README.md).
+
+**CI / AWX / Ansible Tower:** install the `honey` binary on the execution environment and supply credentials the same way you would for `honey search` (for example `HONEY_CONFIG` pointing at a mounted secret, `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_PROFILE` / instance role, `KUBECONFIG`, `CONSUL_HTTP_TOKEN`, or Proxmox flags baked into the wrapper or injected via environment). Use either the **inventory plugin** YAML (set `ANSIBLE_INVENTORY_PLUGINS` or install `honey.py` into the execution image’s plugin path) or a **custom inventory script** wrapper that runs `honey inventory` with `--list` / `--host`. Honey does **not** replace Tower or AWX; it only **feeds inventory JSON** from live APIs.
 
 ### CUE recipes (experimental)
 
@@ -290,6 +315,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `cmd/honey` — CLI entrypoint (`search`, `inventory`, `backends`, `mcp`, …)
 - `internal/cli` — Cobra flags and wiring
 - `internal/inventory` — Ansible JSON mapping from `hosts.Record`
+- `contrib/ansible` — Ansible inventory plugin (`inventory_plugins/honey.py`) + example YAML
 - `internal/mcpserver` — MCP tool handlers
 - `internal/searchrun` — shared search + provider wiring
 - `internal/config` — optional YAML (`backends`, `defaults`)

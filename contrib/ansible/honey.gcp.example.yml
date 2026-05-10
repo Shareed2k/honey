@@ -1,0 +1,18 @@
+# Ansible inventory plugin (no separate shell wrapper).
+# Tell Ansible where the plugin lives, then point -i at this file:
+#
+#   export ANSIBLE_INVENTORY_PLUGINS="/path/to/honey/contrib/ansible/inventory_plugins"
+#   ansible-playbook -i /path/to/honey/contrib/ansible/honey.gcp.example.yml play.yml
+#
+# Or copy inventory_plugins/honey.py to ~/.ansible/plugins/inventory/ and use only -i with this YAML.
+
+plugin: honey
+honey_binary: /tmp/honey
+provider: gcp
+# config: /home/you/.config/honey/config.yaml
+# name: prod-
+# backends: gcp-team-a
+# args:
+#   - --ssh-user
+#   - deploy
+# timeout: 300
