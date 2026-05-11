@@ -37,12 +37,12 @@ func summarizeK8sExecCmd(cmd []string) string {
 	if len(cmd) == 0 {
 		return "(empty)"
 	}
-	const max = 512
+	const maxPreview = 512
 	s := strings.Join(cmd, " ")
-	if len(s) <= max {
+	if len(s) <= maxPreview {
 		return s
 	}
-	return s[:max] + "…"
+	return s[:maxPreview] + "…"
 }
 
 func (c *k8sNativeClient) Close() error {

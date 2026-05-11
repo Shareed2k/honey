@@ -161,7 +161,7 @@ func WriteCueKVTunnelDryLine(out io.Writer, stepIdx int, step cuetry.RecipeStep,
 	if !cuetry.KVTunnelEnabled(step, def) {
 		return
 	}
-	_, _ = fmt.Fprintf(out, "  step %d kv_tunnel: enabled — one operator stepkv for the whole cue-exec on SSH (pooled connections; keys shared across steps and SSH hosts; parallel hosts may race); kubernetes pods use in-pod python3 per exec (not shared with SSH); remote env: HONEY_KV_URL, HONEY_KV_TOKEN (see docs)\n", stepIdx)
+	_, _ = fmt.Fprintf(out, "  step %d kv_tunnel: enabled — one operator stepkv for the whole cue-exec (SSH remote-forward per host; kubernetes pods reach the same session via a long-lived exec multiplex; keys shared across steps, SSH hosts, and pods; parallel hosts may race); remote env: HONEY_KV_URL, HONEY_KV_TOKEN (see docs)\n", stepIdx)
 }
 
 func streamCueStepCommand(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, cliEnv map[string]string, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, execCache *ClientCache, recipeKV *RecipeKVCoordinator) error {

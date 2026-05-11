@@ -24,7 +24,7 @@ const (
 	maxHookOutputRunes    = 8000
 )
 
-func cueRecipeSSHPostHostResult(ctx context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) SSHPostHostResultFunc {
+func cueRecipeSSHPostHostResult(_ context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) SSHPostHostResultFunc {
 	return func(hctx context.Context, r hosts.Record, res *HostExecResult) {
 		runCueStepHooks(hctx, recipe, stepIdx, kind, step, r, res, recipeDir, sshUser, cliEnv, cache, recipeKV, recipeScopedKV)
 	}
@@ -111,7 +111,7 @@ func runCueStepHookRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int,
 func runCueStepHookLocal(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, phase string, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeDir string) {
 	hctx, cancel := context.WithTimeout(ctx, cueLocalHookTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(hctx, "sh", "-c", strings.TrimSpace(hook.Command))
+	cmd := exec.CommandContext(hctx, "sh", "-c", strings.TrimSpace(hook.Command)) // #nosec G204 -- local hooks run arbitrary operator shell by design (cue-exec docs); trusted recipes only
 	if d := strings.TrimSpace(recipeDir); d != "" {
 		cmd.Dir = d
 	}
@@ -213,18 +213,18 @@ func buildLocalHookEnv(recipeName string, stepNo int, phase string, stepRes Host
 	return out, nil
 }
 
-func truncateRunes(s string, max int) string {
-	if max <= 0 || s == "" {
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 || s == "" {
 		return s
 	}
-	if utf8.RuneCountInString(s) <= max {
+	if utf8.RuneCountInString(s) <= limit {
 		return s
 	}
 	runes := []rune(s)
-	if len(runes) <= max {
+	if len(runes) <= limit {
 		return s
 	}
-	return string(runes[:max]) + "…"
+	return string(runes[:limit]) + "…"
 }
 
 func formatHookNotifyBody(phase string, r hosts.Record, hres HostExecResult) string {

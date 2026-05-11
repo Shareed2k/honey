@@ -131,7 +131,8 @@ func (s *Session) handleKV(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, item.Value())
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = io.WriteString(w, item.Value()) // #nosec G705 -- opaque scratch value for curl/automation; not HTML (text/plain + nosniff)
 	case http.MethodPut:
 		b, err := io.ReadAll(io.LimitReader(r.Body, maxBodyRead))
 		if err != nil {

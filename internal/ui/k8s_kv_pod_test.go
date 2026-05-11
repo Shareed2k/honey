@@ -29,10 +29,14 @@ func TestWrapK8sPodKVShell_markers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(s, "printf %s ") {
-		t.Fatalf("expected printf %%s outer, got: %q", s[:min(120, len(s))])
+	pre := 120
+	if len(s) < pre {
+		pre = len(s)
 	}
-	if !strings.Contains(s, "|base64 -d|exec sh") {
+	if !strings.Contains(s, "printf %s ") {
+		t.Fatalf("expected printf %%s outer, got: %q", s[:pre])
+	}
+	if !strings.Contains(s, "|base64 -d|sh") {
 		t.Fatal("expected base64 decode pipeline")
 	}
 	decoded, err := decodeOuterBootstrap(s)
@@ -46,18 +50,13 @@ func TestWrapK8sPodKVShell_markers(t *testing.T) {
 		"HONEY_KV_TOKEN",
 		"k8s_debug_image",
 		"INB64",
+		"/dev/null",
+		"honey-inner-",
 	} {
 		if !strings.Contains(decoded, want) {
 			t.Errorf("bootstrap should mention %q", want)
 		}
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // decodeOuterBootstrap extracts the single-quoted payload from `printf %s '...'|...` and base64-decodes it (test-only).
@@ -67,7 +66,7 @@ func decodeOuterBootstrap(wrapped string) (string, error) {
 		return "", errors.New("decode outer: bad prefix")
 	}
 	rest := strings.TrimPrefix(wrapped, prefix)
-	idx := strings.Index(rest, "|base64 -d|exec sh")
+	idx := strings.Index(rest, "|base64 -d|sh")
 	if idx < 0 {
 		return "", errors.New("decode outer: missing suffix")
 	}

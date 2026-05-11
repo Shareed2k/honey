@@ -11,7 +11,7 @@ recipe: {
 			command: "hostname"
 			// kv_tunnel: true // optional: sets HONEY_KV_URL + HONEY_KV_TOKEN on remote for this step
 			hooks: {
-				on_success: {where: "local", command: "kubectl --context bringg-stg2 get pods --all-namespaces -o custom-columns=NAME:.metadata.name,UID:.metadata.uid"}
+				on_success: {where: "local", command: "kubectl get pods --all-namespaces -o custom-columns=NAME:.metadata.name,UID:.metadata.uid"}
 				on_failure: {where: "remote", command: "logger honey-hook-failed"}
 			}
 		},

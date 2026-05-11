@@ -156,57 +156,25 @@ func runOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel b
 
 		var kv map[string]string
 		if kvTunnel {
-			switch c := client.(type) {
-			case *sshclient.HoneyClient:
-				if recipeScopedKV {
-					if recipeKV == nil {
-						closeSSHIfEphemeral(cache, client)
-						res.Success = false
-						res.ErrMsg = "kv_tunnel: recipe-scoped coordinator is missing"
-						return res
-					}
-					var kvErr error
-					kv, kvErr = recipeKV.EnsureKVTunnelEnv(user, r, c)
-					if kvErr != nil {
-						closeSSHIfEphemeral(cache, client)
-						res.Success = false
-						res.ErrMsg = "kv_tunnel: " + kvErr.Error()
-						return res
-					}
-					stopKV = nil
-				} else {
-					var kvErr error
-					kv, stopKV, kvErr = attachStepKVRemoteForward(c, stepKVTunnelTTL)
-					if kvErr != nil {
-						closeSSHIfEphemeral(cache, client)
-						res.Success = false
-						res.ErrMsg = "kv_tunnel: " + kvErr.Error()
-						return res
-					}
-				}
-			case *k8sNativeClient:
-				// In-pod Python KV server; no SSH remote forward.
-			default:
+			var errMsg string
+			kv, stopKV, errMsg = attachHostKVTunnel(client, user, r, recipeScopedKV, recipeKV)
+			if errMsg != "" {
 				closeSSHIfEphemeral(cache, client)
 				res.Success = false
-				res.ErrMsg = "kv_tunnel is not supported for this executor"
+				res.ErrMsg = errMsg
 				return res
 			}
 		}
 
 		remoteCmd := strings.TrimSpace(cmd(r, kv))
-		if kvTunnel {
-			if _, ok := client.(*k8sNativeClient); ok {
-				wrapped, werr := wrapK8sPodKVShell(remoteCmd)
-				if werr != nil {
-					closeSSHIfEphemeral(cache, client)
-					res.Success = false
-					res.ErrMsg = "kv_tunnel: " + werr.Error()
-					return res
-				}
-				remoteCmd = wrapped
-			}
+		wrapped, werr := maybeWrapK8sKVShell(kvTunnel, client, kv, remoteCmd)
+		if werr != nil {
+			closeSSHIfEphemeral(cache, client)
+			res.Success = false
+			res.ErrMsg = "kv_tunnel: " + werr.Error()
+			return res
 		}
+		remoteCmd = wrapped
 		if remoteCmd == "" {
 			closeSSHIfEphemeral(cache, client)
 			res.Success = true
@@ -535,57 +503,25 @@ func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath str
 
 		var kv map[string]string
 		if kvTunnel {
-			switch c := client.(type) {
-			case *sshclient.HoneyClient:
-				if recipeScopedKV {
-					if recipeKV == nil {
-						closeSSHIfEphemeral(cache, client)
-						res.Success = false
-						res.ErrMsg = "kv_tunnel: recipe-scoped coordinator is missing"
-						return res
-					}
-					var kvErr error
-					kv, kvErr = recipeKV.EnsureKVTunnelEnv(user, r, c)
-					if kvErr != nil {
-						closeSSHIfEphemeral(cache, client)
-						res.Success = false
-						res.ErrMsg = "kv_tunnel: " + kvErr.Error()
-						return res
-					}
-					stopKV = nil
-				} else {
-					var kvErr error
-					kv, stopKV, kvErr = attachStepKVRemoteForward(c, stepKVTunnelTTL)
-					if kvErr != nil {
-						closeSSHIfEphemeral(cache, client)
-						res.Success = false
-						res.ErrMsg = "kv_tunnel: " + kvErr.Error()
-						return res
-					}
-				}
-			case *k8sNativeClient:
-				// In-pod Python KV server; no SSH remote forward.
-			default:
+			var errMsg string
+			kv, stopKV, errMsg = attachHostKVTunnel(client, user, r, recipeScopedKV, recipeKV)
+			if errMsg != "" {
 				closeSSHIfEphemeral(cache, client)
 				res.Success = false
-				res.ErrMsg = "kv_tunnel is not supported for this executor"
+				res.ErrMsg = errMsg
 				return res
 			}
 		}
 
 		remoteCmd := strings.TrimSpace(cmd(r, kv))
-		if kvTunnel {
-			if _, ok := client.(*k8sNativeClient); ok {
-				wrapped, werr := wrapK8sPodKVShell(remoteCmd)
-				if werr != nil {
-					closeSSHIfEphemeral(cache, client)
-					res.Success = false
-					res.ErrMsg = "kv_tunnel: " + werr.Error()
-					return res
-				}
-				remoteCmd = wrapped
-			}
+		wrapped, werr := maybeWrapK8sKVShell(kvTunnel, client, kv, remoteCmd)
+		if werr != nil {
+			closeSSHIfEphemeral(cache, client)
+			res.Success = false
+			res.ErrMsg = "kv_tunnel: " + werr.Error()
+			return res
 		}
+		remoteCmd = wrapped
 		if remoteCmd == "" {
 			closeSSHIfEphemeral(cache, client)
 			res.Success = true

@@ -145,6 +145,68 @@ func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, 
 	return unified, nil
 }
 
+func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefaults, records []hosts.Record) error {
+	if err := ValidateHostField(s.Host); err != nil {
+		return fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
+	}
+	kind, err := ClassifyStep(s)
+	if err != nil {
+		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
+	}
+	if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI) {
+		return fmt.Errorf("cuetry: steps[%d]: env is only supported for command and script steps", i)
+	}
+	if len(s.Env) > 0 {
+		if err := ValidateRecipeEnvMap(s.Env); err != nil {
+			return fmt.Errorf("cuetry: steps[%d].env: %w", i, err)
+		}
+	}
+	if err := ValidateStepRunAsForKind(kind, s); err != nil {
+		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
+	}
+	if strings.TrimSpace(s.RunAs) != "" {
+		if err := ValidateRunAsUser(s.RunAs); err != nil {
+			return fmt.Errorf("cuetry: steps[%d].run_as: %w", i, err)
+		}
+	}
+	if kind == StepKindAgentTransfer {
+		if err := validateAgentTransferStep(i, s, records); err != nil {
+			return err
+		}
+	}
+	if kind == StepKindAI {
+		if i != nSteps-1 {
+			return fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
+		}
+		if i == 0 {
+			return fmt.Errorf("cuetry: steps[%d]: ai cannot be the first step; add at least one prior step", i)
+		}
+		if strings.TrimSpace(s.Host) != MatchLocalAIHost {
+			return fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
+		}
+		if s.AI == nil {
+			return fmt.Errorf("cuetry: steps[%d]: internal ai step", i)
+		}
+		if strings.TrimSpace(s.AI.Prompt) == "" {
+			return fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
+		}
+	}
+	if s.Hooks != nil {
+		if kind != StepKindCommand && kind != StepKindScript {
+			return fmt.Errorf("cuetry: steps[%d]: hooks are only supported on command and script steps", i)
+		}
+		if err := validateStepHooks(i, s.Hooks); err != nil {
+			return err
+		}
+	}
+	if KVTunnelEnabled(s, defaults) {
+		if kind != StepKindCommand && kind != StepKindScript {
+			return fmt.Errorf("cuetry: steps[%d]: kv_tunnel is only supported on command and script steps", i)
+		}
+	}
+	return nil
+}
+
 // ParseRemoteRecipe validates cueBytes and decodes the recipe into Go values.
 func ParseRemoteRecipe(cueBytes []byte, records []hosts.Record) (Recipe, error) {
 	var out Recipe
@@ -165,64 +227,10 @@ func ParseRemoteRecipe(cueBytes []byte, records []hosts.Record) (Recipe, error) 
 			return out, fmt.Errorf("cuetry: defaults.env: %w", err)
 		}
 	}
+	nSteps := len(out.Steps)
 	for i, s := range out.Steps {
-		if err := ValidateHostField(s.Host); err != nil {
-			return out, fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
-		}
-		kind, err := ClassifyStep(s)
-		if err != nil {
-			return out, fmt.Errorf("cuetry: steps[%d]: %w", i, err)
-		}
-		if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI) {
-			return out, fmt.Errorf("cuetry: steps[%d]: env is only supported for command and script steps", i)
-		}
-		if len(s.Env) > 0 {
-			if err := ValidateRecipeEnvMap(s.Env); err != nil {
-				return out, fmt.Errorf("cuetry: steps[%d].env: %w", i, err)
-			}
-		}
-		if err := ValidateStepRunAsForKind(kind, s); err != nil {
-			return out, fmt.Errorf("cuetry: steps[%d]: %w", i, err)
-		}
-		if strings.TrimSpace(s.RunAs) != "" {
-			if err := ValidateRunAsUser(s.RunAs); err != nil {
-				return out, fmt.Errorf("cuetry: steps[%d].run_as: %w", i, err)
-			}
-		}
-		if kind == StepKindAgentTransfer {
-			if err := validateAgentTransferStep(i, s, records); err != nil {
-				return out, err
-			}
-		}
-		if kind == StepKindAI {
-			if i != len(out.Steps)-1 {
-				return out, fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
-			}
-			if i == 0 {
-				return out, fmt.Errorf("cuetry: steps[%d]: ai cannot be the first step; add at least one prior step", i)
-			}
-			if strings.TrimSpace(s.Host) != MatchLocalAIHost {
-				return out, fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
-			}
-			if s.AI == nil {
-				return out, fmt.Errorf("cuetry: steps[%d]: internal ai step", i)
-			}
-			if strings.TrimSpace(s.AI.Prompt) == "" {
-				return out, fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
-			}
-		}
-		if s.Hooks != nil {
-			if kind != StepKindCommand && kind != StepKindScript {
-				return out, fmt.Errorf("cuetry: steps[%d]: hooks are only supported on command and script steps", i)
-			}
-			if err := validateStepHooks(i, s.Hooks); err != nil {
-				return out, err
-			}
-		}
-		if KVTunnelEnabled(s, out.Defaults) {
-			if kind != StepKindCommand && kind != StepKindScript {
-				return out, fmt.Errorf("cuetry: steps[%d]: kv_tunnel is only supported on command and script steps", i)
-			}
+		if err := validateDecodedRecipeStep(i, nSteps, s, out.Defaults, records); err != nil {
+			return out, err
 		}
 	}
 	return out, nil
