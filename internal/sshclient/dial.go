@@ -41,6 +41,10 @@ import (
 // Note: "Match" is unsupported by that parser; configs that rely on Match may not apply here.
 var honeySSHConfig = &ssh_config.UserSettings{IgnoreErrors: true}
 
+// honeySSHIdentityFilesEnv lists extra private key paths (comma-separated) tried after IdentityFile
+// entries from ssh_config and before default ~/.ssh key names. Values support ~/ prefix.
+const honeySSHIdentityFilesEnv = "HONEY_SSH_IDENTITY_FILES"
+
 // knownHostsAppendMu serializes writes to ~/.ssh/known_hosts when many parallel SSH sessions accept-new.
 var knownHostsAppendMu sync.Mutex
 
@@ -601,7 +605,83 @@ func expandSSHPath(p string) (string, error) {
 	return filepath.Clean(p), nil
 }
 
-// buildAuthWithIdentityFiles returns auth methods: agent (if any), then extra key files, then default ~/.ssh keys.
+// splitCommaNonEmpty splits s on commas, trims ASCII space, drops empty tokens.
+func splitCommaNonEmpty(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// identityPathsFromHoneyEnv returns paths from HONEY_SSH_IDENTITY_FILES (comma-separated, ~/ expanded).
+func identityPathsFromHoneyEnv() ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv(honeySSHIdentityFilesEnv))
+	if raw == "" {
+		return nil, nil
+	}
+	var out []string
+	for _, tok := range splitCommaNonEmpty(raw) {
+		p, err := expandSSHPath(tok)
+		if err != nil {
+			return nil, fmt.Errorf("%s: expand %q: %w", honeySSHIdentityFilesEnv, tok, err)
+		}
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// defaultSSHIdentityKeyBaseNames are tried under ~/.ssh/ after IdentityFile and HONEY_SSH_IDENTITY_FILES.
+// Order matches common OpenSSH defaults, then GCE tooling, then legacy DSA (only used if the file exists).
+func defaultSSHIdentityKeyBaseNames() []string {
+	return []string{"id_ed25519", "id_rsa", "id_ecdsa", "google_compute_engine", "id_dsa"}
+}
+
+func appendAuthFromKeyFiles(methods []ssh.AuthMethod, seen map[string]struct{}, paths []string) ([]ssh.AuthMethod, error) {
+	for _, raw := range paths {
+		p, err := expandSSHPath(raw)
+		if err != nil {
+			return methods, err
+		}
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		st, statErr := os.Stat(p)
+		if statErr != nil || st.IsDir() {
+			continue
+		}
+		k, keyErr := goph.Key(p, "")
+		if keyErr != nil {
+			continue
+		}
+		seen[p] = struct{}{}
+		methods = append(methods, k...)
+	}
+	return methods, nil
+}
+
+func errNoSSHAuth() error {
+	return fmt.Errorf("no SSH auth: ensure ssh-agent has a key (ssh-add; check SSH_AUTH_SOCK), "+
+		"or add IdentityFile in ~/.ssh/config for the host/IP honey uses (honey's parser does not support Match blocks), "+
+		"or set %s to comma-separated private key paths, "+
+		"or place a default key under ~/.ssh (id_ed25519, id_rsa, id_ecdsa, google_compute_engine for GCE)",
+		honeySSHIdentityFilesEnv)
+}
+
+// buildAuthWithIdentityFiles returns auth methods: agent (if any), then extra key files (ssh_config IdentityFile),
+// then HONEY_SSH_IDENTITY_FILES, then default ~/.ssh key names (see defaultSSHIdentityKeyBaseNames).
 func buildAuthWithIdentityFiles(extraFiles []string) (goph.Auth, error) {
 	var methods []ssh.AuthMethod
 	if goph.HasAgent() {
@@ -610,47 +690,32 @@ func buildAuthWithIdentityFiles(extraFiles []string) (goph.Auth, error) {
 		}
 	}
 	seen := make(map[string]struct{})
-	for _, raw := range extraFiles {
-		p, err := expandSSHPath(raw)
-		if err != nil || p == "" {
-			continue
-		}
-		if _, ok := seen[p]; ok {
-			continue
-		}
-		st, statErr := os.Stat(p)
-		if statErr != nil || st.IsDir() {
-			continue
-		}
-		k, keyErr := goph.Key(p, "")
-		if keyErr != nil {
-			continue
-		}
-		seen[p] = struct{}{}
-		methods = append(methods, k...)
+	var err error
+	methods, err = appendAuthFromKeyFiles(methods, seen, extraFiles)
+	if err != nil {
+		return nil, err
+	}
+	envPaths, err := identityPathsFromHoneyEnv()
+	if err != nil {
+		return nil, err
+	}
+	methods, err = appendAuthFromKeyFiles(methods, seen, envPaths)
+	if err != nil {
+		return nil, err
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("user home: %w", err)
 	}
-	for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa"} {
+	for _, name := range defaultSSHIdentityKeyBaseNames() {
 		p := filepath.Join(home, ".ssh", name)
-		if _, ok := seen[p]; ok {
-			continue
+		methods, err = appendAuthFromKeyFiles(methods, seen, []string{p})
+		if err != nil {
+			return nil, err
 		}
-		st, statErr := os.Stat(p)
-		if statErr != nil || st.IsDir() {
-			continue
-		}
-		k, keyErr := goph.Key(p, "")
-		if keyErr != nil {
-			continue
-		}
-		seen[p] = struct{}{}
-		methods = append(methods, k...)
 	}
 	if len(methods) == 0 {
-		return nil, fmt.Errorf("no SSH auth (start ssh-agent or add keys under ~/.ssh or IdentityFile in ~/.ssh/config)")
+		return nil, errNoSSHAuth()
 	}
 	return methods, nil
 }
@@ -777,7 +842,8 @@ func closeSSHStack(stack []*ssh.Client) {
 
 // DialHoneyClient opens SSH using ~/.ssh/config (User, HostName, Port, IdentityFile, ProxyJump,
 // StrictHostKeyChecking, UserKnownHostsFile, GlobalKnownHostsFile) and known_hosts verification
-// via golang.org/x/crypto/ssh/knownhosts (see hostKeyCallbackForAlias).
+// via golang.org/x/crypto/ssh/knownhosts (see hostKeyCallbackForAlias). Auth also uses
+// HONEY_SSH_IDENTITY_FILES and default ~/.ssh key names (see buildAuthWithIdentityFiles).
 func DialHoneyClient(userOverride, hostAlias string) (*HoneyClient, error) {
 	zap.L().Debug("dialing honey client", zap.String("host", hostAlias), zap.String("user", userOverride))
 	hostAlias = strings.TrimSpace(hostAlias)
