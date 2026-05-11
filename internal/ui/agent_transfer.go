@@ -562,10 +562,10 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	}
 
 	evictSource := func(failedAttempt int) {
-		evictCachedSSHClient(cache, user, job.Source.Record, failedAttempt)
+		evictCachedSSHClient(cache, user, job.Source.Record, failedAttempt, nil)
 	}
 	evictDestination := func(failedAttempt int) {
-		evictCachedSSHClient(cache, user, job.Destination.Record, failedAttempt)
+		evictCachedSSHClient(cache, user, job.Destination.Record, failedAttempt, nil)
 	}
 
 	cloudBase := agentSessionHostMsg{

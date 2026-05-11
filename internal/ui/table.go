@@ -696,6 +696,16 @@ func (m *model) popupResultLines() []string {
 		lines = append(lines, strings.Split(r.Output, "\n")...)
 	}
 
+	if strings.TrimSpace(r.HookPhase) != "" || strings.TrimSpace(r.HookOutput) != "" {
+		lines = append(lines, "")
+		lines = append(lines, "--- Hook ("+strings.TrimSpace(r.HookPhase)+") ---")
+		if strings.TrimSpace(r.HookOutput) == "" {
+			lines = append(lines, "(no hook output)")
+		} else {
+			lines = append(lines, strings.Split(strings.TrimSpace(r.HookOutput), "\n")...)
+		}
+	}
+
 	return lines
 }
 
@@ -1148,7 +1158,8 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 
 		if !execute {
 			var buf bytes.Buffer
-			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, nil)
+			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
+			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, aiPrompt, nil)
 			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
 				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
 					if runErr != nil {
@@ -1182,7 +1193,8 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 
 		go func() {
 			defer close(ch)
-			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, ch)
+			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
+			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, aiPrompt, ch)
 		}()
 
 		return streamStartMsg{
@@ -1231,7 +1243,7 @@ func runParallelSSHStreamCmd(user string, targets []hosts.Record, cmdLine, targe
 
 		go func() {
 			defer close(ch)
-			cmdFunc := func(r hosts.Record) string {
+			cmdFunc := func(r hosts.Record, _ map[string]string) string {
 				// Inject host variables even for direct UI commands
 				env, err := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
 				if err != nil {
@@ -1243,7 +1255,7 @@ func runParallelSSHStreamCmd(user string, targets []hosts.Record, cmdLine, targe
 				}
 				return remoteCmd
 			}
-			_ = StreamSSHParallel(user, jobs, cmdFunc, 0, ch, nil)
+			_ = StreamSSHParallel(context.Background(), user, jobs, false, cmdFunc, 0, ch, nil, nil, false, nil)
 		}()
 
 		return streamStartMsg{

@@ -14,8 +14,36 @@ import (
 // schemaSource defines the shape of a "remote recipe" document: a named list of
 // host + shell command steps (similar in spirit to a tiny Ansible play).
 const schemaSource = `
+#StepHook: close({
+	where: "local" | "remote"
+	command?: string
+	run_as?: string
+	env?: {[string]: string}
+	notify?: close({
+		notify_subject?: string
+		message?:       string
+		services?: close({
+			http?:     close({})
+			slack?:    close({
+				channel_id?: string
+			})
+			telegram?: close({})
+		})
+	})
+})
 #Step: close({
 	host:     string
+	notify?: close({
+		notify_subject?: string
+		message?:       string
+		services?: close({
+			http?:     close({})
+			slack?:    close({
+				channel_id?: string
+			})
+			telegram?: close({})
+		})
+	})
 	run_as?:  string
 	command?: string
 	put?: close({
@@ -51,6 +79,18 @@ const schemaSource = `
 		max_retries?:      int
 		agent_remote_dir?: string
 	})
+	ai?: close({
+		prompt:              string
+		system_prompt?:      string
+		model?:              string
+		max_output_tokens?:  int
+		max_input_chars?:    int
+	})
+	hooks?: close({
+		on_success?: #StepHook
+		on_failure?: #StepHook
+	})
+	kv_tunnel?: bool
 	env?: {[string]: string}
 })
 #Recipe: close({
@@ -59,6 +99,7 @@ const schemaSource = `
 		run_as?: string
 		env?: {[string]: string}
 		k8s_debug_image?: string
+		kv_tunnel?: bool
 	})
 	steps: [...#Step]
 })
@@ -132,7 +173,7 @@ func ParseRemoteRecipe(cueBytes []byte, records []hosts.Record) (Recipe, error) 
 		if err != nil {
 			return out, fmt.Errorf("cuetry: steps[%d]: %w", i, err)
 		}
-		if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer) {
+		if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI) {
 			return out, fmt.Errorf("cuetry: steps[%d]: env is only supported for command and script steps", i)
 		}
 		if len(s.Env) > 0 {
@@ -153,8 +194,74 @@ func ParseRemoteRecipe(cueBytes []byte, records []hosts.Record) (Recipe, error) 
 				return out, err
 			}
 		}
+		if kind == StepKindAI {
+			if i != len(out.Steps)-1 {
+				return out, fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
+			}
+			if i == 0 {
+				return out, fmt.Errorf("cuetry: steps[%d]: ai cannot be the first step; add at least one prior step", i)
+			}
+			if strings.TrimSpace(s.Host) != MatchLocalAIHost {
+				return out, fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
+			}
+			if s.AI == nil {
+				return out, fmt.Errorf("cuetry: steps[%d]: internal ai step", i)
+			}
+			if strings.TrimSpace(s.AI.Prompt) == "" {
+				return out, fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
+			}
+		}
+		if s.Hooks != nil {
+			if kind != StepKindCommand && kind != StepKindScript {
+				return out, fmt.Errorf("cuetry: steps[%d]: hooks are only supported on command and script steps", i)
+			}
+			if err := validateStepHooks(i, s.Hooks); err != nil {
+				return out, err
+			}
+		}
+		if KVTunnelEnabled(s, out.Defaults) {
+			if kind != StepKindCommand && kind != StepKindScript {
+				return out, fmt.Errorf("cuetry: steps[%d]: kv_tunnel is only supported on command and script steps", i)
+			}
+		}
 	}
 	return out, nil
+}
+
+func validateStepHooks(stepIdx int, h *RecipeStepHooks) error {
+	validateOne := func(phase string, hook *RecipeStepHook) error {
+		if hook == nil {
+			return nil
+		}
+		w := strings.TrimSpace(hook.Where)
+		if w != "local" && w != "remote" {
+			return fmt.Errorf("cuetry: steps[%d].hooks.%s.where must be \"local\" or \"remote\"", stepIdx, phase)
+		}
+		if strings.TrimSpace(hook.Command) == "" {
+			return fmt.Errorf("cuetry: steps[%d].hooks.%s.command is required", stepIdx, phase)
+		}
+		if w == "local" && strings.TrimSpace(hook.RunAs) != "" {
+			return fmt.Errorf("cuetry: steps[%d].hooks.%s: run_as is not allowed when where is local", stepIdx, phase)
+		}
+		if len(hook.Env) > 0 {
+			if err := ValidateRecipeEnvMap(hook.Env); err != nil {
+				return fmt.Errorf("cuetry: steps[%d].hooks.%s.env: %w", stepIdx, phase, err)
+			}
+		}
+		if strings.TrimSpace(hook.RunAs) != "" {
+			if err := ValidateRunAsUser(hook.RunAs); err != nil {
+				return fmt.Errorf("cuetry: steps[%d].hooks.%s.run_as: %w", stepIdx, phase, err)
+			}
+		}
+		return nil
+	}
+	if err := validateOne("on_success", h.OnSuccess); err != nil {
+		return err
+	}
+	if err := validateOne("on_failure", h.OnFailure); err != nil {
+		return err
+	}
+	return nil
 }
 
 func validateAgentTransferStep(i int, s RecipeStep, records []hosts.Record) error {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// SSHRemoteCmdFunc builds the remote shell string. kv is nil when kv_tunnel is disabled; otherwise it contains
+// HONEY_KV_URL (reachable from the remote via SSH remote forward) and HONEY_KV_TOKEN for Authorization.
+type SSHRemoteCmdFunc func(r hosts.Record, kv map[string]string) string
+
 const (
 	defaultSSHBatchConcurrency = 32
 	maxOutputPerHost           = 6000
@@ -26,7 +31,11 @@ func sshTransientBackoff(attempt int) {
 }
 
 // evictCachedSSHClient removes a dead pooled client (if any) and pauses before redial.
-func evictCachedSSHClient(cache *ClientCache, user string, r hosts.Record, attempt int) {
+// When recipeKV is non-nil, the host's recipe-scoped KV remote-forward is torn down so the next dial can re-attach.
+func evictCachedSSHClient(cache *ClientCache, user string, r hosts.Record, attempt int, recipeKV *RecipeKVCoordinator) {
+	if recipeKV != nil {
+		recipeKV.InvalidateHost(user, r)
+	}
 	if cache != nil {
 		cache.Evict(user, r)
 	}
@@ -48,11 +57,19 @@ type HostExecResult struct {
 	ExitCode int
 	Output   string
 	ErrMsg   string // transport / spawn failure (not remote stderr)
+
+	// HookPhase / HookOutput are set when a CUE step hook ran after the main result (command/script only).
+	HookPhase  string // "on_success" or "on_failure"
+	HookOutput string // captured stdout+stderr from the hook (local or remote)
 }
+
+// SSHPostHostResultFunc runs after each host's main SSH run and before the result is emitted (e.g. CUE step hooks).
+// It may set res.HookPhase and res.HookOutput. Hook failures must not change the original step success fields.
+type SSHPostHostResultFunc func(ctx context.Context, r hosts.Record, res *HostExecResult)
 
 // StreamSSHParallel runs the command on records and streams results to out channel.
 // It does not close the channel itself.
-func StreamSSHParallel(user string, jobs []hosts.Record, remoteCmdFunc func(hosts.Record) string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
+func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, maxConc int, out chan<- HostExecResult, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, post SSHPostHostResultFunc) error {
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
 	}
@@ -66,12 +83,11 @@ func StreamSSHParallel(user string, jobs []hosts.Record, remoteCmdFunc func(host
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			cmd := remoteCmdFunc(r)
-			if strings.TrimSpace(cmd) == "" {
-				out <- HostExecResult{Name: r.Name, Provider: r.Provider, Success: true, Output: ""}
-				return
+			res := runOneRemoteSSH(user, r, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+			if post != nil {
+				post(ctx, r, &res)
 			}
-			out <- runOneRemoteSSH(user, r, cmd, cache)
+			out <- res
 		}(jobs[i])
 	}
 	wg.Wait()
@@ -95,7 +111,10 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hos
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		_ = StreamSSHParallel(user, jobs, remoteCmdFunc, maxConc, ch, nil)
+		wrap := func(r hosts.Record, _ map[string]string) string {
+			return remoteCmdFunc(r)
+		}
+		_ = StreamSSHParallel(context.Background(), user, jobs, false, wrap, maxConc, ch, nil, nil, false, nil)
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))
@@ -105,21 +124,94 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hos
 	return out, nil
 }
 
-func runOneRemoteSSH(user string, r hosts.Record, remoteCmd string, cache *ClientCache) HostExecResult {
+func runOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
 	res := HostExecResult{
 		Name:     r.Name,
 		IP:       r.PrimaryIP,
 		Provider: r.Provider,
 	}
+	var stopKV func()
+	defer func() {
+		if stopKV != nil {
+			stopKV()
+		}
+	}()
+
 	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
+		if stopKV != nil {
+			stopKV()
+			stopKV = nil
+		}
+
 		client, dialErr := cache.GetOrDial(user, r)
 		if dialErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, recipeKV)
 				continue
 			}
 			res.Success = false
 			res.ErrMsg = dialErr.Error()
+			return res
+		}
+
+		var kv map[string]string
+		if kvTunnel {
+			switch c := client.(type) {
+			case *sshclient.HoneyClient:
+				if recipeScopedKV {
+					if recipeKV == nil {
+						closeSSHIfEphemeral(cache, client)
+						res.Success = false
+						res.ErrMsg = "kv_tunnel: recipe-scoped coordinator is missing"
+						return res
+					}
+					var kvErr error
+					kv, kvErr = recipeKV.EnsureKVTunnelEnv(user, r, c)
+					if kvErr != nil {
+						closeSSHIfEphemeral(cache, client)
+						res.Success = false
+						res.ErrMsg = "kv_tunnel: " + kvErr.Error()
+						return res
+					}
+					stopKV = nil
+				} else {
+					var kvErr error
+					kv, stopKV, kvErr = attachStepKVRemoteForward(c, stepKVTunnelTTL)
+					if kvErr != nil {
+						closeSSHIfEphemeral(cache, client)
+						res.Success = false
+						res.ErrMsg = "kv_tunnel: " + kvErr.Error()
+						return res
+					}
+				}
+			case *k8sNativeClient:
+				// In-pod Python KV server; no SSH remote forward.
+			default:
+				closeSSHIfEphemeral(cache, client)
+				res.Success = false
+				res.ErrMsg = "kv_tunnel is not supported for this executor"
+				return res
+			}
+		}
+
+		remoteCmd := strings.TrimSpace(cmd(r, kv))
+		if kvTunnel {
+			if _, ok := client.(*k8sNativeClient); ok {
+				wrapped, werr := wrapK8sPodKVShell(remoteCmd)
+				if werr != nil {
+					closeSSHIfEphemeral(cache, client)
+					res.Success = false
+					res.ErrMsg = "kv_tunnel: " + werr.Error()
+					return res
+				}
+				remoteCmd = wrapped
+			}
+		}
+		if remoteCmd == "" {
+			closeSSHIfEphemeral(cache, client)
+			res.Success = true
+			res.ExitCode = 0
+			res.Output = ""
 			return res
 		}
 
@@ -143,7 +235,7 @@ func runOneRemoteSSH(user string, r hosts.Record, remoteCmd string, cache *Clien
 			}
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(runErr) {
 				closeSSHIfEphemeral(cache, client)
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, recipeKV)
 				continue
 			}
 			closeSSHIfEphemeral(cache, client)
@@ -231,7 +323,7 @@ func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int
 }
 
 // StreamScriptUploadRunParallel uploads a script and executes it on multiple hosts in parallel.
-func StreamScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, remotePath string, remoteCmdFunc func(hosts.Record) string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
+func StreamScriptUploadRunParallel(ctx context.Context, user string, recs []hosts.Record, localAbs, remotePath string, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, maxConc int, out chan<- HostExecResult, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, post SSHPostHostResultFunc) error {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
 	if localAbs == "" || remotePath == "" {
@@ -257,12 +349,11 @@ func StreamScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, r
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			cmd := remoteCmdFunc(r)
-			if strings.TrimSpace(cmd) == "" {
-				out <- HostExecResult{Name: r.Name, Provider: r.Provider, Success: true, Output: ""}
-				return
+			res := runOneScriptUploadRun(user, r, localAbs, remotePath, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+			if post != nil {
+				post(ctx, r, &res)
 			}
-			out <- runOneScriptUploadRun(user, r, localAbs, remotePath, cmd, cache)
+			out <- res
 		}(jobs[i])
 	}
 	wg.Wait()
@@ -323,7 +414,7 @@ func RunOneSFTPUploadWithProgress(user string, r hosts.Record, localAbs, remoteP
 		client, dialErr := cache.GetOrDial(user, r)
 		if dialErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, nil)
 				continue
 			}
 			res.Success = false
@@ -354,7 +445,7 @@ func RunOneSFTPUploadWithProgress(user string, r hosts.Record, localAbs, remoteP
 		if upErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(upErr) {
 				closeSSHIfEphemeral(cache, client)
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, nil)
 				continue
 			}
 			closeSSHIfEphemeral(cache, client)
@@ -393,7 +484,8 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		_ = StreamScriptUploadRunParallel(user, recs, localAbs, remotePath, func(_ hosts.Record) string { return remoteCmd }, maxConc, ch, nil)
+		wrap := func(_ hosts.Record, _ map[string]string) string { return remoteCmd }
+		_ = StreamScriptUploadRunParallel(context.Background(), user, recs, localAbs, remotePath, false, wrap, maxConc, ch, nil, nil, false, nil)
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))
@@ -403,13 +495,25 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 	return out, nil
 }
 
-func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, remoteCmd string, cache *ClientCache) HostExecResult {
+func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath string, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
+	var stopKV func()
+	defer func() {
+		if stopKV != nil {
+			stopKV()
+		}
+	}()
+
 	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
+		if stopKV != nil {
+			stopKV()
+			stopKV = nil
+		}
+
 		client, dialErr := cache.GetOrDial(user, r)
 		if dialErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, recipeKV)
 				continue
 			}
 			res.Success = false
@@ -420,12 +524,73 @@ func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, re
 		if upErr := client.Upload(localAbs, remotePath); upErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(upErr) {
 				closeSSHIfEphemeral(cache, client)
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, recipeKV)
 				continue
 			}
 			closeSSHIfEphemeral(cache, client)
 			res.Success = false
 			res.ErrMsg = "upload: " + upErr.Error()
+			return res
+		}
+
+		var kv map[string]string
+		if kvTunnel {
+			switch c := client.(type) {
+			case *sshclient.HoneyClient:
+				if recipeScopedKV {
+					if recipeKV == nil {
+						closeSSHIfEphemeral(cache, client)
+						res.Success = false
+						res.ErrMsg = "kv_tunnel: recipe-scoped coordinator is missing"
+						return res
+					}
+					var kvErr error
+					kv, kvErr = recipeKV.EnsureKVTunnelEnv(user, r, c)
+					if kvErr != nil {
+						closeSSHIfEphemeral(cache, client)
+						res.Success = false
+						res.ErrMsg = "kv_tunnel: " + kvErr.Error()
+						return res
+					}
+					stopKV = nil
+				} else {
+					var kvErr error
+					kv, stopKV, kvErr = attachStepKVRemoteForward(c, stepKVTunnelTTL)
+					if kvErr != nil {
+						closeSSHIfEphemeral(cache, client)
+						res.Success = false
+						res.ErrMsg = "kv_tunnel: " + kvErr.Error()
+						return res
+					}
+				}
+			case *k8sNativeClient:
+				// In-pod Python KV server; no SSH remote forward.
+			default:
+				closeSSHIfEphemeral(cache, client)
+				res.Success = false
+				res.ErrMsg = "kv_tunnel is not supported for this executor"
+				return res
+			}
+		}
+
+		remoteCmd := strings.TrimSpace(cmd(r, kv))
+		if kvTunnel {
+			if _, ok := client.(*k8sNativeClient); ok {
+				wrapped, werr := wrapK8sPodKVShell(remoteCmd)
+				if werr != nil {
+					closeSSHIfEphemeral(cache, client)
+					res.Success = false
+					res.ErrMsg = "kv_tunnel: " + werr.Error()
+					return res
+				}
+				remoteCmd = wrapped
+			}
+		}
+		if remoteCmd == "" {
+			closeSSHIfEphemeral(cache, client)
+			res.Success = true
+			res.ExitCode = 0
+			res.Output = "script put → " + remotePath
 			return res
 		}
 
@@ -449,7 +614,7 @@ func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath, re
 			}
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(runErr) {
 				closeSSHIfEphemeral(cache, client)
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, recipeKV)
 				continue
 			}
 			closeSSHIfEphemeral(cache, client)
@@ -474,7 +639,7 @@ func runOneSFTPDownload(user string, j SFTPDownloadJob, cache *ClientCache) Host
 		client, dialErr := cache.GetOrDial(user, r)
 		if dialErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, nil)
 				continue
 			}
 			res.Success = false
@@ -485,7 +650,7 @@ func runOneSFTPDownload(user string, j SFTPDownloadJob, cache *ClientCache) Host
 		if dlErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dlErr) {
 				closeSSHIfEphemeral(cache, client)
-				evictCachedSSHClient(cache, user, r, attempt)
+				evictCachedSSHClient(cache, user, r, attempt, nil)
 				continue
 			}
 			closeSSHIfEphemeral(cache, client)

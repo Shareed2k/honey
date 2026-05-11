@@ -87,6 +87,12 @@ function formatResultBlock(r: HostExecResultRow): string {
   if (r.Output) {
     s += `${normalizeCapturedText(r.Output)}\n`;
   }
+  if (r.HookPhase || r.HookOutput) {
+    s += `hook (${r.HookPhase || '?'}):\n`;
+    if (r.HookOutput) {
+      s += `${normalizeCapturedText(r.HookOutput)}\n`;
+    }
+  }
   return s;
 }
 
@@ -100,6 +106,12 @@ function formatHostExecRowTTY(r: HostExecResultRow): string {
   }
   if (r.Output) {
     lines.push(`\x1b[0m  out:\n${normalizeCapturedText(r.Output)}`);
+  }
+  if (r.HookPhase || r.HookOutput) {
+    lines.push(`\x1b[35m  hook (${r.HookPhase || '?'}):\x1b[0m`);
+    if (r.HookOutput) {
+      lines.push(normalizeCapturedText(r.HookOutput));
+    }
   }
   return lines.join('\n');
 }

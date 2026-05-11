@@ -32,11 +32,38 @@ type k8sNativeClient struct {
 	container string
 }
 
+// summarizeK8sExecCmd returns a short preview of argv for debug logs (avoids huge sh -c bodies).
+func summarizeK8sExecCmd(cmd []string) string {
+	if len(cmd) == 0 {
+		return "(empty)"
+	}
+	const max = 512
+	s := strings.Join(cmd, " ")
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
 func (c *k8sNativeClient) Close() error {
 	return nil // no persistent connection to close, SPDY connections are ephemeral per exec
 }
 
 func (c *k8sNativeClient) execInPod(ctx context.Context, cmd []string, stdin io.Reader, stdout, stderr io.Writer, tty bool, sizeQ remotecommand.TerminalSizeQueue) error {
+	logMeta := []zap.Field{
+		zap.String("k8s_namespace", c.namespace),
+		zap.String("k8s_pod", c.podName),
+		zap.String("k8s_container", c.container),
+		zap.Int("command_argc", len(cmd)),
+		zap.String("command_preview", summarizeK8sExecCmd(cmd)),
+		zap.Bool("stdin", stdin != nil),
+		zap.Bool("stdout", stdout != nil),
+		zap.Bool("stderr", stderr != nil),
+		zap.Bool("tty", tty),
+		zap.Bool("terminal_size_queue", sizeQ != nil),
+	}
+	zap.L().Debug("k8s execInPod: starting", logMeta...)
+
 	req := c.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(c.podName).
@@ -55,8 +82,12 @@ func (c *k8sNativeClient) execInPod(ctx context.Context, cmd []string, stdin io.
 	}
 	req.VersionedParams(opts, scheme.ParameterCodec)
 
-	exec, err := remotecommand.NewSPDYExecutor(c.config, "POST", req.URL())
+	u := req.URL()
+	zap.L().Debug("k8s execInPod: exec subresource URL", append(append([]zap.Field(nil), logMeta...), zap.String("url_path", u.Path))...)
+
+	exec, err := remotecommand.NewSPDYExecutor(c.config, "POST", u)
 	if err != nil {
+		zap.L().Debug("k8s execInPod: new SPDY executor failed", append(append([]zap.Field(nil), logMeta...), zap.Error(err))...)
 		return fmt.Errorf("create spdy executor: %w", err)
 	}
 
@@ -69,11 +100,13 @@ func (c *k8sNativeClient) execInPod(ctx context.Context, cmd []string, stdin io.
 	if tty && sizeQ != nil {
 		streamOpts.TerminalSizeQueue = sizeQ
 	}
+	zap.L().Debug("k8s execInPod: streaming", logMeta...)
 	err = exec.StreamWithContext(ctx, streamOpts)
 	if err != nil {
+		zap.L().Debug("k8s execInPod: stream finished with error", append(append([]zap.Field(nil), logMeta...), zap.Error(err))...)
 		return fmt.Errorf("exec stream: %w", err)
 	}
-
+	zap.L().Debug("k8s execInPod: stream finished ok", logMeta...)
 	return nil
 }
 

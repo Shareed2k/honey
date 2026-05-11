@@ -23,15 +23,16 @@ type File struct {
 
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
-	SSHUser       string `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
-	CacheTTL      string `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL"` // e.g. "5m", "1h"
-	K8sMode       string `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
-	K8sDebugImage string `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
-	CacheDir      string `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
-	RecordDir     string `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory"`
-	Output        string `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
-	Name          string `yaml:"name" json:"name" honey:"label=Name filter"`
-	NameRegex     string `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
+	SSHUser        string `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
+	CacheTTL       string `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL"` // e.g. "5m", "1h"
+	K8sMode        string `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
+	K8sDebugImage  string `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
+	CacheDir       string `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
+	RecordDir      string `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory"`
+	Output         string `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
+	Name           string `yaml:"name" json:"name" honey:"label=Name filter"`
+	NameRegex      string `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
+	AISystemPrompt string `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step"`
 }
 
 // Backends lists optional multiple instances per provider type.

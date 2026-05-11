@@ -60,6 +60,8 @@ export type HostExecResultRow = {
   ExitCode: number;
   Output: string;
   ErrMsg: string;
+  HookPhase?: string;
+  HookOutput?: string;
 };
 
 export type RecipeListEntry = { name: string; path: string };

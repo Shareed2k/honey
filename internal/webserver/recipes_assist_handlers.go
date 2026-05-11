@@ -156,7 +156,8 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			}
 			recipeDir := filepath.Dir(cp)
 			var buf bytes.Buffer
-			runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, nil)
+			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
+			runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, nil)
 			plan := buf.String()
 			if runErr != nil {
 				planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))

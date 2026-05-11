@@ -405,6 +405,177 @@ recipe: {
 	}
 }
 
+func TestParseRemoteRecipe_stepNotifyBlock(t *testing.T) {
+	t.Parallel()
+	const src = `
+recipe: {
+	name: "n"
+	steps: [
+		{ host: "10.0.0.1", command: "uptime", notify: {} },
+		{ host: "10.0.0.2", command: "hostname", notify: { notify_subject: "Ping" } },
+	]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Steps[0].Notify == nil {
+		t.Fatal("expected steps[0].notify present")
+	}
+	if r.Steps[0].Notify.NotifySubject != "" {
+		t.Fatalf("steps[0] subject: %q", r.Steps[0].Notify.NotifySubject)
+	}
+	if r.Steps[1].Notify == nil || r.Steps[1].Notify.NotifySubject != "Ping" {
+		t.Fatalf("steps[1].notify: %+v", r.Steps[1].Notify)
+	}
+}
+
+func TestParseRemoteRecipe_stepNotifyServicesAndMessage(t *testing.T) {
+	t.Parallel()
+	const src = `
+recipe: {
+	name: "svc"
+	steps: [
+		{
+			host: "10.0.0.1"
+			command: "uptime"
+			notify: {
+				message: "fixed body"
+				services: {
+					slack: { channel_id: "C1" }
+					telegram: {}
+				}
+			}
+		},
+	]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := r.Steps[0].Notify
+	if n == nil || n.Message != "fixed body" {
+		t.Fatalf("notify: %+v", n)
+	}
+	if n.Services == nil || n.Services.HTTP != nil {
+		t.Fatalf("services http: %+v", n.Services)
+	}
+	if n.Services.Slack == nil || n.Services.Slack.ChannelID != "C1" {
+		t.Fatalf("slack: %+v", n.Services.Slack)
+	}
+	if n.Services.Telegram == nil {
+		t.Fatal("expected telegram marker")
+	}
+}
+
+func TestParseRemoteRecipe_stepHooks_ok(t *testing.T) {
+	const src = `
+recipe: {
+	name: "hooks"
+	steps: [
+		{
+			host: "10.0.0.1"
+			command: "true"
+			hooks: {
+				on_success: {where: "local", command: "echo ok"}
+				on_failure: {where: "remote", command: "echo fail", run_as: "nobody", env: {HOOK: "1"}}
+			}
+		},
+		{
+			host: "10.0.0.2"
+			script: {local: "./a.sh", remote: "/tmp/a.sh"}
+			hooks: {
+				on_failure: {where: "local", command: "echo x"}
+			}
+		},
+	]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Steps[0].Hooks == nil || r.Steps[0].Hooks.OnSuccess == nil || r.Steps[0].Hooks.OnSuccess.Where != "local" {
+		t.Fatalf("step0 hooks: %+v", r.Steps[0].Hooks)
+	}
+	if r.Steps[0].Hooks.OnFailure == nil || r.Steps[0].Hooks.OnFailure.RunAs != "nobody" {
+		t.Fatalf("step0 on_failure: %+v", r.Steps[0].Hooks.OnFailure)
+	}
+}
+
+func TestParseRemoteRecipe_stepHooks_localRunAsRejected(t *testing.T) {
+	const src = `
+recipe: {
+	name: "bad"
+	steps: [
+		{
+			host: "10.0.0.1"
+			command: "id"
+			hooks: {on_success: {where: "local", command: "id", run_as: "root"}}
+		},
+	]
+}
+`
+	if _, err := ParseRemoteRecipe([]byte(src), nil); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestParseRemoteRecipe_kvTunnelOnPutRejected(t *testing.T) {
+	const src = `
+recipe: {
+	name: "bad"
+	steps: [
+		{
+			host: "10.0.0.1"
+			put: {local: "./x", remote: "/tmp/x"}
+			kv_tunnel: true
+		},
+	]
+}
+`
+	if _, err := ParseRemoteRecipe([]byte(src), nil); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestParseRemoteRecipe_stepHooks_onPutRejected(t *testing.T) {
+	const src = `
+recipe: {
+	name: "bad"
+	steps: [
+		{
+			host: "10.0.0.1"
+			put: {local: "./x", remote: "/tmp/x"}
+			hooks: {on_success: {where: "local", command: "true"}}
+		},
+	]
+}
+`
+	if _, err := ParseRemoteRecipe([]byte(src), nil); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestEffectiveEnvForRemoteHook_overridesStepEnv(t *testing.T) {
+	step := RecipeStep{
+		Command: "x",
+		Env:     map[string]string{"A": "step", "B": "b"},
+	}
+	hook := &RecipeStepHook{Env: map[string]string{"A": "hook"}}
+	cli := map[string]string{"C": "cli"}
+	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4", Provider: "p", Zone: "z1"}
+	got, err := EffectiveEnvForRemoteHook(step, nil, hook, cli, &rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["A"] != "hook" || got["B"] != "b" || got["C"] != "cli" || got["HONEY_HOST_NAME"] != "h1" {
+		t.Fatalf("merged: %#v", got)
+	}
+}
+
 func TestWrapRemoteShell(t *testing.T) {
 	out, err := WrapRemoteShell("", "hostname")
 	if err != nil || out != "hostname" {

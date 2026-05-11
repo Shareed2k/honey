@@ -85,5 +85,20 @@ fi
 			host: "*"
 			command: "echo \"=== $HONEY_HOST_NAME postgres by CPU% (GNU ps) ===\" && (ps -eo pid,user,%cpu,%mem,etime,args --sort=-%cpu 2>/dev/null | { head -n1; grep -vF 'HONEY_HOST_NAME' | grep -iE 'postgres:|postmaster|/[b]in/postgres |/usr/lib/postgresql/.*/bin/postgres ' | head -25; } || echo \"skip: ps --sort not supported (non-GNU ps?)\")"
 		},
+		{
+			host: "_"
+			notify: {
+				notify_subject: "Honey AI summary"
+				services: { http: {} }
+			}
+			ai: {
+				prompt: """
+Summarize the host listing in 3–5 bullet points. Note any missing output or failures.
+"""
+				model: "models/gemini-3.1-pro-preview"
+				// max_input_chars: 100000
+				// max_output_tokens: 800
+			}
+		},
 	]
 }

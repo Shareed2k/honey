@@ -55,6 +55,13 @@ func formatHostExecReplay(r HostExecResult) string {
 		b.WriteString(stripAnsiReplay(r.Output))
 		b.WriteString("\n")
 	}
+	if strings.TrimSpace(r.HookPhase) != "" || strings.TrimSpace(r.HookOutput) != "" {
+		fmt.Fprintf(&b, "hook (%s):\n", strings.TrimSpace(r.HookPhase))
+		if strings.TrimSpace(r.HookOutput) != "" {
+			b.WriteString(stripAnsiReplay(r.HookOutput))
+			b.WriteString("\n")
+		}
+	}
 	return b.String()
 }
 

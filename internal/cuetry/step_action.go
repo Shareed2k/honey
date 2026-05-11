@@ -15,15 +15,37 @@ const (
 	StepKindGet
 	StepKindScript
 	StepKindAgentTransfer
+	StepKindAI
 )
 
-// ClassifyStep returns the step kind after validating exactly one of command / put / get / script / agent_transfer.
+// StepKindLabel returns a short stable name for defaults and logging.
+func StepKindLabel(k StepKind) string {
+	switch k {
+	case StepKindCommand:
+		return "command"
+	case StepKindPut:
+		return "put"
+	case StepKindGet:
+		return "get"
+	case StepKindScript:
+		return "script"
+	case StepKindAgentTransfer:
+		return "agent_transfer"
+	case StepKindAI:
+		return "ai"
+	default:
+		return "unknown"
+	}
+}
+
+// ClassifyStep returns the step kind after validating exactly one of command / put / get / script / agent_transfer / ai.
 func ClassifyStep(s RecipeStep) (StepKind, error) {
 	cmd := strings.TrimSpace(s.Command)
 	hasPut := s.Put != nil
 	hasGet := s.Get != nil
 	hasScript := s.Script != nil
 	hasAgent := s.AgentTransfer != nil
+	hasAI := s.AI != nil
 	n := 0
 	if cmd != "" {
 		n++
@@ -40,11 +62,14 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	if hasAgent {
 		n++
 	}
+	if hasAI {
+		n++
+	}
 	if n == 0 {
-		return 0, fmt.Errorf("need exactly one of command, put, get, script, or agent_transfer")
+		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, or ai")
 	}
 	if n > 1 {
-		return 0, fmt.Errorf("only one of command, put, get, script, agent_transfer allowed")
+		return 0, fmt.Errorf("only one of command, put, get, script, agent_transfer, ai allowed")
 	}
 	if hasPut {
 		if err := validateFileTransfer("put", s.Put); err != nil {
@@ -67,6 +92,9 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	if hasAgent {
 		return StepKindAgentTransfer, nil
 	}
+	if hasAI {
+		return StepKindAI, nil
+	}
 	return StepKindCommand, nil
 }
 
@@ -83,8 +111,8 @@ func validateFileTransfer(label string, op *RecipeFileTransfer) error {
 // ValidateStepRunAsForKind rejects per-step run_as on put/get (SFTP only).
 // Script steps allow run_as for the execute phase; defaults.run_as applies there too.
 func ValidateStepRunAsForKind(kind StepKind, step RecipeStep) error {
-	if (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer) && strings.TrimSpace(step.RunAs) != "" {
-		return fmt.Errorf("run_as on put/get/agent_transfer steps is not supported (use --ssh-user)")
+	if (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI) && strings.TrimSpace(step.RunAs) != "" {
+		return fmt.Errorf("run_as on put/get/agent_transfer/ai steps is not supported (use --ssh-user)")
 	}
 	return nil
 }

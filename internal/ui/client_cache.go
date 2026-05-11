@@ -27,13 +27,18 @@ func NewClientCache() *ClientCache {
 	}
 }
 
+// SSHClientCacheKey is the stable cache key for a pooled SSH client for (user, record).
+func SSHClientCacheKey(user string, r hosts.Record) string {
+	return r.Provider + "\x00" + r.PrimaryIP + "\x00" + r.Name + "\x00" + user
+}
+
 // GetOrDial returns an existing connection or dials a new one and stores it.
 func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error) {
 	if c == nil {
 		return GetExecutor(r).Dial(user, r)
 	}
 
-	key := r.Provider + "\x00" + r.PrimaryIP + "\x00" + r.Name + "\x00" + user
+	key := SSHClientCacheKey(user, r)
 
 	c.mu.Lock()
 	client, exists := c.clients[key]
@@ -97,7 +102,7 @@ func (c *ClientCache) Evict(user string, r hosts.Record) {
 	if c == nil {
 		return
 	}
-	key := r.Provider + "\x00" + r.PrimaryIP + "\x00" + r.Name + "\x00" + user
+	key := SSHClientCacheKey(user, r)
 	c.mu.Lock()
 	client, ok := c.clients[key]
 	if ok {

@@ -27,8 +27,9 @@ literal IP, exact name match, host "*" for all rows with an IP, or host "re:PATT
 for a Go regexp (RE2) matched against each row's name (only rows with PrimaryIP).
 
 Each step is exactly one of: shell command, put (upload), get (download),
-script (upload a local file then run it with sh on the same SSH connection), or
-agent_transfer (A→cloud→B using the transfer agent; requires --config when using cloud_backend_ref).
+script (upload a local file then run it with sh on the same SSH connection),
+agent_transfer (A→cloud→B using the transfer agent; requires --config when using cloud_backend_ref),
+or ai (terminal local summarizer after prior steps; host must be "_"; OPENAI_API_KEY when executing).
 Relative local paths are resolved against the recipe file's directory.
 
 Then either prints a plan (--execute=false, default) or runs each step (--execute).
@@ -41,7 +42,7 @@ Use recipe.defaults.run_as or per-step run_as for command and script steps
 
 Optional recipe.defaults.env and per-step env (map of NAME to value) set
 export assignments before the shell command or sh <script> on the remote;
-step keys override defaults. Not allowed on put/get steps.
+step keys override defaults. Not allowed on put/get/ai steps.
 
 Repeat -e/--env KEY=value to set remote variables from the CLI; they override
 recipe env on duplicate keys (command and script steps only).
@@ -123,5 +124,9 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		}
 		defer func() { _ = rec.Close() }()
 	}
-	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, rec)
+	aiPrompt := ""
+	if cfg != nil {
+		aiPrompt = strings.TrimSpace(cfg.Defaults.AISystemPrompt)
+	}
+	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, rec)
 }

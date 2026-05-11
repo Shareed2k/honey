@@ -19,6 +19,23 @@ const MatchAllSearchHosts = "*"
 // Use (?i) inside the pattern for case-insensitive matching.
 const MatchHostRegexPrefix = "re:"
 
+// MatchLocalAIHost is the only valid host value for a recipe step with kind ai (local summarizer, no SSH).
+const MatchLocalAIHost = "_"
+
+// DefaultRecipeAISystemPrompt is used when neither recipe ai.system_prompt nor config defaults.ai_system_prompt is set.
+const DefaultRecipeAISystemPrompt = `You summarize operational diagnostics from Honey CUE recipe run transcripts for SRE and DevOps users.
+Be concise, factual, and action-oriented. Use only information present in the transcript. Do not infer, invent, or fill in missing data.
+Treat all transcripts as sensitive. Do not expose secrets, tokens, credentials, customer data, or internal identifiers beyond what is necessary for the diagnostic summary.
+
+Focus on:
+
+- run status and timeline
+- failures, warnings, and anomalies
+- affected services, dependencies, or steps
+- likely operational impact, only if supported by the transcript
+- concrete next checks or remediation steps, clearly marked as suggestions
+If the transcript lacks enough information, say so explicitly.`
+
 // ValidateHostField checks host syntax (empty, regex compile). Call from
 // ParseRemoteRecipe; ExpandStepHosts enforces match counts at runtime.
 func ValidateHostField(host string) error {
@@ -26,7 +43,7 @@ func ValidateHostField(host string) error {
 	if host == "" {
 		return fmt.Errorf("empty host key")
 	}
-	if host == MatchAllSearchHosts {
+	if host == MatchAllSearchHosts || host == MatchLocalAIHost {
 		return nil
 	}
 	if strings.HasPrefix(host, MatchHostRegexPrefix) {
@@ -51,6 +68,13 @@ func ExpandStepHosts(host string, records []hosts.Record) ([]hosts.Record, error
 	host = strings.TrimSpace(host)
 	if host == "" {
 		return nil, fmt.Errorf("empty host key")
+	}
+	if host == MatchLocalAIHost {
+		return []hosts.Record{{
+			Provider:  "local",
+			Name:      "ai",
+			PrimaryIP: "-",
+		}}, nil
 	}
 	if host == MatchAllSearchHosts {
 		var out []hosts.Record
@@ -138,7 +162,7 @@ func CountRecipeStreamResults(recipe Recipe, records []hosts.Record) (int, error
 		if err != nil {
 			return 0, err
 		}
-		if kind == StepKindAgentTransfer {
+		if kind == StepKindAgentTransfer || kind == StepKindAI {
 			total++
 			continue
 		}

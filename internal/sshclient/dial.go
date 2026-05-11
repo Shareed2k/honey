@@ -273,6 +273,14 @@ type HoneyClient struct {
 	sftp   *sftp.Client
 }
 
+// LeafSSH returns the leaf *ssh.Client used for sessions/SFTP on the target host (ProxyJump hops are parents).
+func (h *HoneyClient) LeafSSH() *ssh.Client {
+	if h == nil || h.Client == nil || h.Client.Client == nil {
+		return nil
+	}
+	return h.Client.Client
+}
+
 // Close closes the target session transport, then any bastion SSH clients (reverse order).
 func (h *HoneyClient) Close() error {
 	var err error
