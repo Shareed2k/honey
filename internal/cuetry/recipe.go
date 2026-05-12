@@ -321,6 +321,31 @@ func ValidateRemoteRecipe(cueBytes []byte) error {
 	return err
 }
 
+// ValidateParsedRecipe runs the same per-step validators that ParseRemoteRecipe
+// applies after CUE decoding, but on an already-decoded Recipe value (e.g.
+// constructed from JSON via RecipeFromJSON or supplied inline by an API caller).
+// It does not re-parse CUE text, so callers that bypass the CUE compiler must
+// invoke this to ensure the Recipe is well-formed before handing it to a runner.
+func ValidateParsedRecipe(r Recipe, records []hosts.Record) error {
+	if r.Defaults != nil && strings.TrimSpace(r.Defaults.RunAs) != "" {
+		if err := ValidateRunAsUser(r.Defaults.RunAs); err != nil {
+			return fmt.Errorf("cuetry: defaults.run_as: %w", err)
+		}
+	}
+	if r.Defaults != nil && len(r.Defaults.Env) > 0 {
+		if err := ValidateRecipeEnvMap(r.Defaults.Env); err != nil {
+			return fmt.Errorf("cuetry: defaults.env: %w", err)
+		}
+	}
+	nSteps := len(r.Steps)
+	for i, s := range r.Steps {
+		if err := validateDecodedRecipeStep(i, nSteps, s, r.Defaults, records); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func formatCueErr(err error) error {
 	if err == nil {
 		return nil

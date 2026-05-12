@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/shareed2k/honey/internal/config"
@@ -55,7 +56,8 @@ type execResponse struct {
 }
 
 type cueExecRequest struct {
-	RecipePath    string         `json:"recipe_path"`
+	RecipePath    string         `json:"recipe_path,omitempty"`
+	RecipeContent *cuetry.Recipe `json:"recipe_content,omitempty"`
 	Execute       bool           `json:"execute"`
 	SSHUser       string         `json:"ssh_user"`
 	Records       []hosts.Record `json:"records"`
@@ -279,6 +281,44 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 	}
 }
 
+// resolveCueExecRecipe picks the recipe source from a cueExecRequest, returning
+// the parsed/validated recipe, its on-disk source path (empty for inline),
+// and the recipe's directory (empty for inline). All errors are caller-fixable
+// (HTTP 400 from the handler).
+func resolveCueExecRecipe(body cueExecRequest) (cuetry.Recipe, string, string, error) {
+	switch {
+	case body.RecipeContent != nil:
+		if strings.TrimSpace(body.RecipePath) != "" {
+			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_path and recipe_content are mutually exclusive")
+		}
+		recipe := *body.RecipeContent
+		if err := cuetry.ValidateParsedRecipe(recipe, body.Records); err != nil {
+			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_content: %w", err)
+		}
+		return recipe, "", "", nil
+	case strings.TrimSpace(body.RecipePath) != "":
+		cp, err := normalizeRecipePath(body.RecipePath)
+		if err != nil {
+			return cuetry.Recipe{}, "", "", err
+		}
+		allowedPaths := allowedRecipePathSet()
+		if _, ok := allowedPaths[cp]; !ok {
+			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_path not allowed")
+		}
+		raw, err := safepath.ReadFile(cp)
+		if err != nil {
+			return cuetry.Recipe{}, "", "", err
+		}
+		parsed, err := cuetry.ParseRemoteRecipe(raw, body.Records)
+		if err != nil {
+			return cuetry.Recipe{}, "", "", fmt.Errorf("parse recipe: %w", err)
+		}
+		return parsed, cp, filepath.Dir(cp), nil
+	default:
+		return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_path or recipe_content required")
+	}
+}
+
 func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -289,16 +329,13 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	cp, err := normalizeRecipePath(body.RecipePath)
+
+	recipe, recipeSourcePath, recipeDir, err := resolveCueExecRecipe(body)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	allowedPaths := allowedRecipePathSet()
-	if _, ok := allowedPaths[cp]; !ok {
-		httpError(w, fmt.Errorf("recipe_path not allowed"), http.StatusBadRequest)
-		return
-	}
+
 	if len(body.Records) == 0 {
 		httpError(w, fmt.Errorf("no hosts selected"), http.StatusBadRequest)
 		return
@@ -313,16 +350,6 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := safepath.ReadFile(cp)
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	recipe, err := cuetry.ParseRemoteRecipe(raw, jobs)
-	if err != nil {
-		httpError(w, fmt.Errorf("parse recipe: %w", err), http.StatusBadRequest)
-		return
-	}
 	cliEnv, err := cuetry.ParseEnvKeyValuePairs(body.Env)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -334,8 +361,20 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if user == "" {
 		user = os.Getenv("USER")
 	}
-	recipeDir := filepath.Dir(cp)
 	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
+
+	recordRecipeMeta := func(rec *ui.SessionRecorder) {
+		if rec == nil {
+			return
+		}
+		hash, _ := cuetry.HashRecipeJSON(recipe)
+		rec.RecordRecipeMeta(ui.RecipeMeta{
+			RecipePath:        recipeSourcePath,
+			HostCount:         len(jobs),
+			RecipeContentHash: hash,
+			StartedAt:         time.Now().UTC(),
+		})
+	}
 
 	if !body.Execute {
 		var buf bytes.Buffer
@@ -350,6 +389,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			defer func() { _ = rec.Close() }()
+			recordRecipeMeta(rec)
 		}
 		if runErr != nil {
 			if rec != nil {
@@ -380,6 +420,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			defer func() { _ = rec.Close() }()
+			recordRecipeMeta(rec)
 		}
 		ch := make(chan ui.HostExecResult, cueExecChannelCap)
 		go func() {
@@ -407,6 +448,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() { _ = rec.Close() }()
+		recordRecipeMeta(rec)
 	}
 	ch := make(chan ui.HostExecResult, cueExecChannelCap)
 	errCh := make(chan error, 1)

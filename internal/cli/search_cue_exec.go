@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -121,6 +122,15 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		rec, err = ui.NewBatchSessionRecorder(recordDir, trigger, sshUser, len(records))
 		if err != nil {
 			return err
+		}
+		if rec != nil {
+			hash, _ := cuetry.HashRecipeJSON(recipe)
+			rec.RecordRecipeMeta(ui.RecipeMeta{
+				RecipePath:        absRecipe,
+				HostCount:         len(records),
+				RecipeContentHash: hash,
+				StartedAt:         time.Now().UTC(),
+			})
 		}
 		defer func() { _ = rec.Close() }()
 	}

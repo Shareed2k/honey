@@ -83,6 +83,18 @@ Download runs **after** a failed local build (or when the module root cannot be 
 - Open and run recipes from the UI (same semantics as `honey cue-exec`), including optional **`agent_transfer`** steps (A→cloud→B); the server passes its configured honey YAML path for `cloud_backend_ref` signing, like **`POST /api/v1/files/agent-transfer`**.
 - **Recipe assist** (AI): explains or debugs a recipe using the file content plus optional dry-run output for the current host selection (requires `OPENAI_API_KEY`).
 
+### Recipes (WebUI)
+
+The WebUI's "recipes" tab walks you through running a CUE recipe in 4 steps:
+
+1. Pick hosts (pre-filled from the Search tab; editable).
+2. Pick a recipe from disk, a saved in-browser draft, or a recent run.
+3. Review the resolved plan; optionally edit step commands / `run_as` / env in the structured Edit tab and save as a named draft. Drafts live in `localStorage` and never write back to `.cue` files on disk.
+4. Execute and watch live per-host transcripts.
+
+Recent runs are derived from session recordings, so enabling `record_session`
+keeps the recent-runs list populated.
+
 ## AI assist
 
 Assist features call an **OpenAI-compatible** HTTP API using the official key and optional base URL.

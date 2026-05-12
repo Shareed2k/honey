@@ -3,15 +3,12 @@ import {
   apiGet,
   apiPost,
   apiPut,
-  cueExec,
-  cueExecStream,
   execOnHosts,
   execOnHostsStream,
   fetchConfigSchema,
   fetchRecordingsForHost,
   fetchRecordingsList,
   fetchRecipeContent,
-  fetchRecipes,
   getToken,
   startAgentTransferStream,
   recipeAssist,
@@ -24,34 +21,22 @@ import type {
   ConfigUISchema,
   FormDataUploadProgressEvent,
   HostExecResultRow,
-  RecipeListEntry,
   RecordingListEntry,
   UploadStreamServerEvent,
 } from './api';
 import { ConfigBackendsSection } from './ConfigBackendsSection';
+import { HostPicker, recordHaystack, recordKey } from './HostPicker';
+import type { HostRecord } from './HostPicker';
+import { RecipesTab } from './RecipesTab';
 import { SessionReplayModal } from './SessionReplayModal';
 import { TerminalModal } from './TerminalModal';
 
 type BackendRow = { kind: string; name: string; hint: string };
 
-type HostRecord = {
-  provider: string;
-  name: string;
-  primary_ip: string;
-  extra_ips?: string[];
-  zone?: string;
-  region?: string;
-  meta?: Record<string, string>;
-};
-
-type Tab = 'search' | 'files' | 'backends' | 'config';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const RawYamlEditor = lazy(async () => import('./RawYamlEditor').then((m) => ({ default: m.RawYamlEditor })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
-
-function recordKey(rec: HostRecord): string {
-  return `${rec.provider}\x1e${rec.name}\x1e${rec.primary_ip}`;
-}
 
 /** Detached copy so detail state never shares mutable arrays/maps with `records`. */
 function cloneHostRecord(rec: HostRecord): HostRecord {
@@ -66,19 +51,6 @@ function canProxmoxQemuVnc(rec: HostRecord): boolean {
   const k = (rec.meta?.kind || '').toLowerCase();
   const m = (rec.meta?.exec_mode || '').toLowerCase();
   return rec.provider === 'proxmox' && k === 'qemu' && (m === 'pve' || m === 'hybrid');
-}
-
-function recordHaystack(rec: HostRecord): string {
-  const parts = [rec.provider, rec.name, rec.primary_ip, rec.zone || '', rec.region || ''];
-  if (rec.extra_ips?.length) {
-    parts.push(rec.extra_ips.join(' '));
-  }
-  if (rec.meta) {
-    for (const v of Object.values(rec.meta)) {
-      parts.push(v);
-    }
-  }
-  return parts.join(' ').toLowerCase();
 }
 
 function recordIndex(records: HostRecord[], rec: HostRecord): number {
@@ -332,21 +304,14 @@ export function App() {
   const [selectedKeys, setSelectedKeys] = useState<Record<string, boolean>>({});
   /** Row click (outside actions/checkbox) shows primary + extra IPs in the panel below the table. */
   const [hostDetailRecord, setHostDetailRecord] = useState<HostRecord | null>(null);
-  const [pageSize, setPageSize] = useState(25);
-  const [currentPage, setCurrentPage] = useState(1);
+  /** Mirrors the HostPicker's filtered+visible records (drives "Select visible"). */
+  const [visibleRecords, setVisibleRecords] = useState<HostRecord[]>([]);
   const [execCommand, setExecCommand] = useState('');
   const [execBusy, setExecBusy] = useState(false);
   const [execErr, setExecErr] = useState<string | null>(null);
   const [execResults, setExecResults] = useState<HostExecResultRow[] | null>(null);
 
-  const [recipes, setRecipes] = useState<RecipeListEntry[]>([]);
-  const [recipesErr, setRecipesErr] = useState<string | null>(null);
-
   const [recipePreview, setRecipePreview] = useState<{ title: string; content: string } | null>(null);
-  const [cuePlanText, setCuePlanText] = useState<string | null>(null);
-  const [cueBusy, setCueBusy] = useState(false);
-  const [cueErr, setCueErr] = useState<string | null>(null);
-  const [cueExecResults, setCueExecResults] = useState<HostExecResultRow[] | null>(null);
 
   const [recipeAssistOpen, setRecipeAssistOpen] = useState<{ path: string; name: string } | null>(null);
   const [recipeAssistModels, setRecipeAssistModels] = useState<string[]>([]);
@@ -522,33 +487,6 @@ export function App() {
     });
   }, [records]);
 
-  const displayRecords = useMemo(() => {
-    const q = resultFilter.trim().toLowerCase();
-    if (!q) {
-      return records;
-    }
-    return records.filter((rec) => recordHaystack(rec).includes(q));
-  }, [records, resultFilter]);
-
-  const totalRows = displayRecords.length;
-  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  const pageStart = (currentPage - 1) * pageSize;
-  const pageEnd = pageStart + pageSize;
-  const pagedRecords = useMemo(
-    () => displayRecords.slice(pageStart, pageEnd),
-    [displayRecords, pageStart, pageEnd],
-  );
-  const showingFrom = totalRows === 0 ? 0 : pageStart + 1;
-  const showingTo = totalRows === 0 ? 0 : Math.min(pageEnd, totalRows);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [resultFilter, pageSize]);
-
-  useEffect(() => {
-    setCurrentPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [totalPages]);
-
   const selectedRecords = useMemo(
     () => records.filter((r) => selectedKeys[recordKey(r)]),
     [records, selectedKeys],
@@ -592,22 +530,6 @@ export function App() {
       setTransferBackendRefValue(`${first.kind}:${first.name}`);
     }
   }, [transferBackendOptions, transferBackendRefValue]);
-
-  const loadRecipes = useCallback(async () => {
-    setRecipesErr(null);
-    try {
-      setRecipes(await fetchRecipes());
-    } catch (e) {
-      setRecipes([]);
-      setRecipesErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (tab === 'search') {
-      void loadRecipes();
-    }
-  }, [tab, loadRecipes]);
 
   useEffect(() => {
     if (!recipeAssistOpen || !meta?.terminal_assist_available) {
@@ -668,7 +590,7 @@ export function App() {
   const selectVisibleHosts = () => {
     setSelectedKeys((prev) => {
       const next = { ...prev };
-      for (const r of displayRecords) {
+      for (const r of visibleRecords) {
         next[recordKey(r)] = true;
       }
       return next;
@@ -680,12 +602,6 @@ export function App() {
     setExecErr(null);
     setExecResults(null);
   };
-  const clearCueOutput = () => {
-    setCueErr(null);
-    setCuePlanText(null);
-    setCueExecResults(null);
-  };
-
   const submitAgentTransfer = async () => {
     const sourceHost = transferHostOptions.find((r) => recordKey(r) === transferSourceHostKey);
     const destHost = transferHostOptions.find((r) => recordKey(r) === transferDestHostKey);
@@ -802,66 +718,6 @@ export function App() {
     }
   };
 
-  const runRecipeDryRun = async (recipePath: string) => {
-    if (selectedRecords.length === 0) {
-      setCueErr('Select at least one host for dry-run.');
-      setCuePlanText(null);
-      return;
-    }
-    setCueBusy(true);
-    setCueErr(null);
-    setCuePlanText(null);
-    setCueExecResults(null);
-    try {
-      const { plan } = await cueExec({
-        recipe_path: recipePath,
-        execute: false,
-        ssh_user: sshUser.trim(),
-        records: selectedRecords,
-        record_session: !!(recordWebSession && meta?.session_recording_available),
-      });
-      setCuePlanText(plan ?? '');
-    } catch (e) {
-      setCueErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCueBusy(false);
-    }
-  };
-
-  const runRecipeExecute = async (recipePath: string) => {
-    if (selectedRecords.length === 0) {
-      setCueErr('Select at least one host.');
-      return;
-    }
-    if (
-      !window.confirm(
-        'Execute this recipe on the selected hosts? This runs real commands and file transfers on remotes (and on the web server for recipe-relative paths).',
-      )
-    ) {
-      return;
-    }
-    setCueBusy(true);
-    setCueErr(null);
-    setCuePlanText(null);
-    setCueExecResults([]);
-    try {
-      await cueExecStream(
-        {
-          recipe_path: recipePath,
-          execute: true,
-          ssh_user: sshUser.trim(),
-          records: selectedRecords,
-          record_session: !!(recordWebSession && meta?.session_recording_available),
-        },
-        (row) => setCueExecResults((prev) => [...(prev || []), row]),
-      );
-    } catch (e) {
-      setCueErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCueBusy(false);
-    }
-  };
-
   const openRecipeAssist = (path: string, name: string) => {
     setRecipeAssistReply('');
     setRecipeAssistErr(null);
@@ -913,16 +769,11 @@ export function App() {
         setSearchErr((j as { error?: string }).error || r.statusText);
         setRecords([]);
         setSelectedKeys({});
-        setCurrentPage(1);
         return;
       }
-      setCurrentPage(1);
       setSelectedKeys({});
       setExecResults(null);
       setExecErr(null);
-      setCuePlanText(null);
-      setCueExecResults(null);
-      setCueErr(null);
       setRecords((j as { records: HostRecord[] }).records || []);
     } finally {
       setSearching(false);
@@ -1243,6 +1094,9 @@ export function App() {
         <button type="button" className={tab === 'config' ? 'active' : ''} onClick={() => setTab('config')}>
           Config
         </button>
+        <button type="button" className={tab === 'recipes' ? 'active' : ''} onClick={() => setTab('recipes')}>
+          Recipes
+        </button>
       </nav>
 
       {tab === 'search' ? (
@@ -1374,7 +1228,7 @@ export function App() {
               <span style={{ fontSize: '0.85rem' }}>
                 Selected hosts: <strong>{selectedRecords.length}</strong>
               </span>
-              <button type="button" onClick={() => selectVisibleHosts()} disabled={displayRecords.length === 0}>
+              <button type="button" onClick={() => selectVisibleHosts()} disabled={visibleRecords.length === 0}>
                 Select visible
               </button>
               <button type="button" onClick={() => clearHostSelection()}>
@@ -1446,120 +1300,49 @@ export function App() {
             ) : null}
           </div>
 
-          <div style={{ marginBottom: '0.5rem' }}>
-            <input
-              placeholder="Filter results (provider, name, IP, zone, meta…)"
-              value={resultFilter}
-              onChange={(e) => setResultFilter(e.target.value)}
-              style={{ width: 'min(100%, 420px)' }}
-            />
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center', marginTop: '0.4rem' }}>
-              <span style={{ fontSize: '0.8rem', opacity: 0.75 }}>
-                Showing {showingFrom}-{showingTo} of {totalRows} (total results: {records.length})
-              </span>
-              <label style={{ fontSize: '0.8rem', opacity: 0.9 }}>
-                Rows per page{' '}
-                <select
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
-                  style={{ marginLeft: 4 }}
-                >
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
-              </label>
-              <button type="button" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
-                Prev
-              </button>
-              <span style={{ fontSize: '0.8rem' }}>
-                Page {currentPage} of {totalPages}
-              </span>
-              <button type="button" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
-                Next
-              </button>
-            </div>
-          </div>
-
-          <div style={{ overflowX: 'auto' }} onDragOver={(e) => e.preventDefault()}>
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 36 }}>Sel.</th>
-                  <th>Provider</th>
-                  <th>Name</th>
-                  <th>IP</th>
-                  <th>Zone</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagedRecords.map((rec) => {
-                  const detailOpen = !!hostDetailRecord && recordKey(hostDetailRecord) === recordKey(rec);
-                  return (
-                    <tr
-                      key={recordKey(rec)}
-                      style={{
-                        cursor: 'pointer',
-                        background: detailOpen ? 'rgba(100, 149, 237, 0.12)' : undefined,
-                      }}
-                      onClick={(e) => {
-                        const el = e.target as HTMLElement;
-                        if (el.closest('button, input, a, textarea, select, label')) {
-                          return;
-                        }
-                        setHostDetailRecord((prev) =>
-                          prev && recordKey(prev) === recordKey(rec) ? null : cloneHostRecord(rec),
-                        );
-                      }}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        onDropUpload(rec, e.dataTransfer.files);
-                      }}
-                    >
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={!!selectedKeys[recordKey(rec)]}
-                          onChange={() => toggleRowSelected(rec)}
-                          aria-label={`Select ${rec.name}`}
-                        />
-                      </td>
-                      <td>{rec.provider}</td>
-                      <td>{rec.name}</td>
-                      <td>{rec.primary_ip}</td>
-                      <td>{rec.zone || ''}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'serial' })}>
-                          Terminal
-                        </button>
-                        {canProxmoxQemuVnc(rec) ? (
-                          <>
-                            {' '}
-                            <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'vnc' })}>
-                              VNC
-                            </button>
-                          </>
-                        ) : null}{' '}
-                        <button type="button" onClick={() => openUploadModal(rec)}>
-                          Upload
-                        </button>
-                        {meta?.session_recording_available ? (
-                          <>
-                            {' '}
-                            <button type="button" onClick={() => void openReplayModal(rec)}>
-                              Play
-                            </button>
-                          </>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <HostPicker
+            records={records}
+            selectedKeys={selectedKeys}
+            onToggleRow={toggleRowSelected}
+            onVisibleRecordsChange={setVisibleRecords}
+            filter={resultFilter}
+            onFilterChange={setResultFilter}
+            isRowHighlighted={(rec) =>
+              !!hostDetailRecord && recordKey(hostDetailRecord) === recordKey(rec)
+            }
+            onRowClick={(rec) =>
+              setHostDetailRecord((prev) =>
+                prev && recordKey(prev) === recordKey(rec) ? null : cloneHostRecord(rec),
+              )
+            }
+            onRowDrop={(rec, files) => onDropUpload(rec, files)}
+            renderRowActions={(rec) => (
+              <>
+                <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'serial' })}>
+                  Terminal
+                </button>
+                {canProxmoxQemuVnc(rec) ? (
+                  <>
+                    {' '}
+                    <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'vnc' })}>
+                      VNC
+                    </button>
+                  </>
+                ) : null}{' '}
+                <button type="button" onClick={() => openUploadModal(rec)}>
+                  Upload
+                </button>
+                {meta?.session_recording_available ? (
+                  <>
+                    {' '}
+                    <button type="button" onClick={() => void openReplayModal(rec)}>
+                      Play
+                    </button>
+                  </>
+                ) : null}
+              </>
+            )}
+          />
 
           {hostDetailRecord ? (
             <div
@@ -1632,109 +1415,6 @@ export function App() {
               )}
             </div>
           ) : null}
-
-          <details style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}>
-            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>CUE recipes (default config dirs)</summary>
-            <p style={{ fontSize: '0.8rem', opacity: 0.85, marginTop: '0.5rem' }}>
-              Uses hosts currently <strong>selected</strong> in the table above. Paths come from the server&apos;s default recipe directories (same as CLI).
-            </p>
-            {recipesErr ? <p style={{ color: '#f66' }}>{recipesErr}</p> : null}
-            {recipes.length === 0 && !recipesErr ? (
-              <p style={{ fontSize: '0.85rem', opacity: 0.8 }}>No .cue files found under default recipe dirs.</p>
-            ) : (
-              <ul style={{ listStyle: 'none', padding: 0, margin: '0.5rem 0 0' }}>
-                {recipes.map((rp) => (
-                  <li
-                    key={rp.path}
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: '0.35rem',
-                      alignItems: 'center',
-                      padding: '0.35rem 0',
-                      borderBottom: '1px solid #2a3140',
-                    }}
-                  >
-                    <code style={{ fontSize: '0.8rem' }}>{rp.name}</code>
-                    <span style={{ fontSize: '0.75rem', opacity: 0.65 }}>{rp.path}</span>
-                    <button type="button" onClick={() => void openRecipePreview(rp.path, rp.name)}>
-                      View
-                    </button>
-                    <button type="button" disabled={cueBusy} onClick={() => void runRecipeDryRun(rp.path)}>
-                      Dry-run
-                    </button>
-                    <button type="button" disabled={cueBusy} onClick={() => void runRecipeExecute(rp.path)}>
-                      Execute
-                    </button>
-                    {meta?.terminal_assist_available ? (
-                      <button type="button" disabled={cueBusy} onClick={() => openRecipeAssist(rp.path, rp.name)}>
-                        Explain
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {cueErr ? <p style={{ color: '#f66', marginTop: '0.5rem' }}>{cueErr}</p> : null}
-            <button type="button" onClick={() => clearCueOutput()}>
-              Clear recipe output
-            </button>
-            {cuePlanText !== null ? (
-              <div style={{ marginTop: '0.5rem' }}>
-                <strong style={{ fontSize: '0.85rem' }}>Dry-run plan</strong>
-                <pre
-                  style={{
-                    marginTop: 4,
-                    maxHeight: 280,
-                    overflow: 'auto',
-                    fontSize: '0.75rem',
-                    background: '#0f1115',
-                    padding: '0.5rem',
-                    borderRadius: 6,
-                    border: '1px solid #2a3140',
-                  }}
-                >
-                  {cuePlanText}
-                </pre>
-              </div>
-            ) : null}
-            {cueExecResults ? (
-              <div style={{ marginTop: '0.65rem', overflowX: 'auto' }}>
-                <strong style={{ fontSize: '0.85rem' }}>Execute results</strong>
-                <table style={{ fontSize: '0.78rem', marginTop: 6 }}>
-                  <thead>
-                    <tr>
-                      <th>Step / host</th>
-                      <th>OK</th>
-                      <th>Exit</th>
-                      <th>Output / error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cueExecResults.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} style={{ opacity: 0.8 }}>
-                          {cueBusy ? 'Waiting for results…' : 'No results.'}
-                        </td>
-                      </tr>
-                    ) : null}
-                    {cueExecResults.map((row, i) => (
-                      <tr key={`${row.Name}-${i}`}>
-                        <td>{row.Name}</td>
-                        <td>{row.Success ? 'yes' : 'no'}</td>
-                        <td>{row.ExitCode}</td>
-                        <td style={{ maxWidth: 400, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {row.ErrMsg ? <span style={{ color: '#f66' }}>{row.ErrMsg}</span> : null}
-                          {row.ErrMsg && row.Output ? '\n' : null}
-                          {row.Output}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </details>
 
           <p style={{ fontSize: '0.8rem', opacity: 0.75 }}>
             Use row <strong>Upload</strong> for the file dialog. Drop a file on a row to upload to <code>/tmp/&lt;filename&gt;</code>{' '}
@@ -1982,6 +1662,22 @@ export function App() {
           ) : null}
           <ConfigBackendsSection schema={cfgSchema} onSaved={() => void loadConfig()} />
         </section>
+      ) : null}
+
+      {tab === 'recipes' ? (
+        <RecipesTab
+          records={records}
+          selectedRecords={selectedRecords}
+          onSelectedRecordsChange={(hosts) => {
+            const next: Record<string, boolean> = {};
+            for (const h of hosts) {
+              next[recordKey(h)] = true;
+            }
+            setSelectedKeys(next);
+          }}
+          onViewSource={(path, name) => void openRecipePreview(path, name)}
+          onAiAssist={(path, name) => openRecipeAssist(path, name)}
+        />
       ) : null}
 
       {recipePreview ? (

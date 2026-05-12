@@ -187,6 +187,32 @@ func (r *SessionRecorder) RecordError(err error) {
 	})
 }
 
+// RecipeMeta describes the recipe that a cue-exec batch is about to run.
+// Recorded into the session file so a later "recent runs" enumeration can
+// attribute the recording to a recipe and detect in-browser edits.
+type RecipeMeta struct {
+	RecipePath        string    `json:"recipe_path"`
+	HostCount         int       `json:"host_count"`
+	RecipeContentHash string    `json:"recipe_content_hash"`
+	StartedAt         time.Time `json:"started_at"`
+}
+
+// RecordRecipeMeta writes one "recipe-meta" structured event into the recording.
+// Safe to call on a nil recorder.
+func (r *SessionRecorder) RecordRecipeMeta(meta RecipeMeta) {
+	if r == nil {
+		return
+	}
+	b, err := json.Marshal(meta)
+	if err != nil {
+		return
+	}
+	r.recordEvent(sessionRecordEvent{
+		Type:   "recipe-meta",
+		Result: json.RawMessage(b),
+	})
+}
+
 // Close writes a "close" event and closes the underlying file.
 func (r *SessionRecorder) Close() error {
 	if r == nil {

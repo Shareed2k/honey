@@ -2,10 +2,12 @@ package ui
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/recordings"
 )
 
@@ -21,6 +23,15 @@ func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
 		}
 		if rec, err := NewBatchSessionRecorder(m.recordDir, trigger, m.sshUser, msg.totalJobs); err == nil {
 			m.batchRecorder = rec
+			if msg.isCue && rec != nil && msg.recipe != nil {
+				hash, _ := cuetry.HashRecipeJSON(*msg.recipe)
+				rec.RecordRecipeMeta(RecipeMeta{
+					RecipePath:        msg.recipePath,
+					HostCount:         msg.totalJobs,
+					RecipeContentHash: hash,
+					StartedAt:         time.Now().UTC(),
+				})
+			}
 		}
 	}
 	m.mode = "execresults"

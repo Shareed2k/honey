@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
@@ -1162,6 +1163,15 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, aiPrompt, nil)
 			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
 				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
+					if rec != nil {
+						hash, _ := cuetry.HashRecipeJSON(recipe)
+						rec.RecordRecipeMeta(RecipeMeta{
+							RecipePath:        absRecipe,
+							HostCount:         len(targets),
+							RecipeContentHash: hash,
+							StartedAt:         time.Now().UTC(),
+						})
+					}
 					if runErr != nil {
 						rec.RecordError(runErr)
 					} else {
@@ -1203,6 +1213,8 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			totalJobs:  totalJobs,
 			ch:         ch,
 			isCue:      true,
+			recipe:     &recipe,
+			recipePath: absRecipe,
 		}
 	}
 }
@@ -1213,6 +1225,10 @@ type streamStartMsg struct {
 	totalJobs  int
 	ch         chan HostExecResult
 	isCue      bool
+	// For cue-exec only: parsed recipe and absolute recipe path so the
+	// session recorder can attribute the recording to a recipe.
+	recipe     *cuetry.Recipe
+	recipePath string
 }
 
 type streamResultMsg struct {

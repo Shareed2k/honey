@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewBatchSessionRecorderResultEvents(t *testing.T) {
@@ -65,5 +66,35 @@ func TestNewBatchSessionRecorderResultEvents(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected a result event")
+	}
+}
+
+func TestRecordRecipeMeta_writesStructuredEvent(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := NewBatchSessionRecorder(dir, "web-cue-exec", "alice", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.RecordRecipeMeta(RecipeMeta{
+		RecipePath:        "examples/recipe/hello.sh.cue",
+		HostCount:         3,
+		RecipeContentHash: "sha256:deadbeef",
+		StartedAt:         time.Date(2026, 5, 12, 16, 48, 0, 0, time.UTC),
+	})
+	_ = rec.Close()
+
+	files, _ := os.ReadDir(dir)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 recording file, got %d", len(files))
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, files[0].Name()))
+	if !strings.Contains(string(raw), `"type":"recipe-meta"`) {
+		t.Fatalf("no recipe-meta event:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"recipe_path":"examples/recipe/hello.sh.cue"`) {
+		t.Fatalf("missing recipe_path field:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"recipe_content_hash":"sha256:deadbeef"`) {
+		t.Fatalf("missing hash field:\n%s", raw)
 	}
 }

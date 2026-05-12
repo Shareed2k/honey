@@ -65,6 +65,51 @@ export type HostExecResultRow = {
 };
 
 export type RecipeListEntry = { name: string; path: string };
+
+/** Structured recipe shape that mirrors internal/cuetry.Recipe (JSON keys match Go json tags). */
+export type ParsedRecipe = {
+  name: string;
+  defaults?: Record<string, unknown>;
+  steps: ParsedRecipeStep[];
+};
+
+export type ParsedRecipeStep = {
+  host: string;
+  command?: string;
+  script?: { body?: string; path?: string };
+  ai?: { model?: string; prompt?: string };
+  run_as?: string;
+  env?: Record<string, string>;
+  hooks?: { on_success?: ParsedRecipeStep; on_failure?: ParsedRecipeStep };
+  // Step kinds that v1 does NOT support editing — preserved verbatim by the form.
+  agent_transfer?: unknown;
+  notify?: unknown;
+};
+
+export type ResolvedStep = {
+  index: number;
+  kind: string;
+  host: string;
+  run_as?: string;
+  preview: string;
+};
+
+export type ValidationError = {
+  path?: string;
+  kind: 'json' | 'schema' | 'validation' | 'resolve';
+  message: string;
+};
+
+export type RecentRunEntry = {
+  recipe_name: string;
+  recipe_path: string;
+  host_count: number;
+  started_at: string;
+  recording_id: string;
+  recipe_content_hash?: string;
+  edited: boolean;
+};
+
 export type RecordingListEntry = {
   file_name: string;
   modified_unix_ms: number;
@@ -247,6 +292,40 @@ export async function recipeAssist(body: {
   return { reply: (j.reply || '').trim() };
 }
 
+export async function fetchRecentRuns(limit = 20): Promise<RecentRunEntry[]> {
+  const r = await apiGet(`/api/v1/recipes/recent-runs?limit=${encodeURIComponent(limit)}`);
+  const j = (await r.json().catch(() => ({}))) as { runs?: RecentRunEntry[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.runs ?? [];
+}
+
+/**
+ * Validate a structured recipe payload. Returns `{plan, steps}` on success (200), or
+ * `{errors}` on a 400 validation failure. Other HTTP errors throw.
+ */
+export async function validateRecipeContent(
+  recipe: ParsedRecipe,
+): Promise<{ plan: string; steps: ResolvedStep[] } | { errors: ValidationError[] }> {
+  const r = await apiPost('/api/v1/recipes/validate-content', { recipe_content: recipe });
+  const body = (await r.json().catch(() => ({}))) as {
+    plan?: string;
+    steps?: ResolvedStep[];
+    errors?: ValidationError[];
+    error?: string;
+  };
+  if (r.ok) {
+    return { plan: body.plan ?? '', steps: body.steps ?? [] };
+  }
+  if (r.status === 400) {
+    return {
+      errors: body.errors ?? [{ kind: 'validation', message: body.error || 'unknown error' }],
+    };
+  }
+  throw new Error(body.error || r.statusText);
+}
+
 export async function fetchRecipeContent(path: string): Promise<string> {
   const r = await apiPost('/api/v1/recipes/view', { path });
   const j = (await r.json().catch(() => ({}))) as { content?: string; error?: string };
@@ -254,6 +333,19 @@ export async function fetchRecipeContent(path: string): Promise<string> {
     throw new Error(j.error || r.statusText);
   }
   return j.content ?? '';
+}
+
+/** Parse a disk recipe (.cue) into a ParsedRecipe via POST /api/v1/recipes/parse. */
+export async function parseDiskRecipe(path: string): Promise<ParsedRecipe> {
+  const r = await apiPost('/api/v1/recipes/parse', { path });
+  const j = (await r.json().catch(() => ({}))) as { recipe?: ParsedRecipe; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || `parse failed: ${r.status}`);
+  }
+  if (!j.recipe) {
+    throw new Error('parse: missing recipe in response');
+  }
+  return j.recipe;
 }
 
 /** List recordings; omit filters to return everything in record-dir (e.g. batch exec files use host_name batch-N). */
@@ -365,14 +457,17 @@ export async function execOnHostsStream(
   await readNDJSON<HostExecResultRow>(r, onRow);
 }
 
-export async function cueExec(body: {
-  recipe_path: string;
+export type CueExecRequest = {
+  recipe_path?: string;
+  recipe_content?: ParsedRecipe;
   execute: boolean;
   ssh_user: string;
   records: unknown[];
   env?: string[];
   record_session?: boolean;
-}): Promise<{ plan?: string; results?: HostExecResultRow[] }> {
+};
+
+export async function cueExec(body: CueExecRequest): Promise<{ plan?: string; results?: HostExecResultRow[] }> {
   const r = await apiPost('/api/v1/cue-exec', body);
   const j = (await r.json().catch(() => ({}))) as {
     plan?: string;
@@ -386,14 +481,7 @@ export async function cueExec(body: {
 }
 
 export async function cueExecStream(
-  body: {
-    recipe_path: string;
-    execute: boolean;
-    ssh_user: string;
-    records: unknown[];
-    env?: string[];
-    record_session?: boolean;
-  },
+  body: CueExecRequest,
   onRow: (row: HostExecResultRow) => void,
 ): Promise<void> {
   const r = await fetch('/api/v1/cue-exec?stream=1', {
