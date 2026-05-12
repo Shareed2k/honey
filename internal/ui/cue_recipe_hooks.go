@@ -220,11 +220,7 @@ func truncateRunes(s string, limit int) string {
 	if utf8.RuneCountInString(s) <= limit {
 		return s
 	}
-	runes := []rune(s)
-	if len(runes) <= limit {
-		return s
-	}
-	return string(runes[:limit]) + "…"
+	return string([]rune(s)[:limit]) + "…"
 }
 
 func formatHookNotifyBody(phase string, r hosts.Record, hres HostExecResult) string {

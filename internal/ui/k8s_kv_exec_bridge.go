@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -20,20 +21,34 @@ import (
 //go:embed k8s_kv_exec_bridge_pod.py
 var k8sKVExecBridgePodPy string
 
+type hkvFrameKind byte
+
 const (
-	hkvFrameData  byte = 0
-	hkvFrameClose byte = 1
-	hkvFrameOpen  byte = 2
+	hkvFrameData  hkvFrameKind = 0
+	hkvFrameClose hkvFrameKind = 1
+	hkvFrameOpen  hkvFrameKind = 2
 )
 
-const hkvMaxFramePayload = 16 << 20
+const (
+	hkvMaxFramePayload = 16 << 20
+	hkvMaxOpenConns    = 256
+	hkvConnInboxSize   = 32
+	hkvDialTimeout     = 15 * time.Second
+)
 
-func readHkvFrame(r io.Reader) (typ byte, cid uint32, payload []byte, err error) {
+// hkvConn is the bridge's per-stream handle. The owning goroutine (runHkvConn) reads inbox and writes to
+// the dialed stepkv socket; cancel tears that goroutine (and its read pump) down.
+type hkvConn struct {
+	inbox  chan []byte
+	cancel context.CancelFunc
+}
+
+func readHkvFrame(r io.Reader) (typ hkvFrameKind, cid uint32, payload []byte, err error) {
 	var hdr [9]byte
 	if _, err = io.ReadFull(r, hdr[:]); err != nil {
 		return 0, 0, nil, err
 	}
-	typ = hdr[0]
+	typ = hkvFrameKind(hdr[0])
 	cid = binary.BigEndian.Uint32(hdr[1:5])
 	ln := binary.BigEndian.Uint32(hdr[5:9])
 	if ln > hkvMaxFramePayload {
@@ -49,26 +64,24 @@ func readHkvFrame(r io.Reader) (typ byte, cid uint32, payload []byte, err error)
 	return typ, cid, payload, nil
 }
 
-func writeHkvFrame(w io.Writer, mu *sync.Mutex, typ byte, cid uint32, payload []byte) error {
+// writeHkvFrame serializes one frame in a single Write so the io.Pipe doesn't fragment header from payload.
+func writeHkvFrame(w io.Writer, mu *sync.Mutex, typ hkvFrameKind, cid uint32, payload []byte) error {
 	payLen := len(payload)
 	if payLen > hkvMaxFramePayload {
-		return fmt.Errorf("kv bridge: payload too large")
+		return errors.New("kv bridge: payload too large")
 	}
-	var hdr [9]byte
-	hdr[0] = typ
-	binary.BigEndian.PutUint32(hdr[1:5], cid)
-	binary.BigEndian.PutUint32(hdr[5:9], uint32(payLen)) // #nosec G115 -- payLen <= hkvMaxFramePayload << 2^32-1
+	buf := make([]byte, 9+payLen)
+	buf[0] = byte(typ)
+	binary.BigEndian.PutUint32(buf[1:5], cid)
+	binary.BigEndian.PutUint32(buf[5:9], uint32(payLen)) // #nosec G115 -- payLen bounded by hkvMaxFramePayload (16MiB), fits uint32
+	if payLen > 0 {
+		copy(buf[9:], payload)
+	}
 	if mu != nil {
 		mu.Lock()
 		defer mu.Unlock()
 	}
-	if _, err := w.Write(hdr[:]); err != nil {
-		return err
-	}
-	if len(payload) == 0 {
-		return nil
-	}
-	_, err := w.Write(payload)
+	_, err := w.Write(buf)
 	return err
 }
 
@@ -77,18 +90,18 @@ func writeHkvFrame(w io.Writer, mu *sync.Mutex, typ byte, cid uint32, payload []
 // exec context and waits for the bridge goroutine to finish.
 func startK8sRecipeKVExecBridge(ctx context.Context, k8c *k8sNativeClient, sess *stepkv.Session) (map[string]string, func(), error) {
 	if k8c == nil {
-		return nil, nil, fmt.Errorf("kv bridge: nil k8s client")
+		return nil, nil, errors.New("kv bridge: nil k8s client")
 	}
 	if sess == nil {
-		return nil, nil, fmt.Errorf("kv bridge: nil stepkv session")
+		return nil, nil, errors.New("kv bridge: nil stepkv session")
 	}
 	local := sess.LocalTCPAddr()
 	if local == "" {
-		return nil, nil, fmt.Errorf("kv bridge: empty stepkv dial address")
+		return nil, nil, errors.New("kv bridge: empty stepkv dial address")
 	}
 
 	pyB64 := base64.StdEncoding.EncodeToString([]byte(k8sKVExecBridgePodPy))
-	// Write script to a stable path then exec python (avoids huge argv / env limits).
+	// Avoid huge argv: stage script via base64, then exec python so the shell pid is replaced.
 	bootstrap := fmt.Sprintf(`set -e
 printf %%s %s | base64 -d > /tmp/honey-kv-bridge.py
 exec python3 -u /tmp/honey-kv-bridge.py
@@ -105,122 +118,27 @@ exec python3 -u /tmp/honey-kv-bridge.py
 	}()
 
 	ready := make(chan int, 1)
+	bridgeErrCh := make(chan error, 1)
 	bridgeDone := make(chan struct{})
-	var bridgeErr error
-	var bridgeErrMu sync.Mutex
 
-	go func() {
-		defer close(bridgeDone)
-		conns := make(map[uint32]net.Conn)
-		var connsMu sync.Mutex
-		defer func() {
-			connsMu.Lock()
-			for _, c := range conns {
-				_ = c.Close()
-			}
-			connsMu.Unlock()
-		}()
+	go runHkvBridgeLoop(execCtx, prOut, pwIn, local, ready, bridgeErrCh, bridgeDone)
 
-		br := bufio.NewReader(prOut)
-		line, err := br.ReadString('\n')
-		if err != nil {
-			bridgeErrMu.Lock()
-			bridgeErr = fmt.Errorf("kv bridge: read READY: %w", err)
-			bridgeErrMu.Unlock()
-			return
+	stop := func() {
+		cancel()
+		_ = pwOut.Close()
+		<-bridgeDone
+		_ = pwIn.Close()
+		select {
+		case <-execErr:
+		case <-time.After(5 * time.Second):
 		}
-		line = strings.TrimSpace(line)
-		const pfx = "READY "
-		if !strings.HasPrefix(line, pfx) {
-			bridgeErrMu.Lock()
-			bridgeErr = fmt.Errorf("kv bridge: bad READY line %q", line)
-			bridgeErrMu.Unlock()
-			return
-		}
-		portStr := strings.TrimSpace(strings.TrimPrefix(line, pfx))
-		port, err := strconv.Atoi(portStr)
-		if err != nil || port <= 0 || port > 65535 {
-			bridgeErrMu.Lock()
-			bridgeErr = fmt.Errorf("kv bridge: bad READY port %q", portStr)
-			bridgeErrMu.Unlock()
-			return
-		}
-		ready <- port
-
-		var stdinMu sync.Mutex
-
-		dialStepkv := func() (net.Conn, error) {
-			return net.DialTimeout("tcp", local, 15*time.Second)
-		}
-
-		for {
-			typ, cid, payload, rerr := readHkvFrame(br)
-			if rerr != nil {
-				if rerr == io.EOF || errorsIsClosedPipe(rerr) {
-					return
-				}
-				bridgeErrMu.Lock()
-				if bridgeErr == nil {
-					bridgeErr = fmt.Errorf("kv bridge: read frame: %w", rerr)
-				}
-				bridgeErrMu.Unlock()
-				return
-			}
-			switch typ {
-			case hkvFrameOpen:
-				c, derr := dialStepkv()
-				if derr != nil {
-					bridgeErrMu.Lock()
-					if bridgeErr == nil {
-						bridgeErr = fmt.Errorf("kv bridge: dial stepkv: %w", derr)
-					}
-					bridgeErrMu.Unlock()
-					_ = writeHkvFrame(pwIn, &stdinMu, hkvFrameClose, cid, nil)
-					continue
-				}
-				connsMu.Lock()
-				conns[cid] = c
-				connsMu.Unlock()
-				go pumpStepkvToPod(execCtx, &stdinMu, pwIn, cid, c)
-
-			case hkvFrameData:
-				connsMu.Lock()
-				c := conns[cid]
-				connsMu.Unlock()
-				if c == nil {
-					continue
-				}
-				if len(payload) > 0 {
-					_, _ = c.Write(payload)
-				}
-
-			case hkvFrameClose:
-				connsMu.Lock()
-				c := conns[cid]
-				delete(conns, cid)
-				connsMu.Unlock()
-				if c != nil {
-					_ = c.Close()
-				}
-
-			default:
-				// ignore unknown
-			}
-		}
-	}()
+	}
 
 	select {
 	case port := <-ready:
 		env := map[string]string{
 			"HONEY_KV_URL":   fmt.Sprintf("http://127.0.0.1:%d", port),
 			"HONEY_KV_TOKEN": sess.Token(),
-		}
-		stop := func() {
-			cancel()
-			_ = pwOut.Close()
-			<-bridgeDone
-			_ = pwIn.Close()
-			<-execErr
 		}
 		return env, stop, nil
 
@@ -232,64 +150,219 @@ exec python3 -u /tmp/honey-kv-bridge.py
 		if err != nil {
 			return nil, nil, fmt.Errorf("kv bridge: exec: %w", err)
 		}
-		bridgeErrMu.Lock()
-		e := bridgeErr
-		bridgeErrMu.Unlock()
-		if e != nil {
+		if e := drainErr(bridgeErrCh); e != nil {
 			return nil, nil, e
 		}
-		return nil, nil, fmt.Errorf("kv bridge: exec exited before READY")
+		return nil, nil, errors.New("kv bridge: exec exited before READY")
 
 	case <-bridgeDone:
 		cancel()
 		_ = pwOut.Close()
 		_ = pwIn.Close()
 		<-execErr
-		bridgeErrMu.Lock()
-		e := bridgeErr
-		bridgeErrMu.Unlock()
-		if e != nil {
+		if e := drainErr(bridgeErrCh); e != nil {
 			return nil, nil, e
 		}
-		return nil, nil, fmt.Errorf("kv bridge: bridge exited before READY")
+		return nil, nil, errors.New("kv bridge: bridge exited before READY")
 
 	case <-time.After(45 * time.Second):
-		cancel()
-		_ = pwOut.Close()
-		<-bridgeDone
-		_ = pwIn.Close()
-		<-execErr
-		return nil, nil, fmt.Errorf("kv bridge: READY timeout")
+		stop()
+		return nil, nil, errors.New("kv bridge: READY timeout")
 	}
 }
 
-func pumpStepkvToPod(ctx context.Context, stdinMu *sync.Mutex, pwIn io.Writer, cid uint32, c net.Conn) {
-	defer func() { _ = c.Close() }()
-	defer func() { _ = writeHkvFrame(pwIn, stdinMu, hkvFrameClose, cid, nil) }()
+func runHkvBridgeLoop(ctx context.Context, prOut io.Reader, pwIn io.Writer, dialAddr string, ready chan<- int, bridgeErrCh chan<- error, bridgeDone chan<- struct{}) {
+	defer close(bridgeDone)
+	conns := make(map[uint32]*hkvConn)
+	var connsMu sync.Mutex
+	defer func() {
+		connsMu.Lock()
+		for _, e := range conns {
+			e.cancel()
+		}
+		connsMu.Unlock()
+	}()
 
-	buf := make([]byte, 64*1024)
-	for {
+	fail := func(err error) {
 		select {
-		case <-ctx.Done():
-			return
+		case bridgeErrCh <- err:
 		default:
 		}
-		n, err := c.Read(buf)
-		if n > 0 {
-			if werr := writeHkvFrame(pwIn, stdinMu, hkvFrameData, cid, buf[:n]); werr != nil {
+	}
+
+	br := bufio.NewReader(prOut)
+	port, perr := readReadyLine(br)
+	if perr != nil {
+		fail(perr)
+		return
+	}
+	ready <- port
+
+	var stdinMu sync.Mutex
+	closedByUs := make(map[uint32]struct{})
+	for {
+		typ, cid, payload, rerr := readHkvFrame(br)
+		if rerr != nil {
+			if !isPipeClosedErr(rerr) {
+				fail(fmt.Errorf("kv bridge: read frame: %w", rerr))
+			}
+			return
+		}
+		dispatchHkvFrame(ctx, &connsMu, conns, closedByUs, &stdinMu, pwIn, dialAddr, typ, cid, payload, fail)
+	}
+}
+
+func readReadyLine(br *bufio.Reader) (int, error) {
+	line, err := br.ReadString('\n')
+	if err != nil {
+		return 0, fmt.Errorf("kv bridge: read READY: %w", err)
+	}
+	line = strings.TrimSpace(line)
+	const pfx = "READY "
+	if !strings.HasPrefix(line, pfx) {
+		return 0, fmt.Errorf("kv bridge: bad READY line %q", line)
+	}
+	portStr := strings.TrimSpace(strings.TrimPrefix(line, pfx))
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, fmt.Errorf("kv bridge: bad READY port %q", portStr)
+	}
+	return port, nil
+}
+
+func dispatchHkvFrame(ctx context.Context, connsMu *sync.Mutex, conns map[uint32]*hkvConn, closedByUs map[uint32]struct{}, stdinMu *sync.Mutex, pwIn io.Writer, dialAddr string, typ hkvFrameKind, cid uint32, payload []byte, fail func(error)) {
+	switch typ {
+	case hkvFrameOpen:
+		connsMu.Lock()
+		if len(conns) >= hkvMaxOpenConns {
+			connsMu.Unlock()
+			_ = writeHkvFrame(pwIn, stdinMu, hkvFrameClose, cid, nil)
+			return
+		}
+		cctx, ccancel := context.WithCancel(ctx)
+		e := &hkvConn{
+			inbox:  make(chan []byte, hkvConnInboxSize),
+			cancel: ccancel,
+		}
+		conns[cid] = e
+		connsMu.Unlock()
+		go runHkvConn(cctx, dialAddr, cid, e, stdinMu, pwIn, connsMu, conns, closedByUs, fail)
+
+	case hkvFrameData:
+		if len(payload) == 0 {
+			return
+		}
+		connsMu.Lock()
+		e := conns[cid]
+		connsMu.Unlock()
+		if e == nil {
+			return
+		}
+		select {
+		case e.inbox <- payload:
+		default:
+			// inbox full: backpressure → tear the conn down and tell the pod
+			connsMu.Lock()
+			_, alreadyClosed := closedByUs[cid]
+			if !alreadyClosed {
+				closedByUs[cid] = struct{}{}
+				delete(conns, cid)
+			}
+			connsMu.Unlock()
+			e.cancel()
+			if !alreadyClosed {
+				_ = writeHkvFrame(pwIn, stdinMu, hkvFrameClose, cid, nil)
+			}
+		}
+
+	case hkvFrameClose:
+		connsMu.Lock()
+		e := conns[cid]
+		delete(conns, cid)
+		closedByUs[cid] = struct{}{}
+		connsMu.Unlock()
+		if e != nil {
+			e.cancel()
+		}
+	}
+}
+
+func drainErr(ch <-chan error) error {
+	select {
+	case e := <-ch:
+		return e
+	default:
+		return nil
+	}
+}
+
+// runHkvConn owns one multiplexed connection end-to-end: it dials stepkv (cancellable via ctx), spawns a
+// pump goroutine for stepkv → pod, and drains inbox writing pod → stepkv. ctx cancel closes the dialed
+// conn via context.AfterFunc so both directions unwind even if the bridge read loop is wedged.
+func runHkvConn(ctx context.Context, dialAddr string, cid uint32, e *hkvConn, stdinMu *sync.Mutex, pwIn io.Writer, connsMu *sync.Mutex, conns map[uint32]*hkvConn, closedByUs map[uint32]struct{}, fail func(error)) {
+	defer func() {
+		connsMu.Lock()
+		_, alreadyClosed := closedByUs[cid]
+		if !alreadyClosed {
+			closedByUs[cid] = struct{}{}
+			delete(conns, cid)
+		}
+		connsMu.Unlock()
+		if !alreadyClosed {
+			_ = writeHkvFrame(pwIn, stdinMu, hkvFrameClose, cid, nil)
+		}
+	}()
+
+	d := net.Dialer{Timeout: hkvDialTimeout}
+	c, err := d.DialContext(ctx, "tcp", dialAddr)
+	if err != nil {
+		if ctx.Err() == nil {
+			fail(fmt.Errorf("kv bridge: dial stepkv: %w", err))
+		}
+		return
+	}
+	defer c.Close()
+
+	stopAfter := context.AfterFunc(ctx, func() { _ = c.Close() })
+	defer stopAfter()
+
+	pumpDone := make(chan struct{})
+	go func() {
+		defer close(pumpDone)
+		buf := make([]byte, 64*1024)
+		for {
+			n, rerr := c.Read(buf)
+			if n > 0 {
+				if werr := writeHkvFrame(pwIn, stdinMu, hkvFrameData, cid, buf[:n]); werr != nil {
+					return
+				}
+			}
+			if rerr != nil {
 				return
 			}
 		}
-		if err != nil {
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			<-pumpDone
 			return
+		case payload := <-e.inbox:
+			if _, werr := c.Write(payload); werr != nil {
+				_ = c.Close()
+				<-pumpDone
+				return
+			}
 		}
 	}
 }
 
-func errorsIsClosedPipe(err error) bool {
+func isPipeClosedErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, "file already closed") || strings.Contains(s, "use of closed network connection") || strings.Contains(s, "broken pipe")
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, net.ErrClosed)
 }

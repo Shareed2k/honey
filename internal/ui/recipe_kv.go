@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"sync"
@@ -13,14 +14,15 @@ import (
 )
 
 type recipeKVForward struct {
-	stop func()
-	env  map[string]string
+	stop  func()
+	env   map[string]string
+	ready chan struct{} // closed when stop/env are populated
+	err   error
 }
 
-// RecipeKVCoordinator owns one operator-side stepkv session for a cue-exec run and attaches one SSH
-// remote-forward per cached HoneyClient host key when cue-exec runs a step with kv_tunnel over SSH.
-// For Kubernetes pod targets with recipe-scoped kv_tunnel, it starts a long-lived exec bridge per pod so
-// in-pod HTTP clients reach the same stepkv session (shared namespace with SSH in the same run).
+// RecipeKVCoordinator owns one operator-side stepkv session for a cue-exec run and one forward (SSH
+// remote-forward or k8s exec bridge) per cached client key. The mutex is only held while the per-key
+// placeholder is reserved; the slow handshake runs outside the lock so parallel hosts don't serialize.
 type RecipeKVCoordinator struct {
 	mu       sync.Mutex
 	ttl      time.Duration
@@ -40,65 +42,78 @@ func NewRecipeKVCoordinator(ttl time.Duration) *RecipeKVCoordinator {
 	}
 }
 
-// EnsureKVTunnelEnv returns HONEY_KV_* for this host's remote-forward into the shared session, creating
-// the session and/or forward on first use.
+// EnsureKVTunnelEnv returns HONEY_KV_* for this host's remote-forward into the shared session.
 func (c *RecipeKVCoordinator) EnsureKVTunnelEnv(user string, r hosts.Record, hc *sshclient.HoneyClient) (map[string]string, error) {
 	if c == nil {
-		return nil, fmt.Errorf("recipe kv: nil coordinator")
+		return nil, errors.New("recipe kv: nil coordinator")
 	}
-	key := SSHClientCacheKey(user, r)
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil, fmt.Errorf("recipe kv: coordinator closed")
-	}
-	if fwd, ok := c.forwards[key]; ok {
-		return maps.Clone(fwd.env), nil
-	}
-	if c.sess == nil {
-		sess, err := stepkv.Start(c.ttl)
-		if err != nil {
-			return nil, err
-		}
-		c.sess = sess
-	}
-	env, stopForward, err := attachKVRemoteForwardToSession(hc, c.sess)
-	if err != nil {
-		return nil, err
-	}
-	c.forwards[key] = &recipeKVForward{stop: stopForward, env: env}
-	return maps.Clone(env), nil
+	return c.ensureForward(user, r, func(sess *stepkv.Session) (map[string]string, func(), error) {
+		return attachKVRemoteForwardToSession(hc, sess)
+	})
 }
 
 // EnsureK8sExecBridgeEnv returns HONEY_KV_* for this pod by multiplexing pod loopback HTTP to the shared
-// stepkv session over a long-lived kubectl exec (same key namespace as SSH for this run).
+// stepkv session over a long-lived kubectl exec.
 func (c *RecipeKVCoordinator) EnsureK8sExecBridgeEnv(user string, r hosts.Record, k8c *k8sNativeClient) (map[string]string, error) {
 	if c == nil {
-		return nil, fmt.Errorf("recipe kv: nil coordinator")
+		return nil, errors.New("recipe kv: nil coordinator")
 	}
+	return c.ensureForward(user, r, func(sess *stepkv.Session) (map[string]string, func(), error) {
+		return startK8sRecipeKVExecBridge(context.Background(), k8c, sess)
+	})
+}
+
+func (c *RecipeKVCoordinator) ensureForward(user string, r hosts.Record, attach func(*stepkv.Session) (map[string]string, func(), error)) (map[string]string, error) {
 	key := SSHClientCacheKey(user, r)
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
-		return nil, fmt.Errorf("recipe kv: coordinator closed")
+		c.mu.Unlock()
+		return nil, errors.New("recipe kv: coordinator closed")
 	}
 	if fwd, ok := c.forwards[key]; ok {
+		c.mu.Unlock()
+		<-fwd.ready
+		if fwd.err != nil {
+			return nil, fwd.err
+		}
 		return maps.Clone(fwd.env), nil
 	}
 	if c.sess == nil {
 		sess, err := stepkv.Start(c.ttl)
 		if err != nil {
+			c.mu.Unlock()
 			return nil, err
 		}
 		c.sess = sess
 	}
-	env, stopBridge, err := startK8sRecipeKVExecBridge(context.Background(), k8c, c.sess)
+	fwd := &recipeKVForward{ready: make(chan struct{})}
+	c.forwards[key] = fwd
+	sess := c.sess
+	c.mu.Unlock()
+
+	env, stop, err := attach(sess)
+	c.mu.Lock()
 	if err != nil {
-		return nil, err
+		delete(c.forwards, key)
+		fwd.err = err
+		close(fwd.ready)
+		c.mu.Unlock()
+		return nil, fmt.Errorf("recipe kv: %w", err)
 	}
-	c.forwards[key] = &recipeKVForward{stop: stopBridge, env: env}
+	if c.closed {
+		c.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
+		fwd.err = errors.New("recipe kv: coordinator closed")
+		close(fwd.ready)
+		return nil, fwd.err
+	}
+	fwd.env = env
+	fwd.stop = stop
+	close(fwd.ready)
+	c.mu.Unlock()
 	return maps.Clone(env), nil
 }
 
@@ -115,10 +130,13 @@ func (c *RecipeKVCoordinator) InvalidateHost(user string, r hosts.Record) {
 		delete(c.forwards, key)
 	}
 	c.mu.Unlock()
-	if !ok || fwd == nil || fwd.stop == nil {
+	if !ok || fwd == nil {
 		return
 	}
-	fwd.stop()
+	<-fwd.ready
+	if fwd.stop != nil {
+		fwd.stop()
+	}
 }
 
 // Close stops all remote listeners / k8s bridges and closes the stepkv session.
@@ -134,7 +152,11 @@ func (c *RecipeKVCoordinator) Close() {
 	c.closed = true
 	c.mu.Unlock()
 	for _, fwd := range old {
-		if fwd != nil && fwd.stop != nil {
+		if fwd == nil {
+			continue
+		}
+		<-fwd.ready
+		if fwd.stop != nil {
 			fwd.stop()
 		}
 	}

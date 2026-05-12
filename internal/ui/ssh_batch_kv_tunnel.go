@@ -1,44 +1,47 @@
 package ui
 
 import (
+	"errors"
+
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/sshclient"
 )
 
+var errMissingRecipeKVCoordinator = errors.New("recipe-scoped coordinator is missing")
+
 // attachHostKVTunnel resolves HONEY_KV_* for kv_tunnel on this pooled client. stopKV is non-nil only for
 // non–recipe-scoped SSH (per-exec stepkv forward); recipe-scoped SSH/k8s use the coordinator and return stopKV nil.
-func attachHostKVTunnel(client HostClient, user string, r hosts.Record, recipeScopedKV bool, recipeKV *RecipeKVCoordinator) (kv map[string]string, stopKV func(), errMsg string) {
+// The error is unprefixed; callers are expected to wrap with %q semantics if they want.
+func attachHostKVTunnel(client HostClient, user string, r hosts.Record, recipeScopedKV bool, recipeKV *RecipeKVCoordinator) (kv map[string]string, stopKV func(), err error) {
 	switch c := client.(type) {
 	case *sshclient.HoneyClient:
-		if recipeScopedKV {
-			if recipeKV == nil {
-				return nil, nil, "kv_tunnel: recipe-scoped coordinator is missing"
-			}
-			env, err := recipeKV.EnsureKVTunnelEnv(user, r, c)
-			if err != nil {
-				return nil, nil, "kv_tunnel: " + err.Error()
-			}
-			return env, nil, ""
+		if !recipeScopedKV {
+			return attachStepKVRemoteForward(c, stepKVTunnelTTL)
 		}
-		env, st, err := attachStepKVRemoteForward(c, stepKVTunnelTTL)
+		if recipeKV == nil {
+			return nil, nil, errMissingRecipeKVCoordinator
+		}
+		env, err := recipeKV.EnsureKVTunnelEnv(user, r, c)
 		if err != nil {
-			return nil, nil, "kv_tunnel: " + err.Error()
+			return nil, nil, err
 		}
-		return env, st, ""
+		return env, nil, nil
+
 	case *k8sNativeClient:
-		if recipeScopedKV && recipeKV == nil {
-			return nil, nil, "kv_tunnel: recipe-scoped coordinator is missing"
+		if !recipeScopedKV {
+			return nil, nil, nil
 		}
-		if recipeScopedKV && recipeKV != nil {
-			env, err := recipeKV.EnsureK8sExecBridgeEnv(user, r, c)
-			if err != nil {
-				return nil, nil, "kv_tunnel: " + err.Error()
-			}
-			return env, nil, ""
+		if recipeKV == nil {
+			return nil, nil, errMissingRecipeKVCoordinator
 		}
-		return nil, nil, ""
+		env, err := recipeKV.EnsureK8sExecBridgeEnv(user, r, c)
+		if err != nil {
+			return nil, nil, err
+		}
+		return env, nil, nil
+
 	default:
-		return nil, nil, "kv_tunnel is not supported for this executor"
+		return nil, nil, errors.New("kv_tunnel is not supported for this executor")
 	}
 }
 

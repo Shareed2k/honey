@@ -156,12 +156,12 @@ func runOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel b
 
 		var kv map[string]string
 		if kvTunnel {
-			var errMsg string
-			kv, stopKV, errMsg = attachHostKVTunnel(client, user, r, recipeScopedKV, recipeKV)
-			if errMsg != "" {
+			var kvErr error
+			kv, stopKV, kvErr = attachHostKVTunnel(client, user, r, recipeScopedKV, recipeKV)
+			if kvErr != nil {
 				closeSSHIfEphemeral(cache, client)
 				res.Success = false
-				res.ErrMsg = errMsg
+				res.ErrMsg = "kv_tunnel: " + kvErr.Error()
 				return res
 			}
 		}
@@ -503,12 +503,12 @@ func runOneScriptUploadRun(user string, r hosts.Record, localAbs, remotePath str
 
 		var kv map[string]string
 		if kvTunnel {
-			var errMsg string
-			kv, stopKV, errMsg = attachHostKVTunnel(client, user, r, recipeScopedKV, recipeKV)
-			if errMsg != "" {
+			var kvErr error
+			kv, stopKV, kvErr = attachHostKVTunnel(client, user, r, recipeScopedKV, recipeKV)
+			if kvErr != nil {
 				closeSSHIfEphemeral(cache, client)
 				res.Success = false
-				res.ErrMsg = errMsg
+				res.ErrMsg = "kv_tunnel: " + kvErr.Error()
 				return res
 			}
 		}
