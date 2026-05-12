@@ -295,7 +295,7 @@ func (m *model) submitAgentTransferCmd() tea.Cmd {
 			Region:   m.agentFormValues[5],
 			Endpoint: m.agentFormValues[6],
 		}
-		job, err := BuildAgentTransferJob(
+		events, err := RunAgentTransferWithFallback(
 			ctx,
 			m.fileClientCache,
 			m.sshUser,
@@ -311,11 +311,9 @@ func (m *model) submitAgentTransferCmd() tea.Cmd {
 			m.agentKeepObject,
 			maxR,
 			cloudtransfer.SigningHints{},
+			LoadTransferConfigFromConfigPath(m.configPath),
+			nil,
 		)
-		if err != nil {
-			return agentTransferDoneMsg{title: "Agent transfer", err: err.Error()}
-		}
-		events, err := ExecuteAgentCloudTransfer(job, m.fileClientCache)
 		if err != nil {
 			return agentTransferDoneMsg{title: "Agent transfer", body: formatAgentTransferEvents(events), err: err.Error()}
 		}

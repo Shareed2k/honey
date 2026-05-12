@@ -209,7 +209,60 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	if len(req.Credentials) > 0 {
 		zap.L().Warn("ignoring direct credentials in honey-managed credential mode", zap.Int("count", len(req.Credentials)))
 	}
-	job, err := ui.BuildAgentTransferJob(
+	transferCfg := ui.LoadTransferConfigFromConfigPath(s.opts.ConfigPath)
+	zap.L().Debug("web agent transfer request received",
+		zap.String("source_name", req.SourceRecord.Name),
+		zap.String("source_provider", req.SourceRecord.Provider),
+		zap.String("destination_name", req.DestRecord.Name),
+		zap.String("destination_provider", req.DestRecord.Provider),
+		zap.String("cloud_provider", strings.TrimSpace(req.Cloud.Provider)),
+		zap.String("cloud_bucket", strings.TrimSpace(req.Cloud.Bucket)),
+		zap.Bool("signed_url_mode", false),
+		zap.Bool("credential_envelope_mode", true),
+	)
+
+	if r.URL.Query().Get("stream") == "1" {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		enc := json.NewEncoder(w)
+		fl, _ := w.(http.Flusher)
+		emit := func(ev ui.AgentTransferEvent) {
+			_ = enc.Encode(ev)
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		_, err := ui.RunAgentTransferWithFallback(
+			r.Context(),
+			s.fileClientCache,
+			req.SSHUser,
+			strings.TrimSpace(req.AgentLocalPath),
+			strings.TrimSpace(s.opts.AgentBinaryPath),
+			strings.TrimSpace(s.opts.AgentBuildCacheDir),
+			strings.TrimSpace(req.AgentRemoteDir),
+			req.SourceRecord,
+			req.DestRecord,
+			req.SourcePath,
+			req.DestPath,
+			req.Cloud,
+			req.KeepObject,
+			req.MaxRetries,
+			signingHints,
+			transferCfg,
+			emit,
+		)
+		if err != nil {
+			emit(ui.AgentTransferEvent{
+				Stage:     "fatal_error",
+				Success:   false,
+				Error:     err.Error(),
+				Timestamp: time.Now().UTC(),
+			})
+		}
+		return
+	}
+
+	events, err := ui.RunAgentTransferWithFallback(
 		r.Context(),
 		s.fileClientCache,
 		req.SSHUser,
@@ -225,47 +278,9 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		req.KeepObject,
 		req.MaxRetries,
 		signingHints,
+		transferCfg,
+		nil,
 	)
-	if err != nil {
-		httpError(w, fmt.Errorf("prepare agent transfer: %w", err), http.StatusBadGateway)
-		return
-	}
-	zap.L().Debug("web agent transfer request received",
-		zap.String("source_name", job.Source.Record.Name),
-		zap.String("source_provider", job.Source.Record.Provider),
-		zap.String("destination_name", job.Destination.Record.Name),
-		zap.String("destination_provider", job.Destination.Record.Provider),
-		zap.String("cloud_provider", strings.TrimSpace(job.Cloud.Provider)),
-		zap.String("cloud_bucket", strings.TrimSpace(job.Cloud.Bucket)),
-		zap.Bool("signed_url_mode", false),
-		zap.Bool("credential_envelope_mode", true),
-		zap.Int("credential_env_count", len(job.CredentialEnv)),
-	)
-
-	if r.URL.Query().Get("stream") == "1" {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		w.WriteHeader(http.StatusOK)
-		enc := json.NewEncoder(w)
-		fl, _ := w.(http.Flusher)
-		emit := func(ev ui.AgentTransferEvent) {
-			_ = enc.Encode(ev)
-			if fl != nil {
-				fl.Flush()
-			}
-		}
-		_, err := ui.ExecuteAgentCloudTransferWithEmit(job, s.fileClientCache, emit)
-		if err != nil {
-			emit(ui.AgentTransferEvent{
-				Stage:     "fatal_error",
-				Success:   false,
-				Error:     err.Error(),
-				Timestamp: time.Now().UTC(),
-			})
-		}
-		return
-	}
-
-	events, err := ui.ExecuteAgentCloudTransfer(job, s.fileClientCache)
 	if err != nil {
 		status := http.StatusBadGateway
 		if ui.IsAgentTransferValidationError(err) {

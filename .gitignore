@@ -7,3 +7,6 @@ website/.npm-tmp/
 
 webui/node_modules/
 contrib/ansible/inventory_plugins/__pycache__
+
+# Brainstorming visual-companion artifacts (per-session mockups)
+.superpowers/

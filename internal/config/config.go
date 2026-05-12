@@ -16,9 +16,10 @@ import (
 
 // File is the optional honey YAML configuration.
 type File struct {
-	Version  int      `yaml:"version" json:"version"`
-	Defaults Defaults `yaml:"defaults" json:"defaults"`
-	Backends Backends `yaml:"backends" json:"backends"`
+	Version  int            `yaml:"version" json:"version"`
+	Defaults Defaults       `yaml:"defaults" json:"defaults"`
+	Backends Backends       `yaml:"backends" json:"backends"`
+	Transfer TransferConfig `yaml:"transfer" json:"transfer"`
 }
 
 // Defaults apply when CLI flags are unset.
@@ -236,4 +237,68 @@ func ResolveRecordDir(cfg *File, configPath string, recordDirFlag string, record
 		}
 	}
 	return strings.TrimSpace(DefaultRecordDir(configPath))
+}
+
+// TransferConfig controls the agent-transfer code path. Zero values mean "use
+// defaults" — call WithDefaults() to materialize.
+type TransferConfig struct {
+	PresignedMaxSize        string `yaml:"presigned_max_size,omitempty" json:"presigned_max_size,omitempty"`
+	MultipartThreshold      string `yaml:"multipart_threshold,omitempty" json:"multipart_threshold,omitempty"`
+	PresignedURLTTL         string `yaml:"presigned_url_ttl,omitempty" json:"presigned_url_ttl,omitempty"`
+	PresignedRetryWithAgent *bool  `yaml:"presigned_retry_with_agent,omitempty" json:"presigned_retry_with_agent,omitempty"`
+	ForceAgentPath          bool   `yaml:"force_agent_path,omitempty" json:"force_agent_path,omitempty"`
+}
+
+// TransferConfigEffective is the post-defaults form used by callers.
+type TransferConfigEffective struct {
+	PresignedMaxSizeBytes   int64
+	MultipartThresholdBytes int64
+	PresignedURLTTL         time.Duration
+	PresignedRetryWithAgent bool
+	ForceAgentPath          bool
+}
+
+// WithDefaults returns an effective config, parsing strings to bytes / durations
+// and substituting defaults for unset fields.
+func (c TransferConfig) WithDefaults() TransferConfigEffective {
+	const (
+		defaultMaxSize            int64 = 5 << 30
+		defaultMultipartThreshold int64 = 64 << 20
+		defaultURLTTL                   = time.Hour
+		minURLTTL                       = 5 * time.Minute
+		maxURLTTL                       = 24 * time.Hour
+	)
+
+	out := TransferConfigEffective{
+		PresignedMaxSizeBytes:   defaultMaxSize,
+		MultipartThresholdBytes: defaultMultipartThreshold,
+		PresignedURLTTL:         defaultURLTTL,
+		PresignedRetryWithAgent: true,
+		ForceAgentPath:          c.ForceAgentPath,
+	}
+	if c.PresignedMaxSize != "" {
+		if n, err := ParseBytes(c.PresignedMaxSize); err == nil && n > 0 {
+			out.PresignedMaxSizeBytes = n
+		}
+	}
+	if c.MultipartThreshold != "" {
+		if n, err := ParseBytes(c.MultipartThreshold); err == nil && n > 0 {
+			out.MultipartThresholdBytes = n
+		}
+	}
+	if c.PresignedURLTTL != "" {
+		if d, err := time.ParseDuration(c.PresignedURLTTL); err == nil && d > 0 {
+			if d < minURLTTL {
+				d = minURLTTL
+			}
+			if d > maxURLTTL {
+				d = maxURLTTL
+			}
+			out.PresignedURLTTL = d
+		}
+	}
+	if c.PresignedRetryWithAgent != nil {
+		out.PresignedRetryWithAgent = *c.PresignedRetryWithAgent
+	}
+	return out
 }

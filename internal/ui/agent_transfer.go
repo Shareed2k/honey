@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/transferagent/presign"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +39,8 @@ type AgentCloudBackend struct {
 // AgentTransferJob describes one A->cloud->B transfer orchestration request.
 type AgentTransferJob struct {
 	SSHUser                 string                `json:"ssh_user"`
+	ResolvedSourceUser      string                `json:"resolved_source_user"`
+	ResolvedDestUser        string                `json:"resolved_dest_user"`
 	AgentLocalPath          string                `json:"agent_local_path"`
 	SourceAgentLocalPath    string                `json:"source_agent_local_path,omitempty"`
 	DestAgentLocalPath      string                `json:"dest_agent_local_path,omitempty"`
@@ -49,6 +53,12 @@ type AgentTransferJob struct {
 	CredentialExpiresAtUnix int64                 `json:"credential_expires_at_unix,omitempty"`
 	KeepObject              bool                  `json:"keep_object,omitempty"`
 	MaxRetries              int                   `json:"max_retries,omitempty"`
+	// CurlPlan is non-nil when the curl-based presigned-URL transport should be
+	// used instead of the staged-agent path. See docs/superpowers/specs/2026-05-12-presigned-url-transfer-path-design.md.
+	CurlPlan *presign.Plan `json:"-"`
+	// RetryWithAgentOnCurlFailure controls whether a curl-path failure transparently
+	// retries via the agent path.
+	RetryWithAgentOnCurlFailure bool `json:"retry_with_agent_on_curl_failure,omitempty"`
 }
 
 // AgentTransferEvent is emitted for each orchestration stage.
@@ -61,6 +71,29 @@ type AgentTransferEvent struct {
 	Attempt   int       `json:"attempt,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
+
+// Curl-path stage names. Emitted as the Stage field on AgentTransferEvent
+// during the presigned-URL transfer path. See docs/superpowers/specs/2026-05-12-presigned-url-transfer-path-design.md.
+const (
+	StagePresignPlan           = "presign_plan"
+	StagePresignPlanFailed     = "presign_plan_failed"
+	StageCurlDetect            = "curl_detect"
+	StageCurlDetectFailed      = "curl_detect_failed"
+	StageCurlPutStart          = "curl_put_start"
+	StageCurlPut               = "curl_put"
+	StageCurlPutFailed         = "presign_put_failed"
+	StageCurlGetStart          = "curl_get_start"
+	StageCurlGet               = "curl_get"
+	StageCurlGetFailed         = "presign_get_failed"
+	StagePresignMultipartStart = "presign_multipart_start"
+	StagePresignMultipart      = "presign_multipart"
+	StagePresignMultipartAbort = "presign_multipart_aborted"
+	StagePresignComplete       = "presign_complete"
+	StagePresignCompleteFailed = "presign_complete_failed"
+	StagePresignCleanup        = "presign_cleanup"
+	StagePresignCleanupFailed  = "presign_cleanup_failed"
+	StagePresignFallback       = "presign_falling_back_to_agent"
+)
 
 // AgentTransferValidationError indicates user/input issues (HTTP 400).
 type AgentTransferValidationError struct {
@@ -409,7 +442,7 @@ func validateAgentTransferJob(job AgentTransferJob) error {
 	if strings.TrimSpace(job.Destination.Record.PrimaryIP) == "" && !isK8sPodRecord(job.Destination.Record) {
 		return newAgentTransferValidationError("destination record has no connectable target")
 	}
-	if strings.TrimSpace(job.AgentLocalPath) == "" {
+	if job.CurlPlan == nil && strings.TrimSpace(job.AgentLocalPath) == "" {
 		return newAgentTransferValidationError("agent_local_path is required")
 	}
 	if strings.TrimSpace(job.Source.Path) == "" {
@@ -485,10 +518,154 @@ func stageSourceDestinationAgents(
 	return dstStageErr
 }
 
+// executeCurlPath drives a single transfer using only curl on the remotes,
+// with the operator-generated presigned URLs from job.CurlPlan. Emits stage
+// events for each phase. Cleanup (DeleteObject) runs in a deferred best-effort
+// pass regardless of success.
+func executeCurlPath(job AgentTransferJob, cache *ClientCache, emit func(AgentTransferEvent)) error {
+	plan := job.CurlPlan
+	if plan == nil {
+		return fmt.Errorf("executeCurlPath: nil plan")
+	}
+	defer func() {
+		if plan.Cleanup == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := plan.Cleanup(ctx); err != nil {
+			emit(AgentTransferEvent{Stage: StagePresignCleanupFailed, Success: false, Error: err.Error()})
+		} else {
+			emit(AgentTransferEvent{Stage: StagePresignCleanup, Success: true})
+		}
+	}()
+
+	srcKey := SSHClientCacheKey(job.ResolvedSourceUser, job.Source.Record)
+	dstKey := SSHClientCacheKey(job.ResolvedDestUser, job.Destination.Record)
+
+	// Upload phase: single or multipart.
+	if len(plan.UploadParts) == 1 {
+		emit(AgentTransferEvent{Stage: StageCurlPutStart, Host: srcKey, Success: true, Message: "single-PUT"})
+		script := buildSinglePutScript(job.Source.Path, plan.UploadParts[0], plan.PartSize)
+		if out, err := runOneShotRemote(cache, srcKey, script); err != nil {
+			emit(AgentTransferEvent{Stage: StageCurlPutFailed, Host: srcKey, Success: false, Error: err.Error(), Message: "stdout: " + out})
+			return fmt.Errorf("curl put: %w, output: %s", err, out)
+		}
+		emit(AgentTransferEvent{Stage: StageCurlPut, Host: srcKey, Success: true})
+	} else {
+		emit(AgentTransferEvent{Stage: StagePresignMultipartStart, Host: srcKey, Success: true, Message: fmt.Sprintf("%d parts", len(plan.UploadParts))})
+		script := buildMultipartScript(job.Source.Path, plan.PartSize, plan.UploadParts)
+		out, err := runOneShotRemote(cache, srcKey, script)
+		if err != nil {
+			_ = abortMultipartIfS3(plan, job.Cloud)
+			emit(AgentTransferEvent{Stage: StagePresignMultipartAbort, Host: srcKey, Success: false, Error: err.Error(), Message: "stdout: " + out})
+			return fmt.Errorf("multipart upload: %w, output: %s", err, out)
+		}
+		tags, perr := parseMultipartEtags(out, len(plan.UploadParts))
+		if perr != nil {
+			_ = abortMultipartIfS3(plan, job.Cloud)
+			emit(AgentTransferEvent{Stage: StagePresignMultipartAbort, Host: srcKey, Success: false, Error: perr.Error()})
+			return fmt.Errorf("parse etags: %w", perr)
+		}
+		if plan.Complete != nil {
+			copy(plan.Complete.PartTags, tags)
+		}
+		if err := completeMultipart(plan, job.Cloud); err != nil {
+			emit(AgentTransferEvent{Stage: StagePresignCompleteFailed, Success: false, Error: err.Error()})
+			return fmt.Errorf("complete multipart: %w", err)
+		}
+		emit(AgentTransferEvent{Stage: StagePresignComplete, Success: true})
+	}
+
+	// Download phase.
+	emit(AgentTransferEvent{Stage: StageCurlGetStart, Host: dstKey, Success: true})
+	dlScript := buildDownloadScript(job.Destination.Path, plan.Download)
+	if out, err := runOneShotRemote(cache, dstKey, dlScript); err != nil {
+		emit(AgentTransferEvent{Stage: StageCurlGetFailed, Host: dstKey, Success: false, Error: err.Error(), Message: "stdout: " + out})
+		return fmt.Errorf("curl get: %w, output: %s", err, out)
+	}
+	emit(AgentTransferEvent{Stage: StageCurlGet, Host: dstKey, Success: true})
+	return nil
+}
+
+// completeMultipart finalizes a multipart upload after the operator has all
+// per-part ETags. No-op for non-S3 providers.
+func completeMultipart(plan *presign.Plan, cloud AgentCloudBackend) error {
+	if plan.Provider != "s3" || plan.Complete == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cli, err := presign.DefaultS3Client(ctx, presign.Cloud{
+		Bucket: cloud.Bucket, Object: cloud.Object, Region: cloud.Region, Endpoint: cloud.Endpoint,
+	})
+	if err != nil {
+		return err
+	}
+	return presign.CompleteS3Multipart(ctx, cli, presign.Cloud{
+		Bucket: cloud.Bucket, Object: cloud.Object, Region: cloud.Region, Endpoint: cloud.Endpoint,
+	}, plan.Complete)
+}
+
+// abortMultipartIfS3 calls AbortMultipartUpload when the in-flight plan is S3 multipart.
+func abortMultipartIfS3(plan *presign.Plan, cloud AgentCloudBackend) error {
+	if plan.Provider != "s3" || plan.Complete == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cli, err := presign.DefaultS3Client(ctx, presign.Cloud{
+		Bucket: cloud.Bucket, Object: cloud.Object, Region: cloud.Region, Endpoint: cloud.Endpoint,
+	})
+	if err != nil {
+		return err
+	}
+	return presign.AbortS3Multipart(ctx, cli, presign.Cloud{
+		Bucket: cloud.Bucket, Object: cloud.Object, Region: cloud.Region, Endpoint: cloud.Endpoint,
+	}, plan.Complete.UploadID)
+}
+
 // ExecuteAgentCloudTransfer orchestrates source upload and destination download using
 // ephemeral transfer agents over existing HostClient connections (SSH / k8s pod exec abstraction).
 func ExecuteAgentCloudTransfer(job AgentTransferJob, cache *ClientCache) ([]AgentTransferEvent, error) {
 	return ExecuteAgentCloudTransferWithEmit(job, cache, nil)
+}
+
+// runCurlPathBranch runs the curl-path transfer when job.CurlPlan != nil, emitting
+// events through both emit and the appended events slice. Returns the accumulated
+// events and any error from the curl path; on failure with
+// RetryWithAgentOnCurlFailure, surfaces a clear fallback event explaining that
+// re-orchestration is required.
+func runCurlPathBranch(job AgentTransferJob, cache *ClientCache, emit func(AgentTransferEvent)) ([]AgentTransferEvent, error) {
+	var events []AgentTransferEvent
+	emitWrap := func(ev AgentTransferEvent) {
+		if ev.Timestamp.IsZero() {
+			ev.Timestamp = time.Now().UTC()
+		}
+		events = append(events, ev)
+		if emit != nil {
+			emit(ev)
+		}
+	}
+	curlErr := executeCurlPath(job, cache, emitWrap)
+	if curlErr == nil {
+		return events, nil
+	}
+	if !job.RetryWithAgentOnCurlFailure {
+		return events, curlErr
+	}
+	// Fall-back to the agent path would require re-resolving agent binaries
+	// that the curl branch deliberately skipped. The cleanest place to do
+	// that is one layer up at the orchestrator (web handler / CLI command),
+	// where BuildAgentTransferJob can be re-invoked with ForceAgentPath=true.
+	// Surface a clear final event and return the original error so the caller
+	// can decide whether to re-orchestrate.
+	emitWrap(AgentTransferEvent{
+		Stage:   StagePresignFallback,
+		Success: false,
+		Error:   "retry-with-agent requires re-orchestration with ForceAgentPath=true; original error: " + curlErr.Error(),
+	})
+	return events, curlErr
 }
 
 // ExecuteAgentCloudTransferWithEmit runs the transfer and calls emit for each event.
@@ -497,6 +674,9 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	transferStart := time.Now()
 	if err := validateAgentTransferJob(job); err != nil {
 		return events, err
+	}
+	if job.CurlPlan != nil {
+		return runCurlPathBranch(job, cache, emit)
 	}
 	objectKey := strings.TrimSpace(job.Cloud.Object)
 	user := strings.TrimSpace(job.SSHUser)

@@ -11,7 +11,7 @@ import (
 )
 
 // DetectTransferTargetRuntime runs uname on the host to determine GOOS/GOARCH for agent binaries.
-func DetectTransferTargetRuntime(cache *ClientCache, sshUser string, rec hosts.Record) (string, string, error) {
+func DetectTransferTargetRuntime(cache *ClientCache, sshUser string, rec hosts.Record) (string, string, string, error) {
 	user := strings.TrimSpace(sshUser)
 	if user == "" {
 		user = strings.TrimSpace(os.Getenv("USER"))
@@ -31,7 +31,7 @@ func DetectTransferTargetRuntime(cache *ClientCache, sshUser string, rec hosts.R
 				time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
 				continue
 			}
-			return "", "", err
+			return "", "", user, err
 		}
 		raw, err = client.Run("uname -s; uname -m")
 		if err != nil {
@@ -40,20 +40,20 @@ func DetectTransferTargetRuntime(cache *ClientCache, sshUser string, rec hosts.R
 				time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
 				continue
 			}
-			return "", "", err
+			return "", "", user, err
 		}
 		break
 	}
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	if len(lines) < 2 {
-		return "", "", fmt.Errorf("unexpected uname output: %q", strings.TrimSpace(string(raw)))
+		return "", "", user, fmt.Errorf("unexpected uname output: %q", strings.TrimSpace(string(raw)))
 	}
 	goos := strings.ToLower(strings.TrimSpace(lines[0]))
 	goarch := strings.ToLower(strings.TrimSpace(lines[1]))
 	switch goos {
 	case "linux", "darwin":
 	default:
-		return "", "", fmt.Errorf("unsupported target os: %q", goos)
+		return "", "", user, fmt.Errorf("unsupported target os: %q", goos)
 	}
 	switch goarch {
 	case "x86_64":
@@ -62,15 +62,16 @@ func DetectTransferTargetRuntime(cache *ClientCache, sshUser string, rec hosts.R
 		goarch = "arm64"
 	case "amd64", "arm64":
 	default:
-		return "", "", fmt.Errorf("unsupported target arch: %q", goarch)
+		return "", "", user, fmt.Errorf("unsupported target arch: %q", goarch)
 	}
 	zap.L().Debug("detected transfer target runtime",
 		zap.String("host_name", rec.Name),
 		zap.String("provider", rec.Provider),
 		zap.String("goos", goos),
 		zap.String("goarch", goarch),
+		zap.String("resolved_user", user),
 	)
-	return goos, goarch, nil
+	return goos, goarch, user, nil
 }
 
 // TransferStagingObjectKey builds a unique object key when the caller leaves cloud.Object empty.

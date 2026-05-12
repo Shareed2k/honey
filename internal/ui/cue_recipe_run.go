@@ -33,6 +33,20 @@ func LoadAISystemPromptFromConfigPath(configPath string) string {
 	return strings.TrimSpace(f.Defaults.AISystemPrompt)
 }
 
+// LoadTransferConfigFromConfigPath returns the effective transfer config from the
+// honey YAML at path. If path is empty or the file fails to load, returns defaults.
+func LoadTransferConfigFromConfigPath(configPath string) config.TransferConfigEffective {
+	p := strings.TrimSpace(configPath)
+	if p == "" {
+		return (config.TransferConfig{}).WithDefaults()
+	}
+	f, err := config.Load(p)
+	if err != nil || f == nil {
+		return (config.TransferConfig{}).WithDefaults()
+	}
+	return f.Transfer.WithDefaults()
+}
+
 // StreamCueRecipeSteps executes a CUE recipe step-by-step, streaming results.
 // configPath is the resolved honey YAML path (may be empty); agent_transfer steps with cloud_backend_ref require it.
 // aiSystemPromptFromCfg is defaults.ai_system_prompt (already loaded), used only for the terminal ai step.
@@ -648,20 +662,10 @@ func streamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, ssh
 		}
 		return []HostExecResult{res}, fmt.Errorf("step %d: %w", i, err)
 	}
-	job, err := BuildAgentTransferJob(ctx, cache, sshUser, "", "", "", strings.TrimSpace(at.AgentRemoteDir),
+	events, err := RunAgentTransferWithFallback(ctx, cache, sshUser, "", "", "", strings.TrimSpace(at.AgentRemoteDir),
 		src, dst, strings.TrimSpace(at.SourcePath), strings.TrimSpace(at.DestPath),
-		cloud, at.KeepObject, at.MaxRetries, hints)
-	if err != nil {
-		res := HostExecResult{
-			Name:     fmt.Sprintf("Step %d | agent_transfer %s → %s", i+1, strings.TrimSpace(src.Name), strings.TrimSpace(dst.Name)),
-			IP:       strings.TrimSpace(src.PrimaryIP),
-			Provider: src.Provider,
-			Success:  false,
-			ErrMsg:   err.Error(),
-		}
-		return []HostExecResult{res}, fmt.Errorf("step %d: %w", i, err)
-	}
-	events, err := ExecuteAgentCloudTransfer(job, cache)
+		cloud, at.KeepObject, at.MaxRetries, hints,
+		LoadTransferConfigFromConfigPath(configPath), nil)
 	outStr := summarizeAgentTransferEvents(events)
 	resName := fmt.Sprintf("agent_transfer %s → %s", strings.TrimSpace(src.Name), strings.TrimSpace(dst.Name))
 	if err != nil {

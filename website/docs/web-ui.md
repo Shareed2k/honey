@@ -78,6 +78,47 @@ If the embedded version is empty or `0.0.0-dev`, Honey falls back to **`…/rele
 
 Download runs **after** a failed local build (or when the module root cannot be found). It is **not** used when `upx` packing is enabled for the agent cache (`HONEY_TRANSFER_AGENT_DISABLE_UPX` unset and `upx` on `PATH`). You can still set **`HONEY_TRANSFER_AGENT`** to a local binary to skip both build and download.
 
+#### Presigned-URL transfer path
+
+By default, `honey` orchestrates host↔host file transfers via cloud staging using
+presigned S3/GCS URLs and `curl` on each remote, with the Go `honey-transfer-agent`
+binary kept as a fallback. This eliminates the per-transfer upload of the agent
+binary on hosts that have `curl`, `dd`, and `awk` installed.
+
+**Config:**
+
+```yaml
+transfer:
+  presigned_max_size: 5GiB           # files above this fall back to the agent path
+  multipart_threshold: 64MiB         # single PUT below, multipart above
+  presigned_url_ttl: 1h              # URL validity window (clamped 5m..24h)
+  presigned_retry_with_agent: true   # transparent fallback on curl failure
+  force_agent_path: false            # set true to disable the curl path globally
+```
+
+**Recommended bucket lifecycle rule:** the curl path tries to `DeleteObject`
+after each transfer, but lifecycle rules catch any stragglers from operator
+crashes:
+
+```bash
+# S3: expire the honey-transfer/ prefix after 24h
+aws s3api put-bucket-lifecycle-configuration \
+    --bucket "<bucket>" \
+    --lifecycle-configuration '{"Rules":[{
+        "ID":"honey-transfer-staging",
+        "Status":"Enabled",
+        "Filter":{"Prefix":"honey-transfer/"},
+        "Expiration":{"Days":1}
+    }]}'
+```
+
+**Fallback conditions:** the curl path is bypassed (agent path used instead) when:
+
+- `force_agent_path: true` is set,
+- the source or destination host is missing `curl`, `dd`, or `awk`,
+- the file size exceeds `presigned_max_size`,
+- the cloud SDK fails to sign a URL (e.g., GCS without a service-account key file).
+
 ### CUE recipes
 
 - Open and run recipes from the UI (same semantics as `honey cue-exec`), including optional **`agent_transfer`** steps (A→cloud→B); the server passes its configured honey YAML path for `cloud_backend_ref` signing, like **`POST /api/v1/files/agent-transfer`**.
