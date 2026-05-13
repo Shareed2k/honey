@@ -13,8 +13,8 @@ import (
 
 // Limits for loading a full recording into memory (aligned with HTTP API).
 const (
-	MaxPlayBytes  = 8 << 20
-	MaxPlayEvents = 30000
+	MaxPlayEvents = 10000000 // sanity limit for parsing
+	MaxPlayBytes  = 128 << 20 // 128 MB limit for a single recording
 )
 
 // Event is one JSONL line in a .hrec.jsonl file.

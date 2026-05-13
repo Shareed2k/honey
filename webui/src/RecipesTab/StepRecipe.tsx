@@ -50,19 +50,31 @@ export function StepRecipe(props: Props) {
             No recent cue-exec recordings yet (or session recording is disabled).
           </p>
         ) : (
-          <ul className="rcp-list">
-            {recent.map((r) => (
-              <li key={r.recording_id}>
-                <button type="button" className="rcp-link" onClick={() => props.onPickRecent(r)}>
-                  {r.recipe_name}
-                  {r.edited ? <em> (edited)</em> : null}
-                </button>
-                <span className="rcp-list__meta">
-                  {r.host_count} host{r.host_count === 1 ? '' : 's'} · {timeAgo(r.started_at)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div className="rcp-table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Recipe Name</th>
+                  <th>Hosts</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((r) => (
+                  <tr key={r.recording_id}>
+                    <td>
+                      <button type="button" className="rcp-link" onClick={() => props.onPickRecent(r)}>
+                        {r.recipe_name}
+                        {r.edited ? <em> (edited)</em> : null}
+                      </button>
+                    </td>
+                    <td className="rcp-list__meta">{r.host_count} host{r.host_count === 1 ? '' : 's'}</td>
+                    <td className="rcp-list__meta">{timeAgo(r.started_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -71,58 +83,95 @@ export function StepRecipe(props: Props) {
         {drafts.length === 0 ? (
           <p className="rcp-empty">No drafts saved yet. Edit a recipe on step ③ to save one.</p>
         ) : (
-          <ul className="rcp-list">
-            {drafts.map((d) => (
-              <li key={d.id}>
-                <button type="button" className="rcp-link" onClick={() => props.onPickDraft(d)}>
-                  {d.name}
-                </button>
-                <span className="rcp-list__meta">
-                  from {basename(d.baseRecipePath)} · {timeAgo(d.modifiedAt)}
-                </span>
-                <button
-                  type="button"
-                  className="rcp-btn rcp-btn--ghost"
-                  onClick={() => {
-                    deleteDraft(d.id);
-                    setDrafts(loadDrafts());
-                  }}
-                >
-                  delete
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="rcp-table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Base Recipe</th>
+                  <th>Time</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {drafts.map((d) => (
+                  <tr key={d.id}>
+                    <td>
+                      <button type="button" className="rcp-link" onClick={() => props.onPickDraft(d)}>
+                        {d.name}
+                      </button>
+                    </td>
+                    <td className="rcp-list__meta">{basename(d.baseRecipePath)}</td>
+                    <td className="rcp-list__meta">{timeAgo(d.modifiedAt)}</td>
+                    <td>
+                      <div className="rcp-table__actions">
+                        <button
+                          type="button"
+                          className="rcp-btn rcp-btn--ghost rcp-btn--small"
+                          onClick={() => {
+                            deleteDraft(d.id);
+                            setDrafts(loadDrafts());
+                          }}
+                        >
+                          delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
       <section className="rcp-panel">
         <h3>Recipes on disk</h3>
-        <ul className="rcp-list">
-          {recipes.map((rp) => (
-            <li key={rp.path}>
-              <button type="button" className="rcp-link" onClick={() => props.onPickDisk(rp.path)}>
-                {rp.name}
-              </button>
-              <span>
-                <button
-                  type="button"
-                  className="rcp-btn rcp-btn--ghost"
-                  onClick={() => props.onViewSource(rp.path, rp.name)}
-                >
-                  view source
-                </button>
-                <button
-                  type="button"
-                  className="rcp-btn rcp-btn--ghost"
-                  onClick={() => props.onAiAssist(rp.path, rp.name)}
-                >
-                  AI assist
-                </button>
-              </span>
-            </li>
-          ))}
-        </ul>
+        {recipes.length === 0 ? (
+          <p className="rcp-empty">No recipes found on disk.</p>
+        ) : (
+          <div className="rcp-table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Path</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recipes.map((rp) => (
+                  <tr key={rp.path}>
+                    <td>
+                      <button type="button" className="rcp-link" onClick={() => props.onPickDisk(rp.path)}>
+                        {rp.name}
+                      </button>
+                    </td>
+                    <td className="rcp-list__meta">{rp.path}</td>
+                    <td>
+                      <div className="rcp-table__actions">
+                        <button
+                          type="button"
+                          className="rcp-btn rcp-btn--ghost rcp-btn--small"
+                          onClick={() => props.onViewSource(rp.path, rp.name)}
+                        >
+                          view source
+                        </button>
+                        <button
+                          type="button"
+                          className="rcp-btn rcp-btn--ghost rcp-btn--small"
+                          onClick={() => props.onAiAssist(rp.path, rp.name)}
+                        >
+                          AI assist
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <footer className="rcp-step__footer">

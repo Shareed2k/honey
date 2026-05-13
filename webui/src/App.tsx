@@ -310,6 +310,8 @@ export function App() {
   const [execBusy, setExecBusy] = useState(false);
   const [execErr, setExecErr] = useState<string | null>(null);
   const [execResults, setExecResults] = useState<HostExecResultRow[] | null>(null);
+  const [execCurrentPage, setExecCurrentPage] = useState(1);
+  const EXEC_PAGE_SIZE = 10;
 
   const [recipePreview, setRecipePreview] = useState<{ title: string; content: string } | null>(null);
 
@@ -601,6 +603,7 @@ export function App() {
   const clearExecOutput = () => {
     setExecErr(null);
     setExecResults(null);
+    setExecCurrentPage(1);
   };
   const submitAgentTransfer = async () => {
     const sourceHost = transferHostOptions.find((r) => recordKey(r) === transferSourceHostKey);
@@ -688,6 +691,7 @@ export function App() {
     setExecBusy(true);
     setExecErr(null);
     setExecResults([]);
+    setExecCurrentPage(1);
     try {
       await execOnHostsStream(
         {
@@ -1259,43 +1263,73 @@ export function App() {
             >
               {execBusy ? 'Running…' : `Run on ${selectedRecords.length} host(s)`}
             </button>
-            <button type="button" style={{ marginLeft: '0.5rem' }} onClick={() => clearExecOutput()}>
+            <button type="button" className="primary" style={{ marginLeft: '0.5rem' }} onClick={() => clearExecOutput()}>
               Clear results
             </button>
             {execErr ? <p style={{ color: '#f66', marginTop: '0.5rem', marginBottom: 0 }}>{execErr}</p> : null}
             {execResults ? (
-              <div style={{ marginTop: '0.65rem', overflowX: 'auto' }}>
-                <table style={{ fontSize: '0.8rem' }}>
-                  <thead>
-                    <tr>
-                      <th>Host</th>
-                      <th>OK</th>
-                      <th>Exit</th>
-                      <th>Output / error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {execResults.length === 0 ? (
+              <div style={{ marginTop: '0.65rem' }}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ fontSize: '0.8rem', width: '100%' }}>
+                    <thead>
                       <tr>
-                        <td colSpan={4} style={{ opacity: 0.8 }}>
-                          {execBusy ? 'Waiting for results…' : 'No results.'}
-                        </td>
+                        <th>Host</th>
+                        <th>OK</th>
+                        <th>Exit</th>
+                        <th>Output / error</th>
                       </tr>
-                    ) : null}
-                    {execResults.map((row, i) => (
-                      <tr key={`${row.Name}-${i}`}>
-                        <td>{row.Name}</td>
-                        <td>{row.Success ? 'yes' : 'no'}</td>
-                        <td>{row.ExitCode}</td>
-                        <td style={{ maxWidth: 420, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {row.ErrMsg ? <span style={{ color: '#f66' }}>{row.ErrMsg}</span> : null}
-                          {row.ErrMsg && row.Output ? '\n' : null}
-                          {row.Output}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {execResults.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} style={{ opacity: 0.8 }}>
+                            {execBusy ? 'Waiting for results…' : 'No results.'}
+                          </td>
+                        </tr>
+                      ) : null}
+                      {execResults
+                        .slice((execCurrentPage - 1) * EXEC_PAGE_SIZE, execCurrentPage * EXEC_PAGE_SIZE)
+                        .map((row, i) => (
+                        <tr key={`${row.Name}-${i}`}>
+                          <td>{row.Name}</td>
+                          <td>{row.Success ? 'yes' : 'no'}</td>
+                          <td>{row.ExitCode}</td>
+                          <td style={{ maxWidth: 420, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {row.ErrMsg ? <span style={{ color: '#f66' }}>{row.ErrMsg}</span> : null}
+                            {row.ErrMsg && row.Output ? '\n' : null}
+                            {row.Output}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {execResults.length > EXEC_PAGE_SIZE ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                    <div style={{ opacity: 0.8 }}>
+                      Showing {(execCurrentPage - 1) * EXEC_PAGE_SIZE + 1} to {Math.min(execCurrentPage * EXEC_PAGE_SIZE, execResults.length)} of {execResults.length} results
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        disabled={execCurrentPage <= 1}
+                        onClick={() => setExecCurrentPage(p => p - 1)}
+                      >
+                        ← Prev
+                      </button>
+                      <span>
+                        Page {execCurrentPage} of {Math.ceil(execResults.length / EXEC_PAGE_SIZE)}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={execCurrentPage >= Math.ceil(execResults.length / EXEC_PAGE_SIZE)}
+                        onClick={() => setExecCurrentPage(p => p + 1)}
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

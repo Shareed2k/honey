@@ -63,3 +63,34 @@
   .rcp-step__footer .rcp-btn { width: 100%; }
   .rcp-env__row { grid-template-columns: 1fr; }
 }
+
+.rcp-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.9em;
+}
+
+.rcp-table th {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-color, #ccc);
+  color: var(--text-muted, #666);
+  font-weight: 500;
+}
+
+.rcp-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-color, #eee);
+  vertical-align: middle;
+}
+
+.rcp-table tr:last-child td {
+  border-bottom: none;
+}
+
+.rcp-table__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}

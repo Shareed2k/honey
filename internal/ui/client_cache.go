@@ -97,7 +97,7 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 }
 
 // getByKey returns the cached client for an SSHClientCacheKey, or nil if absent.
-// Used by the curl-path runner to reuse already-pooled SSH connections.
+// Used by the fallback-path runner to reuse already-pooled SSH connections.
 func (c *ClientCache) getByKey(key string) HostClient {
 	if c == nil {
 		return nil

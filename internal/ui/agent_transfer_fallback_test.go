@@ -17,25 +17,36 @@ func (s stubRunner) RunRemoteCmd(_ string, _ string) (string, error) {
 	return s.out, s.err
 }
 
-func TestDetectCurlCapability_present(t *testing.T) {
-	r := stubRunner{out: "/usr/bin/curl /usr/bin/dd /usr/bin/awk\n", err: nil}
-	ok, err := detectCurlCapabilityViaRunner(r, "alice@host1-present")
+func TestDetectFallbackCapability_present_python(t *testing.T) {
+	r := stubRunner{out: "python3\n", err: nil}
+	cap, err := detectFallbackCapabilityViaRunner(r, "alice@host1-python")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if !ok {
-		t.Fatal("expected curl-capable host")
+	if cap != "python3" {
+		t.Fatalf("expected python3, got %q", cap)
 	}
 }
 
-func TestDetectCurlCapability_missing(t *testing.T) {
+func TestDetectFallbackCapability_present_curl(t *testing.T) {
+	r := stubRunner{out: "curl\n", err: nil}
+	cap, err := detectFallbackCapabilityViaRunner(r, "alice@host1-curl")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if cap != "curl" {
+		t.Fatalf("expected curl, got %q", cap)
+	}
+}
+
+func TestDetectFallbackCapability_missing(t *testing.T) {
 	r := stubRunner{out: "", err: errors.New("exit status 1")}
-	ok, err := detectCurlCapabilityViaRunner(r, "alice@host1-missing")
+	cap, err := detectFallbackCapabilityViaRunner(r, "alice@host1-missing")
 	if err != nil {
 		t.Fatalf("err should be nil for clean miss, got: %v", err)
 	}
-	if ok {
-		t.Fatal("expected non-curl-capable host")
+	if cap != "" {
+		t.Fatalf("expected empty capability, got %q", cap)
 	}
 }
 
@@ -44,7 +55,7 @@ func TestBuildSinglePutScript(t *testing.T) {
 		Method: "PUT",
 		URL:    "https://test-bucket.s3.amazonaws.com/honey-transfer/abc.bin?X-Amz-Signature=...",
 	}
-	script := buildSinglePutScript("/data/file.bin", u, 12345)
+	script := buildSinglePutScript("curl", "/data/file.bin", u, 12345)
 	if !strings.Contains(script, "curl -fsSL -f") {
 		t.Fatal("missing curl flags")
 	}
@@ -60,11 +71,19 @@ func TestBuildSinglePutScript(t *testing.T) {
 	if !strings.Contains(script, u.URL) {
 		t.Fatal("missing URL")
 	}
+
+	pyScript := buildSinglePutScript("python3", "/data/file.bin", u, 12345)
+	if !strings.Contains(pyScript, "python3 -c '") {
+		t.Fatal("missing python invocation")
+	}
+	if !strings.Contains(pyScript, "urllib.request.Request") {
+		t.Fatal("missing python urlopen")
+	}
 }
 
 func TestBuildDownloadScript(t *testing.T) {
 	u := presign.SignedURL{Method: "GET", URL: "https://example.com/get?sig=1"}
-	script := buildDownloadScript("/dst/path.bin", u)
+	script := buildDownloadScript("curl", "/dst/path.bin", u)
 	if !strings.Contains(script, "curl -fsSL -f") {
 		t.Fatal("missing curl flags")
 	}
@@ -74,6 +93,14 @@ func TestBuildDownloadScript(t *testing.T) {
 	if !strings.Contains(script, u.URL) {
 		t.Fatal("missing URL")
 	}
+
+	pyScript := buildDownloadScript("python", "/dst/path.bin", u)
+	if !strings.Contains(pyScript, "python -c '") {
+		t.Fatal("missing python invocation")
+	}
+	if !strings.Contains(pyScript, "shutil.copyfileobj") {
+		t.Fatal("missing shutil in python download script")
+	}
 }
 
 func TestBuildMultipartScript(t *testing.T) {
@@ -82,7 +109,7 @@ func TestBuildMultipartScript(t *testing.T) {
 		{Method: "PUT", URL: "https://bucket/?u=1&p=2"},
 		{Method: "PUT", URL: "https://bucket/?u=1&p=3"},
 	}
-	script := buildMultipartScript("/src/file.bin", 64<<20, parts)
+	script := buildMultipartScript("curl", "/src/file.bin", 64<<20, parts)
 	if !strings.Contains(script, "set -e") {
 		t.Fatal("missing set -e")
 	}
@@ -94,6 +121,14 @@ func TestBuildMultipartScript(t *testing.T) {
 	}
 	if !strings.Contains(script, "dd if='/src/file.bin'") {
 		t.Fatalf("missing dd command:\n%s", script)
+	}
+
+	pyScript := buildMultipartScript("python", "/src/file.bin", 64<<20, parts)
+	if !strings.Contains(pyScript, "mmap.mmap") {
+		t.Fatal("missing python mmap implementation")
+	}
+	if !strings.Contains(pyScript, "memoryview") {
+		t.Fatal("missing python memoryview implementation")
 	}
 }
 

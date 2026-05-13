@@ -53,10 +53,12 @@ type AgentTransferJob struct {
 	CredentialExpiresAtUnix int64                 `json:"credential_expires_at_unix,omitempty"`
 	KeepObject              bool                  `json:"keep_object,omitempty"`
 	MaxRetries              int                   `json:"max_retries,omitempty"`
-	// CurlPlan is non-nil when the curl-based presigned-URL transport should be
+	// FallbackPlan is non-nil when the curl-based presigned-URL transport should be
 	// used instead of the staged-agent path. See docs/superpowers/specs/2026-05-12-presigned-url-transfer-path-design.md.
-	CurlPlan *presign.Plan `json:"-"`
-	// RetryWithAgentOnCurlFailure controls whether a curl-path failure transparently
+	FallbackPlan *presign.Plan `json:"-"`
+	FallbackCapabilitySrc string `json:"-"`
+	FallbackCapabilityDst string `json:"-"`
+	// RetryWithAgentOnCurlFailure controls whether a fallback-path failure transparently
 	// retries via the agent path.
 	RetryWithAgentOnCurlFailure bool `json:"retry_with_agent_on_curl_failure,omitempty"`
 }
@@ -72,19 +74,16 @@ type AgentTransferEvent struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// Curl-path stage names. Emitted as the Stage field on AgentTransferEvent
-// during the presigned-URL transfer path. See docs/superpowers/specs/2026-05-12-presigned-url-transfer-path-design.md.
+// Fallback-path stage names. Emitted as the Stage field on AgentTransferEvent
 const (
-	StagePresignPlan           = "presign_plan"
-	StagePresignPlanFailed     = "presign_plan_failed"
-	StageCurlDetect            = "curl_detect"
-	StageCurlDetectFailed      = "curl_detect_failed"
-	StageCurlPutStart          = "curl_put_start"
-	StageCurlPut               = "curl_put"
-	StageCurlPutFailed         = "presign_put_failed"
-	StageCurlGetStart          = "curl_get_start"
-	StageCurlGet               = "curl_get"
-	StageCurlGetFailed         = "presign_get_failed"
+	StageFallbackDetect            = "fallback_detect"
+	StageFallbackDetectFailed      = "fallback_detect_failed"
+	StagePresignPutStart           = "presign_put_start"
+	StagePresignPut                = "presign_put"
+	StagePresignPutFailed          = "presign_put_failed"
+	StagePresignGetStart           = "presign_get_start"
+	StagePresignGet                = "presign_get"
+	StagePresignGetFailed          = "presign_get_failed"
 	StagePresignMultipartStart = "presign_multipart_start"
 	StagePresignMultipart      = "presign_multipart"
 	StagePresignMultipartAbort = "presign_multipart_aborted"
@@ -176,7 +175,9 @@ func fileSHA256(pathValue string) (string, error) {
 }
 
 func remoteFileSHA256(client HostClient, remotePath string) (string, error) {
-	cmd := "if command -v sha256sum >/dev/null 2>&1; then sha256sum " + shellQuote(remotePath) + " | awk '{print $1}'; " +
+	cmd := "if command -v python3 >/dev/null 2>&1; then python3 -c \"import sys,hashlib; h=hashlib.sha256(); f=open(sys.argv[1],'rb'); [h.update(c) for c in iter(lambda:f.read(65536), b'')]; print(h.hexdigest())\" " + shellQuote(remotePath) + "; " +
+		"elif command -v python >/dev/null 2>&1; then python -c \"import sys,hashlib; h=hashlib.sha256(); f=open(sys.argv[1],'rb'); [h.update(c) for c in iter(lambda:f.read(65536), b'')]; print(h.hexdigest())\" " + shellQuote(remotePath) + "; " +
+		"elif command -v sha256sum >/dev/null 2>&1; then sha256sum " + shellQuote(remotePath) + " | awk '{print $1}'; " +
 		"elif command -v shasum >/dev/null 2>&1; then shasum -a 256 " + shellQuote(remotePath) + " | awk '{print $1}'; " +
 		"else exit 127; fi"
 	raw, err := client.Run(cmd)
@@ -442,7 +443,7 @@ func validateAgentTransferJob(job AgentTransferJob) error {
 	if strings.TrimSpace(job.Destination.Record.PrimaryIP) == "" && !isK8sPodRecord(job.Destination.Record) {
 		return newAgentTransferValidationError("destination record has no connectable target")
 	}
-	if job.CurlPlan == nil && strings.TrimSpace(job.AgentLocalPath) == "" {
+	if job.FallbackPlan == nil && strings.TrimSpace(job.AgentLocalPath) == "" {
 		return newAgentTransferValidationError("agent_local_path is required")
 	}
 	if strings.TrimSpace(job.Source.Path) == "" {
@@ -518,14 +519,14 @@ func stageSourceDestinationAgents(
 	return dstStageErr
 }
 
-// executeCurlPath drives a single transfer using only curl on the remotes,
-// with the operator-generated presigned URLs from job.CurlPlan. Emits stage
+// executeFallbackPath drives a single transfer using only curl on the remotes,
+// with the operator-generated presigned URLs from job.FallbackPlan. Emits stage
 // events for each phase. Cleanup (DeleteObject) runs in a deferred best-effort
 // pass regardless of success.
-func executeCurlPath(job AgentTransferJob, cache *ClientCache, emit func(AgentTransferEvent)) error {
-	plan := job.CurlPlan
+func executeFallbackPath(job AgentTransferJob, cache *ClientCache, emit func(AgentTransferEvent)) error {
+	plan := job.FallbackPlan
 	if plan == nil {
-		return fmt.Errorf("executeCurlPath: nil plan")
+		return fmt.Errorf("executeFallbackPath: nil plan")
 	}
 	defer func() {
 		if plan.Cleanup == nil {
@@ -545,16 +546,16 @@ func executeCurlPath(job AgentTransferJob, cache *ClientCache, emit func(AgentTr
 
 	// Upload phase: single or multipart.
 	if len(plan.UploadParts) == 1 {
-		emit(AgentTransferEvent{Stage: StageCurlPutStart, Host: srcKey, Success: true, Message: "single-PUT"})
-		script := buildSinglePutScript(job.Source.Path, plan.UploadParts[0], plan.PartSize)
+		emit(AgentTransferEvent{Stage: StagePresignPutStart, Host: srcKey, Success: true, Message: "single-PUT"})
+		script := buildSinglePutScript(job.FallbackCapabilitySrc, job.Source.Path, plan.UploadParts[0], plan.PartSize)
 		if out, err := runOneShotRemote(cache, srcKey, script); err != nil {
-			emit(AgentTransferEvent{Stage: StageCurlPutFailed, Host: srcKey, Success: false, Error: err.Error(), Message: "stdout: " + out})
-			return fmt.Errorf("curl put: %w, output: %s", err, out)
+			emit(AgentTransferEvent{Stage: StagePresignPutFailed, Host: srcKey, Success: false, Error: err.Error(), Message: "stdout: " + out})
+			return fmt.Errorf("fallback put: %w, output: %s", err, out)
 		}
-		emit(AgentTransferEvent{Stage: StageCurlPut, Host: srcKey, Success: true})
+		emit(AgentTransferEvent{Stage: StagePresignPut, Host: srcKey, Success: true})
 	} else {
 		emit(AgentTransferEvent{Stage: StagePresignMultipartStart, Host: srcKey, Success: true, Message: fmt.Sprintf("%d parts", len(plan.UploadParts))})
-		script := buildMultipartScript(job.Source.Path, plan.PartSize, plan.UploadParts)
+		script := buildMultipartScript(job.FallbackCapabilitySrc, job.Source.Path, plan.PartSize, plan.UploadParts)
 		out, err := runOneShotRemote(cache, srcKey, script)
 		if err != nil {
 			_ = abortMultipartIfS3(plan, job.Cloud)
@@ -578,13 +579,13 @@ func executeCurlPath(job AgentTransferJob, cache *ClientCache, emit func(AgentTr
 	}
 
 	// Download phase.
-	emit(AgentTransferEvent{Stage: StageCurlGetStart, Host: dstKey, Success: true})
-	dlScript := buildDownloadScript(job.Destination.Path, plan.Download)
-	if out, err := runOneShotRemote(cache, dstKey, dlScript); err != nil {
-		emit(AgentTransferEvent{Stage: StageCurlGetFailed, Host: dstKey, Success: false, Error: err.Error(), Message: "stdout: " + out})
-		return fmt.Errorf("curl get: %w, output: %s", err, out)
+	emit(AgentTransferEvent{Stage: StagePresignGetStart, Host: dstKey, Success: true})
+	script := buildDownloadScript(job.FallbackCapabilityDst, job.Destination.Path, plan.Download)
+	if out, err := runOneShotRemote(cache, dstKey, script); err != nil {
+		emit(AgentTransferEvent{Stage: StagePresignGetFailed, Host: dstKey, Success: false, Error: err.Error(), Message: "stdout: " + out})
+		return fmt.Errorf("fallback get: %w, output: %s", err, out)
 	}
-	emit(AgentTransferEvent{Stage: StageCurlGet, Host: dstKey, Success: true})
+	emit(AgentTransferEvent{Stage: StagePresignGet, Host: dstKey, Success: true})
 	return nil
 }
 
@@ -631,12 +632,12 @@ func ExecuteAgentCloudTransfer(job AgentTransferJob, cache *ClientCache) ([]Agen
 	return ExecuteAgentCloudTransferWithEmit(job, cache, nil)
 }
 
-// runCurlPathBranch runs the curl-path transfer when job.CurlPlan != nil, emitting
+// runFallbackPathBranch runs the fallback-path transfer when job.FallbackPlan != nil, emitting
 // events through both emit and the appended events slice. Returns the accumulated
 // events and any error from the curl path; on failure with
 // RetryWithAgentOnCurlFailure, surfaces a clear fallback event explaining that
 // re-orchestration is required.
-func runCurlPathBranch(job AgentTransferJob, cache *ClientCache, emit func(AgentTransferEvent)) ([]AgentTransferEvent, error) {
+func runFallbackPathBranch(job AgentTransferJob, cache *ClientCache, emit func(AgentTransferEvent)) ([]AgentTransferEvent, error) {
 	var events []AgentTransferEvent
 	emitWrap := func(ev AgentTransferEvent) {
 		if ev.Timestamp.IsZero() {
@@ -647,25 +648,23 @@ func runCurlPathBranch(job AgentTransferJob, cache *ClientCache, emit func(Agent
 			emit(ev)
 		}
 	}
-	curlErr := executeCurlPath(job, cache, emitWrap)
-	if curlErr == nil {
+	fallbackErr := executeFallbackPath(job, cache, emitWrap)
+	if fallbackErr == nil {
 		return events, nil
 	}
 	if !job.RetryWithAgentOnCurlFailure {
-		return events, curlErr
+		return events, fallbackErr
 	}
 	// Fall-back to the agent path would require re-resolving agent binaries
-	// that the curl branch deliberately skipped. The cleanest place to do
+	// that the fallback branch deliberately skipped. The cleanest place to do
 	// that is one layer up at the orchestrator (web handler / CLI command),
-	// where BuildAgentTransferJob can be re-invoked with ForceAgentPath=true.
-	// Surface a clear final event and return the original error so the caller
-	// can decide whether to re-orchestrate.
+	// which just passes ForceAgentPath=true and rebuilds the job.
 	emitWrap(AgentTransferEvent{
-		Stage:   StagePresignFallback,
+		Stage:   StageFallbackDetectFailed,
 		Success: false,
-		Error:   "retry-with-agent requires re-orchestration with ForceAgentPath=true; original error: " + curlErr.Error(),
+		Error:   "retry-with-agent requires re-orchestration with ForceAgentPath=true; original error: " + fallbackErr.Error(),
 	})
-	return events, curlErr
+	return events, fallbackErr
 }
 
 // ExecuteAgentCloudTransferWithEmit runs the transfer and calls emit for each event.
@@ -675,8 +674,8 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	if err := validateAgentTransferJob(job); err != nil {
 		return events, err
 	}
-	if job.CurlPlan != nil {
-		return runCurlPathBranch(job, cache, emit)
+	if job.FallbackPlan != nil {
+		return runFallbackPathBranch(job, cache, emit)
 	}
 	objectKey := strings.TrimSpace(job.Cloud.Object)
 	user := strings.TrimSpace(job.SSHUser)
