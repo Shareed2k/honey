@@ -61,7 +61,8 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:         webListen,
 		Token:              token,
-		ConfigPath:         webConfig,
+		ConfigPath:         cfgPath,
+		Config:             cfg,
 		RecordDir:          recordDir,
 		LocalFilesRoot:     webFilesRoot,
 		AgentBinaryPath:    webAgentBin,

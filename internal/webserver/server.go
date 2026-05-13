@@ -25,6 +25,7 @@ type Options struct {
 	ListenAddr         string // e.g. 127.0.0.1:8765
 	Token              string
 	ConfigPath         string // optional explicit --config
+	Config             *config.File
 	RecordDir          string // optional session recording output dir
 	LocalFilesRoot     string // optional root for local file browser/upload/download
 	AgentBinaryPath    string // optional explicit honey-transfer-agent binary path
@@ -60,19 +61,7 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.MaxUploadSize <= 0 {
 		opts.MaxUploadSize = 100 << 20
 	}
-	cfgPath, err := config.ResolvePath(opts.ConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	if cfgPath != "" {
-		cfg, lerr := config.Load(cfgPath)
-		if lerr != nil {
-			return nil, fmt.Errorf("config: %w", lerr)
-		}
-		hostexec.ReconfigureFromHoneyConfig(cfg)
-	} else {
-		hostexec.ReconfigureFromHoneyConfig(nil)
-	}
+	hostexec.ReconfigureFromHoneyConfig(opts.Config)
 
 	s := &Server{
 		opts:            opts,
