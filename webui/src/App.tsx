@@ -1008,7 +1008,9 @@ export function App() {
       setTunnelPortsLoading(false);
       if (rec.meta?.ports) {
         try {
-          const parsed = JSON.parse(rec.meta.ports);
+          // Previously this was a JSON string, now it's a comma-separated string
+          let parsed = rec.meta.ports.split(',').map((p) => p.trim()).filter(Boolean);
+
           setTunnelPorts(Array.isArray(parsed) ? parsed : []);
         } catch (e) {
           // ignore

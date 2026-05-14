@@ -28,6 +28,14 @@ func TestSearchPodsMeta(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pod",
 				Namespace: "default",
+				Labels: map[string]string{
+					"app": "frontend",
+					"env": "production",
+				},
+				Annotations: map[string]string{
+					"kubectl.kubernetes.io/last-applied-configuration": `{"apiVersion":"v1"}`,
+					"my-annotation": "hello-world",
+				},
 			},
 			Spec: corev1.PodSpec{
 				NodeName: "worker-node-7",
@@ -71,6 +79,20 @@ func TestSearchPodsMeta(t *testing.T) {
 	if r.Meta["backend_name"] != "my-backend" {
 		t.Errorf("expected backend_name=my-backend, got %q", r.Meta["backend_name"])
 	}
+
+	if r.Meta["label_app"] != "frontend" {
+		t.Errorf("expected label_app=frontend, got %q", r.Meta["label_app"])
+	}
+	if r.Meta["label_env"] != "production" {
+		t.Errorf("expected label_env=production, got %q", r.Meta["label_env"])
+	}
+	if r.Meta["annotation_my-annotation"] != "hello-world" {
+		t.Errorf("expected annotation_my-annotation=hello-world, got %q", r.Meta["annotation_my-annotation"])
+	}
+	if _, ok := r.Meta["annotation_kubectl.kubernetes.io/last-applied-configuration"]; ok {
+		t.Errorf("expected last-applied-configuration to be filtered out")
+	}
+
 	if r.Meta["node"] != "worker-node-7" {
 		t.Errorf("expected node=worker-node-7, got %q", r.Meta["node"])
 	}
