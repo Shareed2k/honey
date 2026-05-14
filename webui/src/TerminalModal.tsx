@@ -512,7 +512,7 @@ function TerminalSession({
               </div>
             )}
           </div>
-          <form className="modal-terminal-assist-form" onSubmit={handleAssistSubmit}>
+          <div className="modal-terminal-assist-form">
             <div className="assist-models-row">
               <label>Model:</label>
               <select
@@ -538,7 +538,7 @@ function TerminalSession({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  void handleAssistSubmit(e);
+                  void runAssist();
                 }
               }}
               disabled={assistBusy}
@@ -555,11 +555,11 @@ function TerminalSession({
                   disabled={assistBusy}
                 />
               </label>
-              <button type="submit" disabled={assistBusy || !assistPrompt.trim() || !assistCanAsk}>
+                <button type="button" disabled={assistBusy || !assistCanAsk} onClick={() => void runAssist()}>
                 {assistBusy ? 'Thinking...' : 'Ask AI'}
               </button>
             </div>
-          </form>
+          </div>
         </div>
       ) : null}
     </div>
