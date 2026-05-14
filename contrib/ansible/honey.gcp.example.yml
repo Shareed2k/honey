@@ -12,6 +12,8 @@ provider: gcp
 # config: /home/you/.config/honey/config.yaml
 # name: prod-
 # backends: gcp-team-a
+# strip_prefix: true
+# blacklist: "db,label_env,label_role"
 # args:
 #   - --ssh-user
 #   - deploy
