@@ -8,8 +8,17 @@ import (
 	"strings"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/safepath"
 )
+
+func (s *Server) handleConfigSchema(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"json_schema": config.BuildJSONSchema(),
+		"ui_schema":   config.BuildUISchema(),
+	})
+}
 
 func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, err := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
@@ -54,6 +63,9 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 	if err := safepath.WriteFile(cfgPath, body, 0o600); err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
+	}
+	if cfg, lerr := config.Load(cfgPath); lerr == nil {
+		hostexec.ReconfigureFromHoneyConfig(cfg)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "path": cfgPath})

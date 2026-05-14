@@ -10,12 +10,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/webserver"
 )
 
 var (
-	webListen string
-	webConfig string
+	webListen             string
+	webConfig             string
+	webFilesRoot          string
+	webAgentBin           string
+	webAgentBuildCacheDir string
 )
 
 var webCmd = &cobra.Command{
@@ -28,10 +32,13 @@ var webCmd = &cobra.Command{
 func init() {
 	webCmd.Flags().StringVar(&webListen, "listen", "127.0.0.1:8765", "Listen address (host:port); must be loopback for safe default")
 	webCmd.Flags().StringVar(&webConfig, "config", "", "Path to honey YAML (optional; same as honey search)")
+	webCmd.Flags().StringVar(&webFilesRoot, "files-root", "", "Local filesystem root for the web file browser (default: $HONEY_FILES_ROOT or $HOME)")
+	webCmd.Flags().StringVar(&webAgentBin, "agent-bin", "", "Explicit path to honey-transfer-agent binary (optional)")
+	webCmd.Flags().StringVar(&webAgentBuildCacheDir, "agent-build-cache-dir", "", "Directory used to cache auto-built honey-transfer-agent binary")
 	rootCmd.AddCommand(webCmd)
 }
 
-func runWeb(_ *cobra.Command, _ []string) error {
+func runWeb(cmd *cobra.Command, _ []string) error {
 	if err := assertLoopback(webListen); err != nil {
 		return err
 	}
@@ -39,19 +46,36 @@ func runWeb(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	cfgPath, err := config.ResolvePath(webConfig)
+	if err != nil {
+		return err
+	}
+	var cfg *config.File
+	if cfgPath != "" {
+		cfg, err = config.Load(cfgPath)
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+	}
+	recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
 	srv, err := webserver.NewServer(webserver.Options{
-		ListenAddr: webListen,
-		Token:      token,
-		ConfigPath: webConfig,
-		Version:    BuildVersion(),
-		Commit:     BuildCommit(),
-		Date:       BuildDate(),
+		ListenAddr:         webListen,
+		Token:              token,
+		ConfigPath:         cfgPath,
+		Config:             cfg,
+		RecordDir:          recordDir,
+		LocalFilesRoot:     webFilesRoot,
+		AgentBinaryPath:    webAgentBin,
+		AgentBuildCacheDir: webAgentBuildCacheDir,
+		Version:            BuildVersion(),
+		Commit:             BuildCommit(),
+		Date:               BuildDate(),
 	})
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(os.Stderr, "\nHoney Web UI (Ctrl+C to stop)\n  URL:   http://%s/?token=%s\n  API:   Authorization: Bearer <token>  or  X-Honey-Token: <token>\n  WS:    /ws/ssh?token=<token>\n\n", webListen, token)
+	_, _ = fmt.Fprintf(os.Stderr, "\nHoney Web UI (Ctrl+C to stop)\n  URL:   http://%s/?token=%s\n  API:   Authorization: Bearer <token>  or  X-Honey-Token: <token>\n  WS:    /ws/ssh?token=<token>\n  Assist: OPENAI_API_KEY (+ optional OPENAI_BASE_URL)\n\n", webListen, token)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

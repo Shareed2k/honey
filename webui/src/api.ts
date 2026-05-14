@@ -51,6 +51,61 @@ export async function apiDelete(path: string): Promise<Response> {
   return fetch(path, { method: 'DELETE', headers: apiHeaders() });
 }
 
+export type TunnelInfo = {
+  id: string;
+  host: string;
+  record_key: string;
+  mapping: string;
+  started_at: string;
+  error?: string;
+};
+
+export async function fetchTunnels(): Promise<TunnelInfo[]> {
+  const r = await apiGet('/api/v1/tunnels');
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+  const j = (await r.json()) as { tunnels: TunnelInfo[] };
+  return j.tunnels || [];
+}
+
+export async function startTunnel(req: { ssh_user: string; record: unknown; mapping: string }): Promise<void> {
+  const r = await apiPost('/api/v1/tunnels', req);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+}
+
+export async function stopTunnel(id: string): Promise<void> {
+  const r = await apiDelete(`/api/v1/tunnels/${encodeURIComponent(id)}`);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+}
+
+export async function fetchTunnelLogs(id: string): Promise<string> {
+  const r = await apiGet(`/api/v1/tunnels/${encodeURIComponent(id)}/logs`);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+  const j = (await r.json()) as { logs: string };
+  return j.logs || '';
+}
+
+export async function fetchHostPorts(req: { ssh_user: string; record: unknown }): Promise<string[]> {
+  const r = await apiPost('/api/v1/host-ports', req);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+  const j = (await r.json()) as { ports: string[] };
+  return j.ports || [];
+}
+
 /** Matches Go ui.HostExecResult JSON (exported struct fields). */
 export type HostExecResultRow = {
   Name: string;
@@ -60,9 +115,213 @@ export type HostExecResultRow = {
   ExitCode: number;
   Output: string;
   ErrMsg: string;
+  HookPhase?: string;
+  HookOutput?: string;
 };
 
 export type RecipeListEntry = { name: string; path: string };
+
+/** Structured recipe shape that mirrors internal/cuetry.Recipe (JSON keys match Go json tags). */
+export type ParsedRecipe = {
+  name: string;
+  defaults?: Record<string, unknown>;
+  steps: ParsedRecipeStep[];
+};
+
+export type ParsedRecipeStep = {
+  host: string;
+  command?: string;
+  script?: { body?: string; path?: string };
+  ai?: { model?: string; prompt?: string };
+  run_as?: string;
+  env?: Record<string, string>;
+  hooks?: { on_success?: ParsedRecipeStep; on_failure?: ParsedRecipeStep };
+  // Step kinds that v1 does NOT support editing — preserved verbatim by the form.
+  agent_transfer?: unknown;
+  notify?: unknown;
+};
+
+export type ResolvedStep = {
+  index: number;
+  kind: string;
+  host: string;
+  run_as?: string;
+  preview: string;
+};
+
+export type ValidationError = {
+  path?: string;
+  kind: 'json' | 'schema' | 'validation' | 'resolve';
+  message: string;
+};
+
+export type RecentRunEntry = {
+  recipe_name: string;
+  recipe_path: string;
+  host_count: number;
+  started_at: string;
+  recording_id: string;
+  recipe_content_hash?: string;
+  edited: boolean;
+};
+
+export type RecordingListEntry = {
+  file_name: string;
+  modified_unix_ms: number;
+  size_bytes: number;
+  trigger?: string;
+  mode?: string;
+  provider?: string;
+  host_name?: string;
+  host_ip?: string;
+  user?: string;
+};
+
+export type RecordingEvent = {
+  time_ms: number;
+  type: string;
+  direction?: string;
+  data_b64?: string;
+  cols?: number;
+  rows?: number;
+  message?: string;
+  /** Batch exec / CUE: JSON object matching HostExecResultRow when type is "result". */
+  result?: HostExecResultRow;
+};
+
+export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer';
+
+export type FileBrowserEntry = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  mode: string;
+  modified_at: string;
+};
+
+export type AgentTransferCloud = {
+  provider: string;
+  bucket: string;
+  prefix?: string;
+  object?: string;
+  region?: string;
+  endpoint?: string;
+};
+
+export type AgentTransferBackendRef = {
+  kind: string;
+  name?: string;
+  index?: number;
+};
+
+export type AgentTransferEvent = {
+  stage: string;
+  host?: string;
+  success: boolean;
+  message?: string;
+  error?: string;
+  attempt?: number;
+  timestamp: string;
+};
+
+export type ConfigSchemaFieldSpec = {
+  key: string;
+  label: string;
+  type: ConfigSchemaFieldType;
+  required?: boolean;
+  secret?: boolean;
+  enum?: string[];
+  enum_as_warning?: boolean;
+  default?: unknown;
+};
+
+export type ConfigBackendSchema = {
+  label: string;
+  fields: ConfigSchemaFieldSpec[];
+};
+
+export type ConfigUISchema = {
+  top_level_keys: string[];
+  defaults: ConfigSchemaFieldSpec[];
+  backends: Record<string, ConfigBackendSchema>;
+  backend_order: string[];
+};
+
+export type ConfigSchemaResponse = {
+  json_schema: Record<string, unknown>;
+  ui_schema: ConfigUISchema;
+};
+
+export async function fetchConfigSchema(): Promise<ConfigSchemaResponse> {
+  const r = await apiGet('/api/v1/config/schema');
+  const j = (await r.json().catch(() => ({}))) as ConfigSchemaResponse & { error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j;
+}
+
+export async function listLocalFiles(path: string): Promise<{ root: string; path: string; entries: FileBrowserEntry[] }> {
+  const r = await apiPost('/api/v1/files/local/list', { path });
+  const j = (await r.json().catch(() => ({}))) as {
+    root?: string;
+    path?: string;
+    entries?: FileBrowserEntry[];
+    error?: string;
+  };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return { root: j.root || '', path: j.path || '', entries: j.entries || [] };
+}
+
+export async function listRemoteFiles(body: {
+  ssh_user: string;
+  record: unknown;
+  path: string;
+}): Promise<{ path: string; entries: FileBrowserEntry[] }> {
+  const r = await apiPost('/api/v1/files/remote/list', body);
+  const j = (await r.json().catch(() => ({}))) as { path?: string; entries?: FileBrowserEntry[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return { path: j.path || '', entries: j.entries || [] };
+}
+
+export async function copyFiles(body: {
+  direction: 'local_to_remote' | 'remote_to_local';
+  ssh_user: string;
+  record: unknown;
+  local_path: string;
+  remote_path: string;
+}): Promise<{ status: string; local: string; remote: string }> {
+  const r = await apiPost('/api/v1/files/copy', body);
+  const j = (await r.json().catch(() => ({}))) as { status?: string; local?: string; remote?: string; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return { status: j.status || 'ok', local: j.local || '', remote: j.remote || '' };
+}
+
+export async function startAgentTransfer(body: {
+  ssh_user?: string;
+  source_record: unknown;
+  source_path: string;
+  dest_record: unknown;
+  dest_path: string;
+  cloud: AgentTransferCloud;
+  cloud_backend_ref?: AgentTransferBackendRef;
+  keep_object?: boolean;
+  max_retries?: number;
+}): Promise<AgentTransferEvent[]> {
+  const r = await apiPost('/api/v1/files/agent-transfer', body);
+  const j = (await r.json().catch(() => ({}))) as { events?: AgentTransferEvent[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.events || [];
+}
 
 export async function fetchRecipes(): Promise<RecipeListEntry[]> {
   const r = await apiGet('/api/v1/recipes');
@@ -71,6 +330,55 @@ export async function fetchRecipes(): Promise<RecipeListEntry[]> {
     throw new Error(j.error || r.statusText);
   }
   return j.recipes || [];
+}
+
+export async function recipeAssist(body: {
+  recipe_path: string;
+  model: string;
+  user_prompt?: string;
+  ssh_user?: string;
+  records?: unknown[];
+}): Promise<{ reply: string }> {
+  const r = await apiPost('/api/v1/recipes/assist', body);
+  const j = (await r.json().catch(() => ({}))) as { reply?: string; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return { reply: (j.reply || '').trim() };
+}
+
+export async function fetchRecentRuns(limit = 20): Promise<RecentRunEntry[]> {
+  const r = await apiGet(`/api/v1/recipes/recent-runs?limit=${encodeURIComponent(limit)}`);
+  const j = (await r.json().catch(() => ({}))) as { runs?: RecentRunEntry[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.runs ?? [];
+}
+
+/**
+ * Validate a structured recipe payload. Returns `{plan, steps}` on success (200), or
+ * `{errors}` on a 400 validation failure. Other HTTP errors throw.
+ */
+export async function validateRecipeContent(
+  recipe: ParsedRecipe,
+): Promise<{ plan: string; steps: ResolvedStep[] } | { errors: ValidationError[] }> {
+  const r = await apiPost('/api/v1/recipes/validate-content', { recipe_content: recipe });
+  const body = (await r.json().catch(() => ({}))) as {
+    plan?: string;
+    steps?: ResolvedStep[];
+    errors?: ValidationError[];
+    error?: string;
+  };
+  if (r.ok) {
+    return { plan: body.plan ?? '', steps: body.steps ?? [] };
+  }
+  if (r.status === 400) {
+    return {
+      errors: body.errors ?? [{ kind: 'validation', message: body.error || 'unknown error' }],
+    };
+  }
+  throw new Error(body.error || r.statusText);
 }
 
 export async function fetchRecipeContent(path: string): Promise<string> {
@@ -82,10 +390,71 @@ export async function fetchRecipeContent(path: string): Promise<string> {
   return j.content ?? '';
 }
 
+/** Parse a disk recipe (.cue) into a ParsedRecipe via POST /api/v1/recipes/parse. */
+export async function parseDiskRecipe(path: string): Promise<ParsedRecipe> {
+  const r = await apiPost('/api/v1/recipes/parse', { path });
+  const j = (await r.json().catch(() => ({}))) as { recipe?: ParsedRecipe; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || `parse failed: ${r.status}`);
+  }
+  if (!j.recipe) {
+    throw new Error('parse: missing recipe in response');
+  }
+  return j.recipe;
+}
+
+/** List recordings; omit filters to return everything in record-dir (e.g. batch exec files use host_name batch-N). */
+export async function fetchRecordingsList(filters?: {
+  provider?: string;
+  host_name?: string;
+  host_ip?: string;
+}): Promise<RecordingListEntry[]> {
+  const q = new URLSearchParams();
+  if (filters?.provider?.trim()) {
+    q.set('provider', filters.provider.trim());
+  }
+  if (filters?.host_name?.trim()) {
+    q.set('host_name', filters.host_name.trim());
+  }
+  if (filters?.host_ip?.trim()) {
+    q.set('host_ip', filters.host_ip.trim());
+  }
+  const qs = q.toString();
+  const path = qs ? `/api/v1/recordings?${qs}` : '/api/v1/recordings';
+  const r = await apiGet(path);
+  const j = (await r.json().catch(() => ({}))) as { items?: RecordingListEntry[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.items || [];
+}
+
+export async function fetchRecordingsForHost(params: {
+  provider: string;
+  host_name: string;
+  host_ip: string;
+}): Promise<RecordingListEntry[]> {
+  return fetchRecordingsList({
+    provider: params.provider,
+    host_name: params.host_name,
+    host_ip: params.host_ip,
+  });
+}
+
+export async function fetchRecordingEvents(fileName: string): Promise<RecordingEvent[]> {
+  const r = await apiPost('/api/v1/recordings/play', { file_name: fileName });
+  const j = (await r.json().catch(() => ({}))) as { events?: RecordingEvent[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.events || [];
+}
+
 export async function execOnHosts(body: {
   ssh_user: string;
   command: string;
   records: unknown[];
+  record_session?: boolean;
 }): Promise<HostExecResultRow[]> {
   const r = await apiPost('/api/v1/exec', body);
   const j = (await r.json().catch(() => ({}))) as { results?: HostExecResultRow[]; error?: string };
@@ -95,9 +464,9 @@ export async function execOnHosts(body: {
   return j.results || [];
 }
 
-async function readNDJSON(
+async function readNDJSON<T>(
   response: Response,
-  onRow: (row: HostExecResultRow) => void,
+  onRow: (row: T) => void,
 ): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -118,17 +487,17 @@ async function readNDJSON(
       if (!trimmed) {
         continue;
       }
-      onRow(JSON.parse(trimmed) as HostExecResultRow);
+      onRow(JSON.parse(trimmed) as T);
     }
   }
   const tail = buffer.trim();
   if (tail) {
-    onRow(JSON.parse(tail) as HostExecResultRow);
+    onRow(JSON.parse(tail) as T);
   }
 }
 
 export async function execOnHostsStream(
-  body: { ssh_user: string; command: string; records: unknown[] },
+  body: { ssh_user: string; command: string; records: unknown[]; record_session?: boolean },
   onRow: (row: HostExecResultRow) => void,
 ): Promise<void> {
   const r = await fetch('/api/v1/exec?stream=1', {
@@ -140,16 +509,20 @@ export async function execOnHostsStream(
     const j = (await r.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error || r.statusText);
   }
-  await readNDJSON(r, onRow);
+  await readNDJSON<HostExecResultRow>(r, onRow);
 }
 
-export async function cueExec(body: {
-  recipe_path: string;
+export type CueExecRequest = {
+  recipe_path?: string;
+  recipe_content?: ParsedRecipe;
   execute: boolean;
   ssh_user: string;
   records: unknown[];
   env?: string[];
-}): Promise<{ plan?: string; results?: HostExecResultRow[] }> {
+  record_session?: boolean;
+};
+
+export async function cueExec(body: CueExecRequest): Promise<{ plan?: string; results?: HostExecResultRow[] }> {
   const r = await apiPost('/api/v1/cue-exec', body);
   const j = (await r.json().catch(() => ({}))) as {
     plan?: string;
@@ -163,13 +536,7 @@ export async function cueExec(body: {
 }
 
 export async function cueExecStream(
-  body: {
-    recipe_path: string;
-    execute: boolean;
-    ssh_user: string;
-    records: unknown[];
-    env?: string[];
-  },
+  body: CueExecRequest,
   onRow: (row: HostExecResultRow) => void,
 ): Promise<void> {
   const r = await fetch('/api/v1/cue-exec?stream=1', {
@@ -181,14 +548,160 @@ export async function cueExecStream(
     const j = (await r.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error || r.statusText);
   }
-  await readNDJSON(r, onRow);
+  await readNDJSON<HostExecResultRow>(r, onRow);
+}
+
+export async function startAgentTransferStream(
+  body: {
+    ssh_user?: string;
+    source_record: unknown;
+    source_path: string;
+    dest_record: unknown;
+    dest_path: string;
+    cloud: AgentTransferCloud;
+    cloud_backend_ref?: AgentTransferBackendRef;
+    keep_object?: boolean;
+    max_retries?: number;
+  },
+  onEvent: (event: AgentTransferEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const r = await fetch('/api/v1/files/agent-transfer?stream=1', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  await readNDJSON<AgentTransferEvent>(r, onEvent);
+}
+
+/** Bytes sent to this origin; then server may still work (e.g. SFTP to a host). */
+export type FormDataUploadProgressEvent =
+  | { kind: 'uploading'; loaded: number; total: number | null }
+  | { kind: 'awaiting_response' };
+
+/** Server-sent upload stream after the multipart body is stored (SFTP byte progress). */
+export type UploadStreamServerEvent =
+  | { phase: 'sftp_start'; total_bytes: number }
+  | { phase: 'sftp'; sent_bytes: number; total_bytes: number }
+  | { phase: 'error'; message?: string; result?: HostExecResultRow }
+  | { phase: 'done'; results: HostExecResultRow[] };
+
+/**
+ * POST multipart to Honey with ?stream=1: XHR reports bytes to the server; response body is NDJSON
+ * with SFTP progress from the Honey process. Resolves the same result list as the non-streaming upload.
+ */
+export function uploadFormDataWithSFTPStream(
+  url: string,
+  formData: FormData,
+  opts: {
+    onHoneyProgress?: (ev: FormDataUploadProgressEvent) => void;
+    onServerEvent?: (ev: UploadStreamServerEvent) => void;
+  },
+): Promise<HostExecResultRow[]> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    const h = apiHeaders() as Record<string, string>;
+    for (const [k, v] of Object.entries(h)) {
+      xhr.setRequestHeader(k, v);
+    }
+
+    let parsePos = 0;
+    let streamErr: Error | null = null;
+    let doneResults: HostExecResultRow[] | null = null;
+
+    const drain = () => {
+      const text = xhr.responseText;
+      while (parsePos < text.length) {
+        const nl = text.indexOf('\n', parsePos);
+        if (nl < 0) {
+          break;
+        }
+        const line = text.slice(parsePos, nl).trim();
+        parsePos = nl + 1;
+        if (!line) {
+          continue;
+        }
+        let row: unknown;
+        try {
+          row = JSON.parse(line) as unknown;
+        } catch {
+          continue;
+        }
+        if (!row || typeof row !== 'object' || !('phase' in row)) {
+          continue;
+        }
+        const ev = row as UploadStreamServerEvent;
+        opts.onServerEvent?.(ev);
+        const phase = String((row as { phase: string }).phase);
+        if (phase === 'error') {
+          const msg = (row as { message?: string }).message?.trim() || 'upload failed';
+          streamErr = new Error(msg);
+        }
+        if (phase === 'done') {
+          doneResults = (row as { results?: HostExecResultRow[] }).results || [];
+        }
+      }
+    };
+
+    xhr.upload.onprogress = (ev) => {
+      opts.onHoneyProgress?.({
+        kind: 'uploading',
+        loaded: ev.loaded,
+        total: ev.lengthComputable && ev.total > 0 ? ev.total : null,
+      });
+    };
+    xhr.upload.onloadend = () => {
+      opts.onHoneyProgress?.({ kind: 'awaiting_response' });
+    };
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState >= 3) {
+        drain();
+      }
+    };
+    xhr.onprogress = () => {
+      drain();
+    };
+    xhr.onload = () => {
+      drain();
+      if (xhr.status < 200 || xhr.status >= 300) {
+        let msg = xhr.statusText || `HTTP ${xhr.status}`;
+        try {
+          const j = JSON.parse(xhr.responseText) as { error?: string };
+          if (j.error) {
+            msg = j.error;
+          }
+        } catch {
+          /* ignore */
+        }
+        reject(new Error(msg));
+        return;
+      }
+      if (streamErr) {
+        reject(streamErr);
+        return;
+      }
+      if (doneResults) {
+        resolve(doneResults);
+        return;
+      }
+      reject(new Error('upload stream ended without result'));
+    };
+    xhr.onerror = () => reject(new Error('network error'));
+    xhr.send(formData);
+  });
 }
 
 /** POST multipart FormData with upload progress (bytes to this origin only). Resolves parsed JSON body. */
 export function uploadFormDataWithProgress(
   url: string,
   formData: FormData,
-  onProgress: (percent: number) => void,
+  onProgress?: (ev: FormDataUploadProgressEvent) => void,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -198,9 +711,14 @@ export function uploadFormDataWithProgress(
       xhr.setRequestHeader(k, v);
     }
     xhr.upload.onprogress = (ev) => {
-      if (ev.lengthComputable && ev.total > 0) {
-        onProgress(Math.round((100 * ev.loaded) / ev.total));
-      }
+      onProgress?.({
+        kind: 'uploading',
+        loaded: ev.loaded,
+        total: ev.lengthComputable && ev.total > 0 ? ev.total : null,
+      });
+    };
+    xhr.upload.onloadend = () => {
+      onProgress?.({ kind: 'awaiting_response' });
     };
     xhr.onload = () => {
       let body: unknown;

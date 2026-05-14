@@ -11,9 +11,10 @@ func recalculateTableColumns(w int) []table.Column {
 	wIP := 16
 	wZone := 18
 	wRegion := 14
+	wLabels := 20
 
 	// Borders and padding approximate width
-	fixedTotal := wMark + wProvider + wIP + wZone + wRegion + 16 // 16 for approx column padding/borders
+	fixedTotal := wMark + wProvider + wIP + wZone + wRegion + wLabels + 19 // 19 for approx column padding/borders
 
 	wName := 26 // Default minimum
 	if w > fixedTotal {
@@ -30,5 +31,6 @@ func recalculateTableColumns(w int) []table.Column {
 		{Title: "IP", Width: wIP},
 		{Title: "Zone", Width: wZone},
 		{Title: "Region/DC", Width: wRegion},
+		{Title: "Labels", Width: wLabels},
 	}
 }

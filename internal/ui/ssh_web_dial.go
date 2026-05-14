@@ -7,6 +7,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/sshclient"
 )
 
 // DialSSHLeafForRecord returns a leaf *ssh.Client for SSH to hosts.Record.PrimaryIP (same transport as the TUI).
@@ -19,5 +20,5 @@ func DialSSHLeafForRecord(user string, r hosts.Record) (*ssh.Client, func(), err
 	if host == "" {
 		return nil, nil, fmt.Errorf("no IP for selected host")
 	}
-	return dialSSHClient(user, host)
+	return sshclient.DialSSHClient(user, host)
 }

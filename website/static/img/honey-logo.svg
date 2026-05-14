@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="400" height="400">
+  <defs>
+    <linearGradient id="honeyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFC107" /> <!-- Amber / Honey -->
+      <stop offset="100%" stop-color="#F57C00" /> <!-- Dark Orange -->
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Outer Honeycomb Hexagon -->
+  <polygon points="60,10 105,35 105,85 60,110 15,85 15,35" fill="url(#honeyGrad)" filter="url(#shadow)"/>
+  
+  <!-- Inner Terminal Background -->
+  <polygon points="60,20 95,40 95,80 60,100 25,80 25,40" fill="#14171c"/>
+  
+  <!-- CLI Prompt: >_ -->
+  <g transform="translate(38, 72)">
+    <text font-family="monospace, Consolas, 'Courier New'" font-size="36" font-weight="900" fill="#FFC107" letter-spacing="-2">&gt;_</text>
+  </g>
+</svg>

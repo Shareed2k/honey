@@ -40,3 +40,7 @@ func (gcpFactory) BackendRows(cfg *config.File) []config.BackendRow {
 	}
 	return rows
 }
+
+func (gcpFactory) BackendKind() string { return "gcp" }
+
+func (gcpFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.GCP }

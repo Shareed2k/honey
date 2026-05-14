@@ -2,20 +2,26 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/atotto/clipboard"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/pvelxc"
 	"github.com/shareed2k/honey/internal/safepath"
 	k8sexec "k8s.io/client-go/util/exec"
 )
@@ -26,6 +32,7 @@ const (
 	actNone action = iota
 	actSSH
 	actTunnel
+	actReplay
 )
 
 type parallelExecDoneMsg struct {
@@ -39,12 +46,20 @@ type cueRecipeDoneMsg struct {
 	body  string
 }
 
+// RunTableOptions configures optional session recording for the TUI table.
+type RunTableOptions struct {
+	RecordDir     string
+	RecordEnabled bool
+	// ConfigPath is the resolved honey YAML path (may be empty); CUE agent_transfer steps with cloud_backend_ref need it.
+	ConfigPath string
+}
+
 type model struct {
 	recs    []hosts.Record
 	tbl     table.Model
 	ti      textinput.Model
 	sshUser string
-	mode    string // table | tunnel | execinput | execresults | filter
+	mode    string // table | tunnel | execinput | execresults | filter | replaypick | agenttransferform
 	filter  string
 	visible []int // indexes of recs visible when filtered
 
@@ -74,12 +89,40 @@ type model struct {
 	// CUE dropdown
 	availableRecipes []string
 	recipeCursor     int
+	cuePreviewOpen   bool
+	cuePreviewScroll int
 
 	// Tunnel popup state
 	tunnelLocalPort  textinput.Model
 	tunnelRemoteHost textinput.Model
 	tunnelRemotePort textinput.Model
 	tunnelFocusIndex int
+
+	recordDir     string
+	recordEnabled bool
+	configPath    string
+	// batchRecorder is non-nil while streaming parallel exec or CUE execute results when recording is on.
+	batchRecorder *SessionRecorder
+
+	// replaypick: choose a .hrec.jsonl under recordDir; on enter, lastAction=actReplay + replayFileName.
+	replayFiles      []string
+	replayListErr    string
+	replayFileName   string
+	replayCursor     int
+	replayPickScroll int
+
+	// fileClientCache is shared by agent transfer (key a) and other pooled SSH clients.
+	fileClientCache *ClientCache
+
+	// A → cloud → B agent transfer wizard (key a).
+	agentPick       string // "source" | "dest" | ""
+	agentSrc        hosts.Record
+	agentDst        hosts.Record
+	agentFormStep   int
+	agentFormValues [9]string
+	agentStorageIdx int // 0 = s3, 1 = googlecloudstorage (step 2 picker)
+	agentAwaitKeep  bool
+	agentKeepObject bool
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -88,13 +131,14 @@ var baseStyle = lipgloss.NewStyle().
 
 // RunTable shows an interactive table and optionally execs ssh.
 // After SSH/Tunnel disconnects, it returns to the UI.
-func RunTable(records []hosts.Record, sshUser string) error {
+func RunTable(records []hosts.Record, sshUser string, opts RunTableOptions) error {
 	if len(records) == 0 {
 		fmt.Fprintln(os.Stderr, "no matching hosts")
 		return nil
 	}
 
-	m := newModel(records, sshUser)
+	m := newModel(records, sshUser, opts)
+	defer m.fileClientCache.CloseAll()
 
 	for {
 		p := tea.NewProgram(m)
@@ -114,6 +158,14 @@ func RunTable(records []hosts.Record, sshUser string) error {
 		m = fm
 		m.lastAction = actNone // Reset action for the next run so 'q' gracefully exits
 
+		if lastAction == actReplay {
+			if name := strings.TrimSpace(m.replayFileName); name != "" {
+				_ = RunRecordingReplay(m.recordDir, name)
+			}
+			m.replayFileName = ""
+			continue
+		}
+
 		row := fm.tbl.Cursor()
 		if row < 0 || row >= len(fm.visible) {
 			return nil
@@ -123,7 +175,7 @@ func RunTable(records []hosts.Record, sshUser string) error {
 
 		switch lastAction {
 		case actSSH:
-			err = runSSH(fm.sshUser, r)
+			err = runSSHWithRecording(fm.sshUser, r, fm.recordingOptions("tui", "interactive"))
 			if err != nil {
 				// Avoid "ExitError" halting the TUI when users just type 'exit 1' or Ctrl+C
 				_, isSSHExitErr := err.(*ssh.ExitError)
@@ -171,12 +223,51 @@ func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{})
 		if reg == "" {
 			reg = r.Meta["datacenter"]
 		}
-		rows = append(rows, table.Row{mark, r.Provider, r.Name, r.PrimaryIP, r.Zone, reg})
+
+		var labels []string
+		for k, v := range r.Meta {
+			if strings.HasPrefix(k, "label_") {
+				labels = append(labels, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label_"), v))
+			}
+		}
+
+		// Sort labels manually
+		for i := 0; i < len(labels)-1; i++ {
+			for j := i + 1; j < len(labels); j++ {
+				if labels[i] > labels[j] {
+					labels[i], labels[j] = labels[j], labels[i]
+				}
+			}
+		}
+
+		if tagsStr, ok := r.Meta["tags"]; ok && tagsStr != "" {
+			tags := strings.Split(tagsStr, ",")
+			for i := range tags {
+				tags[i] = strings.TrimSpace(tags[i])
+			}
+			// Sort tags manually
+			for i := 0; i < len(tags)-1; i++ {
+				for j := i + 1; j < len(tags); j++ {
+					if tags[i] > tags[j] {
+						tags[i], tags[j] = tags[j], tags[i]
+					}
+				}
+			}
+			if len(labels) > 0 {
+				labels = append(tags, labels...)
+			} else {
+				labels = tags
+			}
+		}
+
+		labelStr := strings.Join(labels, ", ")
+
+		rows = append(rows, table.Row{mark, r.Provider, r.Name, r.PrimaryIP, r.Zone, reg, labelStr})
 	}
 	return rows
 }
 
-func newModel(records []hosts.Record, sshUser string) *model {
+func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *model {
 	sel := make(map[int]struct{})
 	vis := make([]int, len(records))
 	for i := range records {
@@ -241,11 +332,21 @@ func newModel(records []hosts.Record, sshUser string) *model {
 		tunnelRemoteHost: tunHost,
 		tunnelRemotePort: tunRemote,
 		tunnelFocusIndex: 0,
+		recordDir:        strings.TrimSpace(opts.RecordDir),
+		recordEnabled:    strings.TrimSpace(opts.RecordDir) != "" && opts.RecordEnabled,
+		configPath:       strings.TrimSpace(opts.ConfigPath),
+		fileClientCache:  NewClientCache(),
 	}
 }
 
 func (m *model) Init() tea.Cmd {
 	return nil
+}
+
+// pasteMsgUpdatesTextInput reports whether bracketed paste should update the text field (not the table).
+func (m *model) pasteMsgUpdatesTextInput() bool {
+	return m.mode == "execinput" || m.mode == "cueexecinput" ||
+		(m.mode == "agenttransferform" && !m.agentAwaitKeep && m.agentFormStep != 2)
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -260,19 +361,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleParallelExecDoneMsg(msg)
 	case cueRecipeDoneMsg:
 		return m.handleCueRecipeDoneMsg(msg)
+	case agentTransferDoneMsg:
+		return m.handleAgentTransferDoneMsg(msg)
+	case tea.PasteMsg:
+		// On macOS terminals, Cmd+V often arrives as bracketed paste, not KeyMsg.
+		if m.pasteMsgUpdatesTextInput() {
+			m.applyPastedText(msg.Content)
+			return m, nil
+		}
 	case tea.WindowSizeMsg:
 		return m.handleWindowSizeMsg(msg)
 	case tea.KeyMsg:
-		if m.mode == "execresults" {
-			return m.updateExecResultsKeys(msg)
-		}
-		if m.mode == "tunnel" {
-			return m.updateTunnelInputs(msg)
-		}
-		if m.mode == "execinput" || m.mode == "cueexecinput" || m.mode == "filter" {
-			return m.updateTextInputMode(msg)
-		}
-		return m.handleTableKeyMsg(msg)
+		return m.dispatchKeyMsg(msg)
 	}
 
 	var cmd tea.Cmd
@@ -281,69 +381,189 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateTextInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mode == "cueexecinput" && m.cuePreviewOpen {
+		return m.updateCuePreviewKeys(msg)
+	}
+
+	if model, ok := m.tryClipboardPasteInTextInput(msg); ok {
+		return model, nil
+	}
+	if model, ok := m.tryCueRecipeListKeys(msg); ok {
+		return model, nil
+	}
+
 	switch msg.String() {
-	case "up", "k", "ctrl+p":
-		if m.mode == "cueexecinput" && len(m.availableRecipes) > 0 {
-			m.recipeCursor--
-			if m.recipeCursor < 0 {
-				m.recipeCursor = len(m.availableRecipes) - 1
-			}
-			m.ti.SetValue(m.availableRecipes[m.recipeCursor])
-			return m, nil
-		}
-	case "down", "j", "ctrl+n":
-		if m.mode == "cueexecinput" && len(m.availableRecipes) > 0 {
-			m.recipeCursor++
-			if m.recipeCursor >= len(m.availableRecipes) {
-				m.recipeCursor = 0
-			}
-			m.ti.SetValue(m.availableRecipes[m.recipeCursor])
-			return m, nil
-		}
 	case "esc":
 		m.mode = "table"
 		m.ti.Blur()
 		return m, nil
 	case "enter":
-		if m.mode == "cueexecinput" {
-			val := strings.TrimSpace(m.ti.Value())
-			if val == "" {
-				return m, nil
-			}
-			execute := false
-			if strings.HasSuffix(val, "!") {
-				execute = true
-				val = strings.TrimSpace(strings.TrimSuffix(val, "!"))
-			}
-			if val == "" {
-				return m, nil
-			}
-			targets, note := m.parallelExecTargets()
-			m.ti.Blur()
-			return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute)
+		return m.textInputEnter()
+	default:
+		var cmd tea.Cmd
+		m.ti, cmd = m.ti.Update(msg)
+
+		if m.mode == "filter" && m.filter != m.ti.Value() {
+			m.filter = m.ti.Value()
+			m.applyFilter()
 		}
-		if m.mode == "filter" {
-			m.mode = "table"
-			m.ti.Blur()
+
+		return m, cmd
+	}
+}
+
+func (m *model) tryClipboardPasteInTextInput(msg tea.KeyMsg) (tea.Model, bool) {
+	switch msg.String() {
+	case "ctrl+v", "shift+insert", "cmd+v", "meta+v", "super+v":
+		if m.pasteMsgUpdatesTextInput() {
+			if clip, err := clipboard.ReadAll(); err == nil {
+				m.applyPastedText(clip)
+			}
+			return m, true
+		}
+	}
+	return m, false
+}
+
+func (m *model) tryCueRecipeListKeys(msg tea.KeyMsg) (tea.Model, bool) {
+	if m.mode != "cueexecinput" || len(m.availableRecipes) == 0 {
+		return m, false
+	}
+	switch msg.String() {
+	case "tab":
+		m.selectCurrentDefaultRecipe()
+		return m, true
+	case "v":
+		m.cuePreviewOpen = !m.cuePreviewOpen
+		if !m.cuePreviewOpen {
+			m.cuePreviewScroll = 0
+		}
+		return m, true
+	case "up", "k", "ctrl+p":
+		m.recipeCursor--
+		if m.recipeCursor < 0 {
+			m.recipeCursor = len(m.availableRecipes) - 1
+		}
+		return m, true
+	case "down", "j", "ctrl+n":
+		m.recipeCursor++
+		if m.recipeCursor >= len(m.availableRecipes) {
+			m.recipeCursor = 0
+		}
+		return m, true
+	default:
+		return m, false
+	}
+}
+
+func (m *model) textInputEnter() (tea.Model, tea.Cmd) {
+	if m.mode == "cueexecinput" {
+		val := strings.TrimSpace(m.ti.Value())
+		if val == "" {
 			return m, nil
 		}
-		cmd := strings.TrimSpace(m.ti.Value())
-		if cmd == "" {
+		execute := false
+		if strings.HasSuffix(val, "!") {
+			execute = true
+			val = strings.TrimSpace(strings.TrimSuffix(val, "!"))
+		}
+		if val == "" {
 			return m, nil
 		}
 		targets, note := m.parallelExecTargets()
 		m.ti.Blur()
-		return m, runParallelSSHStreamCmd(m.sshUser, targets, cmd, note)
+		return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute, m.recordDir, m.recordEnabled, m.configPath)
 	}
-	var cmd tea.Cmd
-	m.ti, cmd = m.ti.Update(msg)
+	if m.mode == "filter" {
+		m.mode = "table"
+		m.ti.Blur()
+		return m, nil
+	}
+	cmd := strings.TrimSpace(m.ti.Value())
+	if cmd == "" {
+		return m, nil
+	}
+	targets, note := m.parallelExecTargets()
+	m.ti.Blur()
+	return m, runParallelSSHStreamCmd(m.sshUser, targets, cmd, note)
+}
 
-	if m.mode == "filter" && m.filter != m.ti.Value() {
-		m.filter = m.ti.Value()
-		m.applyFilter()
+func (m *model) applyPastedText(raw string) {
+	paste := normalizePastedInput(m.mode, raw)
+	if paste == "" {
+		return
+	}
+	cur := m.ti.Value()
+	if cur == "" {
+		m.ti.SetValue(paste)
+		return
+	}
+	sep := ""
+	if !strings.HasSuffix(cur, " ") && !strings.HasPrefix(paste, " ") {
+		sep = " "
+	}
+	m.ti.SetValue(cur + sep + paste)
+}
+
+func (m *model) selectCurrentDefaultRecipe() {
+	if len(m.availableRecipes) == 0 {
+		return
+	}
+	if m.recipeCursor < 0 || m.recipeCursor >= len(m.availableRecipes) {
+		m.recipeCursor = 0
+	}
+	m.ti.SetValue(m.availableRecipes[m.recipeCursor])
+}
+
+func (m *model) updateCuePreviewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	lines := m.selectedDefaultRecipePreviewLines(0)
+	vis := m.visibleCuePreviewLines()
+	maxScroll := 0
+	if len(lines) > vis {
+		maxScroll = len(lines) - vis
 	}
 
-	return m, cmd
+	switch msg.String() {
+	case "esc", "enter", "v":
+		m.cuePreviewOpen = false
+		m.cuePreviewScroll = 0
+	case "up", "k":
+		if m.cuePreviewScroll > 0 {
+			m.cuePreviewScroll--
+		}
+	case "down", "j":
+		if m.cuePreviewScroll < maxScroll {
+			m.cuePreviewScroll++
+		}
+	case "pgup", "b":
+		m.cuePreviewScroll -= vis / 2
+		if m.cuePreviewScroll < 0 {
+			m.cuePreviewScroll = 0
+		}
+	case "pgdown", "f":
+		m.cuePreviewScroll += vis / 2
+		if m.cuePreviewScroll > maxScroll {
+			m.cuePreviewScroll = maxScroll
+		}
+	case "home", "g":
+		m.cuePreviewScroll = 0
+	case "end", "G":
+		m.cuePreviewScroll = maxScroll
+	}
+
+	return m, nil
+}
+
+func normalizePastedInput(mode, raw string) string {
+	s := strings.ReplaceAll(raw, "\r\n", "\n")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if mode == "cueexecinput" {
+		return strings.TrimSpace(strings.Split(s, "\n")[0])
+	}
+	return strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
 }
 
 func (m *model) updateExecResultsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -517,6 +737,16 @@ func (m *model) popupResultLines() []string {
 		lines = append(lines, strings.Split(r.Output, "\n")...)
 	}
 
+	if strings.TrimSpace(r.HookPhase) != "" || strings.TrimSpace(r.HookOutput) != "" {
+		lines = append(lines, "")
+		lines = append(lines, "--- Hook ("+strings.TrimSpace(r.HookPhase)+") ---")
+		if strings.TrimSpace(r.HookOutput) == "" {
+			lines = append(lines, "(no hook output)")
+		} else {
+			lines = append(lines, strings.Split(strings.TrimSpace(r.HookOutput), "\n")...)
+		}
+	}
+
 	return lines
 }
 
@@ -559,7 +789,7 @@ func (m *model) View() tea.View {
 	case "tunnel":
 		box = m.viewTunnel(helpStyle)
 	case "execinput":
-		help := helpStyle.Render("enter: run   esc: back   q: quit")
+		help := helpStyle.Render(fmt.Sprintf("enter: run   %s: paste   esc: back   q: quit", pasteShortcutHelp()))
 		_, scope := m.parallelExecTargets()
 		box = lipgloss.JoinVertical(
 			lipgloss.Left,
@@ -569,38 +799,378 @@ func (m *model) View() tea.View {
 		)
 		box = baseStyle.Render(box) + "\n" + help
 	case "cueexecinput":
-		helpStr := "enter: run   esc: back   q: quit"
+		var helpStr string
 		if len(m.availableRecipes) > 0 {
-			helpStr = "enter: run   esc: back   ↑/↓: cycle built-in recipes   q: quit"
+			helpStr = fmt.Sprintf("enter: run   %s: paste   tab: use selected default   v: preview popup   esc: back   ↑/↓: move defaults   q: quit", pasteShortcutHelp())
+		} else {
+			helpStr = fmt.Sprintf("enter: run   %s: paste   esc: back   q: quit", pasteShortcutHelp())
 		}
 		help := helpStyle.Render(helpStr)
 		_, scope := m.parallelExecTargets()
-		box = lipgloss.JoinVertical(
+		left := lipgloss.JoinVertical(
 			lipgloss.Left,
 			"CUE recipe (selected hosts only):",
 			helpStyle.Render(scope),
 			m.ti.View(),
 		)
+		if len(m.availableRecipes) > 0 {
+			right := m.viewDefaultRecipesPanel()
+			box = lipgloss.JoinVertical(
+				lipgloss.Left,
+				left,
+				"",
+				right,
+			)
+		} else {
+			box = left
+		}
 		box = baseStyle.Render(box) + "\n" + help
+	case "agenttransferform":
+		box = baseStyle.Render(m.viewAgentTransferForm(helpStyle))
 	case "execresults":
 		box = m.viewExecResults(helpStyle)
+	case "replaypick":
+		box = m.viewReplayPick(helpStyle)
 	default:
-		help := helpStyle.Render("enter: ssh (k8s: exec)   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks   q: quit")
+		recHint := ""
+		if m.recordDir != "" {
+			recState := "off"
+			if m.recordEnabled {
+				recState = "on"
+			}
+			recHint = "   R: record " + recState + "   p: play recording"
+		}
+		help := helpStyle.Render("enter: ssh (k8s: exec)   a: A→cloud→B   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
 			sub = helpStyle.Render(fmt.Sprintf("%d row(s) marked (* for parallel SSH and CUE recipe)", nMark)) + "\n"
 		}
 		title := lipgloss.NewStyle().Bold(true).Render("honey — select a host")
-		box = title + "\n" + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
+		banner := ""
+		switch m.agentPick {
+		case "source":
+			banner = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("Pick SOURCE host for agent transfer — Enter on row   Esc cancel") + "\n\n"
+		case "dest":
+			banner = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("Pick DESTINATION host — Enter on row   Esc cancel") + "\n\n"
+		}
+		box = title + "\n" + banner + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
 	}
 
 	view := tea.NewView(box)
+	if m.mode == "cueexecinput" && m.cuePreviewOpen {
+		view = tea.NewView(m.viewCueRecipePreviewPopup(helpStyle))
+	}
 	view.AltScreen = true
 	return view
 }
 
-func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool) tea.Cmd {
+func pasteShortcutHelp() string {
+	if runtime.GOOS == "darwin" {
+		return "cmd+v"
+	}
+	return "ctrl+v/shift+insert"
+}
+
+func (m *model) viewDefaultRecipesPanel() string {
+	rows := make([]string, 0, 3+len(m.availableRecipes))
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Render("Default recipes"))
+	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("↑/↓ move, tab inserts, v opens popup"))
+	rows = append(rows, "")
+
+	for i, recipe := range m.availableRecipes {
+		displayName := filepath.Base(recipe)
+		if displayName == "." || displayName == string(filepath.Separator) || displayName == "" {
+			displayName = recipe
+		}
+		prefix := "  "
+		if i == m.recipeCursor {
+			prefix = "> "
+			displayName = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Render(displayName)
+		}
+		rows = append(rows, prefix+displayName)
+	}
+	return strings.Join(rows, "\n")
+}
+
+func (m *model) replayPickVisibleLines() int {
+	h := m.winH - 10
+	if h < 4 {
+		h = 4
+	}
+	return h
+}
+
+func (m *model) clampReplayPickScroll() {
+	if len(m.replayFiles) == 0 {
+		m.replayPickScroll = 0
+		return
+	}
+	vis := m.replayPickVisibleLines()
+	maxScroll := len(m.replayFiles) - vis
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.replayPickScroll > maxScroll {
+		m.replayPickScroll = maxScroll
+	}
+	if m.replayPickScroll < 0 {
+		m.replayPickScroll = 0
+	}
+	if m.replayCursor < m.replayPickScroll {
+		m.replayPickScroll = m.replayCursor
+	}
+	if vis > 0 && m.replayCursor >= m.replayPickScroll+vis {
+		m.replayPickScroll = m.replayCursor - vis + 1
+	}
+}
+
+func (m *model) viewReplayPick(helpStyle lipgloss.Style) string {
+	title := lipgloss.NewStyle().Bold(true).Render("Session recordings")
+	var lines []string
+	if m.replayListErr != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(m.replayListErr))
+	}
+	if len(m.replayFiles) == 0 && m.replayListErr == "" {
+		lines = append(lines, helpStyle.Render("(no .hrec.jsonl files in record dir)"))
+	} else if len(m.replayFiles) > 0 {
+		vis := m.replayPickVisibleLines()
+		start := m.replayPickScroll
+		end := start + vis
+		if end > len(m.replayFiles) {
+			end = len(m.replayFiles)
+		}
+		for i := start; i < end; i++ {
+			name := m.replayFiles[i]
+			prefix := "  "
+			line := name
+			if i == m.replayCursor {
+				prefix = "> "
+				line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Render(name)
+			}
+			lines = append(lines, prefix+line)
+		}
+		if len(m.replayFiles) > vis {
+			lines = append(lines, helpStyle.Render(fmt.Sprintf("(rows %d–%d of %d — pgup/pgdn)", start+1, end, len(m.replayFiles))))
+		}
+	}
+	body := strings.Join(lines, "\n")
+	help := helpStyle.Render("enter: play   esc: back   ↑/↓: move   pgup/pgdn: page   q: back")
+	return lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help)
+}
+
+func (m *model) selectedDefaultRecipePath() string {
+	if len(m.availableRecipes) == 0 {
+		return ""
+	}
+	if m.recipeCursor < 0 || m.recipeCursor >= len(m.availableRecipes) {
+		return m.availableRecipes[0]
+	}
+	return m.availableRecipes[m.recipeCursor]
+}
+
+func (m *model) selectedDefaultRecipePreviewLines(maxLines int) []string {
+	recipePath := m.selectedDefaultRecipePath()
+	if recipePath == "" {
+		return []string{"(no recipe selected)"}
+	}
+
+	raw, err := safepath.ReadFile(recipePath)
+	if err != nil {
+		absPath, absErr := filepath.Abs(recipePath)
+		if absErr == nil {
+			raw, err = safepath.ReadFile(absPath)
+		}
+	}
+	if err != nil {
+		return []string{fmt.Sprintf("(failed to read recipe: %v)", err)}
+	}
+
+	text := strings.TrimRight(string(raw), "\n")
+	if strings.TrimSpace(text) == "" {
+		return []string{"(empty recipe file)"}
+	}
+
+	lines := strings.Split(text, "\n")
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = append(lines[:maxLines], fmt.Sprintf("... (%d more lines)", len(lines)-maxLines))
+	}
+	return lines
+}
+
+func (m *model) visibleCuePreviewLines() int {
+	vis := m.winH - 12
+	if vis < 8 {
+		vis = 8
+	}
+	return vis
+}
+
+func (m *model) viewCueRecipePreviewPopup(helpStyle lipgloss.Style) string {
+	lines := m.selectedDefaultRecipePreviewLines(0)
+	vis := m.visibleCuePreviewLines()
+	start := m.cuePreviewScroll
+	if start < 0 {
+		start = 0
+	}
+	if start > len(lines) {
+		start = len(lines)
+	}
+	end := start + vis
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	scrollNote := ""
+	if len(lines) > vis && end > 0 {
+		scrollNote = fmt.Sprintf("lines %d-%d of %d", start+1, end, len(lines))
+	}
+
+	previewBody := "(empty preview)"
+	if end > start {
+		previewBody = strings.Join(highlightCueLines(lines[start:end]), "\n")
+	}
+
+	recipeName := filepath.Base(m.selectedDefaultRecipePath())
+	title := "Recipe Preview"
+	if recipeName != "" {
+		title = "Recipe Preview: " + recipeName
+	}
+	popupWidth := m.winW - 8
+	if popupWidth < 50 {
+		popupWidth = 50
+	}
+	popup := lipgloss.JoinVertical(
+		lipgloss.Left,
+		lipgloss.NewStyle().Bold(true).Render(title),
+		baseStyle.Width(popupWidth).Render(previewBody),
+		helpStyle.Render(scrollNote),
+		helpStyle.Render("esc/v/enter: close   ↑/k ↓/j   pgup/pgdn   home/end"),
+	)
+	return lipgloss.Place(m.winW, m.winH, lipgloss.Center, lipgloss.Center, popup)
+}
+
+func highlightCueLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, highlightCueLine(line))
+	}
+	return out
+}
+
+func highlightCueLine(line string) string {
+	commentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	stringStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("221"))
+	keywordStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+
+	commentIdx := cueLineCommentIndex(line)
+	codePart := line
+	commentPart := ""
+	if commentIdx >= 0 {
+		codePart = line[:commentIdx]
+		commentPart = line[commentIdx:]
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(codePart); {
+		ch := codePart[i]
+		if ch == '"' {
+			j := i + 1
+			escaped := false
+			for j < len(codePart) {
+				if escaped {
+					escaped = false
+					j++
+					continue
+				}
+				if codePart[j] == '\\' {
+					escaped = true
+					j++
+					continue
+				}
+				if codePart[j] == '"' {
+					j++
+					break
+				}
+				j++
+			}
+			b.WriteString(stringStyle.Render(codePart[i:j]))
+			i = j
+			continue
+		}
+		if isCueWordStart(ch) {
+			j := i + 1
+			for j < len(codePart) && isCueWordChar(codePart[j]) {
+				j++
+			}
+			word := codePart[i:j]
+			if isCueKeyword(word) {
+				b.WriteString(keywordStyle.Render(word))
+			} else {
+				b.WriteString(word)
+			}
+			i = j
+			continue
+		}
+		b.WriteByte(ch)
+		i++
+	}
+
+	if commentPart != "" {
+		b.WriteString(commentStyle.Render(commentPart))
+	}
+
+	return b.String()
+}
+
+func cueLineCommentIndex(line string) int {
+	inString := false
+	escaped := false
+	for i := 0; i < len(line)-1; i++ {
+		ch := line[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			continue
+		}
+		if ch == '/' && line[i+1] == '/' {
+			return i
+		}
+	}
+	return -1
+}
+
+func isCueWordStart(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+}
+
+func isCueWordChar(ch byte) bool {
+	return isCueWordStart(ch) || (ch >= '0' && ch <= '9')
+}
+
+func isCueKeyword(word string) bool {
+	switch word {
+	case "package", "import", "let", "for", "if", "in", "true", "false", "null":
+		return true
+	default:
+		return false
+	}
+}
+
+func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool, recordDir string, recordEnabled bool, configPath string) tea.Cmd {
 	title := "CUE recipe (dry-run)"
 	if execute {
 		title = "CUE recipe (execute)"
@@ -629,7 +1199,32 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 
 		if !execute {
 			var buf bytes.Buffer
-			runErr := RunCueRecipeSteps(&buf, recipe, recipeDir, targets, sshUser, execute, nil)
+			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
+			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, aiPrompt, nil)
+			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
+				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
+					if rec != nil {
+						hash, _ := cuetry.HashRecipeJSON(recipe)
+						rec.RecordRecipeMeta(RecipeMeta{
+							RecipePath:        absRecipe,
+							HostCount:         len(targets),
+							RecipeContentHash: hash,
+							StartedAt:         time.Now().UTC(),
+						})
+					}
+					if runErr != nil {
+						rec.RecordError(runErr)
+					} else {
+						plan := buf.String()
+						if strings.TrimSpace(plan) == "" {
+							rec.RecordData("plan", []byte("(empty plan)"))
+						} else {
+							rec.RecordData("plan", []byte(plan))
+						}
+					}
+					_ = rec.Close()
+				}
+			}
 			body := targetNote + "\n\n" + buf.String()
 			if runErr != nil {
 				body += "\nError: " + runErr.Error()
@@ -637,12 +1232,19 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			return cueRecipeDoneMsg{title: title, body: body}
 		}
 
-		totalJobs := len(recipe.Steps) * len(targets)
+		totalJobs, cntErr := cuetry.CountRecipeStreamResults(recipe, targets)
+		if cntErr != nil {
+			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nrecipe steps: " + cntErr.Error()}
+		}
+		if totalJobs < 1 {
+			totalJobs = 1
+		}
 		ch := make(chan HostExecResult, totalJobs)
 
 		go func() {
 			defer close(ch)
-			_ = StreamCueRecipeSteps(recipe, recipeDir, targets, sshUser, nil, ch)
+			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
+			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, aiPrompt, ch)
 		}()
 
 		return streamStartMsg{
@@ -651,6 +1253,8 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			totalJobs:  totalJobs,
 			ch:         ch,
 			isCue:      true,
+			recipe:     &recipe,
+			recipePath: absRecipe,
 		}
 	}
 }
@@ -661,6 +1265,10 @@ type streamStartMsg struct {
 	totalJobs  int
 	ch         chan HostExecResult
 	isCue      bool
+	// For cue-exec only: parsed recipe and absolute recipe path so the
+	// session recorder can attribute the recording to a recipe.
+	recipe     *cuetry.Recipe
+	recipePath string
 }
 
 type streamResultMsg struct {
@@ -691,7 +1299,7 @@ func runParallelSSHStreamCmd(user string, targets []hosts.Record, cmdLine, targe
 
 		go func() {
 			defer close(ch)
-			cmdFunc := func(r hosts.Record) string {
+			cmdFunc := func(r hosts.Record, _ map[string]string) string {
 				// Inject host variables even for direct UI commands
 				env, err := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
 				if err != nil {
@@ -703,7 +1311,7 @@ func runParallelSSHStreamCmd(user string, targets []hosts.Record, cmdLine, targe
 				}
 				return remoteCmd
 			}
-			_ = StreamSSHParallel(user, jobs, cmdFunc, 0, ch, nil)
+			_ = StreamSSHParallel(context.Background(), user, jobs, false, cmdFunc, 0, ch, nil, nil, false, nil)
 		}()
 
 		return streamStartMsg{
@@ -818,12 +1426,45 @@ func (m *model) clearParallelMarks() {
 	m.refreshTableRows(m.tbl.Cursor())
 }
 
-func runSSH(user string, r hosts.Record) error {
-	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") {
+func (m *model) recordingOptions(trigger, mode string) *SessionRecorderOptions {
+	if !m.recordEnabled || strings.TrimSpace(m.recordDir) == "" {
+		return nil
+	}
+	row := m.tbl.Cursor()
+	if row < 0 || row >= len(m.visible) {
+		return nil
+	}
+	realIdx := m.visible[row]
+	r := m.recs[realIdx]
+	return &SessionRecorderOptions{
+		Dir:      m.recordDir,
+		Trigger:  trigger,
+		Mode:     mode,
+		Provider: r.Provider,
+		HostName: r.Name,
+		HostIP:   r.PrimaryIP,
+		User:     m.sshUser,
+	}
+}
+
+func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorderOptions) error {
+	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !pvelxc.ShouldUsePVETTY(r) {
 		return fmt.Errorf("no IP for selected host")
 	}
-	executor := GetExecutor(r)
-	return executor.RunInteractive(user, r)
+	var recorder *SessionRecorder
+	if recordOpts != nil {
+		rec, err := NewSessionRecorder(*recordOpts)
+		if err == nil {
+			recorder = rec
+		}
+	}
+	if recorder != nil {
+		defer recorder.Close()
+	}
+	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
+		return runK8sInteractiveWithRecorder(user, r, recorder)
+	}
+	return runSSHInteractive(user, r, recorder)
 }
 
 func runTunnel(user string, r hosts.Record, localFwd string) error {
@@ -834,5 +1475,7 @@ func runTunnel(user string, r hosts.Record, localFwd string) error {
 		return fmt.Errorf("tunnel spec must look like 8080:remotehost:8080 or 8080:8080 for kubernetes pods")
 	}
 	executor := GetExecutor(r)
-	return executor.RunTunnel(user, r, localFwd)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	return executor.RunTunnel(ctx, user, r, localFwd, os.Stderr)
 }

@@ -36,6 +36,12 @@ func (proxmoxFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []
 		if !insecure && f.ProxmoxInsecure {
 			insecure = true
 		}
+		execMode := strings.ToLower(strings.TrimSpace(e.ExecMode))
+		switch execMode {
+		case "pve", "hybrid":
+		default:
+			execMode = "ssh"
+		}
 		out = append(out, &Proxmox{
 			Name:        e.Name,
 			URL:         url,
@@ -44,6 +50,7 @@ func (proxmoxFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []
 			TokenID:     tid,
 			TokenSecret: tsec,
 			Insecure:    insecure,
+			ExecMode:    execMode,
 		})
 	}
 	return out
@@ -67,3 +74,7 @@ func (proxmoxFactory) BackendRows(cfg *config.File) []config.BackendRow {
 	}
 	return rows
 }
+
+func (proxmoxFactory) BackendKind() string { return "proxmox" }
+
+func (proxmoxFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Proxmox }

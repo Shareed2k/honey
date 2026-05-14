@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/shareed2k/honey/internal/cli"
+	"github.com/shareed2k/honey/internal/transferagent"
 )
 
 // Set by goreleaser / -ldflags at link time.
@@ -17,6 +18,7 @@ var (
 
 func main() {
 	cli.InitBuildInfo(version, commit, date)
+	transferagent.SetEmbeddedHoneyVersion(version)
 	if err := cli.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

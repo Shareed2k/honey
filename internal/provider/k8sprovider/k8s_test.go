@@ -12,15 +12,31 @@ import (
 )
 
 func TestSearchPodsMeta(t *testing.T) {
-	clientset := fake.NewSimpleClientset(&corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pod",
-			Namespace: "default",
+	clientset := fake.NewSimpleClientset(
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "worker-node-7"},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeInternalIP, Address: "10.0.0.5"},
+					{Type: corev1.NodeInternalIP, Address: "10.0.0.6"},
+					// Hostname must not appear in IP extras or node_extra_ips (duplicates node name).
+					{Type: corev1.NodeHostName, Address: "worker-node-7"},
+				},
+			},
 		},
-		Status: corev1.PodStatus{
-			PodIP: "1.2.3.4",
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-pod",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-node-7",
+			},
+			Status: corev1.PodStatus{
+				PodIP: "1.2.3.4",
+			},
 		},
-	})
+	)
 
 	k := &K8s{
 		Name: "my-backend",
@@ -54,5 +70,23 @@ func TestSearchPodsMeta(t *testing.T) {
 	}
 	if r.Meta["backend_name"] != "my-backend" {
 		t.Errorf("expected backend_name=my-backend, got %q", r.Meta["backend_name"])
+	}
+	if r.Meta["node"] != "worker-node-7" {
+		t.Errorf("expected node=worker-node-7, got %q", r.Meta["node"])
+	}
+	if r.Meta["node_ip"] != "10.0.0.5" {
+		t.Errorf("expected node_ip=10.0.0.5, got %q", r.Meta["node_ip"])
+	}
+	if r.Meta["node_extra_ips"] != "10.0.0.6" {
+		t.Errorf("expected node_extra_ips=10.0.0.6, got %q", r.Meta["node_extra_ips"])
+	}
+	wantExtras := []string{"worker-node-7", "10.0.0.5", "10.0.0.6"}
+	if len(r.ExtraIPs) != len(wantExtras) {
+		t.Fatalf("ExtraIPs: want %v got %#v", wantExtras, r.ExtraIPs)
+	}
+	for i, w := range wantExtras {
+		if r.ExtraIPs[i] != w {
+			t.Errorf("ExtraIPs[%d]: want %q got %q", i, w, r.ExtraIPs[i])
+		}
 	}
 }

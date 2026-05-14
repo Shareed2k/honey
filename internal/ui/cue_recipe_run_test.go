@@ -1,0 +1,28 @@
+package ui
+
+import "testing"
+
+func TestCueStepAllTargetsTransientTransportFailed(t *testing.T) {
+	t.Parallel()
+	if cueStepAllTargetsTransientTransportFailed(nil) {
+		t.Fatal("expected false for nil slice")
+	}
+	if cueStepAllTargetsTransientTransportFailed([]HostExecResult{}) {
+		t.Fatal("expected false for empty slice")
+	}
+	if cueStepAllTargetsTransientTransportFailed([]HostExecResult{{Success: true, ErrMsg: ""}}) {
+		t.Fatal("expected false when any host succeeded")
+	}
+	if cueStepAllTargetsTransientTransportFailed([]HostExecResult{
+		{Success: false, ErrMsg: "connection reset by peer"},
+		{Success: false, ErrMsg: "exit 1"},
+	}) {
+		t.Fatal("expected false when failures are not all transport-class")
+	}
+	if !cueStepAllTargetsTransientTransportFailed([]HostExecResult{
+		{Success: false, ErrMsg: "connection reset by peer"},
+		{Success: false, ErrMsg: "read tcp 10.0.0.1:22: i/o timeout"},
+	}) {
+		t.Fatal("expected true when every host failed with transport-class errors")
+	}
+}

@@ -43,3 +43,7 @@ func (consulFactory) BackendRows(cfg *config.File) []config.BackendRow {
 	}
 	return rows
 }
+
+func (consulFactory) BackendKind() string { return "consul" }
+
+func (consulFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Consul }

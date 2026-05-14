@@ -1,0 +1,87 @@
+# Cross-compile cmd/honey-transfer-agent for remote cloud transfers, then compress with UPX
+# via crazy-max/ghaction-upx (https://github.com/marketplace/actions/upx-github-action).
+# Linux: --best --lzma. Darwin (Mach-O packed on Linux runner): add --force-macos (UPX 5.x).
+# Honey fetches prebuilts from the same release tag as the honey binary, e.g.:
+#   https://github.com/shareed2k/honey/releases/download/vX.Y.Z/honey-transfer-agent-<goos>-<goarch>
+# (dev / unset version uses …/releases/latest/download/…). Optional override: DOWNLOAD_BASE / DOWNLOAD_URL.
+# Opt out: HONEY_TRANSFER_AGENT_DOWNLOAD_DISABLE_DEFAULT=1
+name: honey-transfer-agent
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cross-compile honey-transfer-agent
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for pair in "linux amd64" "linux arm64" "darwin amd64" "darwin arm64"; do
+            set -- $pair
+            goos=$1
+            goarch=$2
+            out="dist/honey-transfer-agent-${goos}-${goarch}"
+            echo "Building ${out}"
+            GOOS=${goos} GOARCH=${goarch} CGO_ENABLED=0 \
+              go build -trimpath -ldflags="-s -w" -o "${out}" ./cmd/honey-transfer-agent
+          done
+          ls -la dist/
+
+      - name: UPX (Linux)
+        uses: crazy-max/ghaction-upx@v4
+        with:
+          version: latest
+          files: |
+            dist/honey-transfer-agent-linux-*
+          args: --best --lzma
+
+      - name: UPX (Darwin, packed on Linux)
+        uses: crazy-max/ghaction-upx@v4
+        with:
+          version: latest
+          files: |
+            dist/honey-transfer-agent-darwin-*
+          args: --best --lzma --force-macos
+
+      - name: List dist after UPX
+        run: ls -la dist/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: honey-transfer-agent-binaries
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: honey-transfer-agent-binaries
+          path: dist
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

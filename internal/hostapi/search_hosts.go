@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -92,6 +93,7 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 			return out, fmt.Errorf("config: %w", err)
 		}
 	}
+	hostexec.ReconfigureFromHoneyConfig(cfg)
 
 	q := hosts.Query{
 		NameSubstring:      strings.TrimSpace(in.Name),
