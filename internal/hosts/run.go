@@ -59,6 +59,18 @@ func RunParallel(
 				return err
 			}
 			zap.L().Debug("provider search success", zap.String("provider", p.ID()), zap.String("backend", p.BackendName()), zap.Int("found", len(recs)))
+			
+			bName := p.BackendName()
+			if bName == "" {
+				bName = p.ID()
+			}
+			for j := range recs {
+				if recs[j].Meta == nil {
+					recs[j].Meta = make(map[string]string)
+				}
+				recs[j].Meta["backend_name"] = bName
+			}
+
 			if useCache && key != "" {
 				_ = fc.Set(key, recs)
 			}

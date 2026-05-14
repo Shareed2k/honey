@@ -13,6 +13,7 @@ import (
 const (
 	groupHoneyPrefix      = "honey"
 	groupProviderPrefix   = "honey_provider"
+	groupBackendPrefix    = "honey_backend"
 	groupRegionPrefix     = "honey_region"
 	groupZonePrefix       = "honey_zone"
 	groupTagPrefix        = "honey_tag"
@@ -68,6 +69,7 @@ func AnsibleList(records []hosts.Record, ansibleUser string, stripPrefix bool, b
 	byTag := map[string][]string{}
 	byLabel := map[string][]string{}
 	byProviderBackend := map[string][]string{}
+	byBackend := map[string][]string{}
 
 	for i, r := range records {
 		key := keys[i]
@@ -90,6 +92,11 @@ func AnsibleList(records []hosts.Record, ansibleUser string, stripPrefix bool, b
 				}
 				byProviderBackend[bg] = append(byProviderBackend[bg], key)
 			}
+		}
+
+		if backendName != "" {
+			bg := groupPrefix(groupBackendPrefix, backendName, stripPrefix)
+			byBackend[bg] = append(byBackend[bg], key)
 		}
 
 		if z := strings.TrimSpace(r.Region); z != "" {
@@ -120,6 +127,9 @@ func AnsibleList(records []hosts.Record, ansibleUser string, stripPrefix bool, b
 		out[g] = map[string]any{"hosts": sortedCopy(hs)}
 	}
 	for g, hs := range byProviderBackend {
+		out[g] = map[string]any{"hosts": sortedCopy(hs)}
+	}
+	for g, hs := range byBackend {
 		out[g] = map[string]any{"hosts": sortedCopy(hs)}
 	}
 	for g, hs := range byRegion {
