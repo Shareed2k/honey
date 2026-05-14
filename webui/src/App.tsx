@@ -1496,26 +1496,36 @@ export function App() {
               const tunnelBtnText = activeTunnels.length > 0 ? `Tunnel (${activeTunnels.length})` : 'Tunnel';
               const tunnelBtnStyle = activeTunnels.length > 0 ? { backgroundColor: 'rgba(100, 149, 237, 0.2)' } : undefined;
 
+              const activeTerms = terminals.filter((t) => recordKey(t.record) === recKey);
+              const serialTerms = activeTerms.filter(t => t.pve === 'serial');
+              const vncTerms = activeTerms.filter(t => t.pve === 'vnc');
+              
+              const termBtnStyle = serialTerms.length > 0 ? { backgroundColor: 'rgba(59, 130, 246, 0.2)' } : undefined;
+              const termBtnText = serialTerms.length > 0 ? `Terminal (Open)` : `Terminal`;
+
+              const vncBtnStyle = vncTerms.length > 0 ? { backgroundColor: 'rgba(59, 130, 246, 0.2)' } : undefined;
+              const vncBtnText = vncTerms.length > 0 ? `VNC (Open)` : `VNC`;
+
               return (
               <>
-                <button type="button" onClick={() => {
+                <button type="button" style={termBtnStyle} onClick={() => {
                   const id = Math.random().toString(36).slice(2);
                   setTerminals((prev) => [...prev, { id, record: rec, pve: 'serial' }]);
                   setActiveTermId(id);
                   setIsTerminalModalOpen(true);
                 }}>
-                  Terminal
+                  {termBtnText}
                 </button>
                 {canProxmoxQemuVnc(rec) ? (
                   <>
                     {' '}
-                    <button type="button" onClick={() => {
+                    <button type="button" style={vncBtnStyle} onClick={() => {
                       const id = Math.random().toString(36).slice(2);
                       setTerminals((prev) => [...prev, { id, record: rec, pve: 'vnc' }]);
                       setActiveTermId(id);
                       setIsTerminalModalOpen(true);
                     }}>
-                      VNC
+                      {vncBtnText}
                     </button>
                   </>
                 ) : null}{' '}
@@ -2239,6 +2249,16 @@ export function App() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {terminals.length > 0 && !isTerminalModalOpen ? (
+        <button 
+          className="floating-terminal-btn"
+          onClick={() => setIsTerminalModalOpen(true)}
+        >
+          <span>🖥️</span> 
+          Open Terminals ({terminals.length})
+        </button>
       ) : null}
     </main>
   );

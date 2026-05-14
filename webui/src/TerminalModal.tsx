@@ -482,86 +482,85 @@ function TerminalSession({
   return (
     <div style={{ display: isActive ? 'flex' : 'none', width: '100%', height: '100%', minHeight: 0 }} className={showAssist ? 'modal-terminal-split-inner' : ''}>
       <div className="modal-terminal-body">
-        {isVnc ? (
-          <div className="term-wrap">
-            <div className="term-xterm-host" ref={vncHostRef} style={{ background: '#282828' }} />
-            {connectOverlay}
-          </div>
-        ) : (
-          <div className="term-wrap">
-            <div className="term-xterm-host" ref={ref} />
-            {connectOverlay}
-          </div>
-        )}
-      </div>
-
-      {showAssist ? (
-        <div className="modal-terminal-assist">
-          <div className="modal-terminal-assist-messages">
-            {assistErr && <div style={{ color: '#ef4444', marginBottom: '1rem' }}>Error: {assistErr}</div>}
-            {assistReply && (
-              <div className="assist-reply">
-                {assistClipped && (
-                  <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginBottom: '0.5rem' }}>
-                    Note: Scrollback was truncated to {assistLines} lines for the model context.
-                  </div>
-                )}
-                <Suspense fallback={<div>Loading markdown...</div>}>
+        {termArea}
+        {showAssist ? (
+          <aside className="term-assist-panel" aria-label="Terminal assistant">
+            <strong style={{ fontSize: '0.9rem' }}>Assistant</strong>
+            <small>
+              Sends the last lines of scrollback plus your question using a model from the provider list. Terminal data may
+              be sensitive—only send what you are allowed to share.
+            </small>
+            {assistModelsLoading ? (
+              <small style={{ color: '#9aa4b2' }}>Loading models…</small>
+            ) : null}
+            {assistModelsErr ? (
+              <small style={{ color: '#f5a623' }}>{assistModelsErr}</small>
+            ) : null}
+            {assistModels.length > 0 ? (
+              <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Model
+                <select value={assistSelectedModel} onChange={(e) => setAssistSelectedModel(e.target.value)}>
+                  {assistModels.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : !assistModelsLoading ? (
+              <small style={{ color: '#9aa4b2' }}>No models to choose from.</small>
+            ) : null}
+            <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              Scrollback lines
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={assistLines}
+                onChange={(e) => setAssistLines(Number(e.target.value) || defaultScrollbackLines)}
+              />
+            </label>
+            <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              Your question (optional)
+              <textarea
+                value={assistPrompt}
+                onChange={(e) => setAssistPrompt(e.target.value)}
+                placeholder="e.g. Why did this command fail?"
+                rows={3}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    void runAssist();
+                  }
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary"
+              disabled={assistBusy || !assistCanAsk}
+              onClick={() => void runAssist()}
+            >
+              {assistBusy ? 'Thinking…' : 'Ask assistant'}
+            </button>
+            {assistErr ? (
+              <p style={{ color: '#f66', margin: 0, fontSize: '0.85rem' }}>{assistErr}</p>
+            ) : null}
+            {assistClipped ? (
+              <small style={{ color: '#f5a623' }}>Some scrollback was clipped by server limits.</small>
+            ) : null}
+            {assistReply ? (
+              <div className="term-assist-reply" role="region" aria-label="Assistant reply">
+                <Suspense
+                  fallback={<pre className="ai-markdown-suspense-fallback">{assistReply}</pre>}
+                >
                   <AiMarkdown content={assistReply} />
                 </Suspense>
               </div>
-            )}
-          </div>
-          <div className="modal-terminal-assist-form">
-            <div className="assist-models-row">
-              <label>Model:</label>
-              <select
-                value={assistSelectedModel}
-                onChange={(e) => setAssistSelectedModel(e.target.value)}
-                disabled={assistBusy || assistModelsLoading || assistModelsErr !== null}
-              >
-                {assistModelsLoading && <option>Loading...</option>}
-                {assistModelsErr && <option>Error loading models</option>}
-                {!assistModelsLoading && !assistModelsErr && assistModels.length === 0 && <option>No models found</option>}
-                {assistModels.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <textarea
-              className="assist-textarea"
-              placeholder="Ask the AI about this terminal session..."
-              value={assistPrompt}
-              onChange={(e) => setAssistPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void runAssist();
-                }
-              }}
-              disabled={assistBusy}
-            />
-            <div className="assist-controls">
-              <label className="assist-lines-label">
-                Context lines:
-                <input
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={assistLines}
-                  onChange={(e) => setAssistLines(parseInt(e.target.value, 10) || defaultScrollbackLines)}
-                  disabled={assistBusy}
-                />
-              </label>
-                <button type="button" disabled={assistBusy || !assistCanAsk} onClick={() => void runAssist()}>
-                {assistBusy ? 'Thinking...' : 'Ask AI'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            ) : null}
+          </aside>
+        ) : null}
+      </div>
     </div>
   );
 }
