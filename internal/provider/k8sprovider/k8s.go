@@ -2,6 +2,7 @@ package k8sprovider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -173,6 +174,25 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 		}
 		ns := p.Namespace
 		nodeName := strings.TrimSpace(p.Spec.NodeName)
+
+		portSet := make(map[int32]struct{})
+		var uniquePorts []string
+		for _, c := range p.Spec.Containers {
+			for _, port := range c.Ports {
+				if port.ContainerPort > 0 {
+					if _, ok := portSet[port.ContainerPort]; !ok {
+						portSet[port.ContainerPort] = struct{}{}
+						uniquePorts = append(uniquePorts, fmt.Sprintf("%d", port.ContainerPort))
+					}
+				}
+			}
+		}
+		var portJSON string
+		if len(uniquePorts) > 0 {
+			b, _ := json.Marshal(uniquePorts)
+			portJSON = string(b)
+		}
+
 		meta := map[string]string{
 			"kind":         "pod",
 			"namespace":    ns,
@@ -180,6 +200,9 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 			"kube_context": resolvedContext,
 			"kubeconfig":   kubeconfig,
 			"backend_name": k.BackendName(),
+		}
+		if portJSON != "" {
+			meta["ports"] = portJSON
 		}
 		if nodeName != "" {
 			meta["node"] = nodeName

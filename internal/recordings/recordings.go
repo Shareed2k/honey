@@ -13,7 +13,7 @@ import (
 
 // Limits for loading a full recording into memory (aligned with HTTP API).
 const (
-	MaxPlayEvents = 10000000 // sanity limit for parsing
+	MaxPlayEvents = 10000000  // sanity limit for parsing
 	MaxPlayBytes  = 128 << 20 // 128 MB limit for a single recording
 )
 

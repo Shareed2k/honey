@@ -3,6 +3,7 @@
 package hostexec
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -38,5 +39,5 @@ type HostClient interface {
 type Executor interface {
 	Dial(user string, r hosts.Record) (HostClient, error)
 	RunInteractive(user string, r hosts.Record) error
-	RunTunnel(user string, r hosts.Record, localFwd string) error
+	RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error
 }

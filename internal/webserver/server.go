@@ -41,6 +41,7 @@ type Server struct {
 	opts     Options
 	mux      *http.ServeMux
 	assistRL *slidingRL
+	tunnels  *tunnelManager
 
 	assistModelsMu  sync.Mutex
 	assistModelIDs  []string
@@ -67,6 +68,7 @@ func NewServer(opts Options) (*Server, error) {
 		opts:            opts,
 		mux:             http.NewServeMux(),
 		assistRL:        newSlidingRL(),
+		tunnels:         newTunnelManager(),
 		fileClientCache: ui.NewClientCache(),
 	}
 	s.routes()
@@ -78,6 +80,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/providers", s.withAuth(s.handleProviders))
 	s.mux.HandleFunc("GET /api/v1/backends", s.withAuth(s.handleBackends))
 	s.mux.HandleFunc("POST /api/v1/search", s.withAuth(s.handleSearch))
+	s.mux.HandleFunc("POST /api/v1/host-ports", s.withAuth(s.handleHostPorts))
+	s.mux.HandleFunc("GET /api/v1/tunnels", s.withAuth(s.handleTunnelsGet))
+	s.mux.HandleFunc("GET /api/v1/tunnels/{id}/logs", s.withAuth(s.handleTunnelsLogs))
+	s.mux.HandleFunc("POST /api/v1/tunnels", s.withAuth(s.handleTunnelsPost))
+	s.mux.HandleFunc("DELETE /api/v1/tunnels/{id}", s.withAuth(s.handleTunnelsDelete))
 	s.mux.HandleFunc("GET /api/v1/config/backends", s.withAuth(s.handleConfigBackendsGet))
 	s.mux.HandleFunc("POST /api/v1/config/backends/{kind}", s.withAuth(s.handleConfigBackendsPost))
 	s.mux.HandleFunc("PUT /api/v1/config/backends/{kind}/{index}", s.withAuth(s.handleConfigBackendsPut))

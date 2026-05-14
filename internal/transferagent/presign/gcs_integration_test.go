@@ -121,9 +121,11 @@ func TestGCSIntegration(t *testing.T) {
 
 	// Verify object is actually deleted
 	verifyReq, _ := http.NewRequest(getURL.Method, getURL.URL, nil)
-	verifyResp, _ := http.DefaultClient.Do(verifyReq)
-	defer verifyResp.Body.Close()
-	if verifyResp.StatusCode != http.StatusNotFound && verifyResp.StatusCode != http.StatusForbidden {
-		t.Fatalf("Object should be deleted/inaccessible, but got status %d", verifyResp.StatusCode)
+	verifyResp, err := http.DefaultClient.Do(verifyReq)
+	if err == nil {
+		defer verifyResp.Body.Close()
+		if verifyResp.StatusCode != http.StatusNotFound && verifyResp.StatusCode != http.StatusForbidden {
+			t.Fatalf("Object should be deleted/inaccessible, but got status %d", verifyResp.StatusCode)
+		}
 	}
 }

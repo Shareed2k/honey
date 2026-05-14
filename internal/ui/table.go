@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -1435,5 +1436,7 @@ func runTunnel(user string, r hosts.Record, localFwd string) error {
 		return fmt.Errorf("tunnel spec must look like 8080:remotehost:8080 or 8080:8080 for kubernetes pods")
 	}
 	executor := GetExecutor(r)
-	return executor.RunTunnel(user, r, localFwd)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	return executor.RunTunnel(ctx, user, r, localFwd, os.Stderr)
 }

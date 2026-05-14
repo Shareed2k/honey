@@ -174,6 +174,7 @@ func tryFallbackPlan(
 	}
 	return plan, true, srcCap, dstCap
 }
+
 // RunAgentTransferWithFallback runs Build + Execute, transparently retrying via
 // the agent path on fallback-path failure when transferCfg.PresignedRetryWithAgent
 // is true. Returns the combined event timeline across both attempts so the

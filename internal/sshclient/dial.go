@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/signal"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -1009,7 +1008,7 @@ func parseLocalForward(spec string) (localPort, remoteHost, remotePort string, e
 }
 
 // RunTunnelGo listens on 127.0.0.1:<localPort> and forwards to remoteHost:remotePort via the SSH server (host).
-func RunTunnelGo(user, host, localFwd string) error {
+func RunTunnelGo(ctx context.Context, user, host, localFwd string, out io.Writer) error {
 	if strings.TrimSpace(host) == "" {
 		return fmt.Errorf("no IP for selected host")
 	}
@@ -1033,9 +1032,6 @@ func RunTunnelGo(user, host, localFwd string) error {
 	remoteAddr := net.JoinHostPort(remoteHost, remotePort)
 	_, _ = fmt.Fprintf(os.Stderr, "Forwarding %s -> %s via SSH (Ctrl+C to stop)\n", bind, remoteAddr)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -1049,15 +1045,17 @@ func RunTunnelGo(user, host, localFwd string) error {
 			}
 			return accErr
 		}
-		go forwardOneTunnel(client, conn, remoteAddr)
+		go forwardOneTunnel(client, conn, remoteAddr, out)
 	}
 }
 
-func forwardOneTunnel(client *ssh.Client, local net.Conn, remoteAddr string) {
+func forwardOneTunnel(client *ssh.Client, local net.Conn, remoteAddr string, out io.Writer) {
+	fmt.Fprintf(out, "[%s] Connection opened from %s\n", time.Now().Format(time.RFC3339), local.RemoteAddr())
+	defer func() { fmt.Fprintf(out, "[%s] Connection closed from %s\n", time.Now().Format(time.RFC3339), local.RemoteAddr()) }()
 	defer func() { _ = local.Close() }()
 	remote, err := client.Dial("tcp", remoteAddr)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "tunnel dial %s: %v\n", remoteAddr, err)
+		_, _ = fmt.Fprintf(out, "tunnel dial %s: %v\n", remoteAddr, err)
 		return
 	}
 	defer func() { _ = remote.Close() }()

@@ -1,11 +1,11 @@
 package ui
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"os/signal"
 	"strings"
 
 	"k8s.io/client-go/tools/clientcmd"
@@ -15,7 +15,7 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-func (k k8sPodExecutor) RunTunnel(_ string, r hosts.Record, localFwd string) error {
+func (k *k8sPodExecutor) RunTunnel(ctx context.Context, _ string, r hosts.Record, localFwd string, out io.Writer) error {
 	namespace := r.Meta["namespace"]
 	podName := r.Meta["pod_name"]
 	kubeContext := r.Meta["kube_context"]
@@ -68,19 +68,17 @@ func (k k8sPodExecutor) RunTunnel(_ string, r hosts.Record, localFwd string) err
 	stopCh := make(chan struct{}, 1)
 	readyCh := make(chan struct{})
 
-	// Handle signals for graceful shutdown
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt)
+	// Handle cancellation via context
 	go func() {
-		<-sigs
+		<-ctx.Done()
 		close(stopCh)
 	}()
 
-	fw, err := portforward.New(dialer, ports, stopCh, readyCh, os.Stdout, os.Stderr)
+	fw, err := portforward.New(dialer, ports, stopCh, readyCh, out, out)
 	if err != nil {
 		return fmt.Errorf("create port forwarder: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "\r\n[honey] Forwarding %s -> Pod %s in namespace %s (Ctrl+C to stop)\n", strings.Join(ports, ", "), podName, namespace)
+	fmt.Fprintf(out, "\r\n[honey] Forwarding %s -> Pod %s in namespace %s (Ctrl+C to stop)\n", strings.Join(ports, ", "), podName, namespace)
 	return fw.ForwardPorts()
 }

@@ -138,23 +138,23 @@ func buildCurlMultipartScript(srcPath string, partSize int64, parts []presign.Si
 	return sb.String()
 }
 
-func buildSinglePutScript(cap, srcPath string, u presign.SignedURL, size int64) string {
-	if cap == "python" || cap == "python3" {
-		return buildPythonSinglePutScript(cap, srcPath, u, size)
+func buildSinglePutScript(capValue, srcPath string, u presign.SignedURL, size int64) string {
+	if capValue == "python" || capValue == "python3" {
+		return buildPythonSinglePutScript(capValue, srcPath, u, size)
 	}
 	return buildCurlSinglePutScript(srcPath, u, size)
 }
 
-func buildDownloadScript(cap, dstPath string, u presign.SignedURL) string {
-	if cap == "python" || cap == "python3" {
-		return buildPythonDownloadScript(cap, dstPath, u)
+func buildDownloadScript(capValue, dstPath string, u presign.SignedURL) string {
+	if capValue == "python" || capValue == "python3" {
+		return buildPythonDownloadScript(capValue, dstPath, u)
 	}
 	return buildCurlDownloadScript(dstPath, u)
 }
 
-func buildMultipartScript(cap, srcPath string, partSize int64, parts []presign.SignedURL) string {
-	if cap == "python" || cap == "python3" {
-		return buildPythonMultipartScript(cap, srcPath, partSize, parts)
+func buildMultipartScript(capValue, srcPath string, partSize int64, parts []presign.SignedURL) string {
+	if capValue == "python" || capValue == "python3" {
+		return buildPythonMultipartScript(capValue, srcPath, partSize, parts)
 	}
 	return buildCurlMultipartScript(srcPath, partSize, parts)
 }

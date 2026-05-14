@@ -1,6 +1,8 @@
 package proxmoxprovider
 
 import (
+	"context"
+	"io"
 	"strings"
 
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -49,10 +51,10 @@ func (p *proxmoxExecutor) RunInteractive(_ string, _ hosts.Record) error {
 	return errProxmoxNoInteractiveTTY
 }
 
-func (p *proxmoxExecutor) RunTunnel(user string, r hosts.Record, localFwd string) error {
+func (p *proxmoxExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
 	ip := strings.TrimSpace(r.PrimaryIP)
 	if ip == "" {
 		return errProxmoxNoIP
 	}
-	return hostexec.RunSSHTunnel(user, ip, localFwd)
+	return hostexec.RunSSHTunnel(ctx, user, ip, localFwd, out)
 }

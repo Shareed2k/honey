@@ -51,6 +51,61 @@ export async function apiDelete(path: string): Promise<Response> {
   return fetch(path, { method: 'DELETE', headers: apiHeaders() });
 }
 
+export type TunnelInfo = {
+  id: string;
+  host: string;
+  record_key: string;
+  mapping: string;
+  started_at: string;
+  error?: string;
+};
+
+export async function fetchTunnels(): Promise<TunnelInfo[]> {
+  const r = await apiGet('/api/v1/tunnels');
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+  const j = (await r.json()) as { tunnels: TunnelInfo[] };
+  return j.tunnels || [];
+}
+
+export async function startTunnel(req: { ssh_user: string; record: unknown; mapping: string }): Promise<void> {
+  const r = await apiPost('/api/v1/tunnels', req);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+}
+
+export async function stopTunnel(id: string): Promise<void> {
+  const r = await apiDelete(`/api/v1/tunnels/${encodeURIComponent(id)}`);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+}
+
+export async function fetchTunnelLogs(id: string): Promise<string> {
+  const r = await apiGet(`/api/v1/tunnels/${encodeURIComponent(id)}/logs`);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+  const j = (await r.json()) as { logs: string };
+  return j.logs || '';
+}
+
+export async function fetchHostPorts(req: { ssh_user: string; record: unknown }): Promise<string[]> {
+  const r = await apiPost('/api/v1/host-ports', req);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || r.statusText);
+  }
+  const j = (await r.json()) as { ports: string[] };
+  return j.ports || [];
+}
+
 /** Matches Go ui.HostExecResult JSON (exported struct fields). */
 export type HostExecResultRow = {
   Name: string;

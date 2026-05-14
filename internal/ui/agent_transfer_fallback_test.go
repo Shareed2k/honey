@@ -19,34 +19,34 @@ func (s stubRunner) RunRemoteCmd(_ string, _ string) (string, error) {
 
 func TestDetectFallbackCapability_present_python(t *testing.T) {
 	r := stubRunner{out: "python3\n", err: nil}
-	cap, err := detectFallbackCapabilityViaRunner(r, "alice@host1-python")
+	capValue, err := detectFallbackCapabilityViaRunner(r, "alice@host1-python")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if cap != "python3" {
-		t.Fatalf("expected python3, got %q", cap)
+	if capValue != "python3" {
+		t.Fatalf("expected python3, got %q", capValue)
 	}
 }
 
 func TestDetectFallbackCapability_present_curl(t *testing.T) {
 	r := stubRunner{out: "curl\n", err: nil}
-	cap, err := detectFallbackCapabilityViaRunner(r, "alice@host1-curl")
+	capValue, err := detectFallbackCapabilityViaRunner(r, "alice@host1-curl")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if cap != "curl" {
-		t.Fatalf("expected curl, got %q", cap)
+	if capValue != "curl" {
+		t.Fatalf("expected curl, got %q", capValue)
 	}
 }
 
 func TestDetectFallbackCapability_missing(t *testing.T) {
 	r := stubRunner{out: "", err: errors.New("exit status 1")}
-	cap, err := detectFallbackCapabilityViaRunner(r, "alice@host1-missing")
+	capValue, err := detectFallbackCapabilityViaRunner(r, "alice@host1-missing")
 	if err != nil {
 		t.Fatalf("err should be nil for clean miss, got: %v", err)
 	}
-	if cap != "" {
-		t.Fatalf("expected empty capability, got %q", cap)
+	if capValue != "" {
+		t.Fatalf("expected empty capability, got %q", capValue)
 	}
 }
 

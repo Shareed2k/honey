@@ -13,6 +13,12 @@ import {
   startAgentTransferStream,
   recipeAssist,
   uploadFormDataWithSFTPStream,
+  fetchTunnels,
+  startTunnel,
+  stopTunnel,
+  fetchHostPorts,
+  fetchTunnelLogs,
+  type TunnelInfo,
 } from './api';
 import type {
   AgentTransferBackendRef,
@@ -33,7 +39,7 @@ import { TerminalModal } from './TerminalModal';
 
 type BackendRow = { kind: string; name: string; hint: string };
 
-type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const RawYamlEditor = lazy(async () => import('./RawYamlEditor').then((m) => ({ default: m.RawYamlEditor })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
@@ -282,6 +288,22 @@ export function App() {
   const [cfgSchemaErr, setCfgSchemaErr] = useState<string | null>(null);
 
   const [termOpen, setTermOpen] = useState<{ record: HostRecord; pve: 'serial' | 'vnc' } | null>(null);
+  const [tunnelOpen, setTunnelOpen] = useState<{ record: HostRecord } | null>(null);
+  const [tunnelLocalPort, setTunnelLocalPort] = useState('');
+  const [tunnelRemotePort, setTunnelRemotePort] = useState('');
+  const [tunnelRemoteHost, setTunnelRemoteHost] = useState('');
+  const [tunnelBusy, setTunnelBusy] = useState(false);
+  const [tunnelErr, setTunnelErr] = useState<string | null>(null);
+  const [tunnelPorts, setTunnelPorts] = useState<string[]>([]);
+  const [tunnelPortsLoading, setTunnelPortsLoading] = useState(false);
+  const [tunnelPortsErr, setTunnelPortsErr] = useState<string | null>(null);
+
+  const [tunnelsList, setTunnelsList] = useState<TunnelInfo[]>([]);
+  const [tunnelsListErr, setTunnelsListErr] = useState<string | null>(null);
+  const [tunnelLogOpen, setTunnelLogOpen] = useState<string | null>(null);
+  const [tunnelLogContent, setTunnelLogContent] = useState<string>('');
+  const [tunnelLogErr, setTunnelLogErr] = useState<string | null>(null);
+
   const [replayRecord, setReplayRecord] = useState<HostRecord | null>(null);
   const [replayItems, setReplayItems] = useState<RecordingListEntry[]>([]);
   const [replayErr, setReplayErr] = useState<string | null>(null);
@@ -473,12 +495,56 @@ export function App() {
     }
   }, []);
 
+  const loadTunnels = useCallback(async () => {
+    setTunnelsListErr(null);
+    try {
+      const list = await fetchTunnels();
+      setTunnelsList(list);
+    } catch (e) {
+      setTunnelsListErr(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!tunnelLogOpen) {
+      setTunnelLogContent('');
+      setTunnelLogErr(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const fetchLogs = async () => {
+      try {
+        const logs = await fetchTunnelLogs(tunnelLogOpen);
+        if (!cancelled) {
+          setTunnelLogContent(logs);
+          setTunnelLogErr(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setTunnelLogErr(e instanceof Error ? e.message : String(e));
+        }
+      }
+    };
+
+    void fetchLogs();
+    const interval = setInterval(() => { void fetchLogs(); }, 1500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [tunnelLogOpen]);
+
   useEffect(() => {
     if (tab === 'config') {
       void loadConfig();
       void loadConfigSchema();
+    } else if (tab === 'tunnels') {
+      void loadTunnels();
     }
-  }, [tab, loadConfig, loadConfigSchema]);
+  }, [tab, loadConfig, loadConfigSchema, loadTunnels]);
 
   useEffect(() => {
     setUploadTargetIdx((i) => {
@@ -929,6 +995,74 @@ export function App() {
     setUploadStatusIsError(false);
   };
 
+  const openTunnelModal = (rec: HostRecord) => {
+    setTunnelOpen({ record: rec });
+    setTunnelLocalPort('');
+    setTunnelRemoteHost('');
+    setTunnelRemotePort('');
+    setTunnelErr(null);
+    setTunnelPorts([]);
+    setTunnelPortsErr(null);
+
+    if (rec.provider === 'k8s') {
+      setTunnelPortsLoading(false);
+      if (rec.meta?.ports) {
+        try {
+          const parsed = JSON.parse(rec.meta.ports);
+          setTunnelPorts(Array.isArray(parsed) ? parsed : []);
+        } catch (e) {
+          // ignore
+        }
+      }
+    } else {
+      setTunnelPortsLoading(true);
+      fetchHostPorts({ ssh_user: sshUser.trim(), record: rec })
+        .then((ports) => {
+          setTunnelPorts(ports);
+        })
+        .catch((e) => {
+          setTunnelPortsErr(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          setTunnelPortsLoading(false);
+        });
+    }
+  };
+
+  const submitTunnel = async () => {
+    if (!tunnelOpen) return;
+    setTunnelBusy(true);
+    setTunnelErr(null);
+    try {
+      const lp = tunnelLocalPort.trim();
+      const rh = tunnelRemoteHost.trim();
+      const rp = tunnelRemotePort.trim();
+
+      let mapping = '';
+      if (tunnelOpen.record.provider === 'k8s') {
+        mapping = lp && rp ? `${lp}:${rp}` : rp ? rp : '';
+      } else {
+        mapping = lp && rp ? `${lp}:${rh || 'localhost'}:${rp}` : '';
+      }
+
+      if (!mapping) {
+        throw new Error('Please specify valid ports.');
+      }
+
+      await startTunnel({
+        ssh_user: sshUser.trim(),
+        record: tunnelOpen.record,
+        mapping,
+      });
+      setTunnelOpen(null);
+      setTab('tunnels');
+    } catch (e) {
+      setTunnelErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTunnelBusy(false);
+    }
+  };
+
   const onDropUpload = (rec: HostRecord, files: FileList | null) => {
     if (!files?.length) {
       return;
@@ -1100,6 +1234,9 @@ export function App() {
         </button>
         <button type="button" className={tab === 'recipes' ? 'active' : ''} onClick={() => setTab('recipes')}>
           Recipes
+        </button>
+        <button type="button" className={tab === 'tunnels' ? 'active' : ''} onClick={() => setTab('tunnels')}>
+          Tunnels
         </button>
       </nav>
 
@@ -1350,7 +1487,13 @@ export function App() {
               )
             }
             onRowDrop={(rec, files) => onDropUpload(rec, files)}
-            renderRowActions={(rec) => (
+            renderRowActions={(rec) => {
+              const recKey = recordKey(rec);
+              const activeTunnels = tunnelsList.filter((t) => t.record_key === recKey);
+              const tunnelBtnText = activeTunnels.length > 0 ? `Tunnel (${activeTunnels.length})` : 'Tunnel';
+              const tunnelBtnStyle = activeTunnels.length > 0 ? { backgroundColor: 'rgba(100, 149, 237, 0.2)' } : undefined;
+
+              return (
               <>
                 <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'serial' })}>
                   Terminal
@@ -1366,6 +1509,10 @@ export function App() {
                 <button type="button" onClick={() => openUploadModal(rec)}>
                   Upload
                 </button>
+                {' '}
+                <button type="button" style={tunnelBtnStyle} onClick={() => openTunnelModal(rec)}>
+                  {tunnelBtnText}
+                </button>
                 {meta?.session_recording_available ? (
                   <>
                     {' '}
@@ -1375,7 +1522,7 @@ export function App() {
                   </>
                 ) : null}
               </>
-            )}
+            )}}
           />
 
           {hostDetailRecord ? (
@@ -1714,6 +1861,66 @@ export function App() {
         />
       ) : null}
 
+      {tab === 'tunnels' ? (
+        <section>
+          {tunnelsListErr ? <p style={{ color: '#f66' }}>{tunnelsListErr}</p> : null}
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1rem' }}>
+            <button type="button" onClick={() => void loadTunnels()}>Refresh</button>
+          </div>
+          {tunnelsList.length === 0 ? (
+            <p className="rcp-empty" style={{ opacity: 0.8 }}>No active tunnels. You can start one from the Search tab.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Host</th>
+                  <th>Mapping (Local:Remote)</th>
+                  <th>Status/Started</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tunnelsList.map(t => (
+                  <tr key={t.id}>
+                    <td>{t.host}</td>
+                    <td><code style={{ fontSize: '0.9em' }}>{t.mapping}</code></td>
+                    <td>
+                      {t.error ? (
+                        <span style={{ color: '#f66' }}>{t.error}</span>
+                      ) : (
+                        <span>Started {new Date(t.started_at).toLocaleString()}</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button
+                        type="button"
+                        style={{ marginRight: '0.5rem' }}
+                        onClick={() => setTunnelLogOpen(t.id)}
+                      >
+                        Logs
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await stopTunnel(t.id);
+                            await loadTunnels();
+                          } catch (e) {
+                            setTunnelsListErr(e instanceof Error ? e.message : String(e));
+                          }
+                        }}
+                      >
+                        Stop
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      ) : null}
+
       {recipePreview ? (
         <div className="modal-backdrop" role="presentation">
           <div
@@ -1858,6 +2065,131 @@ export function App() {
         )
       ) : null}
       {uploadModal}
+
+      {tunnelOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog" aria-labelledby="tunnel-modal-title" style={{ width: 'min(420px, 94vw)' }}>
+            <header>
+              <strong id="tunnel-modal-title">Port Forward / Tunnel</strong>
+              <button type="button" onClick={() => setTunnelOpen(null)}>
+                Close
+              </button>
+            </header>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', padding: '0.25rem 0' }}>
+              <p style={{ fontSize: '0.85rem', margin: 0, opacity: 0.85 }}>
+                Configure a tunnel for <strong>{tunnelOpen.record.name}</strong>. The ports will be opened on the machine running the Honey server.
+              </p>
+
+              <label style={{ fontSize: '0.85rem' }}>
+                Local port (on server)
+                <input
+                  type="text"
+                  placeholder="e.g. 8080"
+                  style={{ display: 'block', width: '100%', marginTop: 4 }}
+                  value={tunnelLocalPort}
+                  onChange={(e) => setTunnelLocalPort(e.target.value)}
+                />
+              </label>
+
+              {tunnelOpen.record.provider !== 'k8s' && (
+                <label style={{ fontSize: '0.85rem' }}>
+                  Target remote host (optional, defaults to localhost)
+                  <input
+                    type="text"
+                    placeholder="e.g. localhost"
+                    style={{ display: 'block', width: '100%', marginTop: 4 }}
+                    value={tunnelRemoteHost}
+                    onChange={(e) => setTunnelRemoteHost(e.target.value)}
+                  />
+                </label>
+              )}
+
+              <label style={{ fontSize: '0.85rem' }}>
+                Target remote port
+                <input
+                  type="text"
+                  placeholder={tunnelOpen.record.provider === 'k8s' ? "e.g. 80" : "e.g. 80"}
+                  style={{ display: 'block', width: '100%', marginTop: 4 }}
+                  value={tunnelRemotePort}
+                  onChange={(e) => setTunnelRemotePort(e.target.value)}
+                />
+              </label>
+
+              <div style={{ marginTop: 2, minHeight: 24 }}>
+                {tunnelPortsLoading ? (
+                  <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>Detecting open ports...</span>
+                ) : tunnelPortsErr ? (
+                  <span style={{ fontSize: '0.8rem', color: '#f66' }}>Error detecting ports: {tunnelPortsErr}</span>
+                ) : tunnelPorts.length > 0 ? (
+                  <>
+                    <div style={{ fontSize: '0.8rem', opacity: 0.7, marginBottom: 4 }}>Detected ports:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {tunnelPorts.map(port => (
+                        <button
+                          key={port}
+                          type="button"
+                          className="rcp-btn rcp-btn--ghost rcp-btn--small"
+                          style={{ padding: '2px 6px', fontSize: '0.75rem', fontFamily: 'monospace' }}
+                          onClick={() => setTunnelRemotePort(port)}
+                        >
+                          {port}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>No open ports detected.</span>
+                )}
+              </div>
+
+              {tunnelErr && <p style={{ color: '#f66', margin: 0, fontSize: '0.85rem' }}>{tunnelErr}</p>}
+
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void submitTunnel()}
+                disabled={tunnelBusy || !tunnelLocalPort.trim() || !tunnelRemotePort.trim()}
+              >
+                {tunnelBusy ? 'Starting tunnel...' : 'Start Tunnel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {tunnelLogOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog" aria-labelledby="tunnel-log-title" style={{ width: 'min(800px, 94vw)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+            <header>
+              <strong id="tunnel-log-title">Tunnel Logs</strong>
+              <button type="button" onClick={() => setTunnelLogOpen(null)}>
+                Close
+              </button>
+            </header>
+            <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem', padding: '0.25rem 0' }}>
+              {tunnelLogErr && <p style={{ color: '#f66', margin: 0, fontSize: '0.85rem' }}>{tunnelLogErr}</p>}
+              <pre
+                style={{
+                  margin: 0,
+                  fontSize: '0.78rem',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  padding: '0.65rem',
+                  border: '1px solid #2a3140',
+                  borderRadius: 6,
+                  background: '#0f1115',
+                  flex: 1,
+                  minHeight: '200px',
+                  maxHeight: '60vh',
+                  overflowY: 'auto'
+                }}
+              >
+                {tunnelLogContent || 'Loading...'}
+              </pre>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

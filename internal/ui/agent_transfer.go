@@ -55,9 +55,9 @@ type AgentTransferJob struct {
 	MaxRetries              int                   `json:"max_retries,omitempty"`
 	// FallbackPlan is non-nil when the curl-based presigned-URL transport should be
 	// used instead of the staged-agent path. See docs/superpowers/specs/2026-05-12-presigned-url-transfer-path-design.md.
-	FallbackPlan *presign.Plan `json:"-"`
-	FallbackCapabilitySrc string `json:"-"`
-	FallbackCapabilityDst string `json:"-"`
+	FallbackPlan          *presign.Plan `json:"-"`
+	FallbackCapabilitySrc string        `json:"-"`
+	FallbackCapabilityDst string        `json:"-"`
 	// RetryWithAgentOnCurlFailure controls whether a fallback-path failure transparently
 	// retries via the agent path.
 	RetryWithAgentOnCurlFailure bool `json:"retry_with_agent_on_curl_failure,omitempty"`
@@ -76,14 +76,14 @@ type AgentTransferEvent struct {
 
 // Fallback-path stage names. Emitted as the Stage field on AgentTransferEvent
 const (
-	StageFallbackDetect            = "fallback_detect"
-	StageFallbackDetectFailed      = "fallback_detect_failed"
-	StagePresignPutStart           = "presign_put_start"
-	StagePresignPut                = "presign_put"
-	StagePresignPutFailed          = "presign_put_failed"
-	StagePresignGetStart           = "presign_get_start"
-	StagePresignGet                = "presign_get"
-	StagePresignGetFailed          = "presign_get_failed"
+	StageFallbackDetect        = "fallback_detect"
+	StageFallbackDetectFailed  = "fallback_detect_failed"
+	StagePresignPutStart       = "presign_put_start"
+	StagePresignPut            = "presign_put"
+	StagePresignPutFailed      = "presign_put_failed"
+	StagePresignGetStart       = "presign_get_start"
+	StagePresignGet            = "presign_get"
+	StagePresignGetFailed      = "presign_get_failed"
 	StagePresignMultipartStart = "presign_multipart_start"
 	StagePresignMultipart      = "presign_multipart"
 	StagePresignMultipartAbort = "presign_multipart_aborted"

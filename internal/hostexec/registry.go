@@ -1,6 +1,8 @@
 package hostexec
 
 import (
+	"context"
+	"io"
 	"strings"
 	"sync"
 
@@ -45,7 +47,7 @@ var (
 	sshRunInteractive func(user string, r hosts.Record, recorder any) error
 
 	// sshRunTunnel runs SSH -L style forwarding; wired by internal/sshclient init.
-	sshRunTunnel func(user, host, localFwd string) error
+	sshRunTunnel func(ctx context.Context, user, host, localFwd string, out io.Writer) error
 
 	proxmoxPickExecutor func(r hosts.Record) Executor
 )
@@ -72,7 +74,7 @@ func SetSSHRunInteractive(fn func(user string, r hosts.Record, recorder any) err
 }
 
 // SetSSHRunTunnel registers the SSH local-forward tunnel runner (from sshclient.init).
-func SetSSHRunTunnel(fn func(user, host, localFwd string) error) {
+func SetSSHRunTunnel(fn func(ctx context.Context, user, host, localFwd string, out io.Writer) error) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	sshRunTunnel = fn
@@ -135,14 +137,14 @@ func ProxmoxBackendByName(name string) (ProxmoxBackendRuntime, bool) {
 }
 
 // RunSSHTunnel runs the SSH local-forward tunnel registered by sshclient (used for Proxmox hybrid/pve tunnel fallback).
-func RunSSHTunnel(user, host, localFwd string) error {
+func RunSSHTunnel(ctx context.Context, user, host, localFwd string, out io.Writer) error {
 	regMu.RLock()
 	fn := sshRunTunnel
 	regMu.RUnlock()
 	if fn == nil {
 		return errTunnelNotConfigured
 	}
-	return fn(user, host, localFwd)
+	return fn(ctx, user, host, localFwd, out)
 }
 
 type sshExecutor struct{}
@@ -165,7 +167,7 @@ func (sshExecutor) RunInteractive(user string, r hosts.Record) error {
 	return sshRunInteractive(user, r, nil)
 }
 
-func (sshExecutor) RunTunnel(user string, r hosts.Record, localFwd string) error {
+func (sshExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
 	if sshRunTunnel == nil {
 		return errTunnelNotConfigured
 	}
@@ -173,7 +175,7 @@ func (sshExecutor) RunTunnel(user string, r hosts.Record, localFwd string) error
 	if host == "" {
 		return errNoHostIP
 	}
-	return sshRunTunnel(user, host, localFwd)
+	return sshRunTunnel(ctx, user, host, localFwd, out)
 }
 
 var defaultSSHExecutor = sshExecutor{}

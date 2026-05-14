@@ -12,7 +12,7 @@ import (
 
 // To run this test:
 // HONEY_INTEGRATION_TEST=1 HONEY_TEST_BUCKET=my-test-bucket AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... go test -v ./internal/transferagent/presign -run TestS3Integration
-// 
+//
 // You can also test against MinIO:
 // HONEY_INTEGRATION_TEST=1 HONEY_TEST_BUCKET=test HONEY_TEST_ENDPOINT=http://localhost:9000 AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin go test -v ./internal/transferagent/presign -run TestS3Integration
 func TestS3Integration(t *testing.T) {
@@ -123,9 +123,11 @@ func TestS3Integration(t *testing.T) {
 
 	// Verify object is actually deleted
 	verifyReq, _ := http.NewRequest(getURL.Method, getURL.URL, nil)
-	verifyResp, _ := http.DefaultClient.Do(verifyReq)
-	defer verifyResp.Body.Close()
-	if verifyResp.StatusCode != http.StatusNotFound && verifyResp.StatusCode != http.StatusForbidden {
-		t.Fatalf("Object should be deleted/inaccessible, but got status %d", verifyResp.StatusCode)
+	verifyResp, err := http.DefaultClient.Do(verifyReq)
+	if err == nil {
+		defer verifyResp.Body.Close()
+		if verifyResp.StatusCode != http.StatusNotFound && verifyResp.StatusCode != http.StatusForbidden {
+			t.Fatalf("Object should be deleted/inaccessible, but got status %d", verifyResp.StatusCode)
+		}
 	}
 }
