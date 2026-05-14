@@ -240,6 +240,26 @@ func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{})
 			}
 		}
 
+		if tagsStr, ok := r.Meta["tags"]; ok && tagsStr != "" {
+			tags := strings.Split(tagsStr, ",")
+			for i := range tags {
+				tags[i] = strings.TrimSpace(tags[i])
+			}
+			// Sort tags manually
+			for i := 0; i < len(tags)-1; i++ {
+				for j := i + 1; j < len(tags); j++ {
+					if tags[i] > tags[j] {
+						tags[i], tags[j] = tags[j], tags[i]
+					}
+				}
+			}
+			if len(labels) > 0 {
+				labels = append(tags, labels...)
+			} else {
+				labels = tags
+			}
+		}
+
 		labelStr := strings.Join(labels, ", ")
 
 		rows = append(rows, table.Row{mark, r.Provider, r.Name, r.PrimaryIP, r.Zone, reg, labelStr})

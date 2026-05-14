@@ -113,6 +113,9 @@ func (p *Proxmox) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, er
 			"vmid":   fmt.Sprintf("%d", vmid),
 			"status": status,
 		}
+		if tagsRaw, ok := m["tags"].(string); ok && tagsRaw != "" {
+			meta["tags"] = tagsRaw
+		}
 		if pool != "" {
 			meta["pool"] = pool
 		}

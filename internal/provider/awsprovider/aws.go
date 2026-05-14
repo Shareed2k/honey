@@ -137,6 +137,12 @@ func instanceToRecord(inst types.Instance, q hosts.Query) (hosts.Record, bool, e
 		"state":       string(inst.State.Name),
 	}
 
+	for _, t := range inst.Tags {
+		if t.Key != nil && t.Value != nil {
+			meta["label_"+aws.ToString(t.Key)] = aws.ToString(t.Value)
+		}
+	}
+
 	return hosts.Record{
 		Provider:  "aws",
 		Name:      name,
