@@ -35,7 +35,7 @@ import { HostPicker, recordHaystack, recordKey } from './HostPicker';
 import type { HostRecord } from './HostPicker';
 import { RecipesTab } from './RecipesTab';
 import { SessionReplayModal } from './SessionReplayModal';
-import { TerminalModal } from './TerminalModal';
+import { TerminalTabsModal, type TerminalSessionConfig } from './TerminalModal';
 
 type BackendRow = { kind: string; name: string; hint: string };
 
@@ -287,7 +287,10 @@ export function App() {
   const [cfgSchema, setCfgSchema] = useState<ConfigUISchema | null>(null);
   const [cfgSchemaErr, setCfgSchemaErr] = useState<string | null>(null);
 
-  const [termOpen, setTermOpen] = useState<{ record: HostRecord; pve: 'serial' | 'vnc' } | null>(null);
+  const [terminals, setTerminals] = useState<TerminalSessionConfig[]>([]);
+  const [activeTermId, setActiveTermId] = useState<string | null>(null);
+  const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
+  
   const [tunnelOpen, setTunnelOpen] = useState<{ record: HostRecord } | null>(null);
   const [tunnelLocalPort, setTunnelLocalPort] = useState('');
   const [tunnelRemotePort, setTunnelRemotePort] = useState('');
@@ -1495,16 +1498,36 @@ export function App() {
               const tunnelBtnText = activeTunnels.length > 0 ? `Tunnel (${activeTunnels.length})` : 'Tunnel';
               const tunnelBtnStyle = activeTunnels.length > 0 ? { backgroundColor: 'rgba(100, 149, 237, 0.2)' } : undefined;
 
+              const activeTerms = terminals.filter((t) => recordKey(t.record) === recKey);
+              const serialTerms = activeTerms.filter(t => t.pve === 'serial');
+              const vncTerms = activeTerms.filter(t => t.pve === 'vnc');
+              
+              const termBtnStyle = serialTerms.length > 0 ? { backgroundColor: 'rgba(59, 130, 246, 0.2)' } : undefined;
+              const termBtnText = serialTerms.length > 0 ? `Terminal (Open)` : `Terminal`;
+
+              const vncBtnStyle = vncTerms.length > 0 ? { backgroundColor: 'rgba(59, 130, 246, 0.2)' } : undefined;
+              const vncBtnText = vncTerms.length > 0 ? `VNC (Open)` : `VNC`;
+
               return (
               <>
-                <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'serial' })}>
-                  Terminal
+                <button type="button" style={termBtnStyle} onClick={() => {
+                  const id = Math.random().toString(36).slice(2);
+                  setTerminals((prev) => [...prev, { id, record: rec, pve: 'serial' }]);
+                  setActiveTermId(id);
+                  setIsTerminalModalOpen(true);
+                }}>
+                  {termBtnText}
                 </button>
                 {canProxmoxQemuVnc(rec) ? (
                   <>
                     {' '}
-                    <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'vnc' })}>
-                      VNC
+                    <button type="button" style={vncBtnStyle} onClick={() => {
+                      const id = Math.random().toString(36).slice(2);
+                      setTerminals((prev) => [...prev, { id, record: rec, pve: 'vnc' }]);
+                      setActiveTermId(id);
+                      setIsTerminalModalOpen(true);
+                    }}>
+                      {vncBtnText}
                     </button>
                   </>
                 ) : null}{' '}
@@ -2063,14 +2086,28 @@ export function App() {
         </div>
       ) : null}
 
-      {termOpen ? (
-        <TerminalModal
-          record={termOpen.record}
+      {terminals.length > 0 ? (
+        <TerminalTabsModal
+          isOpen={isTerminalModalOpen}
+          terminals={terminals}
+          activeTermId={activeTermId}
           sshUser={sshUser}
           recordSession={recordWebSession && !!meta?.session_recording_available}
           assistAvailable={!!meta?.terminal_assist_available}
-          pveConsole={termOpen.pve}
-          onClose={() => setTermOpen(null)}
+          onSetActive={setActiveTermId}
+          onCloseTerminal={(id) => {
+            setTerminals((prev) => {
+              const next = prev.filter((t) => t.id !== id);
+              if (activeTermId === id) {
+                setActiveTermId(next.length > 0 ? next[next.length - 1].id : null);
+              }
+              if (next.length === 0) {
+                setIsTerminalModalOpen(false);
+              }
+              return next;
+            });
+          }}
+          onCloseModal={() => setIsTerminalModalOpen(false)}
         />
       ) : null}
       {replayRecord ? (
@@ -2215,6 +2252,16 @@ export function App() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {terminals.length > 0 && !isTerminalModalOpen ? (
+        <button 
+          className="floating-terminal-btn"
+          onClick={() => setIsTerminalModalOpen(true)}
+        >
+          <span>🖥️</span> 
+          Open Terminals ({terminals.length})
+        </button>
       ) : null}
     </main>
   );

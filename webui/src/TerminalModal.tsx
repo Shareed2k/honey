@@ -20,15 +20,31 @@ type NovncRfbHandle = {
 
 export type PveConsoleMode = 'serial' | 'vnc';
 
-type Props = {
+type SessionProps = {
   record: HostRecord;
   sshUser: string;
   recordSession: boolean;
-  /** When true, server has OPENAI_API_KEY; show assist side panel (not used for VNC). */
   assistAvailable?: boolean;
-  /** Proxmox web: `vnc` opens QEMU graphics via PVE; default `serial` uses /ws/ssh (SSH or PVE serial). */
   pveConsole?: PveConsoleMode;
-  onClose: () => void;
+  isActive: boolean;
+};
+
+export type TerminalSessionConfig = {
+  id: string;
+  record: HostRecord;
+  pve: PveConsoleMode;
+};
+
+type TabsProps = {
+  isOpen: boolean;
+  terminals: TerminalSessionConfig[];
+  activeTermId: string | null;
+  sshUser: string;
+  recordSession: boolean;
+  assistAvailable?: boolean;
+  onSetActive: (id: string) => void;
+  onCloseTerminal: (id: string) => void;
+  onCloseModal: () => void;
 };
 
 const defaultScrollbackLines = 200;
@@ -56,14 +72,14 @@ function collectScrollback(term: Terminal, maxLines: number): string {
   return out.join('\n');
 }
 
-export function TerminalModal({
+function TerminalSession({
   record,
   sshUser,
   recordSession,
   assistAvailable,
   pveConsole = 'serial',
-  onClose,
-}: Props) {
+  isActive,
+}: SessionProps) {
   const ref = useRef<HTMLDivElement>(null);
   const vncHostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -292,9 +308,11 @@ export function TerminalModal({
     });
 
     const onResize = () => {
-      fit.fit();
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      if (isActive) {
+        fit.fit();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
       }
     };
     window.addEventListener('resize', onResize);
@@ -309,6 +327,16 @@ export function TerminalModal({
       termRef.current = null;
     };
   }, [assistAvailable, isVnc, record, recordSession, sshUser]);
+
+  // Refit terminal when it becomes active
+  useEffect(() => {
+    if (isActive && termRef.current) {
+      // Small timeout to let flexbox layout finish
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+      }, 50);
+    }
+  }, [isActive]);
 
   useEffect(() => {
     if (!isVnc) {
@@ -452,113 +480,226 @@ export function TerminalModal({
     </div>
   );
 
+  return (
+    <div style={{ display: isActive ? 'flex' : 'none', width: '100%', height: '100%', minHeight: 0, flexDirection: 'column' }} className={showAssist ? 'modal-terminal-split-inner' : ''}>
+      <div className="modal-terminal-body" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row', width: '100%' }}>
+        {termArea}
+        {showAssist ? (
+          <aside className="term-assist-panel" aria-label="Terminal assistant">
+            <strong style={{ fontSize: '0.9rem' }}>Assistant</strong>
+            <small>
+              Sends the last lines of scrollback plus your question using a model from the provider list. Terminal data may
+              be sensitive—only send what you are allowed to share.
+            </small>
+            {assistModelsLoading ? (
+              <small style={{ color: '#9aa4b2' }}>Loading models…</small>
+            ) : null}
+            {assistModelsErr ? (
+              <small style={{ color: '#f5a623' }}>{assistModelsErr}</small>
+            ) : null}
+            {assistModels.length > 0 ? (
+              <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                Model
+                <select value={assistSelectedModel} onChange={(e) => setAssistSelectedModel(e.target.value)}>
+                  {assistModels.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : !assistModelsLoading ? (
+              <small style={{ color: '#9aa4b2' }}>No models to choose from.</small>
+            ) : null}
+            <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              Scrollback lines
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={assistLines}
+                onChange={(e) => setAssistLines(Number(e.target.value) || defaultScrollbackLines)}
+              />
+            </label>
+            <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              Your question (optional)
+              <textarea
+                value={assistPrompt}
+                onChange={(e) => setAssistPrompt(e.target.value)}
+                placeholder="e.g. Why did this command fail?"
+                rows={3}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    void runAssist();
+                  }
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary"
+              disabled={assistBusy || !assistCanAsk}
+              onClick={() => void runAssist()}
+            >
+              {assistBusy ? 'Thinking…' : 'Ask assistant'}
+            </button>
+            {assistErr ? (
+              <p style={{ color: '#f66', margin: 0, fontSize: '0.85rem' }}>{assistErr}</p>
+            ) : null}
+            {assistClipped ? (
+              <small style={{ color: '#f5a623' }}>Some scrollback was clipped by server limits.</small>
+            ) : null}
+            {assistReply ? (
+              <div className="term-assist-reply" role="region" aria-label="Assistant reply">
+                <Suspense
+                  fallback={<pre className="ai-markdown-suspense-fallback">{assistReply}</pre>}
+                >
+                  <AiMarkdown content={assistReply} />
+                </Suspense>
+              </div>
+            ) : null}
+          </aside>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function TerminalTabsModal({
+  isOpen,
+  terminals,
+  activeTermId,
+  sshUser,
+  recordSession,
+  assistAvailable,
+  onSetActive,
+  onCloseTerminal,
+  onCloseModal,
+}: TabsProps) {
+  const [isMaximized, setIsMaximized] = useState(false);
+  
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkScroll = useCallback(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    // Add a tiny 1px tolerance to avoid floating point rounding issues
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    checkScroll();
+    window.addEventListener('resize', checkScroll);
+    return () => window.removeEventListener('resize', checkScroll);
+  }, [checkScroll, terminals]); // Re-check when terminals array changes
+
+  // Also re-check when the modal actually opens, since display:none might have hidden the true scrollWidth
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(checkScroll, 50);
+    }
+  }, [isOpen, checkScroll]);
+
+  const scrollByAmount = (offset: number) => {
+    if (tabsRef.current) {
+      tabsRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+    }
+  };
+
+  if (terminals.length === 0) {
+    return null;
+  }
+
+  const activeTerm = terminals.find((t) => t.id === activeTermId) || terminals[terminals.length - 1];
+  const isVnc = activeTerm.pve === 'vnc';
+  const showAssist = !!assistAvailable && !isVnc;
+
   const modalClass =
-    `modal${showAssist ? ' modal-terminal-split' : ''}${isVnc ? ' modal-pve-vnc' : ''}`.trim();
+    `modal${showAssist ? ' modal-terminal-split' : ''}${isVnc ? ' modal-pve-vnc' : ''}${isMaximized ? ' modal-maximized' : ''}`.trim();
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <div className="modal-backdrop" role="presentation" style={{ display: isOpen ? 'flex' : 'none' }}>
       <div
         className={modalClass}
         role="dialog"
-        aria-busy={showConnectOverlay}
-        aria-label={isVnc ? `VNC: ${record.name}` : `Terminal: ${record.name}`}
+        aria-label="Terminal Sessions"
+        style={{ padding: 0 }}
       >
-        <header>
-          <strong>
-            {record.name} ({record.primary_ip || '—'})
-            {isVnc ? <span style={{ fontWeight: 400, opacity: 0.85 }}> · VNC</span> : null}
-          </strong>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
+        <header className="terminal-tabs-header">
+          <div className="terminal-tabs-scroll-wrapper">
+            {canScrollLeft && (
+              <button type="button" className="terminal-tab-scroll-btn" onClick={() => scrollByAmount(-200)} title="Scroll Left">
+                ‹
+              </button>
+            )}
+            <div className="terminal-tabs-container" ref={tabsRef} onScroll={checkScroll}>
+              {terminals.map((t) => (
+                <div
+                  key={t.id}
+                  className={`terminal-tab ${t.id === activeTermId ? 'active' : ''}`}
+                  onClick={() => onSetActive(t.id)}
+                  title={`${t.record.name} (${t.pve})`}
+                >
+                  <span className="terminal-tab-title">{t.record.name}</span>
+                  <button
+                    type="button"
+                    className="terminal-tab-close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseTerminal(t.id);
+                    }}
+                    title="Close Terminal"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+            </div>
+            {canScrollRight && (
+              <button type="button" className="terminal-tab-scroll-btn right" onClick={() => scrollByAmount(200)} title="Scroll Right">
+                ›
+              </button>
+            )}
+          </div>
+          <div className="terminal-tabs-actions">
+            <button
+              type="button"
+              className="terminal-maximize-btn"
+              onClick={() => setIsMaximized((prev) => !prev)}
+              title={isMaximized ? "Restore size" : "Maximize"}
+            >
+              {isMaximized ? '🗗' : '🗖'}
+            </button>
+            <button type="button" onClick={onCloseModal}>
+              Close
+            </button>
+          </div>
         </header>
-        {isProxmoxPveSerialConsole(record) && !isVnc ? (
-          <p className="term-pve-hint" style={{ margin: '0.35rem 1rem', fontSize: '0.82rem', color: '#9aa4b2' }}>
-            Proxmox serial console: use <kbd>Ctrl+]</kbd> to disconnect, or Close. If the guest uses autologin on tty,{' '}
+
+        {isProxmoxPveSerialConsole(activeTerm.record) && !isVnc ? (
+          <p className="term-pve-hint" style={{ margin: '0.35rem 1rem', fontSize: '0.82rem', color: '#9aa4b2', flexShrink: 0 }}>
+            Proxmox serial console: use <kbd>Ctrl+]</kbd> to disconnect, or Close tab. If the guest uses autologin on tty,{' '}
             <kbd>exit</kbd> may immediately open a new shell — that is normal on the guest.
           </p>
         ) : null}
-        {isVnc ? (
-          <p className="term-pve-hint" style={{ margin: '0.35rem 1rem', fontSize: '0.82rem', color: '#9aa4b2' }}>
-            QEMU graphical console via Proxmox (RFB). Close when finished; pointer and keyboard are sent to the VM.
-          </p>
-        ) : null}
-        {showAssist ? (
-          <div className="modal-terminal-body">
-            {termArea}
-            <aside className="term-assist-panel" aria-label="Terminal assistant">
-              <strong style={{ fontSize: '0.9rem' }}>Assistant</strong>
-              <small>
-                Sends the last lines of scrollback plus your question using a model from the provider list. Terminal data may
-                be sensitive—only send what you are allowed to share.
-              </small>
-              {assistModelsLoading ? (
-                <small style={{ color: '#9aa4b2' }}>Loading models…</small>
-              ) : null}
-              {assistModelsErr ? (
-                <small style={{ color: '#f5a623' }}>{assistModelsErr}</small>
-              ) : null}
-              {assistModels.length > 0 ? (
-                <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  Model
-                  <select value={assistSelectedModel} onChange={(e) => setAssistSelectedModel(e.target.value)}>
-                    {assistModels.map((id) => (
-                      <option key={id} value={id}>
-                        {id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : !assistModelsLoading ? (
-                <small style={{ color: '#9aa4b2' }}>No models to choose from.</small>
-              ) : null}
-              <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                Scrollback lines
-                <input
-                  type="number"
-                  min={1}
-                  max={500}
-                  value={assistLines}
-                  onChange={(e) => setAssistLines(Number(e.target.value) || defaultScrollbackLines)}
-                />
-              </label>
-              <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                Your question (optional)
-                <textarea
-                  value={assistPrompt}
-                  onChange={(e) => setAssistPrompt(e.target.value)}
-                  placeholder="e.g. Why did this command fail?"
-                  rows={3}
-                />
-              </label>
-              <button
-                type="button"
-                className="primary"
-                disabled={assistBusy || !assistCanAsk}
-                onClick={() => void runAssist()}
-              >
-                {assistBusy ? 'Thinking…' : 'Ask assistant'}
-              </button>
-              {assistErr ? (
-                <p style={{ color: '#f66', margin: 0, fontSize: '0.85rem' }}>{assistErr}</p>
-              ) : null}
-              {assistClipped ? (
-                <small style={{ color: '#f5a623' }}>Some scrollback was clipped by server limits.</small>
-              ) : null}
-              {assistReply ? (
-                <div className="term-assist-reply" role="region" aria-label="Assistant reply">
-                  <Suspense
-                    fallback={<pre className="ai-markdown-suspense-fallback">{assistReply}</pre>}
-                  >
-                    <AiMarkdown content={assistReply} />
-                  </Suspense>
-                </div>
-              ) : null}
-            </aside>
-          </div>
-        ) : (
-          termArea
-        )}
+
+        <div className="modal-terminal-sessions-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0.5rem' }}>
+          {terminals.map((t) => (
+            <TerminalSession
+              key={t.id}
+              record={t.record}
+              sshUser={sshUser}
+              recordSession={recordSession}
+              assistAvailable={assistAvailable}
+              pveConsole={t.pve}
+              isActive={t.id === activeTermId}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
