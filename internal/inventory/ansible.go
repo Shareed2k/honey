@@ -15,6 +15,8 @@ const (
 	groupProviderPrefix   = "honey_provider"
 	groupRegionPrefix     = "honey_region"
 	groupZonePrefix       = "honey_zone"
+	groupTagPrefix        = "honey_tag"
+	groupLabelPrefix      = "honey_label"
 	metaHostvarsKey       = "hostvars"
 	metaKey               = "_meta"
 	hostvarAnsibleHost    = "ansible_host"
@@ -39,6 +41,8 @@ func AnsibleList(records []hosts.Record, ansibleUser string) map[string]any {
 	byProvider := map[string][]string{}
 	byRegion := map[string][]string{}
 	byZone := map[string][]string{}
+	byTag := map[string][]string{}
+	byLabel := map[string][]string{}
 
 	for i, r := range records {
 		key := keys[i]
@@ -55,6 +59,27 @@ func AnsibleList(records []hosts.Record, ansibleUser string) map[string]any {
 		if z := strings.TrimSpace(r.Zone); z != "" {
 			g := groupZonePrefix + "_" + sanitizeLabel(z)
 			byZone[g] = append(byZone[g], key)
+		}
+
+		if tagsStr, ok := r.Meta["tags"]; ok && tagsStr != "" {
+			for _, tag := range strings.Split(tagsStr, ",") {
+				t := strings.TrimSpace(tag)
+				if t != "" {
+					g := groupTagPrefix + "_" + sanitizeLabel(t)
+					byTag[g] = append(byTag[g], key)
+				}
+			}
+		}
+
+		for mk, mv := range r.Meta {
+			if strings.HasPrefix(mk, "label_") {
+				labelKey := strings.TrimPrefix(mk, "label_")
+				labelVal := strings.TrimSpace(mv)
+				if labelKey != "" && labelVal != "" {
+					g := groupLabelPrefix + "_" + sanitizeLabel(labelKey) + "_" + sanitizeLabel(labelVal)
+					byLabel[g] = append(byLabel[g], key)
+				}
+			}
 		}
 
 		hostvars[key] = hostvarsForRecord(r, ansibleUser)
@@ -76,6 +101,12 @@ func AnsibleList(records []hosts.Record, ansibleUser string) map[string]any {
 		out[g] = map[string]any{"hosts": sortedCopy(hs)}
 	}
 	for g, hs := range byZone {
+		out[g] = map[string]any{"hosts": sortedCopy(hs)}
+	}
+	for g, hs := range byTag {
+		out[g] = map[string]any{"hosts": sortedCopy(hs)}
+	}
+	for g, hs := range byLabel {
 		out[g] = map[string]any{"hosts": sortedCopy(hs)}
 	}
 

@@ -154,6 +154,7 @@ export function HostPicker(props: Props) {
               <th>Name</th>
               <th>IP</th>
               <th>Zone</th>
+              <th>Labels</th>
               {renderRowActions ? <th>Actions</th> : null}
             </tr>
           </thead>
@@ -200,6 +201,13 @@ export function HostPicker(props: Props) {
                   <td>{rec.name}</td>
                   <td>{rec.primary_ip}</td>
                   <td>{rec.zone || ''}</td>
+                  <td className="rcp-list__meta" style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {Object.entries(rec.meta || {})
+                      .filter(([k]) => k.startsWith('label_'))
+                      .map(([k, v]) => `${k.slice(6)}=${v}`)
+                      .sort()
+                      .join(', ')}
+                  </td>
                   {renderRowActions ? (
                     <td style={{ whiteSpace: 'nowrap' }}>{renderRowActions(rec)}</td>
                   ) : null}

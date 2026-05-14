@@ -1588,6 +1588,30 @@ export function App() {
               ) : (
                 <p style={{ margin: '8px 0 0', opacity: 0.65, fontSize: '0.8rem' }}>No extras on this record.</p>
               )}
+              {hostDetailRecord.meta?.tags && (
+                <div style={{ marginTop: 8 }}>
+                  <span style={{ opacity: 0.75 }}>Tags</span>{' '}
+                  <code style={{ fontSize: '0.85em' }}>{hostDetailRecord.meta.tags}</code>
+                </div>
+              )}
+              {(() => {
+                const labels = Object.entries(hostDetailRecord.meta || {})
+                  .filter(([k]) => k.startsWith('label_'))
+                  .map(([k, v]) => `${k.slice(6)}: ${v}`);
+                if (labels.length === 0) return null;
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    <span style={{ opacity: 0.75, display: 'block', marginBottom: 4 }}>Labels</span>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {labels.map((l) => (
+                        <code key={l} style={{ fontSize: '0.8rem', padding: '2px 4px', background: 'rgba(255,255,255,0.1)' }}>
+                          {l}
+                        </code>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
               {(hostDetailRecord.region || hostDetailRecord.zone) && (
                 <div style={{ marginTop: 8, opacity: 0.85 }}>
                   {hostDetailRecord.region ? <span>Region: {hostDetailRecord.region} </span> : null}

@@ -223,7 +223,26 @@ func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{})
 		if reg == "" {
 			reg = r.Meta["datacenter"]
 		}
-		rows = append(rows, table.Row{mark, r.Provider, r.Name, r.PrimaryIP, r.Zone, reg})
+
+		var labels []string
+		for k, v := range r.Meta {
+			if strings.HasPrefix(k, "label_") {
+				labels = append(labels, fmt.Sprintf("%s=%s", strings.TrimPrefix(k, "label_"), v))
+			}
+		}
+
+		// Sort labels manually
+		for i := 0; i < len(labels)-1; i++ {
+			for j := i + 1; j < len(labels); j++ {
+				if labels[i] > labels[j] {
+					labels[i], labels[j] = labels[j], labels[i]
+				}
+			}
+		}
+
+		labelStr := strings.Join(labels, ", ")
+
+		rows = append(rows, table.Row{mark, r.Provider, r.Name, r.PrimaryIP, r.Zone, reg, labelStr})
 	}
 	return rows
 }

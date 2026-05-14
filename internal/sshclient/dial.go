@@ -1051,7 +1051,9 @@ func RunTunnelGo(ctx context.Context, user, host, localFwd string, out io.Writer
 
 func forwardOneTunnel(client *ssh.Client, local net.Conn, remoteAddr string, out io.Writer) {
 	fmt.Fprintf(out, "[%s] Connection opened from %s\n", time.Now().Format(time.RFC3339), local.RemoteAddr())
-	defer func() { fmt.Fprintf(out, "[%s] Connection closed from %s\n", time.Now().Format(time.RFC3339), local.RemoteAddr()) }()
+	defer func() {
+		fmt.Fprintf(out, "[%s] Connection closed from %s\n", time.Now().Format(time.RFC3339), local.RemoteAddr())
+	}()
 	defer func() { _ = local.Close() }()
 	remote, err := client.Dial("tcp", remoteAddr)
 	if err != nil {

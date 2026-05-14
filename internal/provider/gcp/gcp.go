@@ -136,6 +136,14 @@ func instanceToRecord(inst *computepb.Instance, q hosts.Query) (hosts.Record, bo
 		"status": st,
 		"id":     strconv.FormatUint(inst.GetId(), 10),
 	}
+
+	if tags := inst.GetTags(); tags != nil && len(tags.Items) > 0 {
+		meta["tags"] = strings.Join(tags.Items, ",")
+	}
+
+	for k, v := range inst.GetLabels() {
+		meta["label_"+k] = v
+	}
 	// Prefer internal (VPC) addresses for PrimaryIP; NAT / ephemeral public IPs are extras
 	// so SSH and in-VPC tooling default to the private path.
 	var internalIPs []string
