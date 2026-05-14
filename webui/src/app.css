@@ -450,6 +450,7 @@ tr:nth-child(even) {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
+  gap: 16px;
   background: #0b0c0f;
   border-bottom: 1px solid #2a3140;
   padding: 0.5rem 0.5rem 0;
@@ -606,4 +607,55 @@ tr:nth-child(even) {
 .floating-terminal-btn:hover {
   background-color: #2563eb;
   transform: translateY(-2px);
+}
+
+/* Terminal Tab Carousel Navigation */
+.terminal-tabs-scroll-wrapper {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-tabs-container {
+  display: flex;
+  overflow-x: auto;
+  gap: 4px;
+  flex: 1;
+  scroll-behavior: smooth;
+  scrollbar-width: none; /* Firefox */
+}
+
+.terminal-tabs-container::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+.terminal-tab-scroll-btn {
+  background: #1a1d24;
+  border: 1px solid #2a3140;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: #9aa4b2;
+  cursor: pointer;
+  padding: 0.4rem 0.6rem;
+  font-weight: bold;
+  font-size: 1.1rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.terminal-tab-scroll-btn:hover {
+  background: #2a3140;
+  color: #fff;
+}
+
+.terminal-tab-scroll-btn.right {
+  margin-left: 4px;
 }

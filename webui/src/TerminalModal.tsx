@@ -36,6 +36,7 @@ export type TerminalSessionConfig = {
 };
 
 type TabsProps = {
+  isOpen: boolean;
   terminals: TerminalSessionConfig[];
   activeTermId: string | null;
   sshUser: string;
@@ -566,6 +567,7 @@ function TerminalSession({
 }
 
 export function TerminalTabsModal({
+  isOpen,
   terminals,
   activeTermId,
   sshUser,
@@ -576,6 +578,37 @@ export function TerminalTabsModal({
   onCloseModal,
 }: TabsProps) {
   const [isMaximized, setIsMaximized] = useState(false);
+  
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkScroll = useCallback(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    // Add a tiny 1px tolerance to avoid floating point rounding issues
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    checkScroll();
+    window.addEventListener('resize', checkScroll);
+    return () => window.removeEventListener('resize', checkScroll);
+  }, [checkScroll, terminals]); // Re-check when terminals array changes
+
+  // Also re-check when the modal actually opens, since display:none might have hidden the true scrollWidth
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(checkScroll, 50);
+    }
+  }, [isOpen, checkScroll]);
+
+  const scrollByAmount = (offset: number) => {
+    if (tabsRef.current) {
+      tabsRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+    }
+  };
 
   if (terminals.length === 0) {
     return null;
@@ -589,7 +622,7 @@ export function TerminalTabsModal({
     `modal${showAssist ? ' modal-terminal-split' : ''}${isVnc ? ' modal-pve-vnc' : ''}${isMaximized ? ' modal-maximized' : ''}`.trim();
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <div className="modal-backdrop" role="presentation" style={{ display: isOpen ? 'flex' : 'none' }}>
       <div
         className={modalClass}
         role="dialog"
@@ -597,28 +630,40 @@ export function TerminalTabsModal({
         style={{ padding: 0 }}
       >
         <header className="terminal-tabs-header">
-          <div className="terminal-tabs-container">
-            {terminals.map((t) => (
-              <div
-                key={t.id}
-                className={`terminal-tab ${t.id === activeTermId ? 'active' : ''}`}
-                onClick={() => onSetActive(t.id)}
-                title={`${t.record.name} (${t.pve})`}
-              >
-                <span className="terminal-tab-title">{t.record.name}</span>
-                <button
-                  type="button"
-                  className="terminal-tab-close"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCloseTerminal(t.id);
-                  }}
-                  title="Close Terminal"
+          <div className="terminal-tabs-scroll-wrapper">
+            {canScrollLeft && (
+              <button type="button" className="terminal-tab-scroll-btn" onClick={() => scrollByAmount(-200)} title="Scroll Left">
+                ‹
+              </button>
+            )}
+            <div className="terminal-tabs-container" ref={tabsRef} onScroll={checkScroll}>
+              {terminals.map((t) => (
+                <div
+                  key={t.id}
+                  className={`terminal-tab ${t.id === activeTermId ? 'active' : ''}`}
+                  onClick={() => onSetActive(t.id)}
+                  title={`${t.record.name} (${t.pve})`}
                 >
-                  &times;
-                </button>
-              </div>
-            ))}
+                  <span className="terminal-tab-title">{t.record.name}</span>
+                  <button
+                    type="button"
+                    className="terminal-tab-close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseTerminal(t.id);
+                    }}
+                    title="Close Terminal"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+            </div>
+            {canScrollRight && (
+              <button type="button" className="terminal-tab-scroll-btn right" onClick={() => scrollByAmount(200)} title="Scroll Right">
+                ›
+              </button>
+            )}
           </div>
           <div className="terminal-tabs-actions">
             <button

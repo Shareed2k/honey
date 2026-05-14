@@ -2084,8 +2084,9 @@ export function App() {
         </div>
       ) : null}
 
-      {isTerminalModalOpen ? (
+      {terminals.length > 0 ? (
         <TerminalTabsModal
+          isOpen={isTerminalModalOpen}
           terminals={terminals}
           activeTermId={activeTermId}
           sshUser={sshUser}
