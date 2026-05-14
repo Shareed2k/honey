@@ -572,8 +572,15 @@ tr:nth-child(even) {
 .modal-terminal-split-inner {
   display: flex;
   flex: 1;
-  flex-direction: row;
+  flex-direction: column !important;
   min-height: 0;
+}
+.modal-terminal-split-inner > .modal-terminal-body {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex: 1;
 }
 
 /* Global floating terminal button */

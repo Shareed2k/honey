@@ -480,8 +480,8 @@ function TerminalSession({
   );
 
   return (
-    <div style={{ display: isActive ? 'flex' : 'none', width: '100%', height: '100%', minHeight: 0 }} className={showAssist ? 'modal-terminal-split-inner' : ''}>
-      <div className="modal-terminal-body">
+    <div style={{ display: isActive ? 'flex' : 'none', width: '100%', height: '100%', minHeight: 0, flexDirection: 'column' }} className={showAssist ? 'modal-terminal-split-inner' : ''}>
+      <div className="modal-terminal-body" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row', width: '100%' }}>
         {termArea}
         {showAssist ? (
           <aside className="term-assist-panel" aria-label="Terminal assistant">
@@ -594,6 +594,7 @@ export function TerminalTabsModal({
         className={modalClass}
         role="dialog"
         aria-label="Terminal Sessions"
+        style={{ padding: 0 }}
       >
         <header className="terminal-tabs-header">
           <div className="terminal-tabs-container">
@@ -641,7 +642,7 @@ export function TerminalTabsModal({
           </p>
         ) : null}
 
-        <div className="modal-terminal-sessions-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div className="modal-terminal-sessions-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0.5rem' }}>
           {terminals.map((t) => (
             <TerminalSession
               key={t.id}
