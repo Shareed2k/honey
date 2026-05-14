@@ -35,7 +35,7 @@ import { HostPicker, recordHaystack, recordKey } from './HostPicker';
 import type { HostRecord } from './HostPicker';
 import { RecipesTab } from './RecipesTab';
 import { SessionReplayModal } from './SessionReplayModal';
-import { TerminalModal } from './TerminalModal';
+import { TerminalTabsModal, type TerminalSessionConfig } from './TerminalModal';
 
 type BackendRow = { kind: string; name: string; hint: string };
 
@@ -287,7 +287,10 @@ export function App() {
   const [cfgSchema, setCfgSchema] = useState<ConfigUISchema | null>(null);
   const [cfgSchemaErr, setCfgSchemaErr] = useState<string | null>(null);
 
-  const [termOpen, setTermOpen] = useState<{ record: HostRecord; pve: 'serial' | 'vnc' } | null>(null);
+  const [terminals, setTerminals] = useState<TerminalSessionConfig[]>([]);
+  const [activeTermId, setActiveTermId] = useState<string | null>(null);
+  const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
+  
   const [tunnelOpen, setTunnelOpen] = useState<{ record: HostRecord } | null>(null);
   const [tunnelLocalPort, setTunnelLocalPort] = useState('');
   const [tunnelRemotePort, setTunnelRemotePort] = useState('');
@@ -1495,13 +1498,23 @@ export function App() {
 
               return (
               <>
-                <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'serial' })}>
+                <button type="button" onClick={() => {
+                  const id = Math.random().toString(36).slice(2);
+                  setTerminals((prev) => [...prev, { id, record: rec, pve: 'serial' }]);
+                  setActiveTermId(id);
+                  setIsTerminalModalOpen(true);
+                }}>
                   Terminal
                 </button>
                 {canProxmoxQemuVnc(rec) ? (
                   <>
                     {' '}
-                    <button type="button" onClick={() => setTermOpen({ record: rec, pve: 'vnc' })}>
+                    <button type="button" onClick={() => {
+                      const id = Math.random().toString(36).slice(2);
+                      setTerminals((prev) => [...prev, { id, record: rec, pve: 'vnc' }]);
+                      setActiveTermId(id);
+                      setIsTerminalModalOpen(true);
+                    }}>
                       VNC
                     </button>
                   </>
@@ -2061,14 +2074,27 @@ export function App() {
         </div>
       ) : null}
 
-      {termOpen ? (
-        <TerminalModal
-          record={termOpen.record}
+      {isTerminalModalOpen ? (
+        <TerminalTabsModal
+          terminals={terminals}
+          activeTermId={activeTermId}
           sshUser={sshUser}
           recordSession={recordWebSession && !!meta?.session_recording_available}
           assistAvailable={!!meta?.terminal_assist_available}
-          pveConsole={termOpen.pve}
-          onClose={() => setTermOpen(null)}
+          onSetActive={setActiveTermId}
+          onCloseTerminal={(id) => {
+            setTerminals((prev) => {
+              const next = prev.filter((t) => t.id !== id);
+              if (activeTermId === id) {
+                setActiveTermId(next.length > 0 ? next[next.length - 1].id : null);
+              }
+              if (next.length === 0) {
+                setIsTerminalModalOpen(false);
+              }
+              return next;
+            });
+          }}
+          onCloseModal={() => setIsTerminalModalOpen(false)}
         />
       ) : null}
       {replayRecord ? (

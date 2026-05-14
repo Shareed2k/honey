@@ -444,3 +444,134 @@ tr:nth-child(even) {
     background-position: -100% 0;
   }
 }
+
+/* Terminal Tabs */
+.terminal-tabs-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  background: #0b0c0f;
+  border-bottom: 1px solid #2a3140;
+  padding: 0.5rem 0.5rem 0;
+  border-radius: 8px 8px 0 0;
+  flex-shrink: 0;
+}
+
+.modal-maximized .terminal-tabs-header {
+  border-radius: 0;
+}
+
+.terminal-tabs-container {
+  display: flex;
+  overflow-x: auto;
+  gap: 4px;
+}
+
+.terminal-tabs-container::-webkit-scrollbar {
+  height: 4px;
+}
+.terminal-tabs-container::-webkit-scrollbar-thumb {
+  background: #2a3140;
+  border-radius: 2px;
+}
+
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  background: #1a1d24;
+  border: 1px solid #2a3140;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  max-width: 200px;
+  min-width: 100px;
+  user-select: none;
+  opacity: 0.7;
+  transition: all 0.2s;
+}
+
+.terminal-tab:hover {
+  background: #20242c;
+  opacity: 0.9;
+}
+
+.terminal-tab.active {
+  background: #282f3d;
+  opacity: 1;
+  border-color: #3b82f6;
+}
+
+.terminal-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-right: 8px;
+  flex: 1;
+}
+
+.terminal-tab-close {
+  background: transparent;
+  border: none;
+  color: #9aa4b2;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0;
+  margin: 0 -4px 0 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+
+.terminal-tab-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.terminal-tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 0.4rem;
+}
+
+.terminal-maximize-btn {
+  background: transparent;
+  border: 1px solid #2a3140;
+  color: #9aa4b2;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 1rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-maximize-btn:hover {
+  background: #2a3140;
+  color: #fff;
+}
+
+.modal-maximized {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  border: none !important;
+}
+
+.modal-terminal-split-inner {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  min-height: 0;
+}
