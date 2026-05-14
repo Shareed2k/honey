@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/ui"
@@ -86,6 +87,17 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	st, err := os.Stat(localPath)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	if r.URL.Query().Get("stream") == "1" {
+		s.handleUploadStream(w, user, rec, localPath, meta.RemotePath, st.Size())
+		return
+	}
+
 	results, err := ui.ExecuteSFTPUploadParallel(user, []hosts.Record{rec}, localPath, meta.RemotePath, 1)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
@@ -103,4 +115,55 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(results)
+}
+
+// handleUploadStream streams NDJSON progress while copying the saved file to the host over SFTP.
+func (s *Server) handleUploadStream(w http.ResponseWriter, user string, rec hosts.Record, localPath, remotePath string, fileSize int64) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, `{"error":"streaming upload requires http.Flusher"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+
+	writeLine := func(v any) {
+		b, mErr := json.Marshal(v)
+		if mErr != nil {
+			return
+		}
+		_, _ = w.Write(b)
+		_, _ = w.Write([]byte("\n"))
+		fl.Flush()
+	}
+
+	writeLine(map[string]any{"phase": "sftp_start", "total_bytes": fileSize})
+
+	var lastEmit int64
+	var lastAt time.Time
+	progress := func(written, total int64) {
+		if written <= 0 {
+			return
+		}
+		now := time.Now()
+		atEnd := total > 0 && written >= total
+		if !atEnd && written-lastEmit < 256<<10 && now.Sub(lastAt) < 200*time.Millisecond {
+			return
+		}
+		lastEmit = written
+		lastAt = now
+		writeLine(map[string]any{"phase": "sftp", "sent_bytes": written, "total_bytes": total})
+	}
+
+	res := ui.RunOneSFTPUploadWithProgress(user, rec, localPath, remotePath, s.fileClientCache, progress)
+	if !res.Success {
+		writeLine(map[string]any{
+			"phase":   "error",
+			"message": strings.TrimSpace(res.ErrMsg),
+			"result":  res,
+		})
+		return
+	}
+	writeLine(map[string]any{"phase": "done", "results": []ui.HostExecResult{res}})
 }

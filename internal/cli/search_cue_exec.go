@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
@@ -23,8 +27,10 @@ var (
 literal IP, exact name match, host "*" for all rows with an IP, or host "re:PATTERN"
 for a Go regexp (RE2) matched against each row's name (only rows with PrimaryIP).
 
-Each step is exactly one of: shell command, put (upload), get (download), or
-script (upload a local file then run it with sh on the same SSH connection).
+Each step is exactly one of: shell command, put (upload), get (download),
+script (upload a local file then run it with sh on the same SSH connection),
+agent_transfer (A→cloud→B using the transfer agent; requires --config when using cloud_backend_ref),
+or ai (terminal local summarizer after prior steps; host must be "_"; OPENAI_API_KEY when executing).
 Relative local paths are resolved against the recipe file's directory.
 
 Then either prints a plan (--execute=false, default) or runs each step (--execute).
@@ -37,10 +43,14 @@ Use recipe.defaults.run_as or per-step run_as for command and script steps
 
 Optional recipe.defaults.env and per-step env (map of NAME to value) set
 export assignments before the shell command or sh <script> on the remote;
-step keys override defaults. Not allowed on put/get steps.
+step keys override defaults. Not allowed on put/get/ai steps.
 
 Repeat -e/--env KEY=value to set remote variables from the CLI; they override
-recipe env on duplicate keys (command and script steps only).`,
+recipe env on duplicate keys (command and script steps only).
+
+With global --record-dir or defaults.record_dir in config, writes one batch .hrec.jsonl per
+invocation when recording is enabled: explicit --record-dir, or record_dir set in honey YAML
+(built-in default records/ alone does not enable cue-exec batch logs). Dry-run records the plan text; --execute records each step result.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: runCueExec,
 	}
@@ -70,7 +80,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	records, sshUser, _, err := runSearchCore(cmd, queryArgs)
+	records, sshUser, cfg, cfgPath, err := runSearchCore(cmd, queryArgs)
 	if err != nil {
 		return err
 	}
@@ -98,5 +108,35 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return ui.RunCueRecipeSteps(cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv)
+	recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
+	flagSet := recordDirFlagChanged(cmd) && strings.TrimSpace(flagRecordDir) != ""
+	yamlSet := cfg != nil && strings.TrimSpace(cfg.Defaults.RecordDir) != "" && !recordDirFlagChanged(cmd)
+	wantBatch := len(records) > 0 && (flagSet || yamlSet)
+	var rec *ui.SessionRecorder
+	if wantBatch {
+		trigger := "cli-cue-exec-dry"
+		if flagCueExecExecute {
+			trigger = "cli-cue-exec"
+		}
+		var err error
+		rec, err = ui.NewBatchSessionRecorder(recordDir, trigger, sshUser, len(records))
+		if err != nil {
+			return err
+		}
+		if rec != nil {
+			hash, _ := cuetry.HashRecipeJSON(recipe)
+			rec.RecordRecipeMeta(ui.RecipeMeta{
+				RecipePath:        absRecipe,
+				HostCount:         len(records),
+				RecipeContentHash: hash,
+				StartedAt:         time.Now().UTC(),
+			})
+		}
+		defer func() { _ = rec.Close() }()
+	}
+	aiPrompt := ""
+	if cfg != nil {
+		aiPrompt = strings.TrimSpace(cfg.Defaults.AISystemPrompt)
+	}
+	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, rec)
 }

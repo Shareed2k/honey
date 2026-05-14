@@ -40,3 +40,7 @@ func (awsFactory) BackendRows(cfg *config.File) []config.BackendRow {
 	}
 	return rows
 }
+
+func (awsFactory) BackendKind() string { return "aws" }
+
+func (awsFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.AWS }

@@ -125,6 +125,51 @@ func EffectiveEnvForRun(step RecipeStep, defaults *RecipeDefaults, cliEnv map[st
 	return merged, nil
 }
 
+// EffectiveEnvForRemoteHook merges defaults.env, step.env, hook.env, then cliEnv, then host variables (same rules as EffectiveEnvForRun, with hook.env overlaying step env).
+func EffectiveEnvForRemoteHook(step RecipeStep, defaults *RecipeDefaults, hook *RecipeStepHook, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
+	if hook == nil {
+		return EffectiveEnvForRun(step, defaults, cliEnv, r)
+	}
+	out, err := EffectiveEnv(step, defaults)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range hook.Env {
+		if err := validateOneEnv(k, v); err != nil {
+			return nil, fmt.Errorf("hooks.env: %w", err)
+		}
+		out[k] = v
+	}
+	merged := make(map[string]string, len(out)+len(cliEnv)+16)
+	for k, v := range out {
+		merged[k] = v
+	}
+	for k, v := range cliEnv {
+		if err := validateOneEnv(k, v); err != nil {
+			return nil, fmt.Errorf("CLI env: %w", err)
+		}
+		merged[k] = v
+	}
+	if r != nil {
+		merged["HONEY_HOST_NAME"] = r.Name
+		merged["HONEY_HOST_PRIMARY_IP"] = r.PrimaryIP
+		merged["HONEY_HOST_PROVIDER"] = r.Provider
+		if r.Zone != "" {
+			merged["HONEY_HOST_ZONE"] = r.Zone
+		}
+		if r.Region != "" {
+			merged["HONEY_HOST_REGION"] = r.Region
+		}
+		for k, v := range r.Meta {
+			key := "HONEY_HOST_META_" + sanitizeEnvKey(k)
+			if err := validateOneEnv(key, v); err == nil {
+				merged[key] = v
+			}
+		}
+	}
+	return merged, nil
+}
+
 // ShellExportPrefixForRemote prepends stable `export KEY='value'; ` assignments before inner (remote shell).
 func ShellExportPrefixForRemote(env map[string]string, inner string) (string, error) {
 	if len(env) == 0 {

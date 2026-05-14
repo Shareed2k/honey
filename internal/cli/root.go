@@ -12,7 +12,10 @@ import (
 	_ "github.com/shareed2k/honey/internal/provider/all" // register all providers natively during boot
 )
 
-var flagDebugLog string
+var (
+	flagDebugLog  string
+	flagRecordDir string
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "honey",
@@ -41,9 +44,20 @@ func init() {
 	rootCmd.SetUsageTemplate(BannerText() + "\n\n" + defaultUsage)
 
 	rootCmd.PersistentFlags().StringVar(&flagDebugLog, "debug-log", "", "Path to write debug logs (disables debug logging if empty)")
+	rootCmd.PersistentFlags().StringVar(&flagRecordDir, "record-dir", "", "Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default <directory of config.yaml>/records")
 
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.SilenceUsage = true
 	rootCmd.SetOut(os.Stdout)
 	rootCmd.SetErr(os.Stderr)
+}
+
+// recordDirFlagChanged reports whether --record-dir was set on the command line
+// (root persistent flag, visible to all subcommands).
+func recordDirFlagChanged(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	f := cmd.Root().PersistentFlags().Lookup("record-dir")
+	return f != nil && f.Changed
 }

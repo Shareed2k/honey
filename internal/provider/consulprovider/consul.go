@@ -92,7 +92,7 @@ func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, err
 		}
 		meta := map[string]string{}
 		for k, v := range n.Meta {
-			meta[k] = v
+			meta["label_"+k] = v
 		}
 		meta["datacenter"] = n.Datacenter
 

@@ -1,6 +1,8 @@
 package searchrun
 
 import (
+	"reflect"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -22,6 +24,16 @@ var factories []ProviderFactory
 // This is typically called from an init() function within each provider package.
 func Register(f ProviderFactory) {
 	factories = append(factories, f)
+	if r, ok := f.(BackendConfigRegistry); ok {
+		registerBackendSlice(r.BackendKind(), func(cfg *config.File) reflect.Value {
+			ptr := r.BackendSlicePtr(cfg)
+			v := reflect.ValueOf(ptr)
+			if !v.IsValid() || v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Slice {
+				return reflect.Value{}
+			}
+			return v.Elem()
+		})
+	}
 }
 
 // ListSearchProviderIDs returns hosts.Backend.ID() for each registered factory's default backend,

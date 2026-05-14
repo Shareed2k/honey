@@ -2,6 +2,7 @@ package k8sprovider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -114,7 +115,7 @@ func (k *K8s) searchNodes(ctx context.Context, clientset kubernetes.Interface, q
 			Provider:  "k8s",
 			Name:      n.Name,
 			PrimaryIP: primary,
-			ExtraIPs:  extras,
+			ExtraIPs:  append([]string(nil), extras...),
 			Zone:      nodeZone(n),
 			Region:    "",
 			Meta: map[string]string{
@@ -125,11 +126,39 @@ func (k *K8s) searchNodes(ctx context.Context, clientset kubernetes.Interface, q
 	return out, nil
 }
 
+// nodeAddrInfo holds one node's reachable addresses (same rules as searchNodes).
+type nodeAddrInfo struct {
+	primary string
+	extras  []string
+}
+
+func nodeAddressIndex(ctx context.Context, clientset kubernetes.Interface) map[string]nodeAddrInfo {
+	nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		zap.L().Warn("k8s pods search: could not list nodes; pod extras will omit node IPs (RBAC or API error)",
+			zap.Error(err))
+		return nil
+	}
+	out := make(map[string]nodeAddrInfo, len(nodeList.Items))
+	for i := range nodeList.Items {
+		n := &nodeList.Items[i]
+		pri, ex := nodeIPs(*n)
+		if pri == "" {
+			continue
+		}
+		// Own backing so pod rows never share slices with the node index or each other.
+		exCopy := append([]string(nil), ex...)
+		out[n.Name] = nodeAddrInfo{primary: pri, extras: exCopy}
+	}
+	return out
+}
+
 func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q hosts.Query, resolvedContext string, kubeconfig string) ([]hosts.Record, error) {
 	list, err := clientset.CoreV1().Pods(corev1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	nodeIndex := nodeAddressIndex(ctx, clientset)
 	out := make([]hosts.Record, 0, len(list.Items))
 	for _, p := range list.Items {
 		ok, err := hosts.NameMatches(p.Name, q)
@@ -144,6 +173,26 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 			continue
 		}
 		ns := p.Namespace
+		nodeName := strings.TrimSpace(p.Spec.NodeName)
+
+		portSet := make(map[int32]struct{})
+		var uniquePorts []string
+		for _, c := range p.Spec.Containers {
+			for _, port := range c.Ports {
+				if port.ContainerPort > 0 {
+					if _, ok := portSet[port.ContainerPort]; !ok {
+						portSet[port.ContainerPort] = struct{}{}
+						uniquePorts = append(uniquePorts, fmt.Sprintf("%d", port.ContainerPort))
+					}
+				}
+			}
+		}
+		var portJSON string
+		if len(uniquePorts) > 0 {
+			b, _ := json.Marshal(uniquePorts)
+			portJSON = string(b)
+		}
+
 		meta := map[string]string{
 			"kind":         "pod",
 			"namespace":    ns,
@@ -152,6 +201,20 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 			"kubeconfig":   kubeconfig,
 			"backend_name": k.BackendName(),
 		}
+		if portJSON != "" {
+			meta["ports"] = portJSON
+		}
+		if nodeName != "" {
+			meta["node"] = nodeName
+			if nodeIndex != nil {
+				if na, ok := nodeIndex[nodeName]; ok {
+					meta["node_ip"] = na.primary
+					if len(na.extras) > 0 {
+						meta["node_extra_ips"] = strings.Join(na.extras, ",")
+					}
+				}
+			}
+		}
 		img := q.K8sDebugImage
 		if img == "" {
 			img = k.DebugImage
@@ -159,11 +222,22 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 		if img != "" {
 			meta["debug_image"] = img
 		}
+		var extras []string
+		if nodeName != "" {
+			extras = append(extras, nodeName)
+			if nodeIndex != nil {
+				if na, ok := nodeIndex[nodeName]; ok {
+					extras = append(extras, na.primary)
+					extras = append(extras, na.extras...)
+				}
+			}
+		}
+		extras = append([]string(nil), extras...)
 		out = append(out, hosts.Record{
 			Provider:  "k8s",
 			Name:      fmt.Sprintf("%s/%s", ns, p.Name),
 			PrimaryIP: ip,
-			ExtraIPs:  nil,
+			ExtraIPs:  extras,
 			Zone:      "",
 			Region:    "",
 			Meta:      meta,
@@ -191,7 +265,8 @@ func nodeIPs(n corev1.Node) (primary string, extras []string) {
 		case corev1.NodeInternalIP:
 			internal = append(internal, a.Address)
 		default:
-			if a.Address != "" {
+			// Hostname duplicates the node name and is not an extra IP.
+			if a.Address != "" && a.Type != corev1.NodeHostName {
 				extras = append(extras, a.Address)
 			}
 		}

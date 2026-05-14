@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -126,5 +127,74 @@ func TestRecipesListAndViewAllowedPath(t *testing.T) {
 	}
 	if vr.Content != content {
 		t.Fatalf("content mismatch: %q", vr.Content)
+	}
+}
+
+func TestHandleCueExec_recipeContent_dryRun(t *testing.T) {
+	t.Parallel()
+	s, err := NewServer(Options{
+		ListenAddr: "127.0.0.1:0",
+		Token:      "tok",
+		Version:    "0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+		"recipe_content": {
+			"name": "inline-test",
+			"steps": [
+				{"host": "*", "command": "echo hi"}
+			]
+		},
+		"execute": false,
+		"ssh_user": "ops",
+		"records": [
+			{"provider":"static","name":"h1","primary_ip":"1.1.1.1"}
+		]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cue-exec", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.withAuth(s.handleCueExec)(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "echo hi") {
+		t.Fatalf("expected plan to mention 'echo hi', got: %s", w.Body)
+	}
+}
+
+func TestHandleCueExec_recipeContent_invalidHost(t *testing.T) {
+	t.Parallel()
+	s, err := NewServer(Options{
+		ListenAddr: "127.0.0.1:0",
+		Token:      "tok",
+		Version:    "0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+		"recipe_content": {
+			"name": "bad",
+			"steps": [{"host": "re:[", "command": "true"}]
+		},
+		"execute": false,
+		"records": [
+			{"provider":"static","name":"h1","primary_ip":"1.1.1.1"}
+		]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cue-exec", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.withAuth(s.handleCueExec)(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "host") {
+		t.Fatalf("expected error message to mention 'host', got: %s", w.Body)
 	}
 }

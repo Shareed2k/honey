@@ -50,3 +50,7 @@ func (k8sFactory) BackendRows(cfg *config.File) []config.BackendRow {
 	}
 	return rows
 }
+
+func (k8sFactory) BackendKind() string { return "kubernetes" }
+
+func (k8sFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Kubernetes }

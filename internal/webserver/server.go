@@ -8,30 +8,50 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/ui"
 )
 
 // Options configures the embedded web server.
 type Options struct {
-	ListenAddr    string // e.g. 127.0.0.1:8765
-	Token         string
-	ConfigPath    string // optional explicit --config
-	Version       string
-	Commit        string
-	Date          string
-	MaxUploadSize int64 // default 100 << 20
+	ListenAddr         string // e.g. 127.0.0.1:8765
+	Token              string
+	ConfigPath         string // optional explicit --config
+	Config             *config.File
+	RecordDir          string // optional session recording output dir
+	LocalFilesRoot     string // optional root for local file browser/upload/download
+	AgentBinaryPath    string // optional explicit honey-transfer-agent binary path
+	AgentBuildCacheDir string // optional cache dir for auto-built agent binary
+	Version            string
+	Commit             string
+	Date               string
+	MaxUploadSize      int64 // default 100 << 20
 }
 
 // Server is the honey web UI HTTP server.
 type Server struct {
-	opts Options
-	mux  *http.ServeMux
+	opts     Options
+	mux      *http.ServeMux
+	assistRL *slidingRL
+	tunnels  *tunnelManager
+
+	assistModelsMu  sync.Mutex
+	assistModelIDs  []string
+	assistModelsExp time.Time
+
+	fileClientCache *ui.ClientCache
+
+	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
+	pveQemuVncMu   sync.Mutex
+	pveQemuVncByID map[string]pveQemuVncOfferSession
 }
 
 // NewServer builds handlers with the given auth token.
@@ -42,7 +62,15 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.MaxUploadSize <= 0 {
 		opts.MaxUploadSize = 100 << 20
 	}
-	s := &Server{opts: opts, mux: http.NewServeMux()}
+	hostexec.ReconfigureFromHoneyConfig(opts.Config)
+
+	s := &Server{
+		opts:            opts,
+		mux:             http.NewServeMux(),
+		assistRL:        newSlidingRL(),
+		tunnels:         newTunnelManager(),
+		fileClientCache: ui.NewClientCache(),
+	}
 	s.routes()
 	return s, nil
 }
@@ -52,18 +80,38 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/providers", s.withAuth(s.handleProviders))
 	s.mux.HandleFunc("GET /api/v1/backends", s.withAuth(s.handleBackends))
 	s.mux.HandleFunc("POST /api/v1/search", s.withAuth(s.handleSearch))
+	s.mux.HandleFunc("POST /api/v1/host-ports", s.withAuth(s.handleHostPorts))
+	s.mux.HandleFunc("GET /api/v1/tunnels", s.withAuth(s.handleTunnelsGet))
+	s.mux.HandleFunc("GET /api/v1/tunnels/{id}/logs", s.withAuth(s.handleTunnelsLogs))
+	s.mux.HandleFunc("POST /api/v1/tunnels", s.withAuth(s.handleTunnelsPost))
+	s.mux.HandleFunc("DELETE /api/v1/tunnels/{id}", s.withAuth(s.handleTunnelsDelete))
 	s.mux.HandleFunc("GET /api/v1/config/backends", s.withAuth(s.handleConfigBackendsGet))
 	s.mux.HandleFunc("POST /api/v1/config/backends/{kind}", s.withAuth(s.handleConfigBackendsPost))
 	s.mux.HandleFunc("PUT /api/v1/config/backends/{kind}/{index}", s.withAuth(s.handleConfigBackendsPut))
 	s.mux.HandleFunc("DELETE /api/v1/config/backends/{kind}/{index}", s.withAuth(s.handleConfigBackendsDelete))
+	s.mux.HandleFunc("GET /api/v1/config/schema", s.withAuth(s.handleConfigSchema))
 	s.mux.HandleFunc("GET /api/v1/config", s.withAuth(s.handleConfigGet))
 	s.mux.HandleFunc("PUT /api/v1/config", s.withAuth(s.handleConfigPut))
 	s.mux.HandleFunc("POST /api/v1/upload", s.withAuth(s.handleUpload))
+	s.mux.HandleFunc("POST /api/v1/files/local/list", s.withAuth(s.handleFilesLocalList))
+	s.mux.HandleFunc("POST /api/v1/files/remote/list", s.withAuth(s.handleFilesRemoteList))
+	s.mux.HandleFunc("POST /api/v1/files/copy", s.withAuth(s.handleFilesCopy))
+	s.mux.HandleFunc("POST /api/v1/files/agent-transfer", s.withAuth(s.handleFilesAgentTransfer))
 	s.mux.HandleFunc("GET /api/v1/recipes", s.withAuth(s.handleRecipesList))
 	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
+	s.mux.HandleFunc("POST /api/v1/recipes/assist", s.withAuth(s.handleRecipesAssist))
+	s.mux.HandleFunc("POST /api/v1/recipes/validate-content", s.withAuth(s.handleRecipesValidateContent))
+	s.mux.HandleFunc("POST /api/v1/recipes/parse", s.withAuth(s.handleRecipesParse))
+	s.mux.HandleFunc("GET /api/v1/recipes/recent-runs", s.withAuth(s.handleRecipesRecentRuns))
+	s.mux.HandleFunc("GET /api/v1/recordings", s.withAuth(s.handleRecordingsList))
+	s.mux.HandleFunc("POST /api/v1/recordings/play", s.withAuth(s.handleRecordingsPlay))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
 	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
+	s.mux.HandleFunc("POST /api/v1/terminal-assist", s.withAuth(s.handleTerminalAssist))
+	s.mux.HandleFunc("GET /api/v1/terminal-assist/models", s.withAuth(s.handleTerminalAssistModels))
+	s.mux.HandleFunc("POST /api/v1/pve-qemu-vnc-offer", s.withAuth(s.handlePveQemuVncOffer))
 	s.mux.HandleFunc("GET /ws/ssh", s.handleWebSSH)
+	s.mux.HandleFunc("GET /ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -97,6 +145,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 	select {
 	case <-ctx.Done():
+		if s.fileClientCache != nil {
+			s.fileClientCache.CloseAll()
+		}
 		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shCtx)
@@ -116,11 +167,13 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"version":     s.opts.Version,
-		"commit":      s.opts.Commit,
-		"date":        s.opts.Date,
-		"config_path": cfgPath,
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"version":                     s.opts.Version,
+		"commit":                      s.opts.Commit,
+		"date":                        s.opts.Date,
+		"config_path":                 cfgPath,
+		"session_recording_available": strings.TrimSpace(s.opts.RecordDir) != "",
+		"terminal_assist_available":   terminalAssistConfigured(),
 	})
 }
 

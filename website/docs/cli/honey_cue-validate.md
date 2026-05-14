@@ -26,7 +26,8 @@ honey cue-validate &lt;file.cue&gt; [flags]
 ### Options inherited from parent commands
 
 ```
-      --debug-log string   Path to write debug logs (disables debug logging if empty)
+      --debug-log string    Path to write debug logs (disables debug logging if empty)
+      --record-dir string   Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records
 ```
 
 ### SEE ALSO

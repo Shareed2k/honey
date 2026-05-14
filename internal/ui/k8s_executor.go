@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -30,11 +32,38 @@ type k8sNativeClient struct {
 	container string
 }
 
+// summarizeK8sExecCmd returns a short preview of argv for debug logs (avoids huge sh -c bodies).
+func summarizeK8sExecCmd(cmd []string) string {
+	if len(cmd) == 0 {
+		return "(empty)"
+	}
+	const maxPreview = 512
+	s := strings.Join(cmd, " ")
+	if len(s) <= maxPreview {
+		return s
+	}
+	return s[:maxPreview] + "…"
+}
+
 func (c *k8sNativeClient) Close() error {
 	return nil // no persistent connection to close, SPDY connections are ephemeral per exec
 }
 
 func (c *k8sNativeClient) execInPod(ctx context.Context, cmd []string, stdin io.Reader, stdout, stderr io.Writer, tty bool, sizeQ remotecommand.TerminalSizeQueue) error {
+	logMeta := []zap.Field{
+		zap.String("k8s_namespace", c.namespace),
+		zap.String("k8s_pod", c.podName),
+		zap.String("k8s_container", c.container),
+		zap.Int("command_argc", len(cmd)),
+		zap.String("command_preview", summarizeK8sExecCmd(cmd)),
+		zap.Bool("stdin", stdin != nil),
+		zap.Bool("stdout", stdout != nil),
+		zap.Bool("stderr", stderr != nil),
+		zap.Bool("tty", tty),
+		zap.Bool("terminal_size_queue", sizeQ != nil),
+	}
+	zap.L().Debug("k8s execInPod: starting", logMeta...)
+
 	req := c.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(c.podName).
@@ -53,8 +82,12 @@ func (c *k8sNativeClient) execInPod(ctx context.Context, cmd []string, stdin io.
 	}
 	req.VersionedParams(opts, scheme.ParameterCodec)
 
-	exec, err := remotecommand.NewSPDYExecutor(c.config, "POST", req.URL())
+	u := req.URL()
+	zap.L().Debug("k8s execInPod: exec subresource URL", append(append([]zap.Field(nil), logMeta...), zap.String("url_path", u.Path))...)
+
+	exec, err := remotecommand.NewSPDYExecutor(c.config, "POST", u)
 	if err != nil {
+		zap.L().Debug("k8s execInPod: new SPDY executor failed", append(append([]zap.Field(nil), logMeta...), zap.Error(err))...)
 		return fmt.Errorf("create spdy executor: %w", err)
 	}
 
@@ -67,11 +100,13 @@ func (c *k8sNativeClient) execInPod(ctx context.Context, cmd []string, stdin io.
 	if tty && sizeQ != nil {
 		streamOpts.TerminalSizeQueue = sizeQ
 	}
+	zap.L().Debug("k8s execInPod: streaming", logMeta...)
 	err = exec.StreamWithContext(ctx, streamOpts)
 	if err != nil {
+		zap.L().Debug("k8s execInPod: stream finished with error", append(append([]zap.Field(nil), logMeta...), zap.Error(err))...)
 		return fmt.Errorf("exec stream: %w", err)
 	}
-
+	zap.L().Debug("k8s execInPod: stream finished ok", logMeta...)
 	return nil
 }
 
@@ -87,7 +122,28 @@ func (c *k8sNativeClient) Run(cmd string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+func (c *k8sNativeClient) RunWithStreams(cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	return c.execInPod(context.Background(), []string{"sh", "-c", cmd}, stdin, stdout, stderr, false, nil)
+}
+
 func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
+	localPath = strings.TrimSpace(localPath)
+	remotePath = strings.TrimSpace(remotePath)
+	if localPath == "" || remotePath == "" {
+		return fmt.Errorf("upload: empty local or remote path")
+	}
+	// Trailing slash means "directory" (same as SFTP): use the local file's base name in the pod.
+	if strings.HasSuffix(remotePath, "/") {
+		base := filepath.Base(localPath)
+		if base == "." || base == ".." || base == "/" || base == "" {
+			return fmt.Errorf("upload: need a file name inside %q (local path has no usable base name)", remotePath)
+		}
+		remotePath = path.Join(strings.TrimRight(remotePath, "/"), base)
+	}
+
 	localFile, err := os.Open(localPath) // #nosec G304 -- CLI tool, user explicitly provides the local path for upload
 	if err != nil {
 		return err
@@ -107,7 +163,7 @@ func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
 		defer tw.Close()
 
 		hdr := &tar.Header{
-			Name: filepath.Base(remotePath),
+			Name: path.Base(remotePath),
 			Mode: int64(stat.Mode()),
 			Size: stat.Size(),
 		}
@@ -117,7 +173,7 @@ func (c *k8sNativeClient) Upload(localPath, remotePath string) error {
 		_, _ = io.Copy(tw, localFile)
 	}()
 
-	remoteDir := filepath.Dir(remotePath)
+	remoteDir := path.Dir(remotePath)
 	var stderr bytes.Buffer
 	// Create the directory if it doesn't exist, then extract the tar stream into it
 	cmd := []string{"sh", "-c", fmt.Sprintf("mkdir -p '%s' && tar -xf - -C '%s'", remoteDir, remoteDir)}
@@ -174,6 +230,22 @@ func (c *k8sNativeClient) Download(remotePath, localPath string) error {
 	return fmt.Errorf("file not found in remote archive")
 }
 
+func (c *k8sNativeClient) ListRemoteDir(_ string) ([]RemoteFileEntry, error) {
+	return nil, fmt.Errorf("k8s pod file listing is not supported in this view")
+}
+
+func (c *k8sNativeClient) StatRemote(_ string) (RemoteFileEntry, error) {
+	return RemoteFileEntry{}, fmt.Errorf("k8s pod file stat is not supported in this view")
+}
+
+func (c *k8sNativeClient) MkdirAllRemote(_ string) error {
+	return fmt.Errorf("k8s pod directory create is not supported in this view")
+}
+
+func (c *k8sNativeClient) RemoveRemote(_ string, _ bool) error {
+	return fmt.Errorf("k8s pod file remove is not supported in this view")
+}
+
 func (k k8sPodExecutor) Dial(_ string, r hosts.Record) (HostClient, error) {
 	zap.L().Debug("dialing k8s pod executor", zap.String("record", r.Name))
 	namespace := r.Meta["namespace"]
@@ -221,23 +293,33 @@ func (k k8sPodExecutor) Dial(_ string, r hosts.Record) (HostClient, error) {
 }
 
 func (k k8sPodExecutor) RunInteractive(user string, r hosts.Record) error {
-	client, err := k.Dial(user, r)
+	return runK8sInteractiveWithRecorder(user, r, nil)
+}
+
+func runK8sInteractiveWithRecorder(user string, r hosts.Record, recorder *SessionRecorder) error {
+	client, err := k8sPodExecutor{}.Dial(user, r)
 	if err != nil {
+		recorder.RecordError(err)
 		return err
 	}
 	defer func() { _ = client.Close() }()
 
 	podClient, ok := client.(*k8sNativeClient)
 	if !ok {
-		return fmt.Errorf("unexpected client type %T", client)
+		err := fmt.Errorf("unexpected client type %T", client)
+		recorder.RecordError(err)
+		return err
 	}
 
 	fd := int(os.Stdin.Fd())
 	if !termIsTerminal(fd) {
-		return fmt.Errorf("stdin is not a terminal")
+		err := fmt.Errorf("stdin is not a terminal")
+		recorder.RecordError(err)
+		return err
 	}
 	oldState, err := termMakeRaw(fd)
 	if err != nil {
+		recorder.RecordError(err)
 		return err
 	}
 	defer func() { _ = termRestore(fd, oldState) }()
@@ -247,5 +329,12 @@ func (k k8sPodExecutor) RunInteractive(user string, r hosts.Record) error {
 	cmd, _ := cuetry.ShellExportPrefixForRemote(env, "sh")
 
 	// Start standard sh for interactive session
-	return podClient.execInPod(context.Background(), []string{"sh", "-c", cmd}, os.Stdin, os.Stdout, os.Stderr, true, nil)
+	stdin := WrapRecordingReader(os.Stdin, recorder, "stdin")
+	stdout := WrapRecordingWriter(os.Stdout, recorder, "stdout")
+	stderr := WrapRecordingWriter(os.Stderr, recorder, "stderr")
+	execErr := podClient.execInPod(context.Background(), []string{"sh", "-c", cmd}, stdin, stdout, stderr, true, nil)
+	if execErr != nil {
+		recorder.RecordError(execErr)
+	}
+	return execErr
 }

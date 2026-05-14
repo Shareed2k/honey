@@ -1,54 +1,40 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiDelete, apiGet, apiPost, apiPutJson } from './api';
+import type { ConfigSchemaFieldSpec, ConfigUISchema } from './api';
 
-type GCPBackend = { name: string; project: string; zone: string };
-type AWSBackend = { name: string; profile: string; region: string };
-type KubernetesBackend = { name: string; context: string; kubeconfig: string; mode: string; debug_image: string };
-type ConsulBackend = { name: string; addr: string; datacenter: string; token: string };
-type ProxmoxBackend = {
-  name: string;
-  url: string;
-  user: string;
-  password: string;
-  token_id: string;
-  token_secret: string;
-  insecure: boolean;
-};
-
-export type BackendsPayload = {
-  gcp?: GCPBackend[];
-  aws?: AWSBackend[];
-  kubernetes?: KubernetesBackend[];
-  consul?: ConsulBackend[];
-  proxmox?: ProxmoxBackend[];
-};
-
-type Kind = 'gcp' | 'aws' | 'kubernetes' | 'consul' | 'proxmox';
-
-const emptyGCP = (): GCPBackend => ({ name: '', project: '', zone: '' });
-const emptyAWS = (): AWSBackend => ({ name: '', profile: '', region: '' });
-const emptyK8s = (): KubernetesBackend => ({ name: '', context: '', kubeconfig: '', mode: 'nodes', debug_image: '' });
-const emptyConsul = (): ConsulBackend => ({ name: '', addr: '', datacenter: '', token: '' });
-const emptyProxmox = (): ProxmoxBackend => ({
-  name: '',
-  url: '',
-  user: '',
-  password: '',
-  token_id: '',
-  token_secret: '',
-  insecure: false,
-});
+export type BackendsPayload = Record<string, Record<string, unknown>[] | undefined>;
 
 type Props = {
   onSaved: () => void;
+  schema: ConfigUISchema | null;
 };
 
-export function ConfigBackendsSection({ onSaved }: Props) {
+function initDraft(fields: ConfigSchemaFieldSpec[]): Record<string, unknown> {
+  const draft: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (field.default !== undefined) {
+      draft[field.key] = field.default;
+      continue;
+    }
+    if (field.type === 'boolean') {
+      draft[field.key] = false;
+      continue;
+    }
+    if (field.enum && field.enum.length > 0) {
+      draft[field.key] = field.enum[0];
+      continue;
+    }
+    draft[field.key] = '';
+  }
+  return draft;
+}
+
+export function ConfigBackendsSection({ onSaved, schema }: Props) {
   const [data, setData] = useState<BackendsPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editor, setEditor] = useState<{
-    kind: Kind;
+    kind: string;
     index: number | null;
     draft: Record<string, unknown>;
   } | null>(null);
@@ -94,21 +80,17 @@ export function ConfigBackendsSection({ onSaved }: Props) {
     void load();
   }, [load]);
 
-  const openAdd = (kind: Kind) => {
-    const draft =
-      kind === 'gcp'
-        ? (emptyGCP() as unknown as Record<string, unknown>)
-        : kind === 'aws'
-          ? (emptyAWS() as unknown as Record<string, unknown>)
-          : kind === 'kubernetes'
-            ? (emptyK8s() as unknown as Record<string, unknown>)
-            : kind === 'consul'
-              ? (emptyConsul() as unknown as Record<string, unknown>)
-              : (emptyProxmox() as unknown as Record<string, unknown>);
+  const openAdd = (kind: string) => {
+    const backend = schema?.backends[kind];
+    if (!backend) {
+      setErr(`Missing schema for backend kind "${kind}".`);
+      return;
+    }
+    const draft = initDraft(backend.fields);
     setEditor({ kind, index: null, draft });
   };
 
-  const openEdit = (kind: Kind, index: number, row: unknown) => {
+  const openEdit = (kind: string, index: number, row: unknown) => {
     setEditor({ kind, index, draft: { ...(row as Record<string, unknown>) } });
   };
 
@@ -129,14 +111,14 @@ export function ConfigBackendsSection({ onSaved }: Props) {
     })();
   };
 
-  const remove = (kind: Kind, index: number) => {
+  const remove = (kind: string, index: number) => {
     if (!window.confirm(`Delete ${kind} backend #${index}?`)) {
       return;
     }
     void persist(() => apiDelete(`/api/v1/config/backends/${kind}/${index}`));
   };
 
-  const renderRows = (kind: Kind, rows: unknown[]) => {
+  const renderRows = (kind: string, rows: unknown[]) => {
     const list = rows as { name?: string }[];
     return (
       <table style={{ width: '100%', marginTop: '0.35rem' }}>
@@ -183,15 +165,17 @@ export function ConfigBackendsSection({ onSaved }: Props) {
           Reload backends JSON
         </button>
       </div>
+      {!schema ? <p style={{ opacity: 0.8, fontSize: '0.85rem' }}>Config schema is required to render backend forms.</p> : null}
       {data ? (
         <div style={{ display: 'grid', gap: '1rem' }}>
-          {(['gcp', 'aws', 'kubernetes', 'consul', 'proxmox'] as Kind[]).map((kind) => {
+          {(schema?.backend_order || []).map((kind) => {
             const rows = (data[kind] || []) as unknown[];
+            const backendDef = schema?.backends[kind];
             return (
               <div key={kind}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <strong>{kind}</strong>
-                  <button type="button" disabled={busy} onClick={() => openAdd(kind)}>
+                  <strong>{backendDef?.label || kind}</strong>
+                  <button type="button" disabled={busy || !schema} onClick={() => openAdd(kind)}>
                     Add
                   </button>
                   <span style={{ fontSize: '0.75rem', opacity: 0.75 }}>
@@ -230,7 +214,15 @@ export function ConfigBackendsSection({ onSaved }: Props) {
             <h3 style={{ marginTop: 0 }}>
               {editor.index === null ? 'Add' : 'Edit'} {editor.kind}
             </h3>
-            <BackendFormFields kind={editor.kind} draft={editor.draft} setDraft={(d) => setEditor({ ...editor, draft: d })} />
+            {schema?.backends[editor.kind] ? (
+              <BackendFormFields
+                fields={schema.backends[editor.kind].fields}
+                draft={editor.draft}
+                setDraft={(d) => setEditor({ ...editor, draft: d })}
+              />
+            ) : (
+              <p style={{ color: '#f66' }}>Missing schema for backend kind "{editor.kind}".</p>
+            )}
             <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
               <button type="button" className="primary" disabled={busy} onClick={() => saveEditor()}>
                 Save
@@ -247,82 +239,77 @@ export function ConfigBackendsSection({ onSaved }: Props) {
 }
 
 function BackendFormFields({
-  kind,
+  fields,
   draft,
   setDraft,
 }: {
-  kind: Kind;
+  fields: ConfigSchemaFieldSpec[];
   draft: Record<string, unknown>;
   setDraft: (d: Record<string, unknown>) => void;
 }) {
-  const set = (k: string, v: string | boolean) => setDraft({ ...draft, [k]: v });
-  const inp = (key: string, label: string, type: 'text' | 'password' = 'text') => (
-    <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-      <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
-      <input
-        type={type}
-        style={{ width: '100%' }}
-        value={String(draft[key] ?? '')}
-        onChange={(e) => set(key, e.target.value)}
-      />
-    </label>
-  );
-  const chk = (key: string, label: string) => (
-    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.5rem' }}>
-      <input type="checkbox" checked={Boolean(draft[key])} onChange={(e) => set(key, e.target.checked)} />
-      {label}
-    </label>
-  );
+  const set = (k: string, v: string | boolean | number) => setDraft({ ...draft, [k]: v });
 
-  switch (kind) {
-    case 'gcp':
-      return (
-        <>
-          {inp('name', 'Name')}
-          {inp('project', 'Project')}
-          {inp('zone', 'Zone')}
-        </>
-      );
-    case 'aws':
-      return (
-        <>
-          {inp('name', 'Name')}
-          {inp('profile', 'Profile')}
-          {inp('region', 'Region')}
-        </>
-      );
-    case 'kubernetes':
-      return (
-        <>
-          {inp('name', 'Name')}
-          {inp('context', 'Context')}
-          {inp('kubeconfig', 'Kubeconfig path')}
-          {inp('mode', 'Mode (nodes or pods)')}
-          {inp('debug_image', 'Debug image')}
-        </>
-      );
-    case 'consul':
-      return (
-        <>
-          {inp('name', 'Name')}
-          {inp('addr', 'Address')}
-          {inp('datacenter', 'Datacenter')}
-          {inp('token', 'Token', 'password')}
-        </>
-      );
-    case 'proxmox':
-      return (
-        <>
-          {inp('name', 'Name')}
-          {inp('url', 'URL')}
-          {inp('user', 'User')}
-          {inp('password', 'Password', 'password')}
-          {inp('token_id', 'Token ID')}
-          {inp('token_secret', 'Token secret', 'password')}
-          {chk('insecure', 'Insecure TLS')}
-        </>
-      );
-    default:
-      return null;
-  }
+  return (
+    <>
+      {fields.map((field) => {
+        const label = field.required ? `${field.label} *` : field.label;
+        if (field.type === 'boolean') {
+          return (
+            <label key={field.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.5rem' }}>
+              <input type="checkbox" checked={Boolean(draft[field.key])} onChange={(e) => set(field.key, e.target.checked)} />
+              {label}
+            </label>
+          );
+        }
+
+        if (field.enum && field.enum.length > 0) {
+          return (
+            <label key={field.key} style={{ display: 'block', marginBottom: '0.5rem' }}>
+              <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
+              <select
+                style={{ width: '100%' }}
+                value={String(draft[field.key] ?? field.enum[0] ?? '')}
+                onChange={(e) => set(field.key, e.target.value)}
+              >
+                {field.enum.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        }
+
+        if (field.type === 'integer') {
+          return (
+            <label key={field.key} style={{ display: 'block', marginBottom: '0.5rem' }}>
+              <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
+              <input
+                type="number"
+                style={{ width: '100%' }}
+                value={String(draft[field.key] ?? '')}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  set(field.key, raw === '' ? 0 : Number.parseInt(raw, 10));
+                }}
+              />
+            </label>
+          );
+        }
+
+        return (
+          <label key={field.key} style={{ display: 'block', marginBottom: '0.5rem' }}>
+            <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
+            <input
+              type={field.secret ? 'password' : 'text'}
+              style={{ width: '100%' }}
+              value={String(draft[field.key] ?? '')}
+              onChange={(e) => set(field.key, e.target.value)}
+            />
+          </label>
+        );
+      })}
+    </>
+  );
 }

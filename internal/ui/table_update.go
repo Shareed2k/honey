@@ -1,11 +1,39 @@
 package ui
 
 import (
+	"strings"
+	"time"
+
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/recordings"
 )
 
 func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
+	if m.batchRecorder != nil {
+		_ = m.batchRecorder.Close()
+		m.batchRecorder = nil
+	}
+	if m.recordEnabled && m.recordDir != "" {
+		trigger := "tui-exec"
+		if msg.isCue {
+			trigger = "tui-cue-exec"
+		}
+		if rec, err := NewBatchSessionRecorder(m.recordDir, trigger, m.sshUser, msg.totalJobs); err == nil {
+			m.batchRecorder = rec
+			if msg.isCue && rec != nil && msg.recipe != nil {
+				hash, _ := cuetry.HashRecipeJSON(*msg.recipe)
+				rec.RecordRecipeMeta(RecipeMeta{
+					RecipePath:        msg.recipePath,
+					HostCount:         msg.totalJobs,
+					RecipeContentHash: hash,
+					StartedAt:         time.Now().UTC(),
+				})
+			}
+		}
+	}
 	m.mode = "execresults"
 	m.execCmdLine = msg.cmdLine
 	m.execTargetNote = msg.targetNote
@@ -26,6 +54,9 @@ func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleStreamResultMsg(msg streamResultMsg) (tea.Model, tea.Cmd) {
+	if m.batchRecorder != nil {
+		m.batchRecorder.RecordHostExecResult(msg.res)
+	}
 	m.execResults = append(m.execResults, msg.res)
 
 	// If cursor is at the bottom and a new item arrives, follow it if we are at the end
@@ -46,6 +77,10 @@ func (m *model) handleStreamResultMsg(msg streamResultMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m *model) handleStreamDoneMsg(_ streamDoneMsg) (tea.Model, tea.Cmd) {
+	if m.batchRecorder != nil {
+		_ = m.batchRecorder.Close()
+		m.batchRecorder = nil
+	}
 	m.execDone = true
 	m.execResults = SortHostExecForUI(m.execResults)
 	m.clampExecScroll()
@@ -53,6 +88,14 @@ func (m *model) handleStreamDoneMsg(_ streamDoneMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleParallelExecDoneMsg(msg parallelExecDoneMsg) (tea.Model, tea.Cmd) {
+	if m.recordEnabled && m.recordDir != "" {
+		if rec, err := NewBatchSessionRecorder(m.recordDir, "tui-exec", m.sshUser, len(msg.results)); err == nil {
+			for i := range msg.results {
+				rec.RecordHostExecResult(msg.results[i])
+			}
+			_ = rec.Close()
+		}
+	}
 	m.cueResultBody = ""
 	m.cueResultTitle = "Parallel SSH results"
 	m.execResults = SortHostExecForUI(msg.results)
@@ -86,10 +129,68 @@ func (m *model) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 
 	m.ti.SetWidth(msg.Width - 8)
 	m.clampExecScroll()
+	if m.mode == "replaypick" {
+		m.clampReplayPickScroll()
+	}
 	return m, nil
 }
 
+func (m *model) handleAgentTransferDoneMsg(msg agentTransferDoneMsg) (tea.Model, tea.Cmd) {
+	m.cueResultTitle = msg.title
+	if msg.err != "" {
+		if strings.TrimSpace(msg.body) != "" {
+			m.cueResultBody = msg.body + "\n\nERROR: " + msg.err
+		} else {
+			m.cueResultBody = "ERROR: " + msg.err
+		}
+	} else {
+		m.cueResultBody = msg.body
+	}
+	m.execResults = nil
+	m.execScroll = 0
+	m.execDone = true
+	m.resetAgentTransfer()
+	m.mode = "execresults"
+	return m, nil
+}
+
+func (m *model) dispatchKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mode == "replaypick" {
+		return m.updateReplayPickKeys(msg)
+	}
+	if m.mode == "execresults" {
+		return m.updateExecResultsKeys(msg)
+	}
+	if m.mode == "tunnel" {
+		return m.updateTunnelInputs(msg)
+	}
+	if m.mode == "agenttransferform" {
+		return m.updateAgentTransferFormKeys(msg)
+	}
+	if m.mode == "execinput" || m.mode == "cueexecinput" || m.mode == "filter" {
+		return m.updateTextInputMode(msg)
+	}
+	return m.handleTableKeyMsg(msg)
+}
+
 func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.agentPick != "" {
+		switch msg.String() {
+		case "esc":
+			m.resetAgentTransfer()
+			return m, nil
+		case "q", "ctrl+c":
+			m.resetAgentTransfer()
+			m.lastAction = actNone
+			return m, tea.Quit
+		case "enter":
+			return m.agentPickEnter()
+		default:
+			var cmd tea.Cmd
+			m.tbl, cmd = m.tbl.Update(msg)
+			return m, cmd
+		}
+	}
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.lastAction = actNone
@@ -103,9 +204,35 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		m.clearParallelMarks()
 		return m, nil
+	case "R":
+		if m.recordDir != "" {
+			m.recordEnabled = !m.recordEnabled
+		}
+		return m, nil
+	case "p":
+		if strings.TrimSpace(m.recordDir) == "" {
+			return m, nil
+		}
+		names, err := recordings.ListHrecBasenames(m.recordDir)
+		if err != nil {
+			m.replayListErr = err.Error()
+			m.replayFiles = nil
+		} else {
+			m.replayListErr = ""
+			m.replayFiles = names
+		}
+		m.replayCursor = 0
+		m.replayPickScroll = 0
+		m.mode = "replaypick"
+		m.clampReplayPickScroll()
+		return m, nil
 	case "enter":
 		m.lastAction = actSSH
 		return m, tea.Quit
+	case "a":
+		m.resetAgentTransfer()
+		m.agentPick = "source"
+		return m, nil
 	case "t":
 		m.mode = "tunnel"
 		m.tunnelLocalPort.Reset()
@@ -124,10 +251,8 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = "cueexecinput"
 		if len(m.availableRecipes) > 0 {
 			m.recipeCursor = 0
-			m.ti.SetValue(m.availableRecipes[0])
-		} else {
-			m.ti.Reset()
 		}
+		m.ti.Reset()
 		m.ti.Placeholder = "path/to/recipe.cue (! = execute) — * rows only, or all w/ IP if none marked"
 		m.ti.Focus()
 		return m, textinput.Blink
@@ -142,4 +267,52 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.tbl, cmd = m.tbl.Update(msg)
 	return m, cmd
+}
+
+func (m *model) updateReplayPickKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.mode = "table"
+		m.replayFiles = nil
+		m.replayListErr = ""
+		m.replayPickScroll = 0
+		return m, nil
+	case "enter":
+		if len(m.replayFiles) == 0 {
+			return m, nil
+		}
+		m.replayFileName = m.replayFiles[m.replayCursor]
+		m.lastAction = actReplay
+		m.mode = "table"
+		m.replayFiles = nil
+		m.replayListErr = ""
+		m.replayPickScroll = 0
+		return m, tea.Quit
+	case "up", "k":
+		if m.replayCursor > 0 {
+			m.replayCursor--
+		}
+		m.clampReplayPickScroll()
+		return m, nil
+	case "down", "j":
+		if m.replayCursor < len(m.replayFiles)-1 {
+			m.replayCursor++
+		}
+		m.clampReplayPickScroll()
+		return m, nil
+	case "pgup", "b":
+		vis := m.replayPickVisibleLines()
+		m.replayPickScroll -= vis
+		if m.replayPickScroll < 0 {
+			m.replayPickScroll = 0
+		}
+		m.clampReplayPickScroll()
+		return m, nil
+	case "pgdown", "f":
+		vis := m.replayPickVisibleLines()
+		m.replayPickScroll += vis
+		m.clampReplayPickScroll()
+		return m, nil
+	}
+	return m, nil
 }
