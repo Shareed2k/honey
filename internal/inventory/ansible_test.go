@@ -267,9 +267,11 @@ func TestAnsibleList_matrixGroups(t *testing.T) {
 		"mybackend",                // Backend
 		"gcp_mybackend",            // Provider + Backend
 		"webserver",                // Tag
+		"mybackend_webserver",      // Backend + Tag
 		"gcp_webserver",            // Provider + Tag
 		"gcp_mybackend_webserver",  // Provider + Backend + Tag
 		"kafka_main",               // Label
+		"mybackend_kafka_main",     // Backend + Label
 		"gcp_kafka_main",           // Provider + Label
 		"gcp_mybackend_kafka_main", // Provider + Backend + Label
 	}

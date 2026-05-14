@@ -24,7 +24,16 @@ func processRecordTags(r hosts.Record, key, p, backendName string, stripPrefix b
 		g := groupPrefix(groupTagPrefix, tSanitized, stripPrefix)
 		byTag[g] = append(byTag[g], key)
 
-		// 2. <provider>_<tag> group
+		// 2. <backend>_<tag> group
+		if backendName != "" {
+			bg := backendName + "_" + tSanitized
+			if !stripPrefix {
+				bg = groupTagPrefix + "_" + bg
+			}
+			byTag[bg] = append(byTag[bg], key)
+		}
+
+		// 3. <provider>_<tag> and <provider>_<backend>_<tag> groups
 		if p != "x" {
 			pg := p + "_" + tSanitized
 			if !stripPrefix {
@@ -32,7 +41,6 @@ func processRecordTags(r hosts.Record, key, p, backendName string, stripPrefix b
 			}
 			byTag[pg] = append(byTag[pg], key)
 
-			// 3. <provider>_<backend>_<tag> group
 			if backendName != "" {
 				pbg := p + "_" + backendName + "_" + tSanitized
 				if !stripPrefix {
@@ -67,7 +75,18 @@ func processRecordLabels(r hosts.Record, key, p, backendName string, stripPrefix
 		}
 		byLabel[g] = append(byLabel[g], key)
 
-		// 2. <provider>_<label_value> group
+		// 2. <backend>_<label_value> group
+		if backendName != "" {
+			var bg string
+			if stripPrefix {
+				bg = backendName + "_" + vSanitized
+			} else {
+				bg = groupLabelPrefix + "_" + backendName + "_" + kSanitized + "_" + vSanitized
+			}
+			byLabel[bg] = append(byLabel[bg], key)
+		}
+
+		// 3. <provider>_<label_value> and <provider>_<backend>_<label_value> groups
 		if p != "x" {
 			var pg string
 			if stripPrefix {
@@ -77,7 +96,6 @@ func processRecordLabels(r hosts.Record, key, p, backendName string, stripPrefix
 			}
 			byLabel[pg] = append(byLabel[pg], key)
 
-			// 3. <provider>_<backend>_<label_value> group
 			if backendName != "" {
 				var pbg string
 				if stripPrefix {
