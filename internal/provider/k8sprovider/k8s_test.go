@@ -76,9 +76,8 @@ func TestSearchPodsMeta(t *testing.T) {
 	if r.Meta["kubeconfig"] != "my-kubeconfig" {
 		t.Errorf("expected kubeconfig=my-kubeconfig, got %q", r.Meta["kubeconfig"])
 	}
-	if r.Meta["backend_name"] != "my-backend" {
-		t.Errorf("expected backend_name=my-backend, got %q", r.Meta["backend_name"])
-	}
+	// We no longer test for backend_name in the provider search functions directly,
+	// as this is injected generally via RunParallel.
 
 	if r.Meta["label_app"] != "frontend" {
 		t.Errorf("expected label_app=frontend, got %q", r.Meta["label_app"])

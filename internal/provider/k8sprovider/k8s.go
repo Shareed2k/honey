@@ -209,7 +209,6 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 			"pod_name":     p.Name,
 			"kube_context": resolvedContext,
 			"kubeconfig":   kubeconfig,
-			"backend_name": k.BackendName(),
 		}
 		if portString != "" {
 			meta["ports"] = portString

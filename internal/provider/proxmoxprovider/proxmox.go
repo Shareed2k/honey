@@ -119,9 +119,6 @@ func (p *Proxmox) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, er
 		if pool != "" {
 			meta["pool"] = pool
 		}
-		if p.BackendName() != "" {
-			meta["backend_name"] = p.BackendName()
-		}
 		if em := strings.TrimSpace(p.ExecMode); em != "" {
 			meta["exec_mode"] = em
 		}

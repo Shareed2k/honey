@@ -264,6 +264,7 @@ func TestAnsibleList_matrixGroups(t *testing.T) {
 	// Expected groups when stripPrefix is true:
 	expectedGroups := []string{
 		"gcp",                      // Provider
+		"mybackend",                // Backend
 		"gcp_mybackend",            // Provider + Backend
 		"webserver",                // Tag
 		"gcp_webserver",            // Provider + Tag
