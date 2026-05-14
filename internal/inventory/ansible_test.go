@@ -212,3 +212,68 @@ func TestAnsibleList_blacklist(t *testing.T) {
 		t.Errorf("expected tags webserver,cache, got %v", hv["honey_meta_tags"])
 	}
 }
+
+func TestAnsibleList_PortsStringUnpacking(t *testing.T) {
+	recs := []hosts.Record{
+		{
+			Provider:  "k8s",
+			Name:      "test-pod",
+			PrimaryIP: "1.2.3.4",
+			Meta: map[string]string{
+				"ports": `80,443`,
+			},
+		},
+	}
+
+	hv, err := AnsibleHostVars(recs, "deploy", "test-pod", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	portsVal, ok := hv["honey_meta_ports"]
+	if !ok {
+		t.Fatalf("expected honey_meta_ports to be present")
+	}
+
+	portsSlice, ok := portsVal.([]string)
+	if !ok {
+		t.Fatalf("expected honey_meta_ports to be a []string slice, got %T", portsVal)
+	}
+
+	if len(portsSlice) != 2 || portsSlice[0] != "80" || portsSlice[1] != "443" {
+		t.Errorf("unexpected ports slice content: %v", portsSlice)
+	}
+}
+
+func TestAnsibleList_matrixGroups(t *testing.T) {
+	recs := []hosts.Record{
+		{
+			Provider:  "gcp",
+			Name:      "web-01",
+			PrimaryIP: "1.2.3.4",
+			Meta: map[string]string{
+				"backend_name":  "mybackend",
+				"tags":          "webserver",
+				"label_bg_role": "kafka-main",
+			},
+		},
+	}
+
+	out := AnsibleList(recs, "deploy", true, nil)
+
+	// Expected groups when stripPrefix is true:
+	expectedGroups := []string{
+		"gcp",                      // Provider
+		"gcp_mybackend",            // Provider + Backend
+		"webserver",                // Tag
+		"gcp_webserver",            // Provider + Tag
+		"gcp_mybackend_webserver",  // Provider + Backend + Tag
+		"kafka_main",               // Label
+		"gcp_kafka_main",           // Provider + Label
+		"gcp_mybackend_kafka_main", // Provider + Backend + Label
+	}
+
+	for _, g := range expectedGroups {
+		checkGroup(t, out, g)
+	}
+}

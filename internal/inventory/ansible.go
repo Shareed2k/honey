@@ -67,15 +67,31 @@ func AnsibleList(records []hosts.Record, ansibleUser string, stripPrefix bool, b
 	byZone := map[string][]string{}
 	byTag := map[string][]string{}
 	byLabel := map[string][]string{}
+	byProviderBackend := map[string][]string{}
 
 	for i, r := range records {
 		key := keys[i]
 		honeyHosts = append(honeyHosts, key)
-		p := strings.TrimSpace(r.Provider)
-		if p != "" {
+
+		p := sanitizeLabel(r.Provider)
+		backendName := sanitizeLabel(r.Meta["backend_name"])
+		if backendName == "x" {
+			backendName = ""
+		}
+
+		if p != "x" {
 			g := groupPrefix(groupProviderPrefix, p, stripPrefix)
 			byProvider[g] = append(byProvider[g], key)
+
+			if backendName != "" {
+				bg := p + "_" + backendName
+				if !stripPrefix {
+					bg = groupProviderPrefix + "_" + bg
+				}
+				byProviderBackend[bg] = append(byProviderBackend[bg], key)
+			}
 		}
+
 		if z := strings.TrimSpace(r.Region); z != "" {
 			g := groupPrefix(groupRegionPrefix, z, stripPrefix)
 			byRegion[g] = append(byRegion[g], key)
@@ -85,31 +101,8 @@ func AnsibleList(records []hosts.Record, ansibleUser string, stripPrefix bool, b
 			byZone[g] = append(byZone[g], key)
 		}
 
-		if tagsStr, ok := r.Meta["tags"]; ok && tagsStr != "" {
-			for _, tag := range strings.Split(tagsStr, ",") {
-				t := strings.TrimSpace(tag)
-				if t != "" && !isBlacklisted(blacklist, t) {
-					g := groupPrefix(groupTagPrefix, t, stripPrefix)
-					byTag[g] = append(byTag[g], key)
-				}
-			}
-		}
-
-		for mk, mv := range r.Meta {
-			if strings.HasPrefix(mk, "label_") {
-				labelKey := strings.TrimPrefix(mk, "label_")
-				labelVal := strings.TrimSpace(mv)
-				if labelKey != "" && labelVal != "" && !isBlacklisted(blacklist, mk) {
-					var g string
-					if stripPrefix {
-						g = sanitizeLabel(labelVal)
-					} else {
-						g = groupLabelPrefix + "_" + sanitizeLabel(labelKey) + "_" + sanitizeLabel(labelVal)
-					}
-					byLabel[g] = append(byLabel[g], key)
-				}
-			}
-		}
+		processRecordTags(r, key, p, backendName, stripPrefix, blacklist, byTag)
+		processRecordLabels(r, key, p, backendName, stripPrefix, blacklist, byLabel)
 
 		hostvars[key] = hostvarsForRecord(r, ansibleUser, stripPrefix, blacklist)
 	}
@@ -124,6 +117,9 @@ func AnsibleList(records []hosts.Record, ansibleUser string, stripPrefix bool, b
 	}
 
 	for g, hs := range byProvider {
+		out[g] = map[string]any{"hosts": sortedCopy(hs)}
+	}
+	for g, hs := range byProviderBackend {
 		out[g] = map[string]any{"hosts": sortedCopy(hs)}
 	}
 	for g, hs := range byRegion {
@@ -213,10 +209,19 @@ func hostvarsForRecord(r hosts.Record, ansibleUser string, stripPrefix bool, bla
 		if k == "" {
 			continue
 		}
+
+		var finalValue any = mv
+		// K8s ports are a comma-separated string (e.g. "80,443").
+		// We split it into a native string slice for cleaner Ansible JSON output.
+		if k == "ports" {
+			// Backwards compatibility if it's still a JSON string in some cache
+			finalValue = strings.Split(mv, ",")
+		}
+
 		if stripPrefix {
-			hv[k] = mv
+			hv[k] = finalValue
 		} else {
-			hv[hostvarMetaPrefix+k] = mv
+			hv[hostvarMetaPrefix+k] = finalValue
 		}
 	}
 	return hv

@@ -2,7 +2,6 @@ package k8sprovider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -111,6 +110,20 @@ func (k *K8s) searchNodes(ctx context.Context, clientset kubernetes.Interface, q
 		if primary == "" {
 			continue
 		}
+		meta := map[string]string{
+			"kind": "node",
+		}
+
+		for k, v := range n.Labels {
+			meta["label_"+k] = v
+		}
+		for k, v := range n.Annotations {
+			if k == "kubectl.kubernetes.io/last-applied-configuration" {
+				continue
+			}
+			meta["annotation_"+k] = v
+		}
+
 		out = append(out, hosts.Record{
 			Provider:  "k8s",
 			Name:      n.Name,
@@ -118,9 +131,7 @@ func (k *K8s) searchNodes(ctx context.Context, clientset kubernetes.Interface, q
 			ExtraIPs:  append([]string(nil), extras...),
 			Zone:      nodeZone(n),
 			Region:    "",
-			Meta: map[string]string{
-				"kind": "node",
-			},
+			Meta:      meta,
 		})
 	}
 	return out, nil
@@ -187,10 +198,9 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 				}
 			}
 		}
-		var portJSON string
+		var portString string
 		if len(uniquePorts) > 0 {
-			b, _ := json.Marshal(uniquePorts)
-			portJSON = string(b)
+			portString = strings.Join(uniquePorts, ",")
 		}
 
 		meta := map[string]string{
@@ -201,9 +211,20 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 			"kubeconfig":   kubeconfig,
 			"backend_name": k.BackendName(),
 		}
-		if portJSON != "" {
-			meta["ports"] = portJSON
+		if portString != "" {
+			meta["ports"] = portString
 		}
+
+		for k, v := range p.Labels {
+			meta["label_"+k] = v
+		}
+		for k, v := range p.Annotations {
+			if k == "kubectl.kubernetes.io/last-applied-configuration" {
+				continue
+			}
+			meta["annotation_"+k] = v
+		}
+
 		if nodeName != "" {
 			meta["node"] = nodeName
 			if nodeIndex != nil {
