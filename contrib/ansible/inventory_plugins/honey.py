@@ -60,6 +60,13 @@ DOCUMENTATION = r"""
         default: 300
         env:
           - name: HONEY_ANSIBLE_TIMEOUT
+      strip_prefix:
+        description: Remove 'honey_' prefix from Ansible groups and host variables. Group names will directly use tag/label values.
+        type: bool
+        default: False
+      blacklist:
+        description: Comma-separated list of tags or label keys to ignore (e.g. 'webserver,label_env')
+        type: str
 """
 
 
@@ -147,6 +154,14 @@ class InventoryModule(BaseInventoryPlugin):
         extra = self.get_option("args") or []
         if extra:
             cmd.extend([str(x) for x in extra])
+
+        strip_prefix = self.get_option("strip_prefix")
+        if strip_prefix:
+            cmd.append("--strip-prefix")
+
+        blacklist = self.get_option("blacklist")
+        if blacklist:
+            cmd.extend(["--blacklist", blacklist])
 
         cmd.append("--list")
 

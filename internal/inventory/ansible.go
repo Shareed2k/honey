@@ -30,10 +30,34 @@ const (
 	hostvarMetaPrefix     = "honey_meta_"
 )
 
+// groupPrefixer determines group names based on stripPrefix flag
+func groupPrefix(base, val string, stripPrefix bool) string {
+	if stripPrefix {
+		return sanitizeLabel(val)
+	}
+	return base + "_" + sanitizeLabel(val)
+}
+
+func isBlacklisted(blacklist []string, val string) bool {
+	if len(blacklist) == 0 {
+		return false
+	}
+	val = strings.ToLower(strings.TrimSpace(val))
+	valTrimmed := strings.TrimPrefix(val, "label_")
+
+	for _, b := range blacklist {
+		b = strings.ToLower(strings.TrimSpace(b))
+		if b == val || b == valTrimmed {
+			return true
+		}
+	}
+	return false
+}
+
 // AnsibleList builds the JSON object returned for `ansible-inventory` / dynamic inventory `--list`.
 // Groups: honey (all hosts), honey_provider_<p>, honey_region_<r>, honey_zone_<z> when fields are set.
 // Each host gets ansible_host from PrimaryIP when non-empty; connection falls back to the inventory name when empty.
-func AnsibleList(records []hosts.Record, ansibleUser string) map[string]any {
+func AnsibleList(records []hosts.Record, ansibleUser string, stripPrefix bool, blacklist []string) map[string]any {
 	hostvars := make(map[string]any)
 	keys := ansibleHostKeys(records)
 
@@ -49,23 +73,23 @@ func AnsibleList(records []hosts.Record, ansibleUser string) map[string]any {
 		honeyHosts = append(honeyHosts, key)
 		p := strings.TrimSpace(r.Provider)
 		if p != "" {
-			g := groupProviderPrefix + "_" + sanitizeLabel(p)
+			g := groupPrefix(groupProviderPrefix, p, stripPrefix)
 			byProvider[g] = append(byProvider[g], key)
 		}
 		if z := strings.TrimSpace(r.Region); z != "" {
-			g := groupRegionPrefix + "_" + sanitizeLabel(z)
+			g := groupPrefix(groupRegionPrefix, z, stripPrefix)
 			byRegion[g] = append(byRegion[g], key)
 		}
 		if z := strings.TrimSpace(r.Zone); z != "" {
-			g := groupZonePrefix + "_" + sanitizeLabel(z)
+			g := groupPrefix(groupZonePrefix, z, stripPrefix)
 			byZone[g] = append(byZone[g], key)
 		}
 
 		if tagsStr, ok := r.Meta["tags"]; ok && tagsStr != "" {
 			for _, tag := range strings.Split(tagsStr, ",") {
 				t := strings.TrimSpace(tag)
-				if t != "" {
-					g := groupTagPrefix + "_" + sanitizeLabel(t)
+				if t != "" && !isBlacklisted(blacklist, t) {
+					g := groupPrefix(groupTagPrefix, t, stripPrefix)
 					byTag[g] = append(byTag[g], key)
 				}
 			}
@@ -75,14 +99,19 @@ func AnsibleList(records []hosts.Record, ansibleUser string) map[string]any {
 			if strings.HasPrefix(mk, "label_") {
 				labelKey := strings.TrimPrefix(mk, "label_")
 				labelVal := strings.TrimSpace(mv)
-				if labelKey != "" && labelVal != "" {
-					g := groupLabelPrefix + "_" + sanitizeLabel(labelKey) + "_" + sanitizeLabel(labelVal)
+				if labelKey != "" && labelVal != "" && !isBlacklisted(blacklist, mk) {
+					var g string
+					if stripPrefix {
+						g = sanitizeLabel(labelVal)
+					} else {
+						g = groupLabelPrefix + "_" + sanitizeLabel(labelKey) + "_" + sanitizeLabel(labelVal)
+					}
 					byLabel[g] = append(byLabel[g], key)
 				}
 			}
 		}
 
-		hostvars[key] = hostvarsForRecord(r, ansibleUser)
+		hostvars[key] = hostvarsForRecord(r, ansibleUser, stripPrefix, blacklist)
 	}
 
 	out := map[string]any{
@@ -114,17 +143,17 @@ func AnsibleList(records []hosts.Record, ansibleUser string) map[string]any {
 }
 
 // AnsibleHostVars returns host variables for a single inventory hostname (dynamic inventory `--host`).
-func AnsibleHostVars(records []hosts.Record, ansibleUser, hostname string) (map[string]any, error) {
+func AnsibleHostVars(records []hosts.Record, ansibleUser, hostname string, stripPrefix bool, blacklist []string) (map[string]any, error) {
 	keys := ansibleHostKeys(records)
 	for i, k := range keys {
 		if k == hostname {
-			return hostvarsForRecord(records[i], ansibleUser), nil
+			return hostvarsForRecord(records[i], ansibleUser, stripPrefix, blacklist), nil
 		}
 	}
 	return nil, fmt.Errorf("unknown host %q", hostname)
 }
 
-func hostvarsForRecord(r hosts.Record, ansibleUser string) map[string]any {
+func hostvarsForRecord(r hosts.Record, ansibleUser string, stripPrefix bool, blacklist []string) map[string]any {
 	hv := make(map[string]any)
 	if ip := strings.TrimSpace(r.PrimaryIP); ip != "" {
 		hv[hostvarAnsibleHost] = ip
@@ -132,24 +161,63 @@ func hostvarsForRecord(r hosts.Record, ansibleUser string) map[string]any {
 	if u := strings.TrimSpace(ansibleUser); u != "" {
 		hv[hostvarAnsibleUser] = u
 	}
-	hv[hostvarHoneyProvider] = r.Provider
-	hv[hostvarHoneyName] = r.Name
-	hv[hostvarHoneyPrimaryIP] = r.PrimaryIP
-	if len(r.ExtraIPs) > 0 {
-		hv[hostvarHoneyExtraIPs] = append([]string(nil), r.ExtraIPs...)
+
+	if stripPrefix {
+		hv["provider"] = r.Provider
+		hv["name"] = r.Name
+		hv["primary_ip"] = r.PrimaryIP
+		if len(r.ExtraIPs) > 0 {
+			hv["extra_ips"] = append([]string(nil), r.ExtraIPs...)
+		}
+		if r.Zone != "" {
+			hv["zone"] = r.Zone
+		}
+		if r.Region != "" {
+			hv["region"] = r.Region
+		}
+	} else {
+		hv[hostvarHoneyProvider] = r.Provider
+		hv[hostvarHoneyName] = r.Name
+		hv[hostvarHoneyPrimaryIP] = r.PrimaryIP
+		if len(r.ExtraIPs) > 0 {
+			hv[hostvarHoneyExtraIPs] = append([]string(nil), r.ExtraIPs...)
+		}
+		if r.Zone != "" {
+			hv[hostvarHoneyZone] = r.Zone
+		}
+		if r.Region != "" {
+			hv[hostvarHoneyRegion] = r.Region
+		}
 	}
-	if r.Zone != "" {
-		hv[hostvarHoneyZone] = r.Zone
-	}
-	if r.Region != "" {
-		hv[hostvarHoneyRegion] = r.Region
-	}
+
 	for mk, mv := range r.Meta {
+		if isBlacklisted(blacklist, mk) {
+			continue
+		}
+
+		if mk == "tags" {
+			var filtered []string
+			for _, t := range strings.Split(mv, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" && !isBlacklisted(blacklist, t) {
+					filtered = append(filtered, t)
+				}
+			}
+			if len(filtered) == 0 {
+				continue
+			}
+			mv = strings.Join(filtered, ",")
+		}
+
 		k := sanitizeMetaKey(mk)
 		if k == "" {
 			continue
 		}
-		hv[hostvarMetaPrefix+k] = mv
+		if stripPrefix {
+			hv[k] = mv
+		} else {
+			hv[hostvarMetaPrefix+k] = mv
+		}
 	}
 	return hv
 }

@@ -36,6 +36,8 @@ func init() {
 	inventoryCmd.Flags().AddFlagSet(searchCmd.Flags())
 	inventoryCmd.Flags().Bool("list", false, "Ansible script inventory: emit full JSON (Ansible passes this; optional when not using --host)")
 	inventoryCmd.Flags().String("host", "", "Ansible script inventory: emit JSON object of host variables for this inventory name; unknown hosts print {}")
+	inventoryCmd.Flags().Bool("strip-prefix", false, "Remove 'honey_' prefix from Ansible groups and host variables")
+	inventoryCmd.Flags().StringSlice("blacklist", nil, "Comma-separated list of tags or label keys to ignore (e.g. 'webserver,label_env')")
 }
 
 func runInventory(cmd *cobra.Command, args []string) error {
@@ -50,14 +52,17 @@ func runInventory(cmd *cobra.Command, args []string) error {
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetIndent("", "  ")
 
+	stripPrefix, _ := cmd.Flags().GetBool("strip-prefix")
+	blacklist, _ := cmd.Flags().GetStringSlice("blacklist")
+
 	if h, _ := cmd.Flags().GetString("host"); h != "" {
-		hv, err := inventory.AnsibleHostVars(records, sshUser, h)
+		hv, err := inventory.AnsibleHostVars(records, sshUser, h, stripPrefix, blacklist)
 		if err != nil {
 			return enc.Encode(map[string]any{})
 		}
 		return enc.Encode(hv)
 	}
 
-	out := inventory.AnsibleList(records, sshUser)
+	out := inventory.AnsibleList(records, sshUser, stripPrefix, blacklist)
 	return enc.Encode(out)
 }
