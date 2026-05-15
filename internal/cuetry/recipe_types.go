@@ -14,6 +14,7 @@ type RecipeDefaults struct {
 	Env           map[string]string `json:"env,omitempty"`
 	K8sDebugImage string            `json:"k8s_debug_image,omitempty"`
 	KVTunnel      *bool             `json:"kv_tunnel,omitempty"`
+	SSHPort       int               `json:"ssh_port,omitempty"`
 }
 
 // RecipeFileTransfer is a local ↔ remote path pair for SFTP put/get steps.
@@ -105,6 +106,7 @@ type RecipeStepHook struct {
 // host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
 type RecipeStep struct {
 	Host          string               `json:"host"`
+	SSHPort       int                  `json:"ssh_port,omitempty"`
 	Command       string               `json:"command,omitempty"`
 	Put           *RecipeFileTransfer  `json:"put,omitempty"`
 	Get           *RecipeFileTransfer  `json:"get,omitempty"`

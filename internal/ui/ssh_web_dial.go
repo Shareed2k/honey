@@ -20,5 +20,9 @@ func DialSSHLeafForRecord(user string, r hosts.Record) (*ssh.Client, func(), err
 	if host == "" {
 		return nil, nil, fmt.Errorf("no IP for selected host")
 	}
-	return sshclient.DialSSHClient(user, host)
+	sshPort := 0
+	if p, ok := hosts.MetaSSHPort(&r); ok {
+		sshPort = p
+	}
+	return sshclient.DialSSHClient(user, host, sshPort)
 }

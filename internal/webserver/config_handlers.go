@@ -12,6 +12,13 @@ import (
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
+// handleConfigSchema returns JSON Schema and UI schema for the config editor.
+// @Summary Config JSON Schema
+// @Tags config
+// @Produce json
+// @Success 200 {object} map[string]interface{} "json_schema, ui_schema"
+// @Router /api/v1/config/schema [get]
+// @Security BearerAuth
 func (s *Server) handleConfigSchema(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -20,6 +27,16 @@ func (s *Server) handleConfigSchema(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// handleConfigGet returns the raw honey YAML.
+// @Summary Get honey YAML config
+// @Tags config
+// @Produce application/yaml
+// @Success 200 {string} string "YAML document"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/config [get]
+// @Security BearerAuth
 func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, err := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	if err != nil {
@@ -40,6 +57,16 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(b)
 }
 
+// handleConfigPut replaces the honey YAML after validation.
+// @Summary Replace honey YAML config
+// @Tags config
+// @Produce json
+// @Param body body string true "Full YAML document (Content-Type application/yaml or text/plain)"
+// @Success 200 {object} map[string]string "status, path"
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/config [put]
+// @Security BearerAuth
 func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 	cfgPath, err := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	if err != nil {

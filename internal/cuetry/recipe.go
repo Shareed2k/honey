@@ -33,6 +33,7 @@ const schemaSource = `
 })
 #Step: close({
 	host:     string
+	ssh_port?: int
 	notify?: close({
 		notify_subject?: string
 		message?:       string
@@ -100,6 +101,7 @@ const schemaSource = `
 		env?: {[string]: string}
 		k8s_debug_image?: string
 		kv_tunnel?: bool
+		ssh_port?: int
 	})
 	steps: [...#Step]
 })

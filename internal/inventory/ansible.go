@@ -21,6 +21,7 @@ const (
 	metaHostvarsKey       = "hostvars"
 	metaKey               = "_meta"
 	hostvarAnsibleHost    = "ansible_host"
+	hostvarAnsiblePort    = "ansible_port"
 	hostvarAnsibleUser    = "ansible_user"
 	hostvarHoneyProvider  = "honey_provider"
 	hostvarHoneyName      = "honey_name"
@@ -167,6 +168,9 @@ func hostvarsForRecord(r hosts.Record, ansibleUser string, stripPrefix bool, bla
 	if u := strings.TrimSpace(ansibleUser); u != "" {
 		hv[hostvarAnsibleUser] = u
 	}
+	if p, ok := hosts.MetaSSHPort(&r); ok {
+		hv[hostvarAnsiblePort] = p
+	}
 
 	if stripPrefix {
 		hv["provider"] = r.Provider
@@ -198,6 +202,9 @@ func hostvarsForRecord(r hosts.Record, ansibleUser string, stripPrefix bool, bla
 
 	for mk, mv := range r.Meta {
 		if isBlacklisted(blacklist, mk) {
+			continue
+		}
+		if strings.EqualFold(mk, "ssh_port") {
 			continue
 		}
 

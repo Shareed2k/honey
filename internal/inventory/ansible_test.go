@@ -7,6 +7,27 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
+func TestAnsibleList_sshPortMeta(t *testing.T) {
+	recs := []hosts.Record{
+		{
+			Provider:  "gcp",
+			Name:      "edge",
+			PrimaryIP: "203.0.113.7",
+			Meta:      map[string]string{"ssh_port": "2222"},
+		},
+	}
+	out := AnsibleList(recs, "deploy", false, nil)
+	meta := out["_meta"].(map[string]any)
+	hvmap := meta["hostvars"].(map[string]any)
+	hv := hvmap["edge"].(map[string]any)
+	if hv["ansible_port"] != 2222 {
+		t.Fatalf("ansible_port: want 2222, got %T %v", hv["ansible_port"], hv["ansible_port"])
+	}
+	if _, ok := hv["honey_meta_ssh_port"]; ok {
+		t.Fatalf("expected honey_meta_ssh_port omitted when ansible_port is set, got %v", hv["honey_meta_ssh_port"])
+	}
+}
+
 func TestAnsibleList_basic(t *testing.T) {
 	recs := []hosts.Record{
 		{

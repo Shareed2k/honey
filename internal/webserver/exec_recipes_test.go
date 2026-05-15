@@ -60,7 +60,7 @@ func TestExecRejectsEmptyRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := json.Marshal(execRequest{
+	payload, _ := json.Marshal(ExecRequest{
 		SSHUser: "u",
 		Command: "true",
 		Records: nil,
@@ -104,7 +104,7 @@ func TestRecipesListAndViewAllowedPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: expected 200, got %d %s", rec.Code, rec.Body.String())
 	}
-	var list recipesListResponse
+	var list RecipesListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestRecipesListAndViewAllowedPath(t *testing.T) {
 	}
 	abs := list.Recipes[0].Path
 
-	viewBody, _ := json.Marshal(recipeViewRequest{Path: abs})
+	viewBody, _ := json.Marshal(RecipeViewRequest{Path: abs})
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/view", bytes.NewReader(viewBody))
 	req2.Header.Set("Authorization", "Bearer tok")
@@ -121,7 +121,7 @@ func TestRecipesListAndViewAllowedPath(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("view: expected 200, got %d %s", rec2.Code, rec2.Body.String())
 	}
-	var vr recipeViewResponse
+	var vr RecipeViewResponse
 	if err := json.NewDecoder(rec2.Body).Decode(&vr); err != nil {
 		t.Fatal(err)
 	}

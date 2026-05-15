@@ -178,6 +178,8 @@ After setting the key, restart `honey web`. **`GET /api/v1/meta`** includes `"te
 
 Authenticate all routes below except static files: `Authorization: Bearer <token>` or `X-Honey-Token: <token>` (or `?token=` for GET).
 
+**OpenAPI 3:** `GET /api/v1/openapi.json` returns the machine-readable spec for the REST surface (same auth). In the web UI, open the **API** tab (or `?tab=api-docs`) for an embedded **Swagger UI** explorer, including “Try it out” with your session token. Regenerate from the repo with `make openapi` (runs `go generate` in `internal/webserver`).
+
 ### Meta and discovery
 
 - `GET /api/v1/meta` — version, config path, `session_recording_available`, `terminal_assist_available`.

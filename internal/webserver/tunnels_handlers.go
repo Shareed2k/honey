@@ -142,6 +142,16 @@ func (m *tunnelManager) stop(id string) error {
 	return nil
 }
 
+// handleTunnelsLogs returns buffered log text for an SSH -L tunnel.
+// @Summary Tunnel logs
+// @Tags tunnels
+// @Produce json
+// @Param id path string true "tunnel id"
+// @Success 200 {object} map[string]interface{} "logs"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /api/v1/tunnels/{id}/logs [get]
+// @Security BearerAuth
 func (s *Server) handleTunnelsLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -167,20 +177,38 @@ func (s *Server) handleTunnelsLogs(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"logs": logs})
 }
 
+// handleTunnelsGet lists active local SSH port-forward tunnels.
+// @Summary List tunnels
+// @Tags tunnels
+// @Produce json
+// @Success 200 {object} map[string]interface{} "tunnels array"
+// @Router /api/v1/tunnels [get]
+// @Security BearerAuth
 func (s *Server) handleTunnelsGet(w http.ResponseWriter, _ *http.Request) {
 	list := s.tunnels.list()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"tunnels": list})
 }
 
-type startTunnelReq struct {
+// StartTunnelReq is the JSON body for POST /api/v1/tunnels.
+type StartTunnelReq struct {
 	SSHUser string       `json:"ssh_user"`
 	Record  hosts.Record `json:"record"`
 	Mapping string       `json:"mapping"`
 }
 
+// handleTunnelsPost starts an SSH -L style tunnel in-process.
+// @Summary Start tunnel
+// @Tags tunnels
+// @Accept json
+// @Produce json
+// @Param body body object true "ssh_user, record, mapping (e.g. 8080:localhost:8080)"
+// @Success 200 {object} map[string]interface{} "tunnel descriptor"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/tunnels [post]
+// @Security BearerAuth
 func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
-	var req startTunnelReq
+	var req StartTunnelReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, fmt.Errorf("invalid json"), http.StatusBadRequest)
 		return
@@ -198,6 +226,16 @@ func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"tunnel": tunnel})
 }
 
+// handleTunnelsDelete stops a tunnel by id.
+// @Summary Stop tunnel
+// @Tags tunnels
+// @Produce json
+// @Param id path string true "tunnel id"
+// @Success 200 {object} map[string]bool "success"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /api/v1/tunnels/{id} [delete]
+// @Security BearerAuth
 func (s *Server) handleTunnelsDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {

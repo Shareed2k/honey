@@ -42,11 +42,15 @@ func runSSHInteractive(user string, r hosts.Record, recorder *SessionRecorder) e
 	if pvelxc.ShouldUsePVETTY(r) {
 		return runProxmoxLXCTTYInteractive(context.Background(), r, recorder)
 	}
-	host := r.PrimaryIP
-	if strings.TrimSpace(host) == "" {
+	host := strings.TrimSpace(r.PrimaryIP)
+	if host == "" {
 		return fmt.Errorf("no IP for selected host")
 	}
-	client, cleanup, err := sshclient.DialSSHClient(user, host)
+	sshPort := 0
+	if p, ok := hosts.MetaSSHPort(&r); ok {
+		sshPort = p
+	}
+	client, cleanup, err := sshclient.DialSSHClient(user, host, sshPort)
 	if err != nil {
 		return err
 	}

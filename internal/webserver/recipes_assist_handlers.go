@@ -75,6 +75,17 @@ func clipRunesForRecipeAssist(s string, maxRunes int) string {
 	return string(r[:maxRunes]) + "\n…(truncated)"
 }
 
+// handleRecipesAssist asks the configured LLM about a recipe (requires OPENAI_API_KEY).
+// @Summary Recipe AI assist
+// @Tags recipes
+// @Accept json
+// @Produce json
+// @Param body body object true "recipe_path, model, user_prompt, ssh_user, records"
+// @Success 200 {object} map[string]string "reply"
+// @Failure 400 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Router /api/v1/recipes/assist [post]
+// @Security BearerAuth
 func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)

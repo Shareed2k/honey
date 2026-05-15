@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -29,7 +30,11 @@ func NewClientCache() *ClientCache {
 
 // SSHClientCacheKey is the stable cache key for a pooled SSH client for (user, record).
 func SSHClientCacheKey(user string, r hosts.Record) string {
-	return r.Provider + "\x00" + r.PrimaryIP + "\x00" + r.Name + "\x00" + user
+	port := "-"
+	if p, ok := hosts.MetaSSHPort(&r); ok {
+		port = strconv.Itoa(p)
+	}
+	return r.Provider + "\x00" + r.PrimaryIP + "\x00" + r.Name + "\x00" + user + "\x00" + port
 }
 
 // GetOrDial returns an existing connection or dials a new one and stores it.

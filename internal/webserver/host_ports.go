@@ -10,13 +10,25 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-type hostPortsReq struct {
+// HostPortsReq is the JSON body for POST /api/v1/host-ports.
+type HostPortsReq struct {
 	SSHUser string       `json:"ssh_user"`
 	Record  hosts.Record `json:"record"`
 }
 
+// handleHostPorts discovers listening TCP ports on a host over SSH.
+// @Summary List listening ports on a host
+// @Tags search
+// @Accept json
+// @Produce json
+// @Param body body object true "ssh_user and record (see web UI types)"
+// @Success 200 {object} map[string]interface{} "ports: string array"
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/host-ports [post]
+// @Security BearerAuth
 func (s *Server) handleHostPorts(w http.ResponseWriter, r *http.Request) {
-	var req hostPortsReq
+	var req HostPortsReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, fmt.Errorf("invalid json"), http.StatusBadRequest)
 		return

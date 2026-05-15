@@ -4,7 +4,7 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 
 ## Files
 
-- `example.cue`: The fully documented recipe that demonstrates global defaults, variable injection, using the injected `hosts` variable list for dynamic step generation, and different step kinds (`command`, `put`, `get`, `script`, `agent_transfer`, `ai`).
+- `example.cue`: The fully documented recipe that demonstrates global defaults, variable injection, using the injected `hosts` variable list for dynamic step generation, and different step kinds (`command`, `put`, `get`, `script`, `agent_transfer`, `ai`). Optional **`defaults.ssh_port`** / per-step **`ssh_port`** (1–65535) override the SSH dial port for that step with precedence **step → defaults → each host’s `meta.ssh_port` → `~/.ssh/config` / 22**.
 - `agent_transfer.cue`: Example **A→cloud→B** staging transfer (transfer agent); see the file header for host-arity rules and `cloud_backend_ref` / `--config` requirements.
 - `clean_filesystem.cue`: Maintenance recipe for systemd journal usage/vacuum and snap (remove disabled revisions, clear `/var/lib/snapd/cache`); read the file header for destructive journal behavior and `sudo -n` requirements.
 - `high_load_processes.cue`: On Linux (GNU `ps`), prints load, `free -h`, and top processes by **CPU%** and **RSS**; uses `host: "*"` for every matched host with an IP.

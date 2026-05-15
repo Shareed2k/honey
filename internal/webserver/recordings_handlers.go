@@ -38,6 +38,17 @@ type recordingsPlayResponse struct {
 	Events   []recordings.Event `json:"events"`
 }
 
+// handleRecordingsList lists session recording files with optional filters.
+// @Summary List session recordings
+// @Tags recordings
+// @Produce json
+// @Param provider query string false "filter by provider"
+// @Param host_name query string false "filter by host name"
+// @Param host_ip query string false "filter by host IP"
+// @Success 200 {object} object "items array"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/recordings [get]
+// @Security BearerAuth
 func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -102,6 +113,16 @@ func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(recordingsListResponse{Items: out})
 }
 
+// handleRecordingsPlay loads events from a recording file.
+// @Summary Load recording events
+// @Tags recordings
+// @Accept json
+// @Produce json
+// @Param body body object true "file_name field"
+// @Success 200 {object} object "file_name and events"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/recordings/play [post]
+// @Security BearerAuth
 func (s *Server) handleRecordingsPlay(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -47,6 +47,14 @@ func LoadTransferConfigFromConfigPath(configPath string) config.TransferConfigEf
 	return f.Transfer.WithDefaults()
 }
 
+func cueApplyRecipeSSHPorts(recipe cuetry.Recipe, step cuetry.RecipeStep, targets []hosts.Record) []hosts.Record {
+	out := make([]hosts.Record, len(targets))
+	for i, t := range targets {
+		out[i] = cuetry.RecordForSSHDial(recipe.Defaults, step, t)
+	}
+	return out
+}
+
 // StreamCueRecipeSteps executes a CUE recipe step-by-step, streaming results.
 // configPath is the resolved honey YAML path (may be empty); agent_transfer steps with cloud_backend_ref require it.
 // aiSystemPromptFromCfg is defaults.ai_system_prompt (already loaded), used only for the terminal ai step.
@@ -126,6 +134,7 @@ func streamCueRecipeStep(ctx context.Context, recipe cuetry.Recipe, recipeDir st
 	if err != nil {
 		return nil, fmt.Errorf("step %d: %w", i, err)
 	}
+	targets = cueApplyRecipeSSHPorts(recipe, step, targets)
 
 	// Fast path if nothing to run
 	if len(targets) == 0 {

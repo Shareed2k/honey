@@ -35,14 +35,15 @@ import { HostPicker, recordHaystack, recordKey } from './HostPicker';
 import type { HostRecord } from './HostPicker';
 import { RecipesTab } from './RecipesTab';
 import { SessionReplayModal } from './SessionReplayModal';
-import { TerminalTabsModal, type TerminalSessionConfig } from './TerminalModal';
+import { TerminalTabsModal, type PveConsoleMode, type TerminalSessionConfig } from './TerminalModal';
 
 type BackendRow = { kind: string; name: string; hint: string };
 
-type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'api-docs';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const RawYamlEditor = lazy(async () => import('./RawYamlEditor').then((m) => ({ default: m.RawYamlEditor })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
+const OpenApiDocsTab = lazy(async () => import('./OpenApiDocsTab').then((m) => ({ default: m.OpenApiDocsTab })));
 
 /** Detached copy so detail state never shares mutable arrays/maps with `records`. */
 function cloneHostRecord(rec: HostRecord): HostRecord {
@@ -264,7 +265,15 @@ export function App() {
   
   const [tab, setTab] = useState<Tab>(() => {
     const val = initParams.get('tab');
-    if (val === 'search' || val === 'files' || val === 'backends' || val === 'config' || val === 'recipes' || val === 'tunnels') {
+    if (
+      val === 'search' ||
+      val === 'files' ||
+      val === 'backends' ||
+      val === 'config' ||
+      val === 'recipes' ||
+      val === 'tunnels' ||
+      val === 'api-docs'
+    ) {
       return val as Tab;
     }
     return 'search';
@@ -1365,6 +1374,9 @@ export function App() {
         <button type="button" className={tab === 'tunnels' ? 'active' : ''} onClick={() => setTab('tunnels')}>
           Tunnels
         </button>
+        <button type="button" className={tab === 'api-docs' ? 'active' : ''} onClick={() => setTab('api-docs')}>
+          API
+        </button>
       </nav>
 
       {tab === 'search' ? (
@@ -2096,6 +2108,12 @@ export function App() {
             </table>
           )}
         </section>
+      ) : null}
+
+      {tab === 'api-docs' ? (
+        <Suspense fallback={<p style={{ opacity: 0.85 }}>Loading API explorer…</p>}>
+          <OpenApiDocsTab />
+        </Suspense>
       ) : null}
 
       {recipePreview ? (

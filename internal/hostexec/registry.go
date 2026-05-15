@@ -41,13 +41,13 @@ var (
 	k8sExecutor Executor
 
 	// dialHoneyHost connects to PrimaryIP (or alias) via SSH; wired by internal/sshclient init.
-	dialHoneyHost func(user, hostAlias string) (HostClient, error)
+	dialHoneyHost func(user, hostAlias string, overridePort int) (HostClient, error)
 
 	// sshRunInteractive opens a local TTY session; wired by internal/ui init.
 	sshRunInteractive func(user string, r hosts.Record, recorder any) error
 
 	// sshRunTunnel runs SSH -L style forwarding; wired by internal/sshclient init.
-	sshRunTunnel func(ctx context.Context, user, host, localFwd string, out io.Writer) error
+	sshRunTunnel func(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error
 
 	proxmoxPickExecutor func(r hosts.Record) Executor
 )
@@ -60,7 +60,7 @@ func SetK8sExecutor(ex Executor) {
 }
 
 // SetDialHoney registers the SSH HostClient dialer (from sshclient.init).
-func SetDialHoney(fn func(user, hostAlias string) (HostClient, error)) {
+func SetDialHoney(fn func(user, hostAlias string, overridePort int) (HostClient, error)) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	dialHoneyHost = fn
@@ -74,7 +74,7 @@ func SetSSHRunInteractive(fn func(user string, r hosts.Record, recorder any) err
 }
 
 // SetSSHRunTunnel registers the SSH local-forward tunnel runner (from sshclient.init).
-func SetSSHRunTunnel(fn func(ctx context.Context, user, host, localFwd string, out io.Writer) error) {
+func SetSSHRunTunnel(fn func(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	sshRunTunnel = fn
@@ -137,14 +137,14 @@ func ProxmoxBackendByName(name string) (ProxmoxBackendRuntime, bool) {
 }
 
 // RunSSHTunnel runs the SSH local-forward tunnel registered by sshclient (used for Proxmox hybrid/pve tunnel fallback).
-func RunSSHTunnel(ctx context.Context, user, host, localFwd string, out io.Writer) error {
+func RunSSHTunnel(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error {
 	regMu.RLock()
 	fn := sshRunTunnel
 	regMu.RUnlock()
 	if fn == nil {
 		return errTunnelNotConfigured
 	}
-	return fn(ctx, user, host, localFwd, out)
+	return fn(ctx, user, host, sshPort, localFwd, out)
 }
 
 type sshExecutor struct{}
@@ -157,7 +157,11 @@ func (sshExecutor) Dial(user string, r hosts.Record) (HostClient, error) {
 	if host == "" {
 		return nil, errNoHostIP
 	}
-	return dialHoneyHost(user, host)
+	override := 0
+	if p, ok := hosts.MetaSSHPort(&r); ok {
+		override = p
+	}
+	return dialHoneyHost(user, host, override)
 }
 
 func (sshExecutor) RunInteractive(user string, r hosts.Record) error {
@@ -175,7 +179,11 @@ func (sshExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, l
 	if host == "" {
 		return errNoHostIP
 	}
-	return sshRunTunnel(ctx, user, host, localFwd, out)
+	override := 0
+	if p, ok := hosts.MetaSSHPort(&r); ok {
+		override = p
+	}
+	return sshRunTunnel(ctx, user, host, override, localFwd, out)
 }
 
 var defaultSSHExecutor = sshExecutor{}
