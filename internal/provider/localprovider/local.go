@@ -28,7 +28,7 @@ func (l *Local) CacheIdentity() string {
 var _ hosts.Backend = (*Local)(nil)
 
 // Search returns local static instances matching the query.
-func (l *Local) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
+func (l *Local) Search(_ context.Context, q hosts.Query) ([]hosts.Record, error) {
 	var out []hosts.Record
 
 	for _, h := range l.Hosts {

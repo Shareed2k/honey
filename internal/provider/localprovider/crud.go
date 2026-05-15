@@ -1,3 +1,4 @@
+// Package localprovider provides the ability to manage and search manually defined hosts.
 package localprovider
 
 import (

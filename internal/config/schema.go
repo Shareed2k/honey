@@ -205,39 +205,47 @@ func schemaFieldsFromStruct(t reflect.Type) []SchemaField {
 		if key == "" {
 			continue
 		}
-		
+
+		vTag := f.Tag.Get("validate")
+
 		var fieldType SchemaFieldType
 		var items []SchemaField
-		
-		if f.Type.Kind() == reflect.Slice {
+
+		switch f.Type.Kind() {
+		case reflect.Slice:
 			// Basic support for slice of structs (or slice of basic types if we ever need it)
 			fieldType = SchemaFieldTypeArray
 			if f.Type.Elem().Kind() == reflect.Struct {
 				items = schemaFieldsFromStruct(f.Type.Elem())
 			} else if f.Type.Elem().Kind() == reflect.String {
 				// E.g. []string
-				items = []SchemaField{{Type: SchemaFieldTypeString}}
+				var itemFormat string
+				if strings.Contains(vTag, "dive,ip") {
+					itemFormat = "ip"
+				} else if strings.Contains(vTag, "dive,url") {
+					itemFormat = "url"
+				}
+				items = []SchemaField{{Type: SchemaFieldTypeString, Format: itemFormat}}
 			}
-		} else if f.Type.Kind() == reflect.Map {
+		case reflect.Map:
 			// For map[string]string (like Meta), we handle it differently below
 			// The json schema builder doesn't strictly support free-form objects out of the box in the same way,
 			// but we can map it to an object type if needed.
 			continue // Skip maps in the UI schema for now since there's no UI for arbitrary k/v
-		} else {
+		default:
 			var ok bool
 			fieldType, ok = schemaTypeForGoType(f.Type)
 			if !ok {
 				continue
 			}
 		}
-		
+
 		opts := parseHoneyTag(f.Tag.Get("honey"))
-		vTag := f.Tag.Get("validate")
-		
+
 		var format string
-		if strings.Contains(vTag, "ip") {
+		if strings.Contains(vTag, "ip") && !strings.Contains(vTag, "dive,ip") {
 			format = "ip"
-		} else if strings.Contains(vTag, "url") {
+		} else if strings.Contains(vTag, "url") && !strings.Contains(vTag, "dive,url") {
 			format = "url"
 		}
 
