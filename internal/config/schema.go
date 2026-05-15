@@ -18,6 +18,7 @@ const (
 	SchemaFieldTypeString  SchemaFieldType = "string"
 	SchemaFieldTypeBoolean SchemaFieldType = "boolean"
 	SchemaFieldTypeInteger SchemaFieldType = "integer"
+	SchemaFieldTypeArray   SchemaFieldType = "array"
 )
 
 // SchemaField describes one editable key in defaults/backends schema.
@@ -30,6 +31,7 @@ type SchemaField struct {
 	Enum          []string        `json:"enum,omitempty"`
 	EnumAsWarning bool            `json:"enum_as_warning,omitempty"`
 	Default       any             `json:"default,omitempty"`
+	Items         []SchemaField   `json:"items,omitempty"` // For nested array of objects
 }
 
 // BackendSchema describes one backend kind and its field layout.
@@ -112,6 +114,24 @@ func jsonSchemaField(f SchemaField) map[string]any {
 	out := map[string]any{
 		"type": string(f.Type),
 	}
+	if f.Type == SchemaFieldTypeArray && len(f.Items) > 0 {
+		// Differentiate between array of objects and array of primitive types
+		if f.Items[0].Key == "" && f.Items[0].Type == SchemaFieldTypeString {
+			out["items"] = map[string]any{
+				"type": "string",
+			}
+		} else {
+			itemProps := map[string]any{}
+			for _, item := range f.Items {
+				itemProps[item.Key] = jsonSchemaField(item)
+			}
+			out["items"] = map[string]any{
+				"type":                 "object",
+				"properties":           itemProps,
+				"additionalProperties": false,
+			}
+		}
+	}
 	if len(f.Enum) > 0 {
 		vals := make([]any, 0, len(f.Enum))
 		for _, v := range f.Enum {
@@ -184,10 +204,32 @@ func schemaFieldsFromStruct(t reflect.Type) []SchemaField {
 		if key == "" {
 			continue
 		}
-		fieldType, ok := schemaTypeForGoType(f.Type)
-		if !ok {
-			continue
+		
+		var fieldType SchemaFieldType
+		var items []SchemaField
+		
+		if f.Type.Kind() == reflect.Slice {
+			// Basic support for slice of structs (or slice of basic types if we ever need it)
+			fieldType = SchemaFieldTypeArray
+			if f.Type.Elem().Kind() == reflect.Struct {
+				items = schemaFieldsFromStruct(f.Type.Elem())
+			} else if f.Type.Elem().Kind() == reflect.String {
+				// E.g. []string
+				items = []SchemaField{{Type: SchemaFieldTypeString}}
+			}
+		} else if f.Type.Kind() == reflect.Map {
+			// For map[string]string (like Meta), we handle it differently below
+			// The json schema builder doesn't strictly support free-form objects out of the box in the same way,
+			// but we can map it to an object type if needed.
+			continue // Skip maps in the UI schema for now since there's no UI for arbitrary k/v
+		} else {
+			var ok bool
+			fieldType, ok = schemaTypeForGoType(f.Type)
+			if !ok {
+				continue
+			}
 		}
+		
 		opts := parseHoneyTag(f.Tag.Get("honey"))
 		sf := SchemaField{
 			Key:      key,
@@ -195,6 +237,7 @@ func schemaFieldsFromStruct(t reflect.Type) []SchemaField {
 			Type:     fieldType,
 			Required: hasHoneyFlag(opts, "required"),
 			Secret:   hasHoneyFlag(opts, "secret"),
+			Items:    items,
 		}
 		if rawEnum := strings.TrimSpace(opts["enum"]); rawEnum != "" {
 			parts := strings.Split(rawEnum, "|")
