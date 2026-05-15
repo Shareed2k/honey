@@ -47,7 +47,16 @@ func randomSessionID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// handlePveQemuVncOffer allocates a Proxmox vncproxy ticket and returns it for noVNC RFB (password) plus a one-time session id for /ws/pve-qemu-vnc.
+// handlePveQemuVncOffer requests a short-lived Proxmox QEMU VNC ticket for noVNC.
+// @Summary Proxmox QEMU VNC offer
+// @Tags proxmox
+// @Accept json
+// @Produce json
+// @Param body body object true "record for a QEMU VM on Proxmox"
+// @Success 200 {object} object "session_id, vnc_password"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/pve-qemu-vnc-offer [post]
+// @Security BearerAuth
 func (s *Server) handlePveQemuVncOffer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

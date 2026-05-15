@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-/** Pull heavy deps out of route/lazy chunks so no single output file balloons past ~500 KiB. */
+/** Pull heavy deps out of route/lazy chunks. Most vendor chunks stay under ~500 KiB; `vendor-swagger-ui` is larger by design (~1.3 MiB minified, lazy-loaded API tab). */
 function manualChunks(id: string): string | undefined {
   if (!id.includes('node_modules')) {
     return undefined;
@@ -40,6 +40,9 @@ function manualChunks(id: string): string | undefined {
   if (id.includes('js-yaml')) {
     return 'vendor-js-yaml';
   }
+  if (id.includes('swagger-ui') || id.includes('swagger-client')) {
+    return 'vendor-swagger-ui';
+  }
   // Remaining deps stay in the chunk that imports them (avoids circular vendor <-> feature splits).
   return undefined;
 }
@@ -50,7 +53,8 @@ export default defineConfig({
   build: {
     outDir: '../internal/webserver/static',
     emptyOutDir: true,
-    chunkSizeWarningLimit: 500,
+    // Allow lazy `vendor-swagger-ui` (~1.3 MiB); keep default-ish limit for other chunks.
+    chunkSizeWarningLimit: 1400,
     rollupOptions: {
       output: {
         manualChunks,

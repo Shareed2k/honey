@@ -225,6 +225,17 @@ Rules:
 - Keep answers short unless the user explicitly asks for detail.
 - Do not repeat the entire scrollback back unless needed.`
 
+// handleTerminalAssist sends scrollback + prompt to the LLM (requires OPENAI_API_KEY).
+// @Summary Terminal AI assist
+// @Tags assist
+// @Accept json
+// @Produce json
+// @Param body body object true "scrollback, user_prompt, model, max_lines"
+// @Success 200 {object} map[string]string "reply"
+// @Failure 400 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Router /api/v1/terminal-assist [post]
+// @Security BearerAuth
 func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)

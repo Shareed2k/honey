@@ -56,5 +56,5 @@ func (p *proxmoxExecutor) RunTunnel(ctx context.Context, user string, r hosts.Re
 	if ip == "" {
 		return errProxmoxNoIP
 	}
-	return hostexec.RunSSHTunnel(ctx, user, ip, localFwd, out)
+	return hostexec.RunSSHTunnel(ctx, user, ip, 0, localFwd, out)
 }

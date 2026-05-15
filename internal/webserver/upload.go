@@ -14,12 +14,25 @@ import (
 	"github.com/shareed2k/honey/internal/ui"
 )
 
-type uploadRequestMeta struct {
+// UploadRequestMeta is the JSON in multipart field "meta" for POST /api/v1/upload.
+type UploadRequestMeta struct {
 	SSHUser    string       `json:"ssh_user"`
 	RemotePath string       `json:"remote_path"`
 	Record     hosts.Record `json:"record"`
 }
 
+// handleUpload accepts multipart form: meta (JSON UploadRequestMeta) + file; optional query stream=1 for NDJSON progress.
+// @Summary Upload file to remote
+// @Tags files
+// @Accept multipart/form-data
+// @Produce json
+// @Param meta formData string true "JSON: ssh_user, remote_path, record"
+// @Param file formData file true "File contents"
+// @Param stream query int false "set to 1 for NDJSON streaming response"
+// @Success 200 {object} object "upload results or stream when stream=1"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/upload [post]
+// @Security BearerAuth
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(s.opts.MaxUploadSize); err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -30,7 +43,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("missing form field meta (JSON)"), http.StatusBadRequest)
 		return
 	}
-	var meta uploadRequestMeta
+	var meta UploadRequestMeta
 	if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
 		httpError(w, fmt.Errorf("meta json: %w", err), http.StatusBadRequest)
 		return

@@ -129,7 +129,8 @@ func dialHybridQEMU(b hostexec.ProxmoxBackendRuntime, user string, r hosts.Recor
 	if ip == "" {
 		return nil, fmt.Errorf("proxmox hybrid: no primary IP for SSH file transfer")
 	}
-	sshClient, err := sshclient.DialHoneyClient(user, ip)
+
+	sshClient, err := sshclient.DialHoneyClient(user, ip, 0)
 	if err != nil {
 		return nil, err
 	}

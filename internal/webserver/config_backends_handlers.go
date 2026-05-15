@@ -32,6 +32,15 @@ func (s *Server) resolveWritableConfigPath() (string, error) {
 	return cfgPath, nil
 }
 
+// handleConfigBackendsGet returns the backends section of the config file.
+// @Summary List backends from config
+// @Tags config
+// @Produce json
+// @Success 200 {object} object "backends map (gcp, aws, kubernetes, ...)"
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/config/backends [get]
+// @Security BearerAuth
 func (s *Server) handleConfigBackendsGet(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	cfgPath, err := s.resolveWritableConfigPath()
@@ -49,6 +58,18 @@ func (s *Server) handleConfigBackendsGet(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(cfg.Backends)
 }
 
+// handleConfigBackendsPost appends a backend entry for the given kind.
+// @Summary Append backend entry
+// @Tags config
+// @Accept json
+// @Produce json
+// @Param kind path string true "backend kind (gcp, aws, kubernetes, consul, proxmox, local)"
+// @Param body body object true "Backend entry JSON"
+// @Success 200 {object} map[string]string "status, path"
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/config/backends/{kind} [post]
+// @Security BearerAuth
 func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request) {
 	kind := strings.ToLower(strings.TrimSpace(r.PathValue("kind")))
 	cfgPath, err := s.resolveWritableConfigPath()
@@ -82,6 +103,19 @@ func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "path": cfgPath})
 }
 
+// handleConfigBackendsPut replaces a backend entry by index.
+// @Summary Replace backend entry
+// @Tags config
+// @Accept json
+// @Produce json
+// @Param kind path string true "backend kind"
+// @Param index path int true "0-based index in that kind's list"
+// @Param body body object true "Backend entry JSON"
+// @Success 200 {object} map[string]string "status, path"
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/config/backends/{kind}/{index} [put]
+// @Security BearerAuth
 func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request) {
 	kind := strings.ToLower(strings.TrimSpace(r.PathValue("kind")))
 	idxStr := strings.TrimSpace(r.PathValue("index"))
@@ -121,6 +155,17 @@ func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "path": cfgPath})
 }
 
+// handleConfigBackendsDelete removes a backend entry by index.
+// @Summary Delete backend entry
+// @Tags config
+// @Produce json
+// @Param kind path string true "backend kind"
+// @Param index path int true "0-based index"
+// @Success 200 {object} map[string]string "status, path"
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/config/backends/{kind}/{index} [delete]
+// @Security BearerAuth
 func (s *Server) handleConfigBackendsDelete(w http.ResponseWriter, r *http.Request) {
 	kind := strings.ToLower(strings.TrimSpace(r.PathValue("kind")))
 	idxStr := strings.TrimSpace(r.PathValue("index"))

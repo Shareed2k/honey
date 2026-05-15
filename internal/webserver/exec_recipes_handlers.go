@@ -27,35 +27,42 @@ const (
 	cueExecChannelCap  = 4096
 )
 
-type recipeListEntry struct {
+// RecipeListEntry is one recipe in the list API response.
+type RecipeListEntry struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
 }
 
-type recipesListResponse struct {
-	Recipes []recipeListEntry `json:"recipes"`
+// RecipesListResponse is the JSON body for GET /api/v1/recipes.
+type RecipesListResponse struct {
+	Recipes []RecipeListEntry `json:"recipes"`
 }
 
-type recipeViewRequest struct {
+// RecipeViewRequest is the JSON body for POST /api/v1/recipes/view.
+type RecipeViewRequest struct {
 	Path string `json:"path"`
 }
 
-type recipeViewResponse struct {
+// RecipeViewResponse is the JSON body for a successful recipe view.
+type RecipeViewResponse struct {
 	Content string `json:"content"`
 }
 
-type execRequest struct {
+// ExecRequest is the JSON body for POST /api/v1/exec.
+type ExecRequest struct {
 	SSHUser       string         `json:"ssh_user"`
 	Command       string         `json:"command"`
 	Records       []hosts.Record `json:"records"`
 	RecordSession bool           `json:"record_session"`
 }
 
-type execResponse struct {
+// ExecResponse is the JSON body for a successful exec run.
+type ExecResponse struct {
 	Results []ui.HostExecResult `json:"results"`
 }
 
-type cueExecRequest struct {
+// CueExecRequest is the JSON body for POST /api/v1/cue-exec.
+type CueExecRequest struct {
 	RecipePath    string         `json:"recipe_path,omitempty"`
 	RecipeContent *cuetry.Recipe `json:"recipe_content,omitempty"`
 	Execute       bool           `json:"execute"`
@@ -65,11 +72,13 @@ type cueExecRequest struct {
 	RecordSession bool           `json:"record_session"`
 }
 
-type cueExecDryRunResponse struct {
+// CueExecDryRunResponse is the JSON body when cue-exec runs in dry-run mode.
+type CueExecDryRunResponse struct {
 	Plan string `json:"plan"`
 }
 
-type cueExecExecuteResponse struct {
+// CueExecExecuteResponse is the JSON body when cue-exec runs with execute true.
+type CueExecExecuteResponse struct {
 	Results []ui.HostExecResult `json:"results"`
 }
 
@@ -91,6 +100,13 @@ func normalizeRecipePath(p string) (string, error) {
 	return filepath.Abs(filepath.Clean(p))
 }
 
+// handleRecipesList returns discoverable recipe file paths.
+// @Summary List recipe files
+// @Tags recipes
+// @Produce json
+// @Success 200 {object} RecipesListResponse
+// @Router /api/v1/recipes [get]
+// @Security BearerAuth
 func (*Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -98,7 +114,7 @@ func (*Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 	}
 	paths := config.ListDefaultRecipes()
 	seen := make(map[string]struct{})
-	var recipes []recipeListEntry
+	var recipes []RecipeListEntry
 	for _, p := range paths {
 		cp, err := filepath.Abs(filepath.Clean(p))
 		if err != nil {
@@ -108,21 +124,31 @@ func (*Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		seen[cp] = struct{}{}
-		recipes = append(recipes, recipeListEntry{
+		recipes = append(recipes, RecipeListEntry{
 			Name: filepath.Base(cp),
 			Path: cp,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(recipesListResponse{Recipes: recipes})
+	_ = json.NewEncoder(w).Encode(RecipesListResponse{Recipes: recipes})
 }
 
+// handleRecipesView reads a recipe file from an allowed path.
+// @Summary Read recipe file
+// @Tags recipes
+// @Accept json
+// @Produce json
+// @Param body body RecipeViewRequest true "absolute or resolved recipe path"
+// @Success 200 {object} RecipeViewResponse
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/recipes/view [post]
+// @Security BearerAuth
 func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var body recipeViewRequest
+	var body RecipeViewRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -151,15 +177,26 @@ func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(recipeViewResponse{Content: string(raw)})
+	_ = json.NewEncoder(w).Encode(RecipeViewResponse{Content: string(raw)})
 }
 
+// handleExec runs a shell command on many hosts in parallel (optional NDJSON stream).
+// @Summary Parallel remote exec
+// @Tags exec
+// @Accept json
+// @Produce json
+// @Param stream query int false "set to 1 for NDJSON streaming"
+// @Param body body object true "ssh_user, command, records, record_session"
+// @Success 200 {object} object "ExecResponse JSON or NDJSON stream when stream=1"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/exec [post]
+// @Security BearerAuth
 func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var body execRequest
+	var body ExecRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -235,7 +272,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(execResponse{Results: results})
+	_ = json.NewEncoder(w).Encode(ExecResponse{Results: results})
 }
 
 func filterConnectableRecords(recs []hosts.Record) []hosts.Record {
@@ -281,11 +318,11 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 	}
 }
 
-// resolveCueExecRecipe picks the recipe source from a cueExecRequest, returning
+// resolveCueExecRecipe picks the recipe source from a CueExecRequest, returning
 // the parsed/validated recipe, its on-disk source path (empty for inline),
 // and the recipe's directory (empty for inline). All errors are caller-fixable
 // (HTTP 400 from the handler).
-func resolveCueExecRecipe(body cueExecRequest) (cuetry.Recipe, string, string, error) {
+func resolveCueExecRecipe(body CueExecRequest) (cuetry.Recipe, string, string, error) {
 	switch {
 	case body.RecipeContent != nil:
 		if strings.TrimSpace(body.RecipePath) != "" {
@@ -319,12 +356,23 @@ func resolveCueExecRecipe(body cueExecRequest) (cuetry.Recipe, string, string, e
 	}
 }
 
+// handleCueExec validates or runs a CUE recipe against selected hosts.
+// @Summary CUE recipe dry-run or execute
+// @Tags recipes
+// @Accept json
+// @Produce json
+// @Param stream query int false "set to 1 for NDJSON streaming when execute=true"
+// @Param body body object true "recipe_path or recipe_content, execute, ssh_user, records, env"
+// @Success 200 {object} object "CueExecDryRunResponse or CueExecExecuteResponse or NDJSON stream"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/cue-exec [post]
+// @Security BearerAuth
 func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var body cueExecRequest
+	var body CueExecRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<20)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -407,7 +455,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(cueExecDryRunResponse{Plan: buf.String()})
+		_ = json.NewEncoder(w).Encode(CueExecDryRunResponse{Plan: buf.String()})
 		return
 	}
 	if r.URL.Query().Get("stream") == "1" {
@@ -472,5 +520,5 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(cueExecExecuteResponse{Results: results})
+	_ = json.NewEncoder(w).Encode(CueExecExecuteResponse{Results: results})
 }

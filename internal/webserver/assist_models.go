@@ -113,6 +113,14 @@ func (s *Server) getAssistModelIDs(ctx context.Context, force bool) ([]string, e
 	return ids, nil
 }
 
+// handleTerminalAssistModels lists OpenAI-compatible model IDs for terminal assist.
+// @Summary Terminal assist models
+// @Tags assist
+// @Produce json
+// @Success 200 {object} map[string]interface{} "models: string array"
+// @Failure 503 {object} map[string]string
+// @Router /api/v1/terminal-assist/models [get]
+// @Security BearerAuth
 func (s *Server) handleTerminalAssistModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)

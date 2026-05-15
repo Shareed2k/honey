@@ -15,17 +15,20 @@ import (
 	"go.uber.org/zap"
 )
 
-type filesLocalListRequest struct {
+// FilesLocalListRequest is the JSON body for listing local files.
+type FilesLocalListRequest struct {
 	Path string `json:"path"`
 }
 
-type filesRemoteListRequest struct {
+// FilesRemoteListRequest is the JSON body for listing remote files over SSH.
+type FilesRemoteListRequest struct {
 	SSHUser string       `json:"ssh_user"`
 	Record  hosts.Record `json:"record"`
 	Path    string       `json:"path"`
 }
 
-type filesCopyRequest struct {
+// FilesCopyRequest is the JSON body for copy between local and remote paths.
+type FilesCopyRequest struct {
 	Direction  string       `json:"direction"`
 	SSHUser    string       `json:"ssh_user"`
 	Record     hosts.Record `json:"record"`
@@ -33,7 +36,8 @@ type filesCopyRequest struct {
 	RemotePath string       `json:"remote_path"`
 }
 
-type filesAgentTransferRequest struct {
+// FilesAgentTransferRequest is the JSON body for agent-mediated file transfer.
+type FilesAgentTransferRequest struct {
 	SSHUser         string               `json:"ssh_user"`
 	AgentLocalPath  string               `json:"agent_local_path,omitempty"`
 	AgentRemoteDir  string               `json:"agent_remote_dir,omitempty"`
@@ -48,18 +52,21 @@ type filesAgentTransferRequest struct {
 	MaxRetries      int                  `json:"max_retries,omitempty"`
 }
 
-type filesLocalListResponse struct {
+// FilesLocalListResponse is the JSON body for local list results.
+type FilesLocalListResponse struct {
 	Root    string              `json:"root"`
 	Path    string              `json:"path"`
 	Entries []ui.LocalFileEntry `json:"entries"`
 }
 
-type filesRemoteListResponse struct {
+// FilesRemoteListResponse is the JSON body for remote list results.
+type FilesRemoteListResponse struct {
 	Path    string               `json:"path"`
 	Entries []ui.RemoteFileEntry `json:"entries"`
 }
 
-type filesAgentTransferResponse struct {
+// FilesAgentTransferResponse is the JSON body for agent transfer results.
+type FilesAgentTransferResponse struct {
 	Events []ui.AgentTransferEvent `json:"events"`
 }
 
@@ -70,12 +77,22 @@ func (s *Server) localFilesRoot() string {
 	return ui.DefaultLocalFilesRoot()
 }
 
+// handleFilesLocalList lists files under the configured local browser root.
+// @Summary List local directory
+// @Tags files
+// @Accept json
+// @Produce json
+// @Param body body FilesLocalListRequest true "path relative to browser root"
+// @Success 200 {object} object "root, path, entries"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/files/local/list [post]
+// @Security BearerAuth
 func (s *Server) handleFilesLocalList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req filesLocalListRequest
+	var req FilesLocalListRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -87,19 +104,30 @@ func (s *Server) handleFilesLocalList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(filesLocalListResponse{
+	_ = json.NewEncoder(w).Encode(FilesLocalListResponse{
 		Root:    root,
 		Path:    resolved,
 		Entries: entries,
 	})
 }
 
+// handleFilesRemoteList lists a directory on a remote host over SSH/SFTP.
+// @Summary List remote directory
+// @Tags files
+// @Accept json
+// @Produce json
+// @Param body body object true "ssh_user, record, path"
+// @Success 200 {object} object "path, entries"
+// @Failure 400 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Router /api/v1/files/remote/list [post]
+// @Security BearerAuth
 func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req filesRemoteListRequest
+	var req FilesRemoteListRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -122,18 +150,29 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(filesRemoteListResponse{
+	_ = json.NewEncoder(w).Encode(FilesRemoteListResponse{
 		Path:    path,
 		Entries: entries,
 	})
 }
 
+// handleFilesCopy copies a single file between local (under files root) and remote.
+// @Summary Copy file local/remote
+// @Tags files
+// @Accept json
+// @Produce json
+// @Param body body object true "direction, ssh_user, record, local_path, remote_path"
+// @Success 200 {object} map[string]string "status, local, remote"
+// @Failure 400 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Router /api/v1/files/copy [post]
+// @Security BearerAuth
 func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req filesCopyRequest
+	var req FilesCopyRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -191,12 +230,22 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleFilesAgentTransfer runs A-to-cloud-to-B agent transfer.
+// @Summary Agent-based cloud transfer
+// @Tags files
+// @Accept json
+// @Produce json
+// @Param body body object true "agent transfer request (see web UI)"
+// @Success 200 {object} object "events array"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/files/agent-transfer [post]
+// @Security BearerAuth
 func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req filesAgentTransferRequest
+	var req FilesAgentTransferRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -290,5 +339,5 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(filesAgentTransferResponse{Events: events})
+	_ = json.NewEncoder(w).Encode(FilesAgentTransferResponse{Events: events})
 }

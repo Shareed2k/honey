@@ -39,6 +39,14 @@ type recipeMetaPayload struct {
 	StartedAt         string `json:"started_at"`
 }
 
+// handleRecipesRecentRuns lists recent recipe runs from session recording dir.
+// @Summary Recent recipe runs
+// @Tags recipes
+// @Produce json
+// @Param limit query int false "max entries (default 20, max 200)"
+// @Success 200 {object} object "runs array"
+// @Router /api/v1/recipes/recent-runs [get]
+// @Security BearerAuth
 func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

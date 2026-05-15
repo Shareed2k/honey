@@ -37,6 +37,16 @@ type validateContentResponse struct {
 	Errors []validateContentError `json:"errors,omitempty"`
 }
 
+// handleRecipesValidateContent validates in-editor recipe JSON and returns plan/steps or errors.
+// @Summary Validate recipe JSON
+// @Tags recipes
+// @Accept json
+// @Produce json
+// @Param body body object true "recipe_content object"
+// @Success 200 {object} object "plan and steps on success"
+// @Failure 400 {object} object "errors array in validateContentResponse shape"
+// @Router /api/v1/recipes/validate-content [post]
+// @Security BearerAuth
 func (*Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -84,6 +94,16 @@ type recipesParseRequest struct {
 	Path string `json:"path"`
 }
 
+// handleRecipesParse reads and parses a recipe file from an allowed path.
+// @Summary Parse recipe file to JSON
+// @Tags recipes
+// @Accept json
+// @Produce json
+// @Param body body object true "path field: absolute recipe file"
+// @Success 200 {object} map[string]interface{} "recipe object"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/recipes/parse [post]
+// @Security BearerAuth
 func (*Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

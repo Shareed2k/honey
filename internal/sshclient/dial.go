@@ -37,7 +37,8 @@ import (
 // Honey defaults to accept-new for unknown keys unless HONEY_SSH_STRICT_HOSTKEYS=1. Only "yes" is strict;
 // "ask" is treated as accept-new (the ssh_config parser also defaults to "ask" when unset).
 //
-// Note: "Match" is unsupported by that parser; configs that rely on Match may not apply here.
+// Programmatic dials prefer system OpenSSH `ssh -G` when available (see lookupHostSSHConfig), which
+// evaluates Match blocks; set HONEY_SSH_OPENSSH_G=0 to force this parser only.
 var honeySSHConfig = &ssh_config.UserSettings{IgnoreErrors: true}
 
 // honeySSHIdentityFilesEnv lists extra private key paths (comma-separated) tried after IdentityFile
@@ -47,21 +48,21 @@ const honeySSHIdentityFilesEnv = "HONEY_SSH_IDENTITY_FILES"
 // knownHostsAppendMu serializes writes to ~/.ssh/known_hosts when many parallel SSH sessions accept-new.
 var knownHostsAppendMu sync.Mutex
 
-// hostKeyCallbackForAlias returns a HostKeyCallback for the given ssh_config alias (e.g. instance IP).
-// It loads OpenSSH-style known_hosts files (see https://pkg.go.dev/golang.org/x/crypto/ssh/knownhosts):
-// paths from HONEY_SSH_KNOWN_HOSTS (comma-separated, optional), UserKnownHostsFile / GlobalKnownHostsFile
-// from ssh_config (if set), then ~/.ssh/known_hosts, ~/.ssh/google_compute_engine_known_hosts (common for gcloud),
-// ~/.ssh/known_hosts2, and system ssh_known_hosts.
+// hostKeyCallbackForHostSSH returns a HostKeyCallback using StrictHostKeyChecking and known_hosts
+// paths from cfg (OpenSSH ssh -G or kevinburke/ssh_config).
 //
-// StrictHostKeyChecking from ~/.ssh/config: "no" disables verification; "yes" requires a known key.
+// StrictHostKeyChecking: "no" disables verification; "yes" requires a known key.
 // "ask", "accept-new", and the ssh_config default ("ask" when no directive matches) are treated like
 // accept-new here: honey is non-interactive, so unknown keys are written once to ~/.ssh/known_hosts.
 // Set HONEY_SSH_STRICT_HOSTKEYS=1 to require known keys (and fail if the host is not listed).
 //
 // Stale host keys are renewed by default (matching known_hosts lines removed in pure Go, then append the new key).
 // Set HONEY_SSH_RENEW_STALE_HOST_KEYS=0 (or false/no/off) to disable stale-key renewal. Useful after VM rebuilds; weaker against MITM during renewal.
-func hostKeyCallbackForAlias(alias string) (ssh.HostKeyCallback, error) {
-	strictSSH := strings.ToLower(strings.TrimSpace(honeySSHConfig.Get(alias, "StrictHostKeyChecking")))
+func hostKeyCallbackForHostSSH(cfg *hostSSHConfig) (ssh.HostKeyCallback, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("nil host ssh config")
+	}
+	strictSSH := strings.ToLower(strings.TrimSpace(cfg.strictHostKeyChecking))
 	if strictSSH == "no" {
 		// #nosec G106 -- mirrors OpenSSH StrictHostKeyChecking=no (explicit ssh_config opt-out of host key checking).
 		return ssh.InsecureIgnoreHostKey(), nil
@@ -72,7 +73,7 @@ func hostKeyCallbackForAlias(alias string) (ssh.HostKeyCallback, error) {
 	// when unset, which would otherwise block accept-new for every host.
 	useStrict := strictSSH == "yes" || envStrict == "1" || envStrict == "yes" || envStrict == "true"
 
-	paths := collectKnownHostsPaths(alias)
+	paths := collectKnownHostsPaths(cfg)
 	if len(paths) == 0 {
 		if useStrict {
 			return nil, fmt.Errorf("no readable known_hosts files found; create ~/.ssh/known_hosts (optional: HONEY_SSH_KNOWN_HOSTS=comma-separated paths). Unset HONEY_SSH_STRICT_HOSTKEYS to auto-create ~/.ssh/known_hosts on first connect")
@@ -203,7 +204,10 @@ func sshKeyscanCLIPrompt(hostOrHostPort string) string {
 	return fmt.Sprintf("ssh-keyscan -p %s -H %s", port, host)
 }
 
-func collectKnownHostsPaths(alias string) []string {
+func collectKnownHostsPaths(cfg *hostSSHConfig) []string {
+	if cfg == nil {
+		return nil
+	}
 	seen := make(map[string]struct{})
 	var out []string
 	add := func(p string) {
@@ -236,10 +240,19 @@ func collectKnownHostsPaths(alias string) []string {
 		}
 	}
 
-	for _, key := range []string{"UserKnownHostsFile", "GlobalKnownHostsFile"} {
-		for _, v := range honeySSHConfig.GetAll(alias, key) {
-			for _, part := range strings.Fields(strings.TrimSpace(v)) {
-				add(part)
+	if cfg.fromOpenSSHG {
+		for _, p := range cfg.userKnownHostsFields {
+			add(p)
+		}
+		for _, p := range cfg.globalKnownHostsFields {
+			add(p)
+		}
+	} else {
+		for _, key := range []string{"UserKnownHostsFile", "GlobalKnownHostsFile"} {
+			for _, v := range honeySSHConfig.GetAll(cfg.alias, key) {
+				for _, part := range strings.Fields(strings.TrimSpace(v)) {
+					add(part)
+				}
 			}
 		}
 	}
@@ -737,7 +750,7 @@ func defaultLocalUser() string {
 	return "root"
 }
 
-func resolveOne(alias, userOverride string) resolvedSSH {
+func resolveOneBuiltin(alias, userOverride string) resolvedSSH {
 	alias = strings.TrimSpace(alias)
 	u0 := strings.TrimSpace(userOverride)
 
@@ -768,7 +781,7 @@ type resolvedSSH struct {
 	port int
 }
 
-func collectIdentityFiles(alias string) ([]string, error) {
+func collectIdentityFilesBuiltin(alias string) ([]string, error) {
 	files := honeySSHConfig.GetAll(alias, "IdentityFile")
 	if len(files) == 0 {
 		return nil, nil
@@ -849,40 +862,46 @@ func closeSSHStack(stack []*ssh.Client) {
 
 // DialHoneyClient opens SSH using ~/.ssh/config (User, HostName, Port, IdentityFile, ProxyJump,
 // StrictHostKeyChecking, UserKnownHostsFile, GlobalKnownHostsFile) and known_hosts verification
-// via golang.org/x/crypto/ssh/knownhosts (see hostKeyCallbackForAlias). Auth also uses
-// HONEY_SSH_IDENTITY_FILES and default ~/.ssh key names (see buildAuthWithIdentityFiles).
-func DialHoneyClient(userOverride, hostAlias string) (*HoneyClient, error) {
+// via golang.org/x/crypto/ssh/knownhosts (see hostKeyCallbackForHostSSH). When system OpenSSH is
+// available, resolution uses `ssh -G` so Match blocks apply; set HONEY_SSH_OPENSSH_G=0 to disable.
+// Auth also uses HONEY_SSH_IDENTITY_FILES and default ~/.ssh key names (see buildAuthWithIdentityFiles).
+// If overridePort is in 1..65535, it replaces the leaf port from resolution (e.g. from record meta.ssh_port).
+func DialHoneyClient(userOverride, hostAlias string, overridePort int) (*HoneyClient, error) {
 	zap.L().Debug("dialing honey client", zap.String("host", hostAlias), zap.String("user", userOverride))
 	hostAlias = strings.TrimSpace(hostAlias)
 	if hostAlias == "" {
 		return nil, fmt.Errorf("empty host")
 	}
-	hkFinal, err := hostKeyCallbackForAlias(hostAlias)
+	leafCfg, err := lookupHostSSHConfig(hostAlias, userOverride)
 	if err != nil {
 		return nil, err
 	}
-	final := resolveOne(hostAlias, userOverride)
-	idFiles, err := collectIdentityFiles(hostAlias)
+	hkFinal, err := hostKeyCallbackForHostSSH(leafCfg)
 	if err != nil {
 		return nil, err
 	}
-	for _, hop := range parseProxyJumpChain(honeySSHConfig.Get(hostAlias, "ProxyJump")) {
-		_, hopAlias, _, _, perr := parseJumpSpec(hop)
+	final := leafCfg.resolved
+	if overridePort > 0 && overridePort < 65536 {
+		final.port = overridePort
+	}
+	idFiles := append([]string(nil), leafCfg.identityPaths...)
+	for _, hop := range parseProxyJumpChain(leafCfg.proxyJump) {
+		explicitUser, hopAlias, _, _, perr := parseJumpSpec(hop)
 		if perr != nil || hopAlias == "" {
 			continue
 		}
-		more, ierr := collectIdentityFiles(hopAlias)
+		hopCfg, ierr := lookupHostSSHConfig(hopAlias, explicitUser)
 		if ierr != nil {
 			return nil, ierr
 		}
-		idFiles = append(idFiles, more...)
+		idFiles = append(idFiles, hopCfg.identityPaths...)
 	}
 	auth, err := buildAuthWithIdentityFiles(idFiles)
 	if err != nil {
 		return nil, err
 	}
 
-	jumps := parseProxyJumpChain(honeySSHConfig.Get(hostAlias, "ProxyJump"))
+	jumps := parseProxyJumpChain(leafCfg.proxyJump)
 	stack := make([]*ssh.Client, 0, len(jumps)+1)
 	var cur *ssh.Client
 
@@ -892,8 +911,13 @@ func DialHoneyClient(userOverride, hostAlias string) (*HoneyClient, error) {
 			closeSSHStack(stack)
 			return nil, perr
 		}
-		res := resolveOne(hopHost, explicitUser)
-		hkHop, herr := hostKeyCallbackForAlias(hopHost)
+		hopCfg, herr := lookupHostSSHConfig(hopHost, explicitUser)
+		if herr != nil {
+			closeSSHStack(stack)
+			return nil, herr
+		}
+		res := hopCfg.resolved
+		hkHop, herr := hostKeyCallbackForHostSSH(hopCfg)
 		if herr != nil {
 			closeSSHStack(stack)
 			return nil, herr
@@ -972,8 +996,8 @@ func DialHoneyClient(userOverride, hostAlias string) (*HoneyClient, error) {
 }
 
 // DialSSHClient returns the leaf *ssh.Client and a cleanup that closes the full ProxyJump chain.
-func DialSSHClient(userOverride, hostAlias string) (*ssh.Client, func(), error) {
-	h, err := DialHoneyClient(userOverride, hostAlias)
+func DialSSHClient(userOverride, hostAlias string, overridePort int) (*ssh.Client, func(), error) {
+	h, err := DialHoneyClient(userOverride, hostAlias, overridePort)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1008,7 +1032,8 @@ func parseLocalForward(spec string) (localPort, remoteHost, remotePort string, e
 }
 
 // RunTunnelGo listens on 127.0.0.1:<localPort> and forwards to remoteHost:remotePort via the SSH server (host).
-func RunTunnelGo(ctx context.Context, user, host, localFwd string, out io.Writer) error {
+// sshPort is 0 to use ~/.ssh/config Port / default 22 only, or 1..65535 to override the leaf SSH server port.
+func RunTunnelGo(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error {
 	if strings.TrimSpace(host) == "" {
 		return fmt.Errorf("no IP for selected host")
 	}
@@ -1016,7 +1041,7 @@ func RunTunnelGo(ctx context.Context, user, host, localFwd string, out io.Writer
 	if err != nil {
 		return err
 	}
-	client, cleanup, err := DialSSHClient(user, host)
+	client, cleanup, err := DialSSHClient(user, host, sshPort)
 	if err != nil {
 		return err
 	}

@@ -77,6 +77,7 @@ func NewServer(opts Options) (*Server, error) {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/meta", s.withAuth(s.handleMeta))
+	s.mux.HandleFunc("GET /api/v1/openapi.json", s.withAuth(s.handleOpenAPIJSON))
 	s.mux.HandleFunc("GET /api/v1/providers", s.withAuth(s.handleProviders))
 	s.mux.HandleFunc("GET /api/v1/backends", s.withAuth(s.handleBackends))
 	s.mux.HandleFunc("POST /api/v1/search", s.withAuth(s.handleSearch))
@@ -164,6 +165,13 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
+// handleMeta returns server build metadata and feature flags.
+// @Summary Server metadata
+// @Tags meta
+// @Produce json
+// @Success 200 {object} map[string]interface{} "version, commit, date, config_path, session_recording_available, terminal_assist_available"
+// @Router /api/v1/meta [get]
+// @Security BearerAuth
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	w.Header().Set("Content-Type", "application/json")
@@ -177,6 +185,13 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// handleProviders returns supported provider IDs for search.
+// @Summary List search provider IDs
+// @Tags meta
+// @Produce json
+// @Success 200 {object} map[string]interface{} "providers: string array"
+// @Router /api/v1/providers [get]
+// @Security BearerAuth
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	w.Header().Set("Content-Type", "application/json")
@@ -185,6 +200,14 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleBackends lists backends from the active honey config.
+// @Summary List configured backends
+// @Tags meta
+// @Produce json
+// @Success 200 {array} object
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/backends [get]
+// @Security BearerAuth
 func (s *Server) handleBackends(w http.ResponseWriter, _ *http.Request) {
 	out, err := hostapi.ListBackends(strings.TrimSpace(s.opts.ConfigPath))
 	if err != nil {
@@ -195,6 +218,16 @@ func (s *Server) handleBackends(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
+// handleSearch runs the same parallel search as the CLI/TUI.
+// @Summary Search hosts
+// @Tags search
+// @Accept json
+// @Produce json
+// @Param body body object true "Search request (config_path, provider flags, name filters, etc.)"
+// @Success 200 {object} object "hostapi search result JSON"
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/search [post]
+// @Security BearerAuth
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var in hostapi.SearchHostsInput
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in); err != nil {
