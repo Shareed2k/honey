@@ -601,11 +601,24 @@ export function TerminalTabsModal({
   }, [checkScroll, terminals]); // Re-check when terminals array changes
 
   // Also re-check when the modal actually opens, since display:none might have hidden the true scrollWidth
+  // and trigger a global resize to refit xterm instances that were mounted while hidden!
   useEffect(() => {
     if (isOpen) {
-      setTimeout(checkScroll, 50);
+      setTimeout(() => {
+        checkScroll();
+        window.dispatchEvent(new Event('resize'));
+      }, 50);
     }
   }, [isOpen, checkScroll]);
+
+  // Dispatch a resize event when maximizing so the terminal resizes properly
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+      }, 50); // small delay to let CSS layout apply
+    }
+  }, [isMaximized, isOpen]);
 
   const scrollByAmount = (offset: number) => {
     if (tabsRef.current) {
