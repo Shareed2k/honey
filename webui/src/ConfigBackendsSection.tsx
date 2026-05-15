@@ -245,8 +245,12 @@ export function ConfigBackendsSection({ onSaved, schema }: Props) {
         <EditorModal 
            editor={editor} 
            schema={schema} 
-           busy={busy} 
-           onClose={() => setEditor(null)} 
+           busy={busy}
+           error={err}
+           onClose={() => {
+             setErr(null);
+             setEditor(null);
+           }} 
            onSave={async (body) => {
              const { kind, index } = editor;
              const ok = index === null
@@ -266,12 +270,14 @@ function EditorModal({
   editor,
   schema,
   busy,
+  error,
   onClose,
   onSave
 }: {
   editor: { kind: string; index: number | null; draft: Record<string, unknown> };
   schema: ConfigUISchema | null;
   busy: boolean;
+  error: string | null;
   onClose: () => void;
   onSave: (body: any) => Promise<void>;
 }) {
@@ -317,6 +323,7 @@ function EditorModal({
         <h3 style={{ marginTop: 0 }}>
           {editor.index === null ? 'Add' : 'Edit'} {editor.kind}
         </h3>
+        {error ? <div style={{ color: '#f66', marginBottom: '1rem', padding: '0.5rem', border: '1px solid #f66', borderRadius: 4 }}>{error}</div> : null}
         {backendDef ? (
           <FormProvider {...methods}>
             <form onSubmit={methods.handleSubmit(onSubmit)}>
@@ -386,7 +393,7 @@ function BackendFormFields({
           return (
             <label key={field.key} style={{ display: 'block', marginBottom: '0.5rem' }}>
               <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
-              <select style={{ width: '100%' }} {...register(fieldPath)}>
+              <select style={{ width: '100%', borderColor: errorMessage ? '#f66' : undefined }} {...register(fieldPath)}>
                 {field.enum.map((option) => (
                   <option key={option} value={option}>
                     {option}
@@ -404,7 +411,7 @@ function BackendFormFields({
               <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
               <input
                 type="number"
-                style={{ width: '100%' }}
+                style={{ width: '100%', borderColor: errorMessage ? '#f66' : undefined }}
                 {...register(fieldPath, { valueAsNumber: true })}
               />
               {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
@@ -417,7 +424,7 @@ function BackendFormFields({
             <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
             <input
               type={field.secret ? 'password' : 'text'}
-              style={{ width: '100%' }}
+              style={{ width: '100%', borderColor: errorMessage ? '#f66' : undefined }}
               {...register(fieldPath)}
             />
             {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
@@ -429,7 +436,7 @@ function BackendFormFields({
 }
 
 function ArrayFieldManager({ field, path }: { field: ConfigSchemaFieldSpec, path: string }) {
-  const { control, register } = useFormContext();
+  const { control, register, formState: { errors } } = useFormContext();
   const { fields, append, remove } = useFieldArray({ control, name: path });
   
   return (
@@ -450,33 +457,41 @@ function ArrayFieldManager({ field, path }: { field: ConfigSchemaFieldSpec, path
       
       {fields.length === 0 ? <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>No items.</div> : null}
       
-      {fields.map((item, idx) => (
-        <div key={item.id} style={{ marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: 4 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-            <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Item #{idx}</span>
-            <button
-              type="button"
-              style={{ fontSize: '0.7rem', padding: '2px 6px' }}
-              onClick={() => remove(idx)}
-            >
-              Remove
-            </button>
+      {fields.map((item, idx) => {
+        const itemError = path.split('.').reduce((obj: any, key) => (obj ? obj[key] : undefined), errors)?.[idx];
+        const errorMessage = itemError?.message as string | undefined;
+
+        return (
+          <div key={item.id} style={{ marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: 4 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Item #{idx}</span>
+              <button
+                type="button"
+                style={{ fontSize: '0.7rem', padding: '2px 6px' }}
+                onClick={() => remove(idx)}
+              >
+                Remove
+              </button>
+            </div>
+            
+            {field.items && field.items.length > 0 && field.items[0].key !== "" ? (
+              <BackendFormFields
+                fields={field.items}
+                path={`${path}.${idx}`}
+              />
+            ) : (
+              <>
+                <input
+                  type="text"
+                  style={{ width: '100%', borderColor: errorMessage ? '#f66' : undefined }}
+                  {...register(`${path}.${idx}` as const)}
+                />
+                {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
+              </>
+            )}
           </div>
-          
-          {field.items && field.items.length > 0 && field.items[0].key !== "" ? (
-            <BackendFormFields
-              fields={field.items}
-              path={`${path}.${idx}`}
-            />
-          ) : (
-            <input
-              type="text"
-              style={{ width: '100%' }}
-              {...register(`${path}.${idx}` as const)}
-            />
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
