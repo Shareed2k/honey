@@ -260,7 +260,15 @@ function CodeLoadingFallback({ code }: { code: string }) {
 }
 
 export function App() {
-  const [tab, setTab] = useState<Tab>('search');
+  const initParams = new URLSearchParams(window.location.search);
+  
+  const [tab, setTab] = useState<Tab>(() => {
+    const val = initParams.get('tab');
+    if (val === 'search' || val === 'files' || val === 'backends' || val === 'config' || val === 'recipes' || val === 'tunnels') {
+      return val as Tab;
+    }
+    return 'search';
+  });
   const [tokenMsg, setTokenMsg] = useState('');
   const [meta, setMeta] = useState<{
     version: string;
@@ -271,12 +279,18 @@ export function App() {
   const [backends, setBackends] = useState<BackendRow[]>([]);
   const [backErr, setBackErr] = useState<string | null>(null);
 
-  const [name, setName] = useState('');
-  const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
-  const [selectedBackends, setSelectedBackends] = useState<string[]>([]);
+  const [name, setName] = useState(() => initParams.get('name') || '');
+  const [selectedProviders, setSelectedProviders] = useState<string[]>(() => {
+    const val = initParams.get('selectedProviders');
+    return val ? val.split(',') : [];
+  });
+  const [selectedBackends, setSelectedBackends] = useState<string[]>(() => {
+    const val = initParams.get('selectedBackends');
+    return val ? val.split(',') : [];
+  });
   const [providerIds, setProviderIds] = useState<string[]>([]);
   const [records, setRecords] = useState<HostRecord[]>([]);
-  const [resultFilter, setResultFilter] = useState('');
+  const [resultFilter, setResultFilter] = useState(() => initParams.get('resultFilter') || '');
   const [searchErr, setSearchErr] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
 
@@ -310,8 +324,8 @@ export function App() {
   const [replayRecord, setReplayRecord] = useState<HostRecord | null>(null);
   const [replayItems, setReplayItems] = useState<RecordingListEntry[]>([]);
   const [replayErr, setReplayErr] = useState<string | null>(null);
-  const [recordWebSession, setRecordWebSession] = useState(false);
-  const [sshUser, setSshUser] = useState(() => '');
+  const [recordWebSession, setRecordWebSession] = useState(() => initParams.get('recordWebSession') === 'true');
+  const [sshUser, setSshUser] = useState(() => initParams.get('sshUser') || '');
 
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadTargetIdx, setUploadTargetIdx] = useState(0);
@@ -326,12 +340,16 @@ export function App() {
   const providerMenuRef = useRef<HTMLDivElement>(null);
   const backendMenuRef = useRef<HTMLDivElement>(null);
 
-  const [selectedKeys, setSelectedKeys] = useState<Record<string, boolean>>({});
+  const [selectedKeys, setSelectedKeys] = useState<Record<string, boolean>>(() => {
+    const val = initParams.get('selectedKeys');
+    if (!val) return {};
+    return val.split(',').reduce((acc, key) => ({ ...acc, [key]: true }), {});
+  });
   /** Row click (outside actions/checkbox) shows primary + extra IPs in the panel below the table. */
   const [hostDetailRecord, setHostDetailRecord] = useState<HostRecord | null>(null);
   /** Mirrors the HostPicker's filtered+visible records (drives "Select visible"). */
   const [visibleRecords, setVisibleRecords] = useState<HostRecord[]>([]);
-  const [execCommand, setExecCommand] = useState('');
+  const [execCommand, setExecCommand] = useState(() => initParams.get('execCommand') || '');
   const [execBusy, setExecBusy] = useState(false);
   const [execErr, setExecErr] = useState<string | null>(null);
   const [execResults, setExecResults] = useState<HostExecResultRow[] | null>(null);
@@ -383,6 +401,71 @@ export function App() {
       transferAbortRef.current?.abort();
       transferAbortRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const originalString = params.toString();
+
+    // Tab
+    if (tab && tab !== 'search') params.set('tab', tab);
+    else params.delete('tab');
+
+    // Filter Name
+    if (name) params.set('name', name);
+    else params.delete('name');
+
+    // SSH User
+    if (sshUser) params.set('sshUser', sshUser);
+    else params.delete('sshUser');
+
+    // Record Web Session
+    if (recordWebSession) params.set('recordWebSession', 'true');
+    else params.delete('recordWebSession');
+
+    // Result Filter
+    if (resultFilter) params.set('resultFilter', resultFilter);
+    else params.delete('resultFilter');
+
+    // Exec Command
+    if (execCommand) params.set('execCommand', execCommand);
+    else params.delete('execCommand');
+
+    // Providers
+    if (selectedProviders.length > 0) params.set('selectedProviders', selectedProviders.join(','));
+    else params.delete('selectedProviders');
+
+    // Backends
+    if (selectedBackends.length > 0) params.set('selectedBackends', selectedBackends.join(','));
+    else params.delete('selectedBackends');
+
+    // Selected Keys
+    const keys = Object.keys(selectedKeys).filter((k) => selectedKeys[k]);
+    if (keys.length > 0) params.set('selectedKeys', keys.join(','));
+    else params.delete('selectedKeys');
+
+    // Only update if changed
+    if (params.toString() !== originalString) {
+      window.history.replaceState(null, '', `?${params.toString()}`);
+    }
+  }, [
+    tab,
+    name,
+    sshUser,
+    recordWebSession,
+    resultFilter,
+    execCommand,
+    selectedProviders,
+    selectedBackends,
+    selectedKeys,
+  ]);
+
+  // Initial auto-search if token is present
+  useEffect(() => {
+    if (getToken()) {
+      void runSearch();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -841,10 +924,8 @@ export function App() {
       if (!r.ok) {
         setSearchErr((j as { error?: string }).error || r.statusText);
         setRecords([]);
-        setSelectedKeys({});
         return;
       }
-      setSelectedKeys({});
       setExecResults(null);
       setExecErr(null);
       setRecords((j as { records: HostRecord[] }).records || []);
