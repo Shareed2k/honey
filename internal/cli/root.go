@@ -10,6 +10,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/logger"
 	_ "github.com/shareed2k/honey/internal/provider/all" // register all providers natively during boot
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 var (
@@ -46,6 +47,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDebugLog, "debug-log", "", "Path to write debug logs (disables debug logging if empty)")
 	rootCmd.PersistentFlags().StringVar(&flagRecordDir, "record-dir", "", "Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default <directory of config.yaml>/records")
 
+	rootCmd.PersistentFlags().DurationVar(&flagCacheTTL, "cache-ttl", searchrun.DefaultCacheTTL, "Cache time-to-live (host discovery)")
+	rootCmd.PersistentFlags().BoolVar(&flagNoCache, "no-cache", false, "Bypass read/write cache (host discovery)")
+	rootCmd.PersistentFlags().BoolVar(&flagRefresh, "refresh", false, "Ignore cached entries and refresh (host discovery)")
+	rootCmd.PersistentFlags().StringVar(&flagCacheDir, "cache-dir", "", "Override cache directory (default: XDG_CACHE_HOME/honey)")
+
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.SilenceUsage = true
 	rootCmd.SetOut(os.Stdout)
@@ -59,5 +65,14 @@ func recordDirFlagChanged(cmd *cobra.Command) bool {
 		return false
 	}
 	f := cmd.Root().PersistentFlags().Lookup("record-dir")
+	return f != nil && f.Changed
+}
+
+// rootPersistentFlagChanged reports whether a root-level persistent flag was set on the command line.
+func rootPersistentFlagChanged(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+	f := cmd.Root().PersistentFlags().Lookup(name)
 	return f != nil && f.Changed
 }

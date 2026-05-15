@@ -10,6 +10,10 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
+// DefaultCacheTTL is the product default time-to-live for host-discovery disk cache
+// when neither CLI flags, API fields, nor config defaults.cache_ttl override it.
+const DefaultCacheTTL = 10 * time.Minute
+
 // RunSearch executes hosts.RunParallel with an on-disk cache under cacheDir.
 // If cacheDir is empty, hosts.DefaultCacheDir is used.
 func RunSearch(

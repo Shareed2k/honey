@@ -193,8 +193,9 @@ backends:
 # Regex filter
 ./honey search --name-regex '^prod-'
 
-# Cache (default TTL 1m); force refresh
+# Cache (default TTL 10m; flags are global — see `honey --help` Global Flags); force refresh
 ./honey search --refresh foo
+./honey --refresh search foo
 ./honey search --no-cache foo
 ./honey search --cache-ttl 5m foo
 ```

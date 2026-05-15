@@ -67,10 +67,6 @@ func init() {
 	searchCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Skip interactive UI (same as --output=json)")
 	searchCmd.Flags().BoolVar(&flagJSON, "json", false, "Print results as JSON (same as --output=json)")
 	searchCmd.Flags().StringVar(&flagSSHUser, "ssh-user", os.Getenv("USER"), "Default SSH user for connect actions")
-	searchCmd.Flags().DurationVar(&flagCacheTTL, "cache-ttl", time.Minute, "Cache time-to-live")
-	searchCmd.Flags().BoolVar(&flagNoCache, "no-cache", false, "Bypass read/write cache")
-	searchCmd.Flags().BoolVar(&flagRefresh, "refresh", false, "Ignore cached entries and refresh")
-	searchCmd.Flags().StringVar(&flagCacheDir, "cache-dir", "", "Override cache directory (default: XDG_CACHE_HOME/honey)")
 
 	searchCmd.Flags().StringVar(&flagGCPProject, "gcp-project", "", "GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)")
 	searchCmd.Flags().StringVar(&flagGCPZone, "gcp-zone", "", "Limit GCP to a single zone (default: all zones)")
@@ -141,10 +137,10 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 	if cfg != nil {
 		if d, ok, perr := cfg.Defaults.DefaultsCacheTTL(); perr != nil {
 			return nil, "", nil, cfgPath, fmt.Errorf("defaults.cache_ttl: %w", perr)
-		} else if ok && !cmd.Flags().Changed("cache-ttl") {
+		} else if ok && !rootPersistentFlagChanged(cmd, "cache-ttl") {
 			cacheTTL = d
 		}
-		if s := strings.TrimSpace(cfg.Defaults.CacheDir); s != "" && !cmd.Flags().Changed("cache-dir") {
+		if s := strings.TrimSpace(cfg.Defaults.CacheDir); s != "" && !rootPersistentFlagChanged(cmd, "cache-dir") {
 			cacheDir = s
 		}
 		if s := strings.TrimSpace(cfg.Defaults.SSHUser); s != "" && !cmd.Flags().Changed("ssh-user") {

@@ -104,14 +104,14 @@ If notify is enabled but no matching env configuration exists (or `services` sel
 honey cue-exec &lt;recipe.cue&gt; [name] [flags]
 ```
 
+Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) uses the same **global** flags as `honey search` (see **Global Flags** in `honey cue-exec --help`). Default cache TTL is **10 minutes** unless overridden by `defaults.cache_ttl` in honey YAML.
+
 ### Options
 
 ```
       --aws-profile string            AWS shared config profile
       --aws-region string             AWS region (default: from profile/env)
       --backends string               Comma-separated backend names (YAML backends.*.name); only those entries run
-      --cache-dir string              Override cache directory (default: XDG_CACHE_HOME/honey)
-      --cache-ttl duration            Cache time-to-live (default 1m0s)
       --config string                 Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)
       --consul-addr string            Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)
       --consul-datacenter string      Consul datacenter
@@ -128,7 +128,6 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
       --kubeconfig string             Path to kubeconfig file
       --name string                   Substring filter on instance/node/pod name (case-insensitive)
       --name-regex string             Regex filter on name (overrides --name substring)
-      --no-cache                      Bypass read/write cache
       --no-ui                         Skip interactive UI (same as --output=json)
   -o, --output string                 Output format: tui, table, json (default "tui")
       --provider string               Comma-separated: gcp,aws,k8s,consul,proxmox (default: all)
@@ -138,15 +137,18 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
       --proxmox-token-secret string   Proxmox token secret
       --proxmox-url string            Proxmox API URL (e.g. https://10.0.0.1:8006/api2/json)
       --proxmox-user string           Proxmox user (e.g. root@pam)
-      --refresh                       Ignore cached entries and refresh
       --ssh-user string               Default SSH user for connect actions (default "shareed2k")
 ```
 
-### Options inherited from parent commands
+### Global flags
 
 ```
-      --debug-log string    Path to write debug logs (disables debug logging if empty)
-      --record-dir string   Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records
+      --cache-dir string     Override cache directory (default: XDG_CACHE_HOME/honey)
+      --cache-ttl duration   Cache time-to-live (host discovery) (default 10m0s)
+      --debug-log string     Path to write debug logs (disables debug logging if empty)
+      --no-cache             Bypass read/write cache (host discovery)
+      --record-dir string    Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records
+      --refresh              Ignore cached entries and refresh (host discovery)
 ```
 
 ### SEE ALSO

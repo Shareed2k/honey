@@ -14,10 +14,14 @@ Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox
 ### Options
 
 ```
-      --debug-log string    Path to write debug logs (disables debug logging if empty)
-  -h, --help                help for honey
-      --record-dir string   Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records
-  -v, --version             version for honey
+      --cache-dir string     Override cache directory (default: XDG_CACHE_HOME/honey)
+      --cache-ttl duration   Cache time-to-live (host discovery) (default 10m0s)
+      --debug-log string     Path to write debug logs (disables debug logging if empty)
+  -h, --help                 help for honey
+      --no-cache             Bypass read/write cache (host discovery)
+      --record-dir string    Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records
+      --refresh              Ignore cached entries and refresh (host discovery)
+  -v, --version              version for honey
 ```
 
 ### SEE ALSO

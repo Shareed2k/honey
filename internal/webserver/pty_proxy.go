@@ -1,11 +1,15 @@
 package webserver
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -13,6 +17,46 @@ import (
 
 	"github.com/shareed2k/honey/internal/ui"
 )
+
+// ptyMuxSessionName builds a tmux/zellij session name from the client-provided id.
+// Only safe ASCII characters are kept; if nothing remains, a short stable digest is used
+// so multiplexer argv never embed raw untrusted strings (gosec G204).
+func ptyMuxSessionName(sessionID string) string {
+	const prefix = "honey_"
+	s := strings.TrimSpace(sessionID)
+	var b strings.Builder
+	b.Grow(len(prefix) + 64)
+	b.WriteString(prefix)
+	for i := 0; i < len(s) && b.Len() < len(prefix)+64; i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+			b.WriteByte(c)
+		}
+	}
+	if b.Len() == len(prefix) {
+		sum := sha256.Sum256([]byte(s))
+		b.WriteString(hex.EncodeToString(sum[:8]))
+	}
+	return b.String()
+}
+
+// ptyWinsize clamps terminal dimensions to a valid pty.Winsize range (defaults match handleWebSSH).
+func ptyWinsize(cols, rows int) pty.Winsize {
+	if cols <= 0 {
+		cols = 120
+	}
+	if rows <= 0 {
+		rows = 32
+	}
+	if cols > math.MaxUint16 {
+		cols = math.MaxUint16
+	}
+	if rows > math.MaxUint16 {
+		rows = math.MaxUint16
+	}
+	return pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}
+}
 
 func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, recorder *ui.SessionRecorder) error {
 	zap.L().Debug("handleWebPtyProxy: starting local multiplexer", zap.String("session_id", hello.SessionID))
@@ -24,14 +68,16 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 	}
 
 	encodedPayload := base64.StdEncoding.EncodeToString(helloRaw)
+	muxName := ptyMuxSessionName(hello.SessionID)
 
-	// Build multiplexer command
+	// Build multiplexer command (argv: fixed multiplexer literals, sanitized session name,
+	// path from os.Executable(), base64(JSON) from the same WS hello the server already accepted).
 	var cmd *exec.Cmd
 	if _, err := exec.LookPath("zellij"); err == nil {
-		cmd = exec.Command("zellij", "attach", "-c", "-f", fmt.Sprintf("honey_%s", hello.SessionID), "--", bin, "pty-proxy", encodedPayload)
+		cmd = exec.Command("zellij", "attach", "-c", "-f", muxName, "--", bin, "pty-proxy", encodedPayload) // #nosec G204 -- see comment above
 		zap.L().Debug("handleWebPtyProxy: using zellij", zap.Strings("args", cmd.Args))
 	} else if _, err := exec.LookPath("tmux"); err == nil {
-		cmd = exec.Command("tmux", "new-session", "-A", "-D", "-s", fmt.Sprintf("honey_%s", hello.SessionID), bin, "pty-proxy", encodedPayload)
+		cmd = exec.Command("tmux", "new-session", "-A", "-D", "-s", muxName, bin, "pty-proxy", encodedPayload) // #nosec G204 -- see comment above
 		zap.L().Debug("handleWebPtyProxy: using tmux", zap.Strings("args", cmd.Args))
 	} else {
 		zap.L().Debug("handleWebPtyProxy: no multiplexer found, falling back")
@@ -46,7 +92,8 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 	zap.L().Debug("handleWebPtyProxy: pty started successfully")
 	defer ptmx.Close()
 
-	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(hello.Cols), Rows: uint16(hello.Rows)}); err != nil {
+	ws := ptyWinsize(hello.Cols, hello.Rows)
+	if err := pty.Setsize(ptmx, &ws); err != nil {
 		zap.L().Warn("failed to resize pty", zap.Error(err))
 	}
 
@@ -94,7 +141,8 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 						if recorder != nil {
 							recorder.RecordResize(rz.Cols, rz.Rows)
 						}
-						_ = pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(rz.Cols), Rows: uint16(rz.Rows)})
+						ws := ptyWinsize(rz.Cols, rz.Rows)
+						_ = pty.Setsize(ptmx, &ws)
 					}
 				} else if rz.Type == "detach" {
 					return // Just stop pumping, let PTY live (it will close via defer)
