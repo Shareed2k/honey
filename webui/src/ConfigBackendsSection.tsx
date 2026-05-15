@@ -77,6 +77,20 @@ function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
     } else if (f.type === 'array') {
       if (f.items && f.items.length > 0 && f.items[0].key !== '') {
         fieldSchema = z.array(buildZodSchema(f.items));
+      } else if (f.items && f.items.length > 0 && f.items[0].type === 'string') {
+        let itemStrSchema: z.ZodTypeAny = z.string();
+        if (f.items[0].format === 'ip') {
+          itemStrSchema = z.string().refine((val) => {
+            if (!val) return true;
+            return z.ipv4().safeParse(val).success || z.ipv6().safeParse(val).success;
+          }, { message: `${f.label} items must be valid IP addresses` });
+        } else if (f.items[0].format === 'url') {
+          itemStrSchema = z.string().refine((val) => {
+            if (!val) return true;
+            return z.string().url().safeParse(val).success;
+          }, { message: `${f.label} items must be valid URLs` });
+        }
+        fieldSchema = z.array(itemStrSchema);
       } else {
         fieldSchema = z.array(z.string());
       }

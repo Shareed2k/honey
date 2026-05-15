@@ -460,10 +460,13 @@ export function App() {
     selectedKeys,
   ]);
 
-  // Initial auto-search if token is present
+  // Initial auto-search if token is present and URL contains search criteria
   useEffect(() => {
     if (getToken()) {
-      void runSearch();
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('name') || params.has('selectedProviders') || params.has('selectedBackends') || params.has('selectedKeys')) {
+        void runSearch();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -516,10 +519,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!meta?.session_recording_available) {
+    if (meta !== null && !meta.session_recording_available) {
       setRecordWebSession(false);
     }
-  }, [meta?.session_recording_available]);
+  }, [meta]);
 
   useEffect(() => {
     void loadMeta();
