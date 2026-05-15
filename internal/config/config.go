@@ -56,8 +56,8 @@ type LocalBackend struct {
 
 // LocalHost represents a manually defined static server.
 type LocalHost struct {
-	Name      string            `yaml:"name" json:"name" honey:"label=Name"`
-	PrimaryIP string            `yaml:"primary_ip" json:"primary_ip" honey:"label=Primary IP"`
+	Name      string            `yaml:"name" json:"name" honey:"label=Name;required"`
+	PrimaryIP string            `yaml:"primary_ip" json:"primary_ip" honey:"label=Primary IP;format=ip;required"`
 	ExtraIPs  []string          `yaml:"extra_ips,omitempty" json:"extra_ips,omitempty" honey:"label=Extra IPs"`
 	Zone      string            `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone"`
 	Region    string            `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region"`
@@ -66,21 +66,21 @@ type LocalHost struct {
 
 // GCPBackend configures one Google Cloud Compute Engine listing.
 type GCPBackend struct {
-	Name    string `yaml:"name" json:"name" honey:"label=Name"`
-	Project string `yaml:"project" json:"project" honey:"label=Project"`
+	Name    string `yaml:"name" json:"name" honey:"label=Name;required"`
+	Project string `yaml:"project" json:"project" honey:"label=Project;required"`
 	Zone    string `yaml:"zone" json:"zone" honey:"label=Zone"`
 }
 
 // AWSBackend configures one Amazon EC2 listing.
 type AWSBackend struct {
-	Name    string `yaml:"name" json:"name" honey:"label=Name"`
-	Profile string `yaml:"profile" json:"profile" honey:"label=Profile"`
+	Name    string `yaml:"name" json:"name" honey:"label=Name;required"`
+	Profile string `yaml:"profile" json:"profile" honey:"label=Profile;required"`
 	Region  string `yaml:"region" json:"region" honey:"label=Region"`
 }
 
 // KubernetesBackend configures one Kubernetes nodes/pods listing.
 type KubernetesBackend struct {
-	Name       string `yaml:"name" json:"name" honey:"label=Name"`
+	Name       string `yaml:"name" json:"name" honey:"label=Name;required"`
 	Context    string `yaml:"context" json:"context" honey:"label=Context"`
 	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig" honey:"label=Kubeconfig path"`
 	Mode       string `yaml:"mode" json:"mode" honey:"label=Mode;enum=nodes|pods;enum_as_warning;default=nodes"`
@@ -89,17 +89,17 @@ type KubernetesBackend struct {
 
 // ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
-	Name       string `yaml:"name" json:"name" honey:"label=Name"`
-	Addr       string `yaml:"addr" json:"addr" honey:"label=Address"`
+	Name       string `yaml:"name" json:"name" honey:"label=Name;required"`
+	Addr       string `yaml:"addr" json:"addr" honey:"label=Address;format=url;required"`
 	Datacenter string `yaml:"datacenter" json:"datacenter" honey:"label=Datacenter"`
 	Token      string `yaml:"token" json:"token" honey:"label=Token;secret"`
 }
 
 // ProxmoxBackend configures one Proxmox VE listing.
 type ProxmoxBackend struct {
-	Name        string `yaml:"name" json:"name" honey:"label=Name"`
-	URL         string `yaml:"url" json:"url" honey:"label=URL"`
-	User        string `yaml:"user" json:"user" honey:"label=User"`
+	Name        string `yaml:"name" json:"name" honey:"label=Name;required"`
+	URL         string `yaml:"url" json:"url" honey:"label=URL;format=url;required"`
+	User        string `yaml:"user" json:"user" honey:"label=User;required"`
 	Password    string `yaml:"password" json:"password" honey:"label=Password;secret"`
 	TokenID     string `yaml:"token_id" json:"token_id" honey:"label=Token ID"`
 	TokenSecret string `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret"`
@@ -146,6 +146,9 @@ func ParseYAML(b []byte) (*File, error) {
 	var f File
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if err := f.Validate(); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return &f, nil
 }

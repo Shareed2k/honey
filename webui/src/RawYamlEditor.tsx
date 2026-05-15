@@ -251,6 +251,21 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null): Diagnosti
               );
               continue;
             }
+            if (fieldSpec.type === 'array') {
+              if (!isSeq(fieldPair.value)) {
+                const r = nodeRange(fieldPair.value ?? fieldPair.key);
+                pushDiag(
+                  diagnostics,
+                  `backends.${backendKey}[${index}].${fieldKey} must be a list/array.`,
+                  'error',
+                  r.from,
+                  r.to,
+                  text.length,
+                );
+              }
+              continue;
+            }
+
             if (!isScalar(fieldPair.value)) {
               const r = nodeRange(fieldPair.value ?? fieldPair.key);
               pushDiag(

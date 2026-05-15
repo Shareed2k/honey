@@ -189,7 +189,7 @@ export type RecordingEvent = {
   result?: HostExecResultRow;
 };
 
-export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer';
+export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer' | 'array';
 
 export type FileBrowserEntry = {
   name: string;
@@ -234,6 +234,7 @@ export type ConfigSchemaFieldSpec = {
   enum?: string[];
   enum_as_warning?: boolean;
   default?: unknown;
+  items?: ConfigSchemaFieldSpec[];
 };
 
 export type ConfigBackendSchema = {

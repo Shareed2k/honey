@@ -26,6 +26,7 @@ type SchemaField struct {
 	Key           string          `json:"key"`
 	Label         string          `json:"label"`
 	Type          SchemaFieldType `json:"type"`
+	Format        string          `json:"format,omitempty"` // "ip", "url", etc.
 	Required      bool            `json:"required,omitempty"`
 	Secret        bool            `json:"secret,omitempty"`
 	Enum          []string        `json:"enum,omitempty"`
@@ -235,6 +236,7 @@ func schemaFieldsFromStruct(t reflect.Type) []SchemaField {
 			Key:      key,
 			Label:    firstNonEmpty(opts["label"], key),
 			Type:     fieldType,
+			Format:   opts["format"],
 			Required: hasHoneyFlag(opts, "required"),
 			Secret:   hasHoneyFlag(opts, "secret"),
 			Items:    items,
