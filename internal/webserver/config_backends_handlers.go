@@ -70,6 +70,10 @@ func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
+	if err := cfg.Validate(); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
 	if err := saveConfigFile(cfgPath, cfg); err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -102,6 +106,10 @@ func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := replaceBackendByKind(cfg, kind, idx, body); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := cfg.Validate(); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}

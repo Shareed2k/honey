@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useForm, useFieldArray, FormProvider, useFormContext } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { apiDelete, apiGet, apiPost, apiPutJson } from './api';
 import type { ConfigSchemaFieldSpec, ConfigUISchema } from './api';
 
@@ -12,6 +15,10 @@ type Props = {
 function initDraft(fields: ConfigSchemaFieldSpec[]): Record<string, unknown> {
   const draft: Record<string, unknown> = {};
   for (const field of fields) {
+    if (field.type === 'array') {
+      draft[field.key] = [];
+      continue;
+    }
     if (field.default !== undefined) {
       draft[field.key] = field.default;
       continue;
@@ -27,6 +34,55 @@ function initDraft(fields: ConfigSchemaFieldSpec[]): Record<string, unknown> {
     draft[field.key] = '';
   }
   return draft;
+}
+
+function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  
+  for (const f of fields) {
+    let fieldSchema: z.ZodTypeAny;
+    
+    if (f.type === 'string') {
+      let strSchema: z.ZodTypeAny = z.string();
+      if (f.format === 'ip') {
+        // Zod v4 uses z.ipv4().or(z.ipv6()) for generic IP validation
+        // since z.string().ip() was replaced/removed.
+        strSchema = z.union([
+          z.ipv4({ message: `${f.label} must be a valid IPv4 address` }),
+          z.ipv6({ message: `${f.label} must be a valid IPv6 address` })
+        ]);
+      } else if (f.format === 'url') {
+        strSchema = (strSchema as z.ZodString).url({ message: `${f.label} must be a valid URL` });
+      }
+      fieldSchema = strSchema;
+    } else if (f.type === 'integer') {
+      fieldSchema = z.coerce.number().int();
+    } else if (f.type === 'boolean') {
+      fieldSchema = z.boolean();
+    } else if (f.type === 'array') {
+      if (f.items && f.items.length > 0 && f.items[0].key !== '') {
+        fieldSchema = z.array(buildZodSchema(f.items));
+      } else {
+        fieldSchema = z.array(z.string());
+      }
+    } else {
+      fieldSchema = z.any();
+    }
+
+    if (f.enum && f.enum.length > 0) {
+      fieldSchema = z.enum(f.enum as [string, ...string[]]);
+    }
+
+    if (!f.required) {
+      fieldSchema = z.union([fieldSchema, z.literal(''), z.undefined()]).optional();
+    } else if (f.type === 'string') {
+      fieldSchema = (fieldSchema as z.ZodString).min(1, { message: `${f.label} is required` });
+    }
+    
+    shape[f.key] = fieldSchema;
+  }
+  
+  return z.object(shape);
 }
 
 export function ConfigBackendsSection({ onSaved, schema }: Props) {
@@ -55,6 +111,7 @@ export function ConfigBackendsSection({ onSaved, schema }: Props) {
       kubernetes: j.kubernetes || [],
       consul: j.consul || [],
       proxmox: j.proxmox || [],
+      local: j.local || [],
     });
   }, []);
 
@@ -92,23 +149,6 @@ export function ConfigBackendsSection({ onSaved, schema }: Props) {
 
   const openEdit = (kind: string, index: number, row: unknown) => {
     setEditor({ kind, index, draft: { ...(row as Record<string, unknown>) } });
-  };
-
-  const saveEditor = () => {
-    if (!editor) {
-      return;
-    }
-    const { kind, index, draft } = editor;
-    const body = draft;
-    void (async () => {
-      const ok =
-        index === null
-          ? await persist(() => apiPost(`/api/v1/config/backends/${kind}`, body))
-          : await persist(() => apiPutJson(`/api/v1/config/backends/${kind}/${index}`, body));
-      if (ok) {
-        setEditor(null);
-      }
-    })();
   };
 
   const remove = (kind: string, index: number) => {
@@ -190,74 +230,142 @@ export function ConfigBackendsSection({ onSaved, schema }: Props) {
       ) : null}
 
       {editor ? (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 50,
-          }}
-        >
-          <div
-            style={{
-              background: '#1a1a1a',
-              padding: '1rem',
-              borderRadius: 8,
-              minWidth: 'min(420px, 92vw)',
-              maxHeight: '90vh',
-              overflow: 'auto',
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>
-              {editor.index === null ? 'Add' : 'Edit'} {editor.kind}
-            </h3>
-            {schema?.backends[editor.kind] ? (
-              <BackendFormFields
-                fields={schema.backends[editor.kind].fields}
-                draft={editor.draft}
-                setDraft={(d) => setEditor({ ...editor, draft: d })}
-              />
-            ) : (
-              <p style={{ color: '#f66' }}>Missing schema for backend kind "{editor.kind}".</p>
-            )}
-            <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-              <button type="button" className="primary" disabled={busy} onClick={() => saveEditor()}>
-                Save
-              </button>
-              <button type="button" disabled={busy} onClick={() => setEditor(null)}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditorModal 
+           editor={editor} 
+           schema={schema} 
+           busy={busy} 
+           onClose={() => setEditor(null)} 
+           onSave={async (body) => {
+             const { kind, index } = editor;
+             const ok = index === null
+               ? await persist(() => apiPost(`/api/v1/config/backends/${kind}`, body))
+               : await persist(() => apiPutJson(`/api/v1/config/backends/${kind}/${index}`, body));
+             if (ok) {
+               setEditor(null);
+             }
+           }} 
+        />
       ) : null}
     </section>
   );
 }
 
+function EditorModal({
+  editor,
+  schema,
+  busy,
+  onClose,
+  onSave
+}: {
+  editor: { kind: string; index: number | null; draft: Record<string, unknown> };
+  schema: ConfigUISchema | null;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (body: any) => Promise<void>;
+}) {
+  const backendDef = schema?.backends[editor.kind];
+  
+  const zodSchema = useMemo(() => {
+    if (!backendDef) return z.any();
+    return buildZodSchema(backendDef.fields);
+  }, [backendDef]);
+
+  const methods = useForm({
+    resolver: zodResolver(zodSchema),
+    defaultValues: editor.draft,
+    mode: 'onChange',
+  });
+
+  const onSubmit = (data: any) => {
+    return onSave(data);
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 50,
+      }}
+    >
+      <div
+        style={{
+          background: '#1a1a1a',
+          padding: '1rem',
+          borderRadius: 8,
+          minWidth: 'min(420px, 92vw)',
+          maxHeight: '90vh',
+          overflow: 'auto',
+        }}
+      >
+        <h3 style={{ marginTop: 0 }}>
+          {editor.index === null ? 'Add' : 'Edit'} {editor.kind}
+        </h3>
+        {backendDef ? (
+          <FormProvider {...methods}>
+            <form onSubmit={methods.handleSubmit(onSubmit)}>
+              <BackendFormFields fields={backendDef.fields} path="" />
+              <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
+                <button type="submit" className="primary" disabled={busy}>
+                  Save
+                </button>
+                <button type="button" disabled={busy} onClick={onClose}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </FormProvider>
+        ) : (
+          <p style={{ color: '#f66' }}>Missing schema for backend kind "{editor.kind}".</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BackendFormFields({
   fields,
-  draft,
-  setDraft,
+  path
 }: {
   fields: ConfigSchemaFieldSpec[];
-  draft: Record<string, unknown>;
-  setDraft: (d: Record<string, unknown>) => void;
+  path: string;
 }) {
-  const set = (k: string, v: string | boolean | number) => setDraft({ ...draft, [k]: v });
+  const { register, formState: { errors } } = useFormContext();
 
   return (
     <>
       {fields.map((field) => {
         const label = field.required ? `${field.label} *` : field.label;
+        const fieldPath = path ? `${path}.${field.key}` : field.key;
+        
+        // Deep error resolution for nested arrays
+        const error = fieldPath.split('.').reduce((obj: any, key) => (obj ? obj[key] : undefined), errors);
+        const errorMessage = error?.message as string | undefined;
+
+        if (field.type === 'array') {
+          return (
+            <div key={field.key} style={{ marginBottom: '1rem', padding: '0.5rem', border: '1px solid #333', borderRadius: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <strong>{label}</strong>
+              </div>
+              
+              <ArrayFieldManager field={field} path={fieldPath} />
+              
+              {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
+            </div>
+          );
+        }
+
         if (field.type === 'boolean') {
           return (
             <label key={field.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.5rem' }}>
-              <input type="checkbox" checked={Boolean(draft[field.key])} onChange={(e) => set(field.key, e.target.checked)} />
+              <input type="checkbox" {...register(fieldPath)} />
               {label}
+              {errorMessage && <span style={{ color: '#f66', fontSize: '0.75rem', marginLeft: 'auto' }}>{errorMessage}</span>}
             </label>
           );
         }
@@ -266,17 +374,14 @@ function BackendFormFields({
           return (
             <label key={field.key} style={{ display: 'block', marginBottom: '0.5rem' }}>
               <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
-              <select
-                style={{ width: '100%' }}
-                value={String(draft[field.key] ?? field.enum[0] ?? '')}
-                onChange={(e) => set(field.key, e.target.value)}
-              >
+              <select style={{ width: '100%' }} {...register(fieldPath)}>
                 {field.enum.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
               </select>
+              {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
             </label>
           );
         }
@@ -288,12 +393,9 @@ function BackendFormFields({
               <input
                 type="number"
                 style={{ width: '100%' }}
-                value={String(draft[field.key] ?? '')}
-                onChange={(e) => {
-                  const raw = e.target.value.trim();
-                  set(field.key, raw === '' ? 0 : Number.parseInt(raw, 10));
-                }}
+                {...register(fieldPath, { valueAsNumber: true })}
               />
+              {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
             </label>
           );
         }
@@ -304,12 +406,65 @@ function BackendFormFields({
             <input
               type={field.secret ? 'password' : 'text'}
               style={{ width: '100%' }}
-              value={String(draft[field.key] ?? '')}
-              onChange={(e) => set(field.key, e.target.value)}
+              {...register(fieldPath)}
             />
+            {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
           </label>
         );
       })}
     </>
+  );
+}
+
+function ArrayFieldManager({ field, path }: { field: ConfigSchemaFieldSpec, path: string }) {
+  const { control, register } = useFormContext();
+  const { fields, append, remove } = useFieldArray({ control, name: path });
+  
+  return (
+    <div>
+      <div style={{ marginBottom: '0.5rem' }}>
+        <button
+          type="button"
+          onClick={() => {
+            const newItem = field.items && field.items.length > 0 && field.items[0].key !== '' 
+                ? initDraft(field.items) 
+                : '';
+            append(newItem);
+          }}
+        >
+          Add Item
+        </button>
+      </div>
+      
+      {fields.length === 0 ? <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>No items.</div> : null}
+      
+      {fields.map((item, idx) => (
+        <div key={item.id} style={{ marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Item #{idx}</span>
+            <button
+              type="button"
+              style={{ fontSize: '0.7rem', padding: '2px 6px' }}
+              onClick={() => remove(idx)}
+            >
+              Remove
+            </button>
+          </div>
+          
+          {field.items && field.items.length > 0 && field.items[0].key !== "" ? (
+            <BackendFormFields
+              fields={field.items}
+              path={`${path}.${idx}`}
+            />
+          ) : (
+            <input
+              type="text"
+              style={{ width: '100%' }}
+              {...register(`${path}.${idx}` as const)}
+            />
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
