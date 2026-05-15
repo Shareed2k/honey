@@ -301,9 +301,26 @@ export function App() {
   const [cfgSchema, setCfgSchema] = useState<ConfigUISchema | null>(null);
   const [cfgSchemaErr, setCfgSchemaErr] = useState<string | null>(null);
 
-  const [terminals, setTerminals] = useState<TerminalSessionConfig[]>([]);
-  const [activeTermId, setActiveTermId] = useState<string | null>(null);
-  const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
+  const [terminals, setTerminals] = useState<TerminalSessionConfig[]>(() => {
+    const val = initParams.get('terminals');
+    if (!val) return [];
+    try {
+      return val.split(',').map(part => {
+        const [id, key, pve] = part.split('|');
+        const sessionRec = sessionStorage.getItem(`honey_term_${id}`);
+        const record = sessionRec ? JSON.parse(sessionRec) : { _key: key, provider: 'loading', name: 'loading', primary_ip: '' };
+        return { 
+          id: id || Math.random().toString(36).slice(2), 
+          record, 
+          pve: (pve as PveConsoleMode) || 'serial' 
+        };
+      });
+    } catch {
+      return [];
+    }
+  });
+  const [activeTermId, setActiveTermId] = useState<string | null>(() => initParams.get('activeTermId'));
+  const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(() => initParams.get('isTerminalModalOpen') === 'true');
   
   const [tunnelOpen, setTunnelOpen] = useState<{ record: HostRecord } | null>(null);
   const [tunnelLocalPort, setTunnelLocalPort] = useState('');
@@ -444,6 +461,20 @@ export function App() {
     if (keys.length > 0) params.set('selectedKeys', keys.join(','));
     else params.delete('selectedKeys');
 
+    // Terminals
+    if (terminals.length > 0) {
+      const joined = terminals.map(t => `${t.id}|${t.pve || 'serial'}`).join(',');
+      params.set('terminals', joined);
+    } else {
+      params.delete('terminals');
+    }
+
+    if (activeTermId) params.set('activeTermId', activeTermId);
+    else params.delete('activeTermId');
+
+    if (isTerminalModalOpen) params.set('isTerminalModalOpen', 'true');
+    else params.delete('isTerminalModalOpen');
+
     // Only update if changed
     if (params.toString() !== originalString) {
       window.history.replaceState(null, '', `?${params.toString()}`);
@@ -458,6 +489,9 @@ export function App() {
     selectedProviders,
     selectedBackends,
     selectedKeys,
+    terminals,
+    activeTermId,
+    isTerminalModalOpen,
   ]);
 
   // Initial auto-search if token is present and URL contains search criteria
@@ -1596,6 +1630,7 @@ export function App() {
               <>
                 <button type="button" style={termBtnStyle} onClick={() => {
                   const id = Math.random().toString(36).slice(2);
+                  sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
                   setTerminals((prev) => [...prev, { id, record: rec, pve: 'serial' }]);
                   setActiveTermId(id);
                   setIsTerminalModalOpen(true);
@@ -1607,6 +1642,7 @@ export function App() {
                     {' '}
                     <button type="button" style={vncBtnStyle} onClick={() => {
                       const id = Math.random().toString(36).slice(2);
+                      sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
                       setTerminals((prev) => [...prev, { id, record: rec, pve: 'vnc' }]);
                       setActiveTermId(id);
                       setIsTerminalModalOpen(true);
@@ -2184,6 +2220,7 @@ export function App() {
           assistAvailable={!!meta?.terminal_assist_available}
           onSetActive={setActiveTermId}
           onCloseTerminal={(id) => {
+            sessionStorage.removeItem(`honey_term_${id}`);
             setTerminals((prev) => {
               const next = prev.filter((t) => t.id !== id);
               if (activeTermId === id) {

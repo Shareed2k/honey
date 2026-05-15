@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 	"k8s.io/client-go/tools/remotecommand"
 
@@ -55,7 +56,9 @@ func hostOnly(hostPort string) string {
 	return h
 }
 
-type wsHello struct {
+// WSHello is exported so it can be unmarshaled by the honey pty-proxy subcommand.
+type WSHello struct {
+	SessionID     string       `json:"session_id"`
 	SSHUser       string       `json:"ssh_user"`
 	Record        hosts.Record `json:"record"`
 	Cols          int          `json:"cols"`
@@ -84,7 +87,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	var hello wsHello
+	var hello WSHello
 	if err := json.Unmarshal(helloRaw, &hello); err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"invalid hello json"}`))
 		return
@@ -104,6 +107,23 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	if recorder != nil {
 		recorder.RecordResize(cols, rows)
 		defer recorder.Close()
+	}
+
+	if hello.SessionID != "" {
+		zap.L().Debug("web ssh: session ID provided, attempting pty proxy", zap.String("session_id", hello.SessionID))
+		err := handleWebPtyProxy(conn, helloRaw, hello, recorder)
+		if err == nil {
+			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true}`))
+			return
+		}
+		// If error is that tmux/zellij aren't found, we just fallback to the normal ephemeral shell below!
+		if err.Error() != "neither zellij nor tmux found on the server" {
+			zap.L().Error("web ssh: pty proxy failed", zap.Error(err))
+			recorder.RecordError(err)
+			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+			return
+		}
+		zap.L().Debug("web ssh: pty proxy fallback triggered")
 	}
 
 	if isK8sPodWebTerminal(hello.Record) {
