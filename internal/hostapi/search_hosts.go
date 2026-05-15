@@ -118,7 +118,7 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 	}
 	MergeSearchDefaultsFromConfig(cfg, &q)
 
-	cacheTTL := time.Minute
+	cacheTTL := searchrun.DefaultCacheTTL
 	if s := strings.TrimSpace(in.CacheTTL); s != "" {
 		cacheTTL, err = time.ParseDuration(s)
 		if err != nil {
