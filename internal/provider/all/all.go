@@ -7,6 +7,7 @@ import (
 	_ "github.com/shareed2k/honey/internal/provider/consulprovider"
 	_ "github.com/shareed2k/honey/internal/provider/gcp"
 	_ "github.com/shareed2k/honey/internal/provider/k8sprovider"
+	_ "github.com/shareed2k/honey/internal/provider/localprovider"
 	_ "github.com/shareed2k/honey/internal/provider/proxmoxprovider"
 	_ "github.com/shareed2k/honey/internal/sshclient"
 )
