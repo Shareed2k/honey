@@ -40,24 +40,24 @@ type Defaults struct {
 // If a slice is nil or omitted, that provider is not defined by the file (use CLI defaults).
 // If a slice is non-empty, one backend is created per element.
 type Backends struct {
-	GCP        []GCPBackend        `yaml:"gcp" json:"gcp" honey:"label=Google Cloud;order=10"`
-	AWS        []AWSBackend        `yaml:"aws" json:"aws" honey:"label=AWS;order=20"`
-	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes" honey:"label=Kubernetes;order=30"`
-	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40"`
-	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50"`
-	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60"`
+	GCP        []GCPBackend        `yaml:"gcp" json:"gcp" honey:"label=Google Cloud;order=10" validate:"dive"`
+	AWS        []AWSBackend        `yaml:"aws" json:"aws" honey:"label=AWS;order=20" validate:"dive"`
+	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes" honey:"label=Kubernetes;order=30" validate:"dive"`
+	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40" validate:"dive"`
+	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50" validate:"dive"`
+	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60" validate:"dive"`
 }
 
 // LocalBackend configures manually defined host lists.
 type LocalBackend struct {
-	Name  string      `yaml:"name" json:"name" honey:"label=Name"`
-	Hosts []LocalHost `yaml:"hosts" json:"hosts" honey:"label=Hosts"`
+	Name  string      `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Hosts []LocalHost `yaml:"hosts" json:"hosts" honey:"label=Hosts" validate:"dive"`
 }
 
 // LocalHost represents a manually defined static server.
 type LocalHost struct {
-	Name      string            `yaml:"name" json:"name" honey:"label=Name;required"`
-	PrimaryIP string            `yaml:"primary_ip" json:"primary_ip" honey:"label=Primary IP;format=ip;required"`
+	Name      string            `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	PrimaryIP string            `yaml:"primary_ip" json:"primary_ip" honey:"label=Primary IP" validate:"required,ip"`
 	ExtraIPs  []string          `yaml:"extra_ips,omitempty" json:"extra_ips,omitempty" honey:"label=Extra IPs"`
 	Zone      string            `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone"`
 	Region    string            `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region"`
@@ -66,21 +66,21 @@ type LocalHost struct {
 
 // GCPBackend configures one Google Cloud Compute Engine listing.
 type GCPBackend struct {
-	Name    string `yaml:"name" json:"name" honey:"label=Name;required"`
-	Project string `yaml:"project" json:"project" honey:"label=Project;required"`
+	Name    string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Project string `yaml:"project" json:"project" honey:"label=Project" validate:"required"`
 	Zone    string `yaml:"zone" json:"zone" honey:"label=Zone"`
 }
 
 // AWSBackend configures one Amazon EC2 listing.
 type AWSBackend struct {
-	Name    string `yaml:"name" json:"name" honey:"label=Name;required"`
-	Profile string `yaml:"profile" json:"profile" honey:"label=Profile;required"`
+	Name    string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Profile string `yaml:"profile" json:"profile" honey:"label=Profile" validate:"required"`
 	Region  string `yaml:"region" json:"region" honey:"label=Region"`
 }
 
 // KubernetesBackend configures one Kubernetes nodes/pods listing.
 type KubernetesBackend struct {
-	Name       string `yaml:"name" json:"name" honey:"label=Name;required"`
+	Name       string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
 	Context    string `yaml:"context" json:"context" honey:"label=Context"`
 	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig" honey:"label=Kubeconfig path"`
 	Mode       string `yaml:"mode" json:"mode" honey:"label=Mode;enum=nodes|pods;enum_as_warning;default=nodes"`
@@ -89,20 +89,20 @@ type KubernetesBackend struct {
 
 // ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
-	Name       string `yaml:"name" json:"name" honey:"label=Name;required"`
-	Addr       string `yaml:"addr" json:"addr" honey:"label=Address;format=url;required"`
+	Name       string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Addr       string `yaml:"addr" json:"addr" honey:"label=Address" validate:"required,url"`
 	Datacenter string `yaml:"datacenter" json:"datacenter" honey:"label=Datacenter"`
 	Token      string `yaml:"token" json:"token" honey:"label=Token;secret"`
 }
 
 // ProxmoxBackend configures one Proxmox VE listing.
 type ProxmoxBackend struct {
-	Name        string `yaml:"name" json:"name" honey:"label=Name;required"`
-	URL         string `yaml:"url" json:"url" honey:"label=URL;format=url;required"`
-	User        string `yaml:"user" json:"user" honey:"label=User;required"`
-	Password    string `yaml:"password" json:"password" honey:"label=Password;secret"`
-	TokenID     string `yaml:"token_id" json:"token_id" honey:"label=Token ID"`
-	TokenSecret string `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret"`
+	Name        string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	URL         string `yaml:"url" json:"url" honey:"label=URL" validate:"required,url"`
+	User        string `yaml:"user" json:"user" honey:"label=User" validate:"required_without=TokenID"`
+	Password    string `yaml:"password" json:"password" honey:"label=Password;secret" validate:"required_without=TokenSecret"`
+	TokenID     string `yaml:"token_id" json:"token_id" honey:"label=Token ID" validate:"required_without=User"`
+	TokenSecret string `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret" validate:"required_without=Password"`
 	Insecure    bool   `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
 	// ExecMode: ssh (default) = guest SSH for commands/SFTP/tunnels; pve = QEMU commands via guest agent API, LXC commands/SFTP over guest SSH (PVE has no LXC REST exec; web UI LXC console uses termproxy when token_id is set);
 	// hybrid = QEMU via guest agent + SSH for files; LXC uses guest SSH for commands and files.
