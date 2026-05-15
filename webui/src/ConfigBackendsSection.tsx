@@ -46,12 +46,15 @@ function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
       let strSchema: z.ZodTypeAny = z.string();
       
       if (f.format === 'ip') {
-        strSchema = z.union([
-          z.ipv4(),
-          z.ipv6()
-        ]);
+        strSchema = z.string().refine((val) => {
+          if (!val && !f.required) return true;
+          return z.ipv4().safeParse(val).success || z.ipv6().safeParse(val).success;
+        }, { message: `${f.label} must be a valid IP address` });
       } else if (f.format === 'url') {
-        strSchema = z.url();
+        strSchema = z.string().refine((val) => {
+          if (!val && !f.required) return true;
+          return z.string().url().safeParse(val).success;
+        }, { message: `${f.label} must be a valid URL` });
       }
 
       // If required, we enforce a minimum length of 1 on strings
