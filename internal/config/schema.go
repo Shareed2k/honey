@@ -232,12 +232,23 @@ func schemaFieldsFromStruct(t reflect.Type) []SchemaField {
 		}
 		
 		opts := parseHoneyTag(f.Tag.Get("honey"))
+		vTag := f.Tag.Get("validate")
+		
+		var format string
+		if strings.Contains(vTag, "ip") {
+			format = "ip"
+		} else if strings.Contains(vTag, "url") {
+			format = "url"
+		}
+
+		isRequired := strings.Contains(vTag, "required") && !strings.Contains(vTag, "required_without")
+
 		sf := SchemaField{
 			Key:      key,
 			Label:    firstNonEmpty(opts["label"], key),
 			Type:     fieldType,
-			Format:   opts["format"],
-			Required: hasHoneyFlag(opts, "required"),
+			Format:   format,
+			Required: isRequired,
 			Secret:   hasHoneyFlag(opts, "secret"),
 			Items:    items,
 		}
