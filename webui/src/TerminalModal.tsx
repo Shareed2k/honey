@@ -21,6 +21,7 @@ type NovncRfbHandle = {
 export type PveConsoleMode = 'serial' | 'vnc';
 
 type SessionProps = {
+  sessionId: string;
   record: HostRecord;
   sshUser: string;
   recordSession: boolean;
@@ -73,6 +74,7 @@ function collectScrollback(term: Terminal, maxLines: number): string {
 }
 
 function TerminalSession({
+  sessionId,
   record,
   sshUser,
   recordSession,
@@ -245,6 +247,7 @@ function TerminalSession({
       const rows = term.rows;
       ws.send(
         JSON.stringify({
+          session_id: sessionId,
           ssh_user: sshUser,
           record,
           cols,
@@ -326,7 +329,7 @@ function TerminalSession({
       term.dispose();
       termRef.current = null;
     };
-  }, [assistAvailable, isVnc, record, recordSession, sshUser]);
+  }, [assistAvailable, isVnc, record, recordSession, sshUser, sessionId, isActive]);
 
   // Refit terminal when it becomes active
   useEffect(() => {
@@ -691,6 +694,7 @@ export function TerminalTabsModal({
           {terminals.map((t) => (
             <TerminalSession
               key={t.id}
+              sessionId={t.id}
               record={t.record}
               sshUser={sshUser}
               recordSession={recordSession}

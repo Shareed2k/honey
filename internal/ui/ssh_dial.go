@@ -28,6 +28,14 @@ func init() {
 	})
 }
 
+// RunTerminalInteractive opens an interactive session (SSH, K8s, or Proxmox) on os.Stdin/Stdout.
+func RunTerminalInteractive(user string, r hosts.Record) error {
+	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
+		return runK8sInteractiveWithRecorder(user, r, nil)
+	}
+	return runSSHInteractive(user, r, nil)
+}
+
 // runSSHInteractive opens a login shell over crypto/ssh (respects ~/.ssh/config),
 // or a Proxmox LXC/QEMU serial PVE console when exec_mode/token match the same policy as the web UI.
 func runSSHInteractive(user string, r hosts.Record, recorder *SessionRecorder) error {
