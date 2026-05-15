@@ -12,7 +12,7 @@ func init() {
 
 type localFactory struct{}
 
-func (localFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []hosts.Backend {
+func (localFactory) FromConfig(cfg *config.File, _ searchrun.ProviderFlags) []hosts.Backend {
 	if cfg == nil || len(cfg.Backends.Local) == 0 {
 		return nil
 	}
@@ -26,12 +26,12 @@ func (localFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []ho
 	return out
 }
 
-func (localFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
+func (localFactory) Default(_ searchrun.ProviderFlags) hosts.Backend {
 	return &Local{}
 }
 
 func (localFactory) BackendRows(cfg *config.File) []config.BackendRow {
-	var rows []config.BackendRow
+	rows := make([]config.BackendRow, 0, len(cfg.Backends.Local))
 	for _, b := range cfg.Backends.Local {
 		rows = append(rows, config.BackendRow{
 			Kind: "local",
@@ -50,5 +50,7 @@ func (localFactory) BackendSlicePtr(cfg *config.File) any {
 	return &cfg.Backends.Local
 }
 
-var _ searchrun.ProviderFactory = localFactory{}
-var _ searchrun.BackendConfigRegistry = localFactory{}
+var (
+	_ searchrun.ProviderFactory       = localFactory{}
+	_ searchrun.BackendConfigRegistry = localFactory{}
+)
