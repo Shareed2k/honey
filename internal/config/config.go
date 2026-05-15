@@ -58,7 +58,7 @@ type LocalBackend struct {
 type LocalHost struct {
 	Name      string            `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
 	PrimaryIP string            `yaml:"primary_ip" json:"primary_ip" honey:"label=Primary IP" validate:"required,ip"`
-	ExtraIPs  []string          `yaml:"extra_ips,omitempty" json:"extra_ips,omitempty" honey:"label=Extra IPs"`
+	ExtraIPs  []string          `yaml:"extra_ips,omitempty" json:"extra_ips,omitempty" honey:"label=Extra IPs" validate:"dive,ip"`
 	Zone      string            `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone"`
 	Region    string            `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region"`
 	Meta      map[string]string `yaml:"meta,omitempty" json:"meta,omitempty" honey:"label=Metadata"`
@@ -148,7 +148,7 @@ func ParseYAML(b []byte) (*File, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	if err := f.Validate(); err != nil {
-		return nil, fmt.Errorf("validate config: %w", err)
+		return nil, err
 	}
 	return &f, nil
 }
