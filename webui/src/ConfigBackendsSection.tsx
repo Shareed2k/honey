@@ -44,17 +44,29 @@ function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
     
     if (f.type === 'string') {
       let strSchema: z.ZodTypeAny = z.string();
+      
       if (f.format === 'ip') {
-        // Zod v4 uses z.ipv4().or(z.ipv6()) for generic IP validation
-        // since z.string().ip() was replaced/removed.
         strSchema = z.union([
-          z.ipv4({ message: `${f.label} must be a valid IPv4 address` }),
-          z.ipv6({ message: `${f.label} must be a valid IPv6 address` })
+          z.ipv4(),
+          z.ipv6()
         ]);
       } else if (f.format === 'url') {
-        strSchema = (strSchema as z.ZodString).url({ message: `${f.label} must be a valid URL` });
+        strSchema = z.url();
       }
-      fieldSchema = strSchema;
+
+      // If required, we enforce a minimum length of 1 on strings
+      // because otherwise an empty string passes z.string()
+      if (f.required) {
+        if (f.format === 'ip') {
+          fieldSchema = strSchema;
+        } else if (f.format === 'url') {
+          fieldSchema = strSchema;
+        } else {
+          fieldSchema = (strSchema as z.ZodString).min(1, { message: `${f.label} is required` });
+        }
+      } else {
+        fieldSchema = z.union([strSchema, z.literal(''), z.undefined()]).optional();
+      }
     } else if (f.type === 'integer') {
       fieldSchema = z.coerce.number().int();
     } else if (f.type === 'boolean') {
@@ -73,10 +85,10 @@ function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
       fieldSchema = z.enum(f.enum as [string, ...string[]]);
     }
 
-    if (!f.required) {
-      fieldSchema = z.union([fieldSchema, z.literal(''), z.undefined()]).optional();
-    } else if (f.type === 'string') {
-      fieldSchema = (fieldSchema as z.ZodString).min(1, { message: `${f.label} is required` });
+    if (f.type !== 'string') {
+      if (!f.required) {
+        fieldSchema = z.union([fieldSchema, z.literal(''), z.undefined()]).optional();
+      }
     }
     
     shape[f.key] = fieldSchema;
