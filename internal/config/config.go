@@ -45,6 +45,23 @@ type Backends struct {
 	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes" honey:"label=Kubernetes;order=30"`
 	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40"`
 	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50"`
+	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60"`
+}
+
+// LocalBackend configures manually defined host lists.
+type LocalBackend struct {
+	Name  string      `yaml:"name" json:"name" honey:"label=Name"`
+	Hosts []LocalHost `yaml:"hosts" json:"hosts" honey:"label=Hosts"`
+}
+
+// LocalHost represents a manually defined static server.
+type LocalHost struct {
+	Name      string            `yaml:"name" json:"name" honey:"label=Name"`
+	PrimaryIP string            `yaml:"primary_ip" json:"primary_ip" honey:"label=Primary IP"`
+	ExtraIPs  []string          `yaml:"extra_ips,omitempty" json:"extra_ips,omitempty" honey:"label=Extra IPs"`
+	Zone      string            `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone"`
+	Region    string            `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region"`
+	Meta      map[string]string `yaml:"meta,omitempty" json:"meta,omitempty" honey:"label=Metadata"`
 }
 
 // GCPBackend configures one Google Cloud Compute Engine listing.
@@ -154,7 +171,8 @@ func (f *File) HasAnyBackend() bool {
 		len(f.Backends.AWS) > 0 ||
 		len(f.Backends.Kubernetes) > 0 ||
 		len(f.Backends.Consul) > 0 ||
-		len(f.Backends.Proxmox) > 0
+		len(f.Backends.Proxmox) > 0 ||
+		len(f.Backends.Local) > 0
 }
 
 // ResolvePath returns an explicit path from --config or HONEY_CONFIG
