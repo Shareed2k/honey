@@ -1864,8 +1864,12 @@ export function App() {
           >
             <RawYamlEditor
               value={yaml}
-              onChange={setYaml}
+              onChange={(next) => {
+                setYaml(next);
+                if (cfgErr) setCfgErr(null); // Clear backend error on user edit
+              }}
               schema={cfgSchema}
+              backendError={cfgErr}
               onSave={() => {
                 if (!yamlHasLintIssue) {
                   void saveConfig();

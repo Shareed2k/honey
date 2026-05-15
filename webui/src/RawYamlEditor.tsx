@@ -12,6 +12,7 @@ type Props = {
   onChange: (next: string) => void;
   onSave: () => void;
   schema: ConfigUISchema | null;
+  backendError?: string | null;
   onLintStateChange?: (hasBlockingIssue: boolean) => void;
 };
 
@@ -62,7 +63,7 @@ function fieldsByKey(fields: ConfigSchemaFieldSpec[]): Map<string, ConfigSchemaF
   return new Map(fields.map((f) => [f.key, f]));
 }
 
-function lintHoneyConfig(text: string, schema: ConfigUISchema | null): Diagnostic[] {
+function lintHoneyConfig(text: string, schema: ConfigUISchema | null, backendError?: string | null): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const doc = parseDocument(text, { strict: false });
 
@@ -72,6 +73,35 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null): Diagnosti
       pushDiag(diagnostics, err.message, 'error', pos[0], pos[1], text.length);
     }
     return diagnostics;
+  }
+
+  if (backendError) {
+    try {
+      const parsed = JSON.parse(backendError);
+      if (Array.isArray(parsed)) {
+        for (const be of parsed) {
+          if (typeof be.path === 'string' && typeof be.message === 'string') {
+            const parts = be.path.split('.').reduce((acc: (string | number)[], part: string) => {
+              const match = part.match(/([^\[]+)(?:\[(\d+)\])?/);
+              if (match) {
+                acc.push(match[1]);
+                if (match[2] !== undefined) {
+                  acc.push(parseInt(match[2], 10));
+                }
+              }
+              return acc;
+            }, []);
+            const node = doc.getIn(parts, true);
+            const r = nodeRange(node ?? undefined, text.length);
+            pushDiag(diagnostics, `Backend Error: ${be.message}`, 'error', r.from, r.to, text.length);
+          }
+        }
+      } else {
+        pushDiag(diagnostics, `Backend Error: ${backendError}`, 'error', 0, 1, text.length);
+      }
+    } catch (e) {
+      pushDiag(diagnostics, `Backend Error: ${backendError}`, 'error', 0, 1, text.length);
+    }
   }
 
   if (!doc.contents || !isMap(doc.contents)) {
@@ -333,8 +363,8 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null): Diagnosti
   return diagnostics;
 }
 
-export function RawYamlEditor({ value, onChange, onSave, schema, onLintStateChange }: Props) {
-  const diagnostics = useMemo(() => lintHoneyConfig(value, schema), [value, schema]);
+export function RawYamlEditor({ value, onChange, onSave, schema, backendError, onLintStateChange }: Props) {
+  const diagnostics = useMemo(() => lintHoneyConfig(value, schema, backendError), [value, schema, backendError]);
   const hasBlockingIssues = diagnostics.some((d) => d.severity === 'error' || d.severity === 'warning');
 
   const saveShortcut = useMemo(
@@ -354,8 +384,8 @@ export function RawYamlEditor({ value, onChange, onSave, schema, onLintStateChan
   );
 
   const yamlParseLinter = useMemo(
-    () => linter((view) => lintHoneyConfig(view.state.doc.toString(), schema)),
-    [schema],
+    () => linter((view) => lintHoneyConfig(view.state.doc.toString(), schema, backendError)),
+    [schema, backendError],
   );
 
   useEffect(() => {
