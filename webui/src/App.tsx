@@ -463,7 +463,11 @@ export function App() {
 
     // Terminals
     if (terminals.length > 0) {
-      const joined = terminals.map(t => `${t.id}|${t.pve || 'serial'}`).join(',');
+      const joined = terminals.map(t => {
+        // If it's a dummy record waiting to hydrate, use _key, else use the real key
+        const rKey = (t.record as any)._key || recordKey(t.record);
+        return `${t.id}|${rKey}|${t.pve || 'serial'}`;
+      }).join(',');
       params.set('terminals', joined);
     } else {
       params.delete('terminals');
