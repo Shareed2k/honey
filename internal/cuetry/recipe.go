@@ -19,6 +19,7 @@ const schemaSource = `
 	command?: string
 	run_as?: string
 	env?: {[string]: string}
+	secrets?: {[string]: string}
 	notify?: close({
 		notify_subject?: string
 		message?:       string
@@ -93,12 +94,14 @@ const schemaSource = `
 	})
 	kv_tunnel?: bool
 	env?: {[string]: string}
+	secrets?: {[string]: string}
 })
 #Recipe: close({
 	name:  string
 	defaults?: close({
 		run_as?: string
 		env?: {[string]: string}
+		secrets?: {[string]: string}
 		k8s_debug_image?: string
 		kv_tunnel?: bool
 		ssh_port?: int
@@ -155,13 +158,8 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 	if err != nil {
 		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
 	}
-	if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI) {
-		return fmt.Errorf("cuetry: steps[%d]: env is only supported for command and script steps", i)
-	}
-	if len(s.Env) > 0 {
-		if err := ValidateRecipeEnvMap(s.Env); err != nil {
-			return fmt.Errorf("cuetry: steps[%d].env: %w", i, err)
-		}
+	if err := validateStepEnvAndSecrets(i, kind, s); err != nil {
+		return err
 	}
 	if err := ValidateStepRunAsForKind(kind, s); err != nil {
 		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
@@ -176,23 +174,59 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 			return err
 		}
 	}
-	if kind == StepKindAI {
-		if i != nSteps-1 {
-			return fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
-		}
-		if i == 0 {
-			return fmt.Errorf("cuetry: steps[%d]: ai cannot be the first step; add at least one prior step", i)
-		}
-		if strings.TrimSpace(s.Host) != MatchLocalAIHost {
-			return fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
-		}
-		if s.AI == nil {
-			return fmt.Errorf("cuetry: steps[%d]: internal ai step", i)
-		}
-		if strings.TrimSpace(s.AI.Prompt) == "" {
-			return fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
+	if err := validateStepAI(i, nSteps, kind, s); err != nil {
+		return err
+	}
+	return validateStepHooksAndKVTunnel(i, kind, s, defaults)
+}
+
+func validateStepEnvAndSecrets(i int, kind StepKind, s RecipeStep) error {
+	if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI) {
+		return fmt.Errorf("cuetry: steps[%d]: env is only supported for command and script steps", i)
+	}
+	if len(s.Secrets) > 0 && kind != StepKindCommand && kind != StepKindScript {
+		return fmt.Errorf("cuetry: steps[%d]: secrets are only supported for command and script steps", i)
+	}
+	if len(s.Env) > 0 {
+		if err := ValidateRecipeEnvMap(s.Env); err != nil {
+			return fmt.Errorf("cuetry: steps[%d].env: %w", i, err)
 		}
 	}
+	if len(s.Secrets) == 0 {
+		return nil
+	}
+	if err := ValidateRecipeSecretsRefMap(s.Secrets); err != nil {
+		return fmt.Errorf("cuetry: steps[%d].secrets: %w", i, err)
+	}
+	if err := OverlapEnvSecrets(s.Env, s.Secrets); err != nil {
+		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
+	}
+	return nil
+}
+
+func validateStepAI(i, nSteps int, kind StepKind, s RecipeStep) error {
+	if kind != StepKindAI {
+		return nil
+	}
+	if i != nSteps-1 {
+		return fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
+	}
+	if i == 0 {
+		return fmt.Errorf("cuetry: steps[%d]: ai cannot be the first step; add at least one prior step", i)
+	}
+	if strings.TrimSpace(s.Host) != MatchLocalAIHost {
+		return fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
+	}
+	if s.AI == nil {
+		return fmt.Errorf("cuetry: steps[%d]: internal ai step", i)
+	}
+	if strings.TrimSpace(s.AI.Prompt) == "" {
+		return fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
+	}
+	return nil
+}
+
+func validateStepHooksAndKVTunnel(i int, kind StepKind, s RecipeStep, defaults *RecipeDefaults) error {
 	if s.Hooks != nil {
 		if kind != StepKindCommand && kind != StepKindScript {
 			return fmt.Errorf("cuetry: steps[%d]: hooks are only supported on command and script steps", i)
@@ -201,10 +235,8 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 			return err
 		}
 	}
-	if KVTunnelEnabled(s, defaults) {
-		if kind != StepKindCommand && kind != StepKindScript {
-			return fmt.Errorf("cuetry: steps[%d]: kv_tunnel is only supported on command and script steps", i)
-		}
+	if KVTunnelEnabled(s, defaults) && kind != StepKindCommand && kind != StepKindScript {
+		return fmt.Errorf("cuetry: steps[%d]: kv_tunnel is only supported on command and script steps", i)
 	}
 	return nil
 }
@@ -227,6 +259,14 @@ func ParseRemoteRecipe(cueBytes []byte, records []hosts.Record) (Recipe, error) 
 	if out.Defaults != nil && len(out.Defaults.Env) > 0 {
 		if err := ValidateRecipeEnvMap(out.Defaults.Env); err != nil {
 			return out, fmt.Errorf("cuetry: defaults.env: %w", err)
+		}
+	}
+	if out.Defaults != nil && len(out.Defaults.Secrets) > 0 {
+		if err := ValidateRecipeSecretsRefMap(out.Defaults.Secrets); err != nil {
+			return out, fmt.Errorf("cuetry: defaults.secrets: %w", err)
+		}
+		if err := OverlapEnvSecrets(out.Defaults.Env, out.Defaults.Secrets); err != nil {
+			return out, fmt.Errorf("cuetry: defaults: %w", err)
 		}
 	}
 	nSteps := len(out.Steps)
@@ -256,6 +296,14 @@ func validateStepHooks(stepIdx int, h *RecipeStepHooks) error {
 		if len(hook.Env) > 0 {
 			if err := ValidateRecipeEnvMap(hook.Env); err != nil {
 				return fmt.Errorf("cuetry: steps[%d].hooks.%s.env: %w", stepIdx, phase, err)
+			}
+		}
+		if len(hook.Secrets) > 0 {
+			if err := ValidateRecipeSecretsRefMap(hook.Secrets); err != nil {
+				return fmt.Errorf("cuetry: steps[%d].hooks.%s.secrets: %w", stepIdx, phase, err)
+			}
+			if err := OverlapEnvSecrets(hook.Env, hook.Secrets); err != nil {
+				return fmt.Errorf("cuetry: steps[%d].hooks.%s: %w", stepIdx, phase, err)
 			}
 		}
 		if strings.TrimSpace(hook.RunAs) != "" {
@@ -337,6 +385,14 @@ func ValidateParsedRecipe(r Recipe, records []hosts.Record) error {
 	if r.Defaults != nil && len(r.Defaults.Env) > 0 {
 		if err := ValidateRecipeEnvMap(r.Defaults.Env); err != nil {
 			return fmt.Errorf("cuetry: defaults.env: %w", err)
+		}
+	}
+	if r.Defaults != nil && len(r.Defaults.Secrets) > 0 {
+		if err := ValidateRecipeSecretsRefMap(r.Defaults.Secrets); err != nil {
+			return fmt.Errorf("cuetry: defaults.secrets: %w", err)
+		}
+		if err := OverlapEnvSecrets(r.Defaults.Env, r.Defaults.Secrets); err != nil {
+			return fmt.Errorf("cuetry: defaults: %w", err)
 		}
 	}
 	nSteps := len(r.Steps)

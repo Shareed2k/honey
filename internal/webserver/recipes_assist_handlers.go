@@ -168,14 +168,19 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			recipeDir := filepath.Dir(cp)
 			var buf bytes.Buffer
 			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-			runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, nil)
-			plan := buf.String()
-			if runErr != nil {
-				planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
+			secRes, resErr := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(s.opts.Config))
+			if resErr != nil {
+				planNote = "secret resolver: " + resErr.Error()
 			} else {
-				planNote = clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes)
-				if strings.TrimSpace(planNote) == "" {
-					planNote = "(dry-run produced empty plan)"
+				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, nil)
+				plan := buf.String()
+				if runErr != nil {
+					planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
+				} else {
+					planNote = clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes)
+					if strings.TrimSpace(planNote) == "" {
+						planNote = "(dry-run produced empty plan)"
+					}
 				}
 			}
 		} else {

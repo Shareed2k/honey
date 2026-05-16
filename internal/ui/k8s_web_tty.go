@@ -88,7 +88,7 @@ func RunK8sPodWebTTY(
 		return fmt.Errorf("unexpected client type %T", client)
 	}
 
-	env, _ := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
+	env, _ := cuetry.EffectiveEnvForRun(context.Background(), false, nil, cuetry.RecipeStep{}, nil, nil, &r)
 	shCmd, _ := cuetry.ShellExportPrefixForRemote(env, "sh")
 	q := newTTYSizeQueue(cols, rows, resizeCh)
 	// Match CLI RunInteractive: pass stderr (often same writer as stdout for web); client-go expects both streams for exec.

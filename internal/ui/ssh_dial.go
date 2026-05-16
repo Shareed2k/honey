@@ -133,7 +133,7 @@ func runSSHTerminal(client *ssh.Client, r hosts.Record, recorder *SessionRecorde
 	defer func() { _ = sess.Close() }()
 
 	var shellCmd string
-	env, err := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
+	env, err := cuetry.EffectiveEnvForRun(context.Background(), false, nil, cuetry.RecipeStep{}, nil, nil, &r)
 	if err == nil && len(env) > 0 {
 		for k, v := range env {
 			_ = sess.Setenv(k, v)

@@ -12,6 +12,7 @@ type Recipe struct {
 type RecipeDefaults struct {
 	RunAs         string            `json:"run_as,omitempty"`
 	Env           map[string]string `json:"env,omitempty"`
+	Secrets       map[string]string `json:"secrets,omitempty"`
 	K8sDebugImage string            `json:"k8s_debug_image,omitempty"`
 	KVTunnel      *bool             `json:"kv_tunnel,omitempty"`
 	SSHPort       int               `json:"ssh_port,omitempty"`
@@ -98,6 +99,7 @@ type RecipeStepHook struct {
 	Command string            `json:"command,omitempty"`
 	RunAs   string            `json:"run_as,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
+	Secrets map[string]string `json:"secrets,omitempty"`
 	Notify  *RecipeNotify     `json:"notify,omitempty"`
 }
 
@@ -118,6 +120,7 @@ type RecipeStep struct {
 	KVTunnel      *bool                `json:"kv_tunnel,omitempty"`
 	RunAs         string               `json:"run_as,omitempty"`
 	Env           map[string]string    `json:"env,omitempty"`
+	Secrets       map[string]string    `json:"secrets,omitempty"`
 }
 
 // NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).

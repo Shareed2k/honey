@@ -424,10 +424,16 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	secRes, secErr := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(s.opts.Config))
+	if secErr != nil {
+		httpError(w, secErr, http.StatusInternalServerError)
+		return
+	}
+
 	if !body.Execute {
 		var buf bytes.Buffer
 		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, cliEnv, s.opts.ConfigPath, aiPrompt, nil)
+		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, nil)
 		var rec *ui.SessionRecorder
 		if wantRec {
 			var err error
@@ -474,7 +480,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer close(ch)
 			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-			if err := ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, ch); err != nil {
+			if err := ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, ch); err != nil {
 				ch <- ui.HostExecResult{
 					Name:     "cue-exec",
 					Provider: "web",
@@ -503,7 +509,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(ch)
 		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		errCh <- ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, ch)
+		errCh <- ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, ch)
 	}()
 	var results []ui.HostExecResult
 	for res := range ch {
