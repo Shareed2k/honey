@@ -50,6 +50,8 @@ type cueRecipeDoneMsg struct {
 type RunTableOptions struct {
 	RecordDir     string
 	RecordEnabled bool
+	// Config is the honey YAML already loaded for this session (optional; nil if none / load failed).
+	Config *config.File
 	// ConfigPath is the resolved honey YAML path (may be empty); CUE agent_transfer steps with cloud_backend_ref need it.
 	ConfigPath string
 }
@@ -100,6 +102,7 @@ type model struct {
 
 	recordDir     string
 	recordEnabled bool
+	honey         *config.File
 	configPath    string
 	// batchRecorder is non-nil while streaming parallel exec or CUE execute results when recording is on.
 	batchRecorder *SessionRecorder
@@ -334,6 +337,7 @@ func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *mod
 		tunnelFocusIndex: 0,
 		recordDir:        strings.TrimSpace(opts.RecordDir),
 		recordEnabled:    strings.TrimSpace(opts.RecordDir) != "" && opts.RecordEnabled,
+		honey:            opts.Config,
 		configPath:       strings.TrimSpace(opts.ConfigPath),
 		fileClientCache:  NewClientCache(),
 	}
@@ -472,7 +476,7 @@ func (m *model) textInputEnter() (tea.Model, tea.Cmd) {
 		}
 		targets, note := m.parallelExecTargets()
 		m.ti.Blur()
-		return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute, m.recordDir, m.recordEnabled, m.configPath)
+		return m, runCueRecipeCmd(val, targets, note, m.sshUser, execute, m.recordDir, m.recordEnabled, m.honey, m.configPath)
 	}
 	if m.mode == "filter" {
 		m.mode = "table"
@@ -1170,7 +1174,7 @@ func isCueKeyword(word string) bool {
 	}
 }
 
-func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool, recordDir string, recordEnabled bool, configPath string) tea.Cmd {
+func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool, recordDir string, recordEnabled bool, honey *config.File, configPath string) tea.Cmd {
 	title := "CUE recipe (dry-run)"
 	if execute {
 		title = "CUE recipe (execute)"
@@ -1200,7 +1204,11 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		if !execute {
 			var buf bytes.Buffer
 			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
-			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, aiPrompt, nil)
+			secRes, err := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(honey))
+			if err != nil {
+				return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nsecrets: " + err.Error()}
+			}
+			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, aiPrompt, secRes, nil)
 			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
 				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
 					if rec != nil {
@@ -1244,7 +1252,12 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		go func() {
 			defer close(ch)
 			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
-			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, aiPrompt, ch)
+			secRes, err := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(honey))
+			if err != nil {
+				ch <- HostExecResult{Name: "cue recipe", Success: false, ErrMsg: "secrets: " + err.Error()}
+				return
+			}
+			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, aiPrompt, secRes, ch)
 		}()
 
 		return streamStartMsg{
@@ -1301,7 +1314,7 @@ func runParallelSSHStreamCmd(user string, targets []hosts.Record, cmdLine, targe
 			defer close(ch)
 			cmdFunc := func(r hosts.Record, _ map[string]string) string {
 				// Inject host variables even for direct UI commands
-				env, err := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
+				env, err := cuetry.EffectiveEnvHostOnly(&r)
 				if err != nil {
 					return fmt.Sprintf("echo 'env err: %s'", err.Error())
 				}

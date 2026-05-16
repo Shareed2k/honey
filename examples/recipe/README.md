@@ -13,9 +13,43 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 - `kv_tunnel_multistep_example.cue`: Three **`command`** steps with **`defaults.kv_tunnel: true`** — one operator `stepkv` for the whole `cue-exec` on **SSH and Kubernetes** (pods use a long-lived exec bridge to that session). Per-host keys sanitize `HONEY_HOST_NAME` for `/` and `:`.
 - `postgres_logical_replication_slots.cue`: Read-only logical replication triage (`pg_replication_slots`, `pg_publication`, `pg_replication_slot_advance` in `pg_stat_activity`, primary-only WAL distance); same `PG*` / `-e PGPASSWORD` pattern; see file header for Grafana/Wazuh and destructive follow-ups not in the recipe.
 - `ai_summarize_hosts.cue`: Sample `command` steps on `host: "*"` then a final **`ai`** step (`host: "_"`); needs `OPENAI_API_KEY` for `--execute`; optional **`notify`** (`notify_subject`, `message`, `services` allowlist, `slack.channel_id`) + `HONEY_NOTIFY_*` env for [notify](https://github.com/nikoksr/notify); see file header and `honey cue-exec` docs.
+- `with_env.cue` / `with_secrets.cue`: Literal **`env`** maps vs **`secrets`** maps; **`secrets` values must be `secure:v1:…` only**. Requires honey `defaults.secretsprovider` + `defaults.encryptedkey` (or a test static key); dry-run redacts; `--execute` decrypts on the operator host.
+- `with_secrets_stores.cue`: Same symmetric-only model with provider URL examples (GCP/AWS KMS, Vault Transit, K8s, keyring, age).
 - `assets/index.html`: A dummy file used to demonstrate the `put` (upload) step.
 - `scripts/setup.sh`: A shell script used to demonstrate the `script` (upload and execute) step.
 - `downloads/`: An empty folder to receive files retrieved by the `get` step.
+
+## Secrets authoring
+
+Recipe `secrets:` values must be `secure:v1:<nonce-b64>:<ciphertext-b64>`. Use the stack data key from honey `defaults.secretsprovider` and `defaults.encryptedkey` (see `with_secrets_stores.cue` header for provider URLs).
+
+### Local Keychain (macOS) / secret service (Linux)
+
+```bash
+# Create stack key in OS keyring and print YAML to paste into ~/.config/honey/config.yaml
+honey secrets keyring-init
+
+# Overwrite an existing entry, or custom service/account names
+honey secrets keyring-init --force
+honey secrets keyring-init --service honey --user stack-data-key
+```
+
+Then seal recipe secrets:
+
+```bash
+# Encrypt plaintext → secure:v1 ref (stdout)
+echo -n 'my-db-password' | honey secrets seal --config ~/.config/honey/config.yaml
+
+# CUE map entry for pasting into a recipe
+honey secrets seal --cue-key DB_PASSWORD -f ./password.txt --config ~/.config/honey/config.yaml
+
+# Verify decrypt (plaintext goes to stdout; may appear in shell history)
+honey secrets unseal 'secure:v1:…' --config ~/.config/honey/config.yaml
+
+# Local test without cloud KMS (64 hex chars = 32-byte key)
+KEY=$(openssl rand -hex 32)
+honey secrets seal --data-key-hex "$KEY" 'hello'
+```
 
 ## How to use
 

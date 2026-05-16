@@ -34,6 +34,13 @@ type Defaults struct {
 	Name           string `yaml:"name" json:"name" honey:"label=Name filter"`
 	NameRegex      string `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
 	AISystemPrompt string `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step"`
+
+	// secretsprovider unwraps the stack AES data key (see internal/cuetry/secrets/doc.go).
+	// Examples: gcpkms://projects/…/cryptoKeys/…, awskms://, vault-transit://mount/key,
+	// k8s://namespace/secret, keyring://service/user, age://, age-file://path.
+	SecretsProvider string `yaml:"secretsprovider,omitempty" json:"secretsprovider,omitempty" honey:"label=Stack secrets provider URL (e.g. gcpkms://…);reserved"`
+	// encryptedkey is provider-specific ciphertext or field name (see secrets package doc).
+	EncryptedKey string `yaml:"encryptedkey,omitempty" json:"encryptedkey,omitempty" honey:"label=Stack encrypted data key blob;secret;reserved"`
 }
 
 // Backends lists optional multiple instances per provider type.

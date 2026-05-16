@@ -1,6 +1,7 @@
 package cuetry
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -567,12 +568,40 @@ func TestEffectiveEnvForRemoteHook_overridesStepEnv(t *testing.T) {
 	hook := &RecipeStepHook{Env: map[string]string{"A": "hook"}}
 	cli := map[string]string{"C": "cli"}
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4", Provider: "p", Zone: "z1"}
-	got, err := EffectiveEnvForRemoteHook(step, nil, hook, cli, &rec)
+	got, err := EffectiveEnvForRemoteHook(context.Background(), true, nil, step, nil, hook, cli, &rec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got["A"] != "hook" || got["B"] != "b" || got["C"] != "cli" || got["HONEY_HOST_NAME"] != "h1" {
 		t.Fatalf("merged: %#v", got)
+	}
+}
+
+func TestParseRemoteRecipe_putWithSecretsRejected(t *testing.T) {
+	const src = `
+recipe: {
+	name: "bad"
+	steps: [
+		{host: "10.0.0.1", put: {local: "./x", remote: "/tmp/x"}, secrets: {FOO: "env:BAR"}},
+	]
+}
+`
+	if err := ValidateRemoteRecipe([]byte(src)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestParseRemoteRecipe_envSecretsOverlapRejected(t *testing.T) {
+	const src = `
+recipe: {
+	name: "bad"
+	steps: [
+		{host: "10.0.0.1", command: "id", env: {K: "1"}, secrets: {K: "secure:v1:AAAAAAAAAAAAAAAA:YmFj"}},
+	]
+}
+`
+	if err := ValidateRemoteRecipe([]byte(src)); err == nil {
+		t.Fatal("expected error")
 	}
 }
 

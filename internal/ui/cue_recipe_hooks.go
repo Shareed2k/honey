@@ -24,13 +24,13 @@ const (
 	maxHookOutputRunes    = 8000
 )
 
-func cueRecipeSSHPostHostResult(_ context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) SSHPostHostResultFunc {
+func cueRecipeSSHPostHostResult(_ context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, secretResolver cuetry.SecretResolver) SSHPostHostResultFunc {
 	return func(hctx context.Context, r hosts.Record, res *HostExecResult) {
-		runCueStepHooks(hctx, recipe, stepIdx, kind, step, r, res, recipeDir, sshUser, cliEnv, cache, recipeKV, recipeScopedKV)
+		runCueStepHooks(hctx, recipe, stepIdx, kind, step, r, res, recipeDir, sshUser, cliEnv, cache, recipeKV, recipeScopedKV, secretResolver)
 	}
 }
 
-func runCueStepHooks(ctx context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, r hosts.Record, res *HostExecResult, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) {
+func runCueStepHooks(ctx context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, r hosts.Record, res *HostExecResult, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, secretResolver cuetry.SecretResolver) {
 	h := step.Hooks
 	if h == nil {
 		return
@@ -53,21 +53,21 @@ func runCueStepHooks(ctx context.Context, recipe cuetry.Recipe, stepIdx int, kin
 	case "local":
 		runCueStepHookLocal(ctx, recipe, stepIdx+1, kind, phase, r, res, hook, recipeDir)
 	case "remote":
-		runCueStepHookRemote(ctx, recipe, stepIdx+1, kind, phase, step, r, res, hook, sshUser, cliEnv, cache, recipeKV, recipeScopedKV)
+		runCueStepHookRemote(ctx, recipe, stepIdx+1, kind, phase, step, r, res, hook, sshUser, cliEnv, cache, recipeKV, recipeScopedKV, secretResolver)
 	default:
 		res.HookPhase = ""
 		zap.L().Warn("cue recipe hook: invalid where (should be caught at parse)", zap.String("where", where), zap.Int("step", stepIdx+1))
 	}
 }
 
-func runCueStepHookRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, phase string, step cuetry.RecipeStep, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) {
+func runCueStepHookRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, phase string, step cuetry.RecipeStep, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, secretResolver cuetry.SecretResolver) {
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
 	if rs := strings.TrimSpace(hook.RunAs); rs != "" {
 		runAs = rs
 	}
 	kvTunnel := cuetry.KVTunnelEnabled(step, recipe.Defaults)
 	build := func(r2 hosts.Record, kv map[string]string) string {
-		env, err := cuetry.EffectiveEnvForRemoteHook(step, recipe.Defaults, hook, cliEnv, &r2)
+		env, err := cuetry.EffectiveEnvForRemoteHook(ctx, true, secretResolver, step, recipe.Defaults, hook, cliEnv, &r2)
 		if err != nil {
 			return fmt.Sprintf("echo 'env err: %s'", err.Error())
 		}

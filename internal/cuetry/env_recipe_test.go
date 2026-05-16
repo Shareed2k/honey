@@ -1,9 +1,11 @@
 package cuetry
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/cuetry/secrets/stack"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -50,7 +52,7 @@ func TestEffectiveEnvForRun_cliOverrides(t *testing.T) {
 	def := &RecipeDefaults{Env: map[string]string{"A": "1"}}
 	step := RecipeStep{Env: map[string]string{"B": "2"}}
 	cli := map[string]string{"A": "9", "C": "3"}
-	got, err := EffectiveEnvForRun(step, def, cli, nil)
+	got, err := EffectiveEnvForRun(context.Background(), false, nil, step, def, cli, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func TestEffectiveEnvForRun_withHostRecord(t *testing.T) {
 		},
 	}
 
-	got, err := EffectiveEnvForRun(step, nil, nil, r)
+	got, err := EffectiveEnvForRun(context.Background(), false, nil, step, nil, nil, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +126,29 @@ recipe: {
 `
 	if err := ValidateRemoteRecipe([]byte(src)); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestEffectiveEnvForRun_resolvesSecureV1(t *testing.T) {
+	key := make([]byte, stack.SymmetricKeyBytes)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	ref, err := stack.FormatSecureRef(key, "secret-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewSecretResolver(SecretResolverOptions{SymmetricDataKey: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := RecipeStep{Secrets: map[string]string{"TOKEN": ref}}
+	got, err := EffectiveEnvForRun(context.Background(), true, res, step, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["TOKEN"] != "secret-value" {
+		t.Fatalf("got %q", got["TOKEN"])
 	}
 }
 

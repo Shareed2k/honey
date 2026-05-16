@@ -311,7 +311,7 @@ func (m *model) submitAgentTransferCmd() tea.Cmd {
 			m.agentKeepObject,
 			maxR,
 			cloudtransfer.SigningHints{},
-			LoadTransferConfigFromConfigPath(m.configPath),
+			transferConfigFromSessionHoney(m.configPath, m.honey),
 			nil,
 		)
 		if err != nil {
