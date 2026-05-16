@@ -147,6 +147,7 @@ type RecipeStep struct {
 	RunAs         string               `json:"run_as,omitempty"`
 	Env           map[string]string    `json:"env,omitempty"`
 	Secrets       map[string]string    `json:"secrets,omitempty"`
+	When          string               `json:"when,omitempty"`
 }
 
 // NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).

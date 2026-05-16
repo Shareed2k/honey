@@ -113,6 +113,7 @@ const schemaSource = `
 	})]
 	env?: {[string]: string}
 	secrets?: {[string]: string}
+	when?: string
 })
 #Recipe: close({
 	name:  string
@@ -183,6 +184,9 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 		return err
 	}
 	if err := validateStepEnvFrom(i, kind, mode, s); err != nil {
+		return err
+	}
+	if err := validateStepWhen(i, mode, s, nil); err != nil {
 		return err
 	}
 	if err := validateMaxParallelField(fmt.Sprintf("steps[%d]", i), s.MaxParallel); err != nil {

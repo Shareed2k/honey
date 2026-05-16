@@ -37,6 +37,9 @@ func streamCueRecipeStepsGraph(
 			return err
 		}
 	}
+	if err := ensureKVSessionForWhen(recipe, recipeKV); err != nil {
+		return err
+	}
 	outputStore := cuetry.NewStepOutputStore()
 	n := len(recipe.Steps)
 	state := make([]cuetry.StepRunState, n)
@@ -184,7 +187,7 @@ func graphRunOneStep(
 	var rows []HostExecResult
 	var stepErr error
 	if kind == cuetry.StepKindAI {
-		rows, stepErr = graphRunAIStep(ctx, recipe, idx, step, sg, state, historyByIndex, stateMu, historyMu, aiSystemPromptFromCfg, out)
+		rows, stepErr = graphRunAIStep(ctx, recipe, idx, step, sg, state, historyByIndex, stateMu, historyMu, aiSystemPromptFromCfg, outputStore, secretResolver, recipeKV, execute, out)
 	} else {
 		rows, stepErr = streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, idx, step, out, cache, recipeKV, outputStore, secretResolver, pluginMgr, execute)
 	}
@@ -196,6 +199,11 @@ func graphRunOneStep(
 		historyMu.Lock()
 		historyByIndex[idx] = rows
 		historyMu.Unlock()
+	}
+	if len(rows) > 0 && allHostsWhenSkipped(rows) {
+		state[idx] = cuetry.StepRunSkipped
+		sg.MarkSkippedDescendants(idx, state)
+		return
 	}
 	if failed {
 		state[idx] = cuetry.StepRunFailed
@@ -220,8 +228,27 @@ func graphRunAIStep(
 	stateMu *sync.Mutex,
 	historyMu *sync.Mutex,
 	aiSystemPromptFromCfg string,
+	outputStore *cuetry.StepResultStore,
+	secretResolver cuetry.SecretResolver,
+	recipeKV *RecipeKVCoordinator,
+	execute bool,
 	out chan<- HostExecResult,
 ) ([]HostExecResult, error) {
+	kv := kvReaderFromCoordinator(recipeKV)
+	ok, whenErr := evalAIStepWhen(ctx, recipe, step, outputStore, secretResolver, kv, execute)
+	if whenErr != nil {
+		return nil, whenErr
+	}
+	if !ok {
+		res := HostExecResult{
+			Name:     fmt.Sprintf("Step %d | ai", idx+1),
+			Provider: "local",
+			Skipped:  true,
+			Output:   "(skipped: when)",
+		}
+		out <- res
+		return []HostExecResult{res}, nil
+	}
 	stateMu.Lock()
 	succeeded := make(map[int]bool, len(state))
 	for j, st := range state {

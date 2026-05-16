@@ -112,6 +112,7 @@ export type HostExecResultRow = {
   IP: string;
   Provider: string;
   Success: boolean;
+  Skipped?: boolean;
   ExitCode: number;
   Output: string;
   ErrMsg: string;
@@ -141,6 +142,7 @@ export type ParsedRecipeStep = {
   max_parallel?: number;
   kv_tunnel?: boolean;
   env_from?: { step: string; map: Record<string, string> }[];
+  when?: string;
   hooks?: { on_success?: ParsedRecipeStep; on_failure?: ParsedRecipeStep };
   // Step kinds that v1 does NOT support editing — preserved verbatim by the form.
   agent_transfer?: unknown;
@@ -167,6 +169,7 @@ export type GraphPlanNode = {
   kind: string;
   host: string;
   wave?: number;
+  when?: string;
   kv_tunnel?: boolean;
   preview?: string;
 };

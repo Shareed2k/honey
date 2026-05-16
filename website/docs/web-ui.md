@@ -122,7 +122,9 @@ aws s3api put-bucket-lifecycle-configuration \
 ### CUE recipes
 
 - Open and run recipes from the UI (same semantics as `honey cue-exec`), including optional **`agent_transfer`** steps (A→cloud→B); the server passes its configured honey YAML path for `cloud_backend_ref` signing, like **`POST /api/v1/files/agent-transfer`**.
+- **Graph recipes** (`type: "graph"`): the plan step shows **Plan | Graph | Edit** tabs; the Graph tab is a read-only DAG from validation (`graph` in the validate response). Optional per-step **`when`** (CEL) appears in the plan text; see [CUE Recipes — conditional steps](./cue-recipes.md#conditional-steps-when--cel).
 - **Recipe assist** (AI): explains or debugs a recipe using the file content plus optional dry-run output for the current host selection (requires `OPENAI_API_KEY`).
+- **WASM plugins:** when `plugins.enabled` is set in honey config, `plugin:` steps and `cue_transform` run the same as CLI — see [Plugin development](./plugins-development.md).
 
 ### Recipes (WebUI)
 

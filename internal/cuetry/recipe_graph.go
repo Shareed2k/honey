@@ -192,8 +192,13 @@ func ValidateRecipeGraph(r Recipe) error {
 	switch mode {
 	case ExecutionModeLinear:
 		for i, s := range r.Steps {
-			if strings.TrimSpace(s.ID) != "" {
-				return fmt.Errorf("cuetry: steps[%d].id is only allowed when recipe.type is \"graph\"", i)
+			hasWhen := strings.TrimSpace(s.When) != ""
+			hasID := strings.TrimSpace(s.ID) != ""
+			if hasID && !hasWhen {
+				return fmt.Errorf("cuetry: steps[%d].id in linear mode is only allowed when when is set", i)
+			}
+			if hasWhen && !hasID {
+				return fmt.Errorf("cuetry: steps[%d].when requires a non-empty id", i)
 			}
 			if len(s.Depends) > 0 {
 				return fmt.Errorf("cuetry: steps[%d].depends is only allowed when recipe.type is \"graph\"", i)
@@ -223,6 +228,9 @@ func ValidateRecipeGraph(r Recipe) error {
 			}
 			if KVTunnelEnabled(s, r.Defaults) && strings.TrimSpace(s.ID) == "" {
 				return fmt.Errorf("cuetry: steps[%d]: kv_tunnel in graph mode requires a non-empty id", i)
+			}
+			if err := validateStepWhen(i, ExecutionModeGraph, s, sg); err != nil {
+				return err
 			}
 		}
 		return nil

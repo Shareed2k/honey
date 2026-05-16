@@ -9,6 +9,9 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 - `graph_parallel.cue`: **`type: "graph"`** with per-step **`id`** and **`depends`** for parallel waves (see below).
 - `graph_env_from.cue`: Graph mode **`env_from`** — map dependency step **stdout** into env (per host).
 - `graph_kv_tunnel.cue`: Graph mode **`defaults.kv_tunnel`** shared across waves; namespace keys with **`HONEY_STEP_ID`** and **`HONEY_HOST_NAME`**.
+- `graph_when.cue`: Graph mode **`when`** (CEL) — run a step per host only if a CEL expression is true (e.g. prior step stdout).
+- `graph_when_kv.cue`: **`when`** with **`kv_get` / `kv_has`** against operator-local recipe KV (`defaults.kv_tunnel`).
+- `graph_when_secrets.cue`: **`when`** reading declared **`secrets`** keys (resolved on `--execute`, redacted on dry-run).
 - `agent_transfer.cue`: Example **A→cloud→B** staging transfer (transfer agent); see the file header for host-arity rules and `cloud_backend_ref` / `--config` requirements.
 - `clean_filesystem.cue`: Maintenance recipe for systemd journal usage/vacuum and snap (remove disabled revisions, clear `/var/lib/snapd/cache`); read the file header for destructive journal behavior and `sudo -n` requirements.
 - `high_load_processes.cue`: On Linux (GNU `ps`), prints load, `free -h`, and top processes by **CPU%** and **RSS**; uses `host: "*"` for every matched host with an IP.
@@ -73,6 +76,34 @@ By default recipes run **linearly** (steps in array order). Set **`type: "graph"
 - Web UI: in the recipe wizard (Step ③ Review plan), use the **Graph** tab for a read-only DAG (powered by `POST /api/v1/recipes/validate-content` → `graph` field).
 
 See [`graph_parallel.cue`](graph_parallel.cue) for a fetch → parallel restarts → verify → ai example.
+
+## Conditional steps (`when` + CEL)
+
+Optional **`when: "<CEL expression>"`** on any step kind (`command`, `script`, `plugin`, `put`, `get`, `agent_transfer`, `ai`). The expression must evaluate to **bool**. When false, that host (or the whole `agent_transfer` / `ai` step) is **skipped** without SSH/SFTP.
+
+- **`id` is required** whenever `when` is set (linear or graph) so `steps['fetch']` is stable. In linear recipes, `id` is only allowed on steps that have `when`.
+- Graph: step ids referenced in `when` must appear in that step’s **`depends`**.
+- If **every** target for a graph step is when-skipped, the step is treated as **skipped** and **dependents are skipped** (same as a failed branch).
+
+### CEL variables and functions
+
+| Name | Type | Meaning |
+|------|------|---------|
+| `host.name`, `host.ip`, `host.provider`, `host.zone`, `host.region` | string | Current target host |
+| `host.meta` | map | Host metadata (`hosts.Record.Meta`) |
+| `host.extra_ips` | list | Extra IPs |
+| `dest.*` | same as `host` | Destination host (`agent_transfer` only) |
+| `steps['id'].succeeded` | bool | Prior step outcome on this host |
+| `steps['id'].skipped` | bool | Prior step was skipped |
+| `steps['id'].stdout` | string | Captured stdout (command/script/plugin) |
+| `steps['id'].exit_code` | int | Remote exit code |
+| `secrets['KEY']` | string | Declared `defaults.secrets` / `step.secrets` only |
+| `execute` | bool | `false` on dry-run / plan |
+| `recipe_name` | string | Recipe name |
+| `kv_get(key)` | string | Operator recipe KV value (`""` if missing) |
+| `kv_has(key)` | bool | Whether key exists in recipe KV |
+
+**Security:** `secrets` in CEL use the same resolver as recipe env — as sensitive as putting values in `step.secrets`. Dry-run plans never print resolved secret material. KV reads are operator-local (what prior steps wrote in the run).
 
 ## How to use
 

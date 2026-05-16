@@ -18,49 +18,6 @@ type EnvFromRef struct {
 	Map  map[string]string `json:"map"`
 }
 
-// StepOutputStore holds per-step per-host stdout from completed command/script/plugin runs.
-type StepOutputStore struct {
-	byStep map[string]map[string]string // stepID -> hostName -> stdout
-}
-
-// NewStepOutputStore creates an empty output store.
-func NewStepOutputStore() *StepOutputStore {
-	return &StepOutputStore{byStep: make(map[string]map[string]string)}
-}
-
-// Record stores trimmed stdout for a host after a step succeeds.
-func (s *StepOutputStore) Record(stepID, hostName, stdout string) {
-	if s == nil {
-		return
-	}
-	stepID = strings.TrimSpace(stepID)
-	hostName = strings.TrimSpace(hostName)
-	if stepID == "" || hostName == "" {
-		return
-	}
-	out := strings.TrimSpace(stdout)
-	if len(out) > maxStepOutputBytes {
-		out = out[:maxStepOutputBytes]
-	}
-	if s.byStep[stepID] == nil {
-		s.byStep[stepID] = make(map[string]string)
-	}
-	s.byStep[stepID][hostName] = out
-}
-
-// Get returns captured stdout for stepID and hostName.
-func (s *StepOutputStore) Get(stepID, hostName string) (string, bool) {
-	if s == nil || s.byStep == nil {
-		return "", false
-	}
-	m := s.byStep[strings.TrimSpace(stepID)]
-	if m == nil {
-		return "", false
-	}
-	v, ok := m[strings.TrimSpace(hostName)]
-	return v, ok
-}
-
 func validateStepEnvFrom(stepIdx int, kind StepKind, mode ExecutionMode, step RecipeStep) error {
 	if len(step.EnvFrom) == 0 {
 		return nil
@@ -146,8 +103,11 @@ func RecipeNeedsStepOutputCapture(r Recipe) bool {
 	if err != nil || mode != ExecutionModeGraph {
 		return false
 	}
+	if len(StepIDsReferencedByEnvFrom(r)) > 0 || len(StepIDsReferencedByWhen(r)) > 0 {
+		return true
+	}
 	for _, s := range r.Steps {
-		if len(s.EnvFrom) > 0 {
+		if len(s.EnvFrom) > 0 || strings.TrimSpace(s.When) != "" {
 			return true
 		}
 	}
@@ -163,6 +123,9 @@ func StepIDsReferencedByEnvFrom(r Recipe) map[string]struct{} {
 				out[id] = struct{}{}
 			}
 		}
+	}
+	for id := range StepIDsReferencedByWhen(r) {
+		out[id] = struct{}{}
 	}
 	return out
 }

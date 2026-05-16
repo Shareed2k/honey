@@ -16,6 +16,7 @@ type StepSummary struct {
 	Kind    string   `json:"kind"`
 	Host    string   `json:"host"`
 	RunAs   string   `json:"run_as,omitempty"`
+	When    string   `json:"when,omitempty"`
 	Preview string   `json:"preview"`
 }
 
@@ -64,18 +65,23 @@ func RenderDryRunPlan(r Recipe) (string, []StepSummary, error) {
 			Kind:    kindLabel,
 			Host:    strings.TrimSpace(step.Host),
 			RunAs:   runAs,
+			When:    strings.TrimSpace(step.When),
 			Preview: preview,
 		}
 		if waveOf != nil {
 			summary.Wave = waveOf[i]
 		}
 		steps = append(steps, summary)
+		whenPart := ""
+		if summary.When != "" {
+			whenPart = fmt.Sprintf(" when=%q", summary.When)
+		}
 		if summary.ID != "" {
-			fmt.Fprintf(&b, "step %d (id=%q wave=%d depends=%v): kind=%s host=%q run_as=%q preview=%q\n",
-				i, summary.ID, summary.Wave, summary.Depends, kindLabel, summary.Host, runAs, preview)
+			fmt.Fprintf(&b, "step %d (id=%q wave=%d depends=%v): kind=%s host=%q run_as=%q%s preview=%q\n",
+				i, summary.ID, summary.Wave, summary.Depends, kindLabel, summary.Host, runAs, whenPart, preview)
 		} else {
-			fmt.Fprintf(&b, "step %d: kind=%s host=%q run_as=%q preview=%q\n",
-				i, kindLabel, summary.Host, runAs, preview)
+			fmt.Fprintf(&b, "step %d: kind=%s host=%q run_as=%q%s preview=%q\n",
+				i, kindLabel, summary.Host, runAs, whenPart, preview)
 		}
 	}
 	return b.String(), steps, nil
