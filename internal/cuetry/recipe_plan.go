@@ -76,6 +76,10 @@ func previewForStep(kind StepKind, s RecipeStep) string {
 		if s.AI != nil {
 			p = "ai: " + strings.TrimSpace(s.AI.Prompt)
 		}
+	case StepKindPlugin:
+		if s.Plugin != nil {
+			p = fmt.Sprintf("plugin %s action=%s", strings.TrimSpace(s.Plugin.ID), strings.TrimSpace(s.Plugin.Action))
+		}
 	}
 	p = strings.ReplaceAll(p, "\n", " ")
 	if len(p) > maxPreviewBytes {

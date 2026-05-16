@@ -1,5 +1,7 @@
 package secrets
 
+import "github.com/shareed2k/honey/internal/cuetry/secrets/ref"
+
 // Options configures stack data-key unwrap and optional symmetric test keys.
 type Options struct {
 	// SymmetricDataKey, when exactly [stack.SymmetricKeyBytes] long, decrypts secure:v1 without KMS (tests).
@@ -9,4 +11,6 @@ type Options struct {
 	EncryptedKey    string
 	// AgeIdentityFile enables age:// and age-file:// stack providers and loads age identities.
 	AgeIdentityFile string
+	// ExtraBackends append plugin or test secret backends after built-in wiring.
+	ExtraBackends []ref.Backend
 }

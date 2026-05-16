@@ -16,6 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -322,7 +323,7 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 // the parsed/validated recipe, its on-disk source path (empty for inline),
 // and the recipe's directory (empty for inline). All errors are caller-fixable
 // (HTTP 400 from the handler).
-func resolveCueExecRecipe(body CueExecRequest) (cuetry.Recipe, string, string, error) {
+func resolveCueExecRecipe(body CueExecRequest, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
 	switch {
 	case body.RecipeContent != nil:
 		if strings.TrimSpace(body.RecipePath) != "" {
@@ -346,7 +347,7 @@ func resolveCueExecRecipe(body CueExecRequest) (cuetry.Recipe, string, string, e
 		if err != nil {
 			return cuetry.Recipe{}, "", "", err
 		}
-		parsed, err := cuetry.ParseRemoteRecipe(raw, body.Records)
+		parsed, err := cuetry.ParseRemoteRecipeOpts(raw, body.Records, parseOpts)
 		if err != nil {
 			return cuetry.Recipe{}, "", "", fmt.Errorf("parse recipe: %w", err)
 		}
@@ -378,7 +379,14 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recipe, recipeSourcePath, recipeDir, err := resolveCueExecRecipe(body)
+	pluginMgr, err := plugins.Open(r.Context(), s.opts.Config)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = pluginMgr.Close() }()
+
+	recipe, recipeSourcePath, recipeDir, err := resolveCueExecRecipe(body, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -424,7 +432,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	secRes, secErr := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(s.opts.Config))
+	secRes, secErr := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(s.opts.Config), pluginMgr)
 	if secErr != nil {
 		httpError(w, secErr, http.StatusInternalServerError)
 		return
@@ -433,7 +441,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if !body.Execute {
 		var buf bytes.Buffer
 		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, nil)
+		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil)
 		var rec *ui.SessionRecorder
 		if wantRec {
 			var err error
@@ -480,7 +488,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer close(ch)
 			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-			if err := ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, ch); err != nil {
+			if err := ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, true, ch); err != nil {
 				ch <- ui.HostExecResult{
 					Name:     "cue-exec",
 					Provider: "web",
@@ -509,7 +517,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(ch)
 		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		errCh <- ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, ch)
+		errCh <- ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, true, ch)
 	}()
 	var results []ui.HostExecResult
 	for res := range ch {

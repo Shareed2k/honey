@@ -18,6 +18,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -150,11 +151,17 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	if len(jobs) > 0 {
 		parseSlice = jobs
 	}
-	recipe, perr := cuetry.ParseRemoteRecipe(raw, parseSlice)
+	pluginMgr, plugErr := plugins.Open(r.Context(), s.opts.Config)
+	if plugErr != nil {
+		httpError(w, plugErr, http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = pluginMgr.Close() }()
+	recipe, perr := cuetry.ParseRemoteRecipeOpts(raw, parseSlice, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if perr != nil {
 		parseNote = perr.Error()
 		if len(jobs) > 0 {
-			if _, err2 := cuetry.ParseRemoteRecipe(raw, nil); err2 == nil {
+			if _, err2 := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{PluginManager: pluginMgr}); err2 == nil {
 				parseNote += "\n(Schema validates with an empty host list but not with the selected hosts.)"
 			}
 		}
@@ -168,11 +175,11 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			recipeDir := filepath.Dir(cp)
 			var buf bytes.Buffer
 			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-			secRes, resErr := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(s.opts.Config))
+			secRes, resErr := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(s.opts.Config), pluginMgr)
 			if resErr != nil {
 				planNote = "secret resolver: " + resErr.Error()
 			} else {
-				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, nil)
+				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil)
 				plan := buf.String()
 				if runErr != nil {
 					planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
