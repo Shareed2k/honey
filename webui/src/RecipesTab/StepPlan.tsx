@@ -1,8 +1,11 @@
 // webui/src/RecipesTab/StepPlan.tsx
 import { useEffect, useState } from 'react';
-import { validateRecipeContent, type ParsedRecipe, type ResolvedStep } from '../api';
+import { isGraphRecipe, validateRecipeContent, type ParsedRecipe, type ResolvedStep } from '../api';
 import type { EnvPair, PlanState } from './types';
 import { EditForm } from './EditForm';
+import { RecipeGraphFlow } from './RecipeGraphFlow';
+
+type PlanTab = 'plan' | 'graph' | 'edit';
 
 type Props = {
   recipe: ParsedRecipe;
@@ -21,7 +24,8 @@ type Props = {
 };
 
 export function StepPlan(props: Props) {
-  const [tab, setTab] = useState<'plan' | 'edit'>('plan');
+  const graphMode = isGraphRecipe(props.recipe);
+  const [tab, setTab] = useState<PlanTab>('plan');
   const [plan, setPlan] = useState<PlanState>(null);
 
   useEffect(() => {
@@ -29,9 +33,15 @@ export function StepPlan(props: Props) {
     (async () => {
       const res = await validateRecipeContent(props.recipe);
       if (cancelled) return;
-      setPlan('errors' in res ? { ok: false, errors: res.errors } : { ok: true, plan: res.plan, steps: res.steps });
+      setPlan(
+        'errors' in res
+          ? { ok: false, errors: res.errors }
+          : { ok: true, plan: res.plan, steps: res.steps, graph: res.graph },
+      );
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [props.recipe]);
 
   const hasErrors = plan && !plan.ok;
@@ -54,17 +64,32 @@ export function StepPlan(props: Props) {
             type="button"
             className={'rcp-tab' + (tab === 'plan' ? ' rcp-tab--active' : '')}
             onClick={() => setTab('plan')}
-          >Plan</button>
+          >
+            Plan
+          </button>
+          {graphMode ? (
+            <button
+              type="button"
+              className={'rcp-tab' + (tab === 'graph' ? ' rcp-tab--active' : '')}
+              onClick={() => setTab('graph')}
+            >
+              Graph
+            </button>
+          ) : null}
           <button
             type="button"
             className={'rcp-tab' + (tab === 'edit' ? ' rcp-tab--active' : '')}
             onClick={() => setTab('edit')}
-          >Edit</button>
+          >
+            Edit
+          </button>
         </div>
       </header>
 
       {tab === 'plan' ? (
-        <PlanView plan={plan} />
+        <PlanView plan={plan} graphMode={graphMode} />
+      ) : tab === 'graph' ? (
+        <GraphView plan={plan} />
       ) : (
         <EditForm
           recipe={props.recipe}
@@ -99,7 +124,9 @@ export function StepPlan(props: Props) {
       </section>
 
       <footer className="rcp-step__footer">
-        <button type="button" className="rcp-btn" onClick={props.onBack}>← back</button>
+        <button type="button" className="rcp-btn" onClick={props.onBack}>
+          ← back
+        </button>
         <button
           type="button"
           className="rcp-btn rcp-btn--danger"
@@ -113,22 +140,33 @@ export function StepPlan(props: Props) {
   );
 }
 
-function PlanView({ plan }: { plan: PlanState }) {
+function PlanView({ plan, graphMode }: { plan: PlanState; graphMode: boolean }) {
   if (!plan) return <div className="rcp-loading">Resolving plan…</div>;
   if (!plan.ok) {
     return (
       <div className="rcp-errors">
-        <strong>{plan.errors.length} issue{plan.errors.length === 1 ? '' : 's'}:</strong>
-        <ul>{plan.errors.map((e, i) => <li key={i}>{e.path ? `${e.path}: ` : ''}{e.message}</li>)}</ul>
+        <strong>
+          {plan.errors.length} issue{plan.errors.length === 1 ? '' : 's'}:
+        </strong>
+        <ul>
+          {plan.errors.map((e, i) => (
+            <li key={i}>
+              {e.path ? `${e.path}: ` : ''}
+              {e.message}
+            </li>
+          ))}
+        </ul>
       </div>
     );
   }
   return (
-    <ul className="rcp-steps">
+    <ul className={'rcp-steps' + (graphMode ? ' rcp-steps--graph' : '')}>
       {plan.steps.map((s: ResolvedStep) => (
         <li key={s.index}>
           <span className="rcp-steps__idx">{s.index + 1}</span>
+          {s.id ? <span className="rcp-steps__id">{s.id}</span> : null}
           <span className="rcp-steps__kind">{s.kind}</span>
+          {s.wave ? <span className="rcp-steps__wave">w{s.wave}</span> : null}
           {s.run_as ? <span className="rcp-steps__runas">run_as={s.run_as}</span> : null}
           <span className="rcp-steps__host">host={s.host}</span>
           <code className="rcp-steps__preview">{s.preview}</code>
@@ -136,6 +174,17 @@ function PlanView({ plan }: { plan: PlanState }) {
       ))}
     </ul>
   );
+}
+
+function GraphView({ plan }: { plan: PlanState }) {
+  if (!plan) return <div className="rcp-loading">Resolving graph…</div>;
+  if (!plan.ok) {
+    return <p className="rcp-err">Fix validation errors before viewing the graph.</p>;
+  }
+  if (!plan.graph) {
+    return <p className="rcp-err">No graph data returned for this recipe.</p>;
+  }
+  return <RecipeGraphFlow plan={plan.graph} />;
 }
 
 function EnvEditor({ pairs, onChange }: { pairs: EnvPair[]; onChange: (e: EnvPair[]) => void }) {
@@ -161,10 +210,14 @@ function EnvEditor({ pairs, onChange }: { pairs: EnvPair[]; onChange: (e: EnvPai
               onChange(next);
             }}
           />
-          <button type="button" onClick={() => onChange(pairs.filter((_, j) => j !== i))}>×</button>
+          <button type="button" onClick={() => onChange(pairs.filter((_, j) => j !== i))}>
+            ×
+          </button>
         </div>
       ))}
-      <button type="button" onClick={() => onChange([...pairs, { key: '', value: '' }])}>+ add</button>
+      <button type="button" onClick={() => onChange([...pairs, { key: '', value: '' }])}>
+        + add
+      </button>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import "encoding/json"
 // Recipe is the decoded "recipe" block from a CUE document.
 type Recipe struct {
 	Name     string          `json:"name"`
+	Type     string          `json:"type,omitempty"`
 	Defaults *RecipeDefaults `json:"defaults,omitempty"`
 	Steps    []RecipeStep    `json:"steps"`
 }
@@ -17,7 +18,9 @@ type RecipeDefaults struct {
 	Secrets       map[string]string `json:"secrets,omitempty"`
 	K8sDebugImage string            `json:"k8s_debug_image,omitempty"`
 	KVTunnel      *bool             `json:"kv_tunnel,omitempty"`
+	MaxParallel   int               `json:"max_parallel,omitempty"`
 	SSHPort       int               `json:"ssh_port,omitempty"`
+	SSHPrivateKey string            `json:"ssh_private_key,omitempty"`
 }
 
 // RecipeFileTransfer is a local ↔ remote path pair for SFTP put/get steps.
@@ -124,8 +127,11 @@ type RecipeStepPlugin struct {
 // Host selects targets: literal IP, exact name, "*", "re:…", or "_" for ai only (see resolve.go). For agent_transfer,
 // host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
 type RecipeStep struct {
+	ID            string               `json:"id,omitempty"`
+	Depends       []string             `json:"depends,omitempty"`
 	Host          string               `json:"host"`
 	SSHPort       int                  `json:"ssh_port,omitempty"`
+	SSHPrivateKey string               `json:"ssh_private_key,omitempty"`
 	Command       string               `json:"command,omitempty"`
 	Put           *RecipeFileTransfer  `json:"put,omitempty"`
 	Get           *RecipeFileTransfer  `json:"get,omitempty"`
@@ -136,6 +142,8 @@ type RecipeStep struct {
 	Notify        *RecipeNotify        `json:"notify,omitempty"`
 	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`
 	KVTunnel      *bool                `json:"kv_tunnel,omitempty"`
+	MaxParallel   int                  `json:"max_parallel,omitempty"`
+	EnvFrom       []EnvFromRef         `json:"env_from,omitempty"`
 	RunAs         string               `json:"run_as,omitempty"`
 	Env           map[string]string    `json:"env,omitempty"`
 	Secrets       map[string]string    `json:"secrets,omitempty"`

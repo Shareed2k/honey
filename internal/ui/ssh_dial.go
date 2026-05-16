@@ -50,7 +50,11 @@ func runSSHInteractive(user string, r hosts.Record, recorder *SessionRecorder) e
 	if p, ok := hosts.MetaSSHPort(&r); ok {
 		sshPort = p
 	}
-	client, cleanup, err := sshclient.DialSSHClient(user, host, sshPort)
+	identity := ""
+	if id, ok := hosts.MetaSSHIdentityFile(&r); ok {
+		identity = id
+	}
+	client, cleanup, err := sshclient.DialSSHClient(user, host, sshPort, identity)
 	if err != nil {
 		return err
 	}

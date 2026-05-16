@@ -22,6 +22,20 @@ func TestSSHClientCacheKey_differsByMetaSSHPort(t *testing.T) {
 	}
 }
 
+func TestSSHClientCacheKey_differsByMetaSSHIdentityFile(t *testing.T) {
+	base := hosts.Record{
+		Provider:  "gcp",
+		Name:      "n1",
+		PrimaryIP: "10.0.0.1",
+	}
+	a := hosts.CloneWithMetaSSHIdentityFile(base, "~/.ssh/a")
+	b := hosts.CloneWithMetaSSHIdentityFile(base, "~/.ssh/b")
+	u := "deploy"
+	if SSHClientCacheKey(u, a) == SSHClientCacheKey(u, b) {
+		t.Fatal("expected different cache keys for different meta ssh_identity_file")
+	}
+}
+
 func TestSSHClientCacheKey_sameWhenNoMetaPort(t *testing.T) {
 	r := hosts.Record{Provider: "aws", Name: "x", PrimaryIP: "1.2.3.4"}
 	k1 := SSHClientCacheKey("u", r)

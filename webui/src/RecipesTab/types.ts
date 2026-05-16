@@ -3,6 +3,7 @@ import type { HostRecord } from '../HostPicker';
 import type {
   HostExecResultRow,
   ParsedRecipe,
+  RecipeGraphPlan,
   ResolvedStep,
   ValidationError,
 } from '../api';
@@ -24,7 +25,7 @@ export type Draft = {
 export type EnvPair = { key: string; value: string };
 
 export type PlanState =
-  | { ok: true; plan: string; steps: ResolvedStep[] }
+  | { ok: true; plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan }
   | { ok: false; errors: ValidationError[] }
   | null;
 

@@ -38,8 +38,11 @@ const schemaSource = `
 	})
 })
 #Step: close({
+	id?:      string
+	depends?: [...string]
 	host:     string
 	ssh_port?: int
+	ssh_private_key?: string
 	notify?: close({
 		notify_subject?: string
 		message?:       string
@@ -103,18 +106,26 @@ const schemaSource = `
 		on_failure?: #StepHook
 	})
 	kv_tunnel?: bool
+	max_parallel?: int
+	env_from?: [...close({
+		step: string
+		map: {[string]: string}
+	})]
 	env?: {[string]: string}
 	secrets?: {[string]: string}
 })
 #Recipe: close({
 	name:  string
+	type?: "linear" | "graph"
 	defaults?: close({
 		run_as?: string
 		env?: {[string]: string}
 		secrets?: {[string]: string}
 		k8s_debug_image?: string
 		kv_tunnel?: bool
+		max_parallel?: int
 		ssh_port?: int
+		ssh_private_key?: string
 	})
 	steps: [...#Step]
 })
@@ -160,7 +171,7 @@ func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, 
 	return unified, nil
 }
 
-func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefaults, records []hosts.Record, secretPrefixes []string) error {
+func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefaults, records []hosts.Record, secretPrefixes []string, mode ExecutionMode) error {
 	if err := ValidateHostField(s.Host); err != nil {
 		return fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
 	}
@@ -169,6 +180,15 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
 	}
 	if err := validateStepEnvAndSecrets(i, kind, s, secretPrefixes); err != nil {
+		return err
+	}
+	if err := validateStepEnvFrom(i, kind, mode, s); err != nil {
+		return err
+	}
+	if err := validateMaxParallelField(fmt.Sprintf("steps[%d]", i), s.MaxParallel); err != nil {
+		return err
+	}
+	if err := validateSSHPrivateKeyField(fmt.Sprintf("steps[%d]", i), s.SSHPrivateKey); err != nil {
 		return err
 	}
 	if err := ValidateStepRunAsForKind(kind, s); err != nil {
@@ -184,7 +204,7 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 			return err
 		}
 	}
-	if err := validateStepAI(i, nSteps, kind, s); err != nil {
+	if err := validateStepAI(i, nSteps, kind, s, mode); err != nil {
 		return err
 	}
 	return validateStepHooksAndKVTunnel(i, kind, s, defaults, secretPrefixes)
@@ -214,11 +234,11 @@ func validateStepEnvAndSecrets(i int, kind StepKind, s RecipeStep, secretPrefixe
 	return nil
 }
 
-func validateStepAI(i, nSteps int, kind StepKind, s RecipeStep) error {
+func validateStepAI(i, nSteps int, kind StepKind, s RecipeStep, mode ExecutionMode) error {
 	if kind != StepKindAI {
 		return nil
 	}
-	if i != nSteps-1 {
+	if mode == ExecutionModeLinear && i != nSteps-1 {
 		return fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
 	}
 	if i == 0 {
@@ -278,13 +298,38 @@ func parseRemoteRecipeAfterTransform(cueBytes []byte, records []hosts.Record, se
 			return out, fmt.Errorf("cuetry: defaults: %w", err)
 		}
 	}
-	nSteps := len(out.Steps)
-	for i, s := range out.Steps {
-		if err := validateDecodedRecipeStep(i, nSteps, s, out.Defaults, records, secretPrefixes); err != nil {
+	if out.Defaults != nil {
+		if err := validateSSHPrivateKeyField("defaults", out.Defaults.SSHPrivateKey); err != nil {
+			return out, err
+		}
+		if err := validateMaxParallelField("defaults", out.Defaults.MaxParallel); err != nil {
 			return out, err
 		}
 	}
+	mode, err := RecipeExecutionMode(out)
+	if err != nil {
+		return out, err
+	}
+	nSteps := len(out.Steps)
+	for i, s := range out.Steps {
+		if err := validateDecodedRecipeStep(i, nSteps, s, out.Defaults, records, secretPrefixes, mode); err != nil {
+			return out, err
+		}
+	}
+	if err := ValidateRecipeGraph(out); err != nil {
+		return out, err
+	}
 	return out, nil
+}
+
+func validateSSHPrivateKeyField(where, path string) error {
+	if path == "" {
+		return nil
+	}
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("cuetry: %s.ssh_private_key must not be empty or whitespace", where)
+	}
+	return nil
 }
 
 func validateStepHooks(stepIdx int, h *RecipeStepHooks, secretPrefixes []string) error {
@@ -418,13 +463,22 @@ func ValidateParsedRecipe(r Recipe, records []hosts.Record) error {
 			return fmt.Errorf("cuetry: defaults: %w", err)
 		}
 	}
-	nSteps := len(r.Steps)
-	for i, s := range r.Steps {
-		if err := validateDecodedRecipeStep(i, nSteps, s, r.Defaults, records, nil); err != nil {
+	if r.Defaults != nil {
+		if err := validateMaxParallelField("defaults", r.Defaults.MaxParallel); err != nil {
 			return err
 		}
 	}
-	return nil
+	mode, err := RecipeExecutionMode(r)
+	if err != nil {
+		return err
+	}
+	nSteps := len(r.Steps)
+	for i, s := range r.Steps {
+		if err := validateDecodedRecipeStep(i, nSteps, s, r.Defaults, records, nil, mode); err != nil {
+			return err
+		}
+	}
+	return ValidateRecipeGraph(r)
 }
 
 func formatCueErr(err error) error {

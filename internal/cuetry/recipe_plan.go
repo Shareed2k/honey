@@ -9,11 +9,14 @@ import (
 // It backs the wizard's Plan view and any other UI that wants a per-step
 // digest without resolving target hosts.
 type StepSummary struct {
-	Index   int    `json:"index"`
-	Kind    string `json:"kind"`
-	Host    string `json:"host"`
-	RunAs   string `json:"run_as,omitempty"`
-	Preview string `json:"preview"`
+	Index   int      `json:"index"`
+	ID      string   `json:"id,omitempty"`
+	Depends []string `json:"depends,omitempty"`
+	Wave    int      `json:"wave,omitempty"`
+	Kind    string   `json:"kind"`
+	Host    string   `json:"host"`
+	RunAs   string   `json:"run_as,omitempty"`
+	Preview string   `json:"preview"`
 }
 
 // RenderDryRunPlan returns a host-agnostic plan summary for r: one line per
@@ -22,8 +25,30 @@ type StepSummary struct {
 // The line format mirrors the per-target dry-run text in internal/ui — same
 // "step N: kind=… host=… run_as=… preview=…" shape, minus per-host detail.
 func RenderDryRunPlan(r Recipe) (string, []StepSummary, error) {
+	mode, err := RecipeExecutionMode(r)
+	if err != nil {
+		return "", nil, err
+	}
+	var waveOf map[int]int
+	if mode == ExecutionModeGraph {
+		sg, gerr := BuildStepGraph(r.Steps)
+		if gerr != nil {
+			return "", nil, gerr
+		}
+		waveOf = make(map[int]int, len(r.Steps))
+		for w, wave := range sg.Waves {
+			for _, idx := range wave {
+				waveOf[idx] = w + 1
+			}
+		}
+	}
 	steps := make([]StepSummary, 0, len(r.Steps))
 	var b strings.Builder
+	if mode == ExecutionModeGraph {
+		if text, werr := FormatGraphWavesText(r); werr == nil {
+			b.WriteString(text)
+		}
+	}
 	for i, step := range r.Steps {
 		kind, err := ClassifyStep(step)
 		if err != nil {
@@ -34,14 +59,24 @@ func RenderDryRunPlan(r Recipe) (string, []StepSummary, error) {
 		preview := previewForStep(kind, step)
 		summary := StepSummary{
 			Index:   i,
+			ID:      strings.TrimSpace(step.ID),
+			Depends: append([]string(nil), step.Depends...),
 			Kind:    kindLabel,
 			Host:    strings.TrimSpace(step.Host),
 			RunAs:   runAs,
 			Preview: preview,
 		}
+		if waveOf != nil {
+			summary.Wave = waveOf[i]
+		}
 		steps = append(steps, summary)
-		fmt.Fprintf(&b, "step %d: kind=%s host=%q run_as=%q preview=%q\n",
-			i, kindLabel, summary.Host, runAs, preview)
+		if summary.ID != "" {
+			fmt.Fprintf(&b, "step %d (id=%q wave=%d depends=%v): kind=%s host=%q run_as=%q preview=%q\n",
+				i, summary.ID, summary.Wave, summary.Depends, kindLabel, summary.Host, runAs, preview)
+		} else {
+			fmt.Fprintf(&b, "step %d: kind=%s host=%q run_as=%q preview=%q\n",
+				i, kindLabel, summary.Host, runAs, preview)
+		}
 	}
 	return b.String(), steps, nil
 }

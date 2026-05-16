@@ -41,7 +41,7 @@ var (
 	k8sExecutor Executor
 
 	// dialHoneyHost connects to PrimaryIP (or alias) via SSH; wired by internal/sshclient init.
-	dialHoneyHost func(user, hostAlias string, overridePort int) (HostClient, error)
+	dialHoneyHost func(user, hostAlias string, overridePort int, identityFile string) (HostClient, error)
 
 	// sshRunInteractive opens a local TTY session; wired by internal/ui init.
 	sshRunInteractive func(user string, r hosts.Record, recorder any) error
@@ -60,7 +60,7 @@ func SetK8sExecutor(ex Executor) {
 }
 
 // SetDialHoney registers the SSH HostClient dialer (from sshclient.init).
-func SetDialHoney(fn func(user, hostAlias string, overridePort int) (HostClient, error)) {
+func SetDialHoney(fn func(user, hostAlias string, overridePort int, identityFile string) (HostClient, error)) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	dialHoneyHost = fn
@@ -161,7 +161,11 @@ func (sshExecutor) Dial(user string, r hosts.Record) (HostClient, error) {
 	if p, ok := hosts.MetaSSHPort(&r); ok {
 		override = p
 	}
-	return dialHoneyHost(user, host, override)
+	identity := ""
+	if id, ok := hosts.MetaSSHIdentityFile(&r); ok {
+		identity = id
+	}
+	return dialHoneyHost(user, host, override, identity)
 }
 
 func (sshExecutor) RunInteractive(user string, r hosts.Record) error {

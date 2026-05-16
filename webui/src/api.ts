@@ -124,30 +124,69 @@ export type RecipeListEntry = { name: string; path: string };
 /** Structured recipe shape that mirrors internal/cuetry.Recipe (JSON keys match Go json tags). */
 export type ParsedRecipe = {
   name: string;
+  type?: string;
   defaults?: Record<string, unknown>;
   steps: ParsedRecipeStep[];
 };
 
 export type ParsedRecipeStep = {
+  id?: string;
+  depends?: string[];
   host: string;
   command?: string;
-  script?: { body?: string; path?: string };
+  script?: { body?: string; path?: string; local?: string; remote?: string };
   ai?: { model?: string; prompt?: string };
   run_as?: string;
   env?: Record<string, string>;
+  max_parallel?: number;
+  kv_tunnel?: boolean;
+  env_from?: { step: string; map: Record<string, string> }[];
   hooks?: { on_success?: ParsedRecipeStep; on_failure?: ParsedRecipeStep };
   // Step kinds that v1 does NOT support editing — preserved verbatim by the form.
   agent_transfer?: unknown;
   notify?: unknown;
+  plugin?: unknown;
+  put?: unknown;
+  get?: unknown;
 };
 
 export type ResolvedStep = {
   index: number;
+  id?: string;
+  depends?: string[];
+  wave?: number;
   kind: string;
   host: string;
   run_as?: string;
   preview: string;
 };
+
+export type GraphPlanNode = {
+  index: number;
+  id: string;
+  kind: string;
+  host: string;
+  wave?: number;
+  kv_tunnel?: boolean;
+  preview?: string;
+};
+
+export type GraphPlanEdge = {
+  from: string;
+  to: string;
+};
+
+export type RecipeGraphPlan = {
+  type: string;
+  waves?: GraphPlanNode[][];
+  nodes: GraphPlanNode[];
+  edges: GraphPlanEdge[];
+  mermaid?: string;
+};
+
+export function isGraphRecipe(recipe: ParsedRecipe): boolean {
+  return recipe.type?.trim().toLowerCase() === 'graph';
+}
 
 export type ValidationError = {
   path?: string;
@@ -363,16 +402,17 @@ export async function fetchRecentRuns(limit = 20): Promise<RecentRunEntry[]> {
  */
 export async function validateRecipeContent(
   recipe: ParsedRecipe,
-): Promise<{ plan: string; steps: ResolvedStep[] } | { errors: ValidationError[] }> {
+): Promise<{ plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan } | { errors: ValidationError[] }> {
   const r = await apiPost('/api/v1/recipes/validate-content', { recipe_content: recipe });
   const body = (await r.json().catch(() => ({}))) as {
     plan?: string;
     steps?: ResolvedStep[];
+    graph?: RecipeGraphPlan;
     errors?: ValidationError[];
     error?: string;
   };
   if (r.ok) {
-    return { plan: body.plan ?? '', steps: body.steps ?? [] };
+    return { plan: body.plan ?? '', steps: body.steps ?? [], graph: body.graph };
   }
   if (r.status === 400) {
     return {

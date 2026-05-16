@@ -13,7 +13,7 @@ import (
 	"github.com/shareed2k/honey/internal/stepkv"
 )
 
-func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, cliEnv map[string]string, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, pluginMgr *plugins.Manager, secretResolver cuetry.SecretResolver, execute bool, cache *ClientCache, recipeKV *RecipeKVCoordinator) error {
+func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, cliEnv map[string]string, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, pluginMgr *plugins.Manager, secretResolver cuetry.SecretResolver, execute bool, cache *ClientCache, recipeKV *RecipeKVCoordinator, outputStore *cuetry.StepOutputStore) error {
 	if pluginMgr == nil || !pluginMgr.Enabled() {
 		return fmt.Errorf("plugin step requires plugins.enabled in honey config")
 	}
@@ -21,7 +21,11 @@ func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir st
 	if pl == nil {
 		return fmt.Errorf("internal plugin step")
 	}
-	sem := make(chan struct{}, 8)
+	maxConc := recipeHostMaxConc(step, recipe.Defaults)
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	for _, target := range targets {
 		target := target
@@ -30,7 +34,7 @@ func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir st
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runCuePluginOnHost(ctx, recipe, recipeDir, stepIdx, kind, step, target, cliEnv, sshUser, pluginMgr, secretResolver, execute, cache, recipeKV)
+			res := runCuePluginOnHost(ctx, recipe, recipeDir, stepIdx, kind, step, target, cliEnv, sshUser, pluginMgr, secretResolver, execute, cache, recipeKV, outputStore)
 			ch <- res
 		}()
 	}
@@ -38,14 +42,14 @@ func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir st
 	return nil
 }
 
-func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, target hosts.Record, cliEnv map[string]string, sshUser string, pluginMgr *plugins.Manager, secretResolver cuetry.SecretResolver, execute bool, cache *ClientCache, recipeKV *RecipeKVCoordinator) HostExecResult {
+func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, target hosts.Record, cliEnv map[string]string, sshUser string, pluginMgr *plugins.Manager, secretResolver cuetry.SecretResolver, execute bool, cache *ClientCache, recipeKV *RecipeKVCoordinator, outputStore *cuetry.StepOutputStore) HostExecResult {
 	res := HostExecResult{Name: target.Name, Success: false}
 	hostJSON, err := json.Marshal(target)
 	if err != nil {
 		res.ErrMsg = err.Error()
 		return res
 	}
-	env, err := cuetry.EffectiveEnvForRun(ctx, execute, secretResolver, step, recipe.Defaults, cliEnv, &target)
+	env, err := cuetry.EffectiveEnvForRunEx(ctx, execute, secretResolver, step, recipe.Defaults, cliEnv, &target, cueEnvRunOpts(&recipe, outputStore, !execute))
 	if err != nil {
 		res.ErrMsg = err.Error()
 		return res

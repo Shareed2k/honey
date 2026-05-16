@@ -31,7 +31,28 @@
 
 .rcp-steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .rcp-steps li { display: grid; grid-template-columns: auto 80px auto auto 1fr; gap: 8px; align-items: baseline; padding: 4px 6px; }
+.rcp-steps--graph li { grid-template-columns: auto 72px 64px 48px auto auto 1fr; }
+.rcp-steps__id { color: #79c0ff; font-size: 12px; }
+.rcp-steps__wave { color: #a371f7; font-size: 11px; }
 .rcp-steps__preview { color: #7ee787; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+
+.rcp-graph { display: grid; grid-template-columns: 1fr 220px; gap: 12px; min-height: 420px; }
+.rcp-graph__canvas { min-height: 420px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; }
+.rcp-graph__canvas .react-flow { width: 100%; height: 100%; min-height: 420px; }
+.rcp-graph__detail { padding: 10px; background: #161b22; border: 1px solid #30363d; border-radius: 4px; font-size: 13px; overflow: auto; }
+.rcp-graph__detail pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 11px; color: #7ee787; }
+.rcp-graph__hint { color: #6e7681; font-size: 13px; margin: 0; padding: 8px; align-self: start; }
+.rcp-graph-node { padding: 10px 14px; min-width: 140px; background: #3d5a80; border: 1px solid #58a6ff; border-radius: 6px; color: #f0f6fc; font-size: 12px; }
+.rcp-graph-node--kv { background: #6a4c93; border-color: #bc8cff; }
+.rcp-graph-node__id { font-weight: 600; margin-bottom: 4px; }
+.rcp-graph-node__kind { color: #c9d1d9; font-size: 11px; }
+.rcp-graph-node__wave { display: inline-block; margin-top: 4px; font-size: 10px; color: #a371f7; }
+.rcp-graph-handle { width: 6px; height: 6px; background: #8b949e; border: none; }
+
+@media (max-width: 900px) {
+  .rcp-graph { grid-template-columns: 1fr; }
+  .rcp-graph__canvas { min-height: 320px; }
+}
 
 .rcp-controls { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
 .rcp-field { display: flex; flex-direction: column; gap: 4px; }

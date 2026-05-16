@@ -4,7 +4,11 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 
 ## Files
 
-- `example.cue`: The fully documented recipe that demonstrates global defaults, variable injection, using the injected `hosts` variable list for dynamic step generation, and different step kinds (`command`, `put`, `get`, `script`, `agent_transfer`, `ai`). Optional **`defaults.ssh_port`** / per-step **`ssh_port`** (1–65535) override the SSH dial port for that step with precedence **step → defaults → each host’s `meta.ssh_port` → `~/.ssh/config` / 22**.
+- `example.cue`: The fully documented recipe that demonstrates global defaults, variable injection, using the injected `hosts` variable list for dynamic step generation, and different step kinds (`command`, `put`, `get`, `script`, `agent_transfer`, `ai`). Optional **`defaults.ssh_port`** / per-step **`ssh_port`** (1–65535) override the SSH dial port for that step with precedence **step → defaults → each host’s `meta.ssh_port` → `~/.ssh/config` / 22**. Optional **`defaults.ssh_private_key`** / per-step **`ssh_private_key`** set a private key path for SSH with precedence **step → defaults → unset (normal `~/.ssh/config` / env / `~/.ssh` keys)**; when set, honey uses **only** that key file (no `IdentityFile`, `HONEY_SSH_IDENTITY_FILES`, or default `~/.ssh` fallbacks).
+- `with_ssh_key.cue`: Minimal recipe showing `ssh_private_key` on defaults and a per-step override.
+- `graph_parallel.cue`: **`type: "graph"`** with per-step **`id`** and **`depends`** for parallel waves (see below).
+- `graph_env_from.cue`: Graph mode **`env_from`** — map dependency step **stdout** into env (per host).
+- `graph_kv_tunnel.cue`: Graph mode **`defaults.kv_tunnel`** shared across waves; namespace keys with **`HONEY_STEP_ID`** and **`HONEY_HOST_NAME`**.
 - `agent_transfer.cue`: Example **A→cloud→B** staging transfer (transfer agent); see the file header for host-arity rules and `cloud_backend_ref` / `--config` requirements.
 - `clean_filesystem.cue`: Maintenance recipe for systemd journal usage/vacuum and snap (remove disabled revisions, clear `/var/lib/snapd/cache`); read the file header for destructive journal behavior and `sudo -n` requirements.
 - `high_load_processes.cue`: On Linux (GNU `ps`), prints load, `free -h`, and top processes by **CPU%** and **RSS**; uses `host: "*"` for every matched host with an IP.
@@ -51,6 +55,24 @@ honey secrets unseal 'secure:v1:…' --config ~/.config/honey/config.yaml
 KEY=$(openssl rand -hex 32)
 honey secrets seal --data-key-hex "$KEY" 'hello'
 ```
+
+## Graph mode (explicit dependencies)
+
+By default recipes run **linearly** (steps in array order). Set **`type: "graph"`** when independent steps should run in **parallel** once their dependencies succeed:
+
+- Each step needs a unique **`id`** (`[a-zA-Z][a-zA-Z0-9_-]*`).
+- Optional **`depends: [id, ...]`** lists prerequisite steps (must form a **DAG**, no cycles).
+- Honey runs steps in **waves** (all steps in a wave may run concurrently; default up to 8 steps at once).
+- Optional **`max_parallel`** (1–128) on `defaults` or a step caps **host-level** SSH/SFTP/plugin concurrency for that step (default 32); it does **not** limit how many steps run in one graph wave.
+- Optional **`env_from`** on a step maps env vars from a dependency step’s captured **stdout** (per host); each `env_from[].step` must appear in that step’s **`depends`**.
+- Graph mode sets **`HONEY_STEP_ID`** on remote command/script/plugin env when the step has an **`id`** (use with shared KV keys).
+- **`kv_tunnel`** may be enabled on multiple graph steps (or via `defaults.kv_tunnel`); one shared stepkv session for the run — dependency waves order reads; **same-wave** steps may race (namespace keys per host/step).
+- If a step **fails** (or all hosts hit transient SSH errors), **descendants are skipped**; other branches continue.
+- If the recipe has an **`ai`** step and it becomes **unreachable** (a dependency failed or was skipped), the whole run **aborts**.
+- Linear recipes must not use `id` / `depends` / `env_from`; graph recipes relax the rule that `ai` must be last in the `steps` array (but `ai` must not be listed in any other step’s `depends`).
+- Web UI: in the recipe wizard (Step ③ Review plan), use the **Graph** tab for a read-only DAG (powered by `POST /api/v1/recipes/validate-content` → `graph` field).
+
+See [`graph_parallel.cue`](graph_parallel.cue) for a fetch → parallel restarts → verify → ai example.
 
 ## How to use
 
