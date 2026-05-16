@@ -325,7 +325,7 @@ func runK8sInteractiveWithRecorder(user string, r hosts.Record, recorder *Sessio
 	defer func() { _ = termRestore(fd, oldState) }()
 
 	// Inject host environment variables into the interactive shell session
-	env, _ := cuetry.EffectiveEnvForRun(cuetry.RecipeStep{}, nil, nil, &r)
+	env, _ := cuetry.EffectiveEnvForRun(context.Background(), false, nil, cuetry.RecipeStep{}, nil, nil, &r)
 	cmd, _ := cuetry.ShellExportPrefixForRemote(env, "sh")
 
 	// Start standard sh for interactive session

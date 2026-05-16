@@ -43,7 +43,9 @@ Use recipe.defaults.run_as or per-step run_as for command and script steps
 
 Optional recipe.defaults.env and per-step env (map of NAME to value) set
 export assignments before the shell command or sh <script> on the remote;
-step keys override defaults. Not allowed on put/get/ai steps.
+step keys override defaults. Optional defaults.secrets and step secrets (command/script
+only) map NAME to ref strings (env:VAR, keyring://…, etc.) resolved at execute time; dry-run
+shows redacted placeholders, not resolved values. Not allowed on put/get/ai steps.
 
 Repeat -e/--env KEY=value to set remote variables from the CLI; they override
 recipe env on duplicate keys (command and script steps only).
@@ -138,5 +140,9 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if cfg != nil {
 		aiPrompt = strings.TrimSpace(cfg.Defaults.AISystemPrompt)
 	}
-	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, rec)
+	secRes, err := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(cfg))
+	if err != nil {
+		return err
+	}
+	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, secRes, rec)
 }

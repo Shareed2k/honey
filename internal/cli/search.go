@@ -212,6 +212,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return ui.RunTable(records, sshUser, ui.RunTableOptions{
 			RecordDir:     recordDir,
 			RecordEnabled: recordOnStart,
+			Config:        cfg,
 			ConfigPath:    cfgPath,
 		})
 	}

@@ -1,15 +1,22 @@
 package cuetry
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/shareed2k/honey/internal/cuetry/secrets/stack"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-const maxEnvValueLen = 8192
+const (
+	maxEnvValueLen           = 8192
+	maxSecretRefLen          = 65536
+	maxSecretRefDisplayRunes = 120
+)
 
 var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -39,22 +46,118 @@ func validateOneEnv(k, v string) error {
 	return nil
 }
 
-// EffectiveEnv merges recipe.defaults.env with step.env (step wins on duplicate keys).
+// OverlapEnvSecrets returns an error if the same key appears in both env and secrets maps.
+func OverlapEnvSecrets(env, secrets map[string]string) error {
+	if len(env) == 0 || len(secrets) == 0 {
+		return nil
+	}
+	for k := range secrets {
+		if _, ok := env[k]; ok {
+			return fmt.Errorf("env and secrets both define key %q", k)
+		}
+	}
+	return nil
+}
+
+// ValidateRecipeSecretsRefMap checks secret map keys and ref strings (refs are resolved at execute time).
+func ValidateRecipeSecretsRefMap(m map[string]string) error {
+	for k, ref := range m {
+		if err := validateOneSecretRef(k, ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateOneSecretRef(k, ref string) error {
+	if strings.TrimSpace(k) == "" {
+		return fmt.Errorf("secrets: empty key")
+	}
+	if !envNamePattern.MatchString(k) {
+		return fmt.Errorf("secrets key %q must match %s (POSIX-style names)", k, envNamePattern.String())
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return fmt.Errorf("secrets: empty ref for key %q", k)
+	}
+	if strings.ContainsAny(ref, "\x00\n\r") {
+		return fmt.Errorf("secrets ref for %q must not contain NUL, LF, or CR", k)
+	}
+	if len(ref) > maxSecretRefLen {
+		return fmt.Errorf("secrets ref for %q exceeds %d bytes", k, maxSecretRefLen)
+	}
+	if err := stack.ValidateSecureRef(ref); err != nil {
+		return fmt.Errorf("secrets ref for key %q: %w", k, err)
+	}
+	return nil
+}
+
+// RedactedSecretValueForDryRun returns a safe placeholder for dry-run / plans (truncated ref, never resolved material).
+func RedactedSecretValueForDryRun(ref string) string {
+	ref = strings.TrimSpace(ref)
+	const prefix = "<<secret "
+	const suffix = ">>"
+	maxInner := maxSecretRefDisplayRunes - utf8.RuneCountInString(prefix) - utf8.RuneCountInString(suffix)
+	if maxInner < 8 {
+		return prefix + "…" + suffix
+	}
+	runes := []rune(ref)
+	if len(runes) <= maxInner {
+		return prefix + string(runes) + suffix
+	}
+	return prefix + string(runes[:maxInner-1]) + "…" + suffix
+}
+
+func mergeEnvLiteralsInto(dst map[string]string, m map[string]string, label string) error {
+	for k, v := range m {
+		if err := validateOneEnv(k, v); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+		dst[k] = v
+	}
+	return nil
+}
+
+// MergeResolvedSecretsInto validates secret refs and merges resolved values into dst (or redacted placeholders when resolve is false).
+func MergeResolvedSecretsInto(ctx context.Context, resolve bool, resolver SecretResolver, dst map[string]string, secrets map[string]string, label string) error {
+	if len(secrets) == 0 {
+		return nil
+	}
+	for k, ref := range secrets {
+		if err := validateOneSecretRef(k, ref); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+		var v string
+		var err error
+		if resolve {
+			if resolver == nil {
+				return fmt.Errorf("%s: secret resolver is nil", label)
+			}
+			v, err = resolver.Resolve(ctx, ref)
+			if err != nil {
+				return fmt.Errorf("%s key %q: %w", label, k, err)
+			}
+		} else {
+			v = RedactedSecretValueForDryRun(ref)
+		}
+		if err := validateOneEnv(k, v); err != nil {
+			return fmt.Errorf("%s resolved %q: %w", label, k, err)
+		}
+		dst[k] = v
+	}
+	return nil
+}
+
+// EffectiveEnv merges recipe.defaults.env with step.env (step wins on duplicate keys). Literal env only (no secrets).
 func EffectiveEnv(step RecipeStep, defaults *RecipeDefaults) (map[string]string, error) {
 	out := make(map[string]string)
 	if defaults != nil && len(defaults.Env) > 0 {
-		for k, v := range defaults.Env {
-			if err := validateOneEnv(k, v); err != nil {
-				return nil, fmt.Errorf("defaults.env: %w", err)
-			}
-			out[k] = v
+		if err := mergeEnvLiteralsInto(out, defaults.Env, "defaults.env"); err != nil {
+			return nil, err
 		}
 	}
-	for k, v := range step.Env {
-		if err := validateOneEnv(k, v); err != nil {
-			return nil, fmt.Errorf("env: %w", err)
-		}
-		out[k] = v
+	if err := mergeEnvLiteralsInto(out, step.Env, "env"); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -86,15 +189,44 @@ func sanitizeEnvKey(k string) string {
 	return regexp.MustCompile(`[^a-zA-Z0-9_]`).ReplaceAllString(strings.ToUpper(k), "_")
 }
 
-// EffectiveEnvForRun merges recipe env (defaults then step) with cliEnv and adds host variables; cliEnv wins on duplicate keys.
-func EffectiveEnvForRun(step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
-	out, err := EffectiveEnv(step, defaults)
-	if err != nil {
+func appendHostEnvVars(dst map[string]string, r *hosts.Record) {
+	if r == nil {
+		return
+	}
+	dst["HONEY_HOST_NAME"] = r.Name
+	dst["HONEY_HOST_PRIMARY_IP"] = r.PrimaryIP
+	dst["HONEY_HOST_PROVIDER"] = r.Provider
+	if r.Zone != "" {
+		dst["HONEY_HOST_ZONE"] = r.Zone
+	}
+	if r.Region != "" {
+		dst["HONEY_HOST_REGION"] = r.Region
+	}
+	for k, v := range r.Meta {
+		key := "HONEY_HOST_META_" + sanitizeEnvKey(k)
+		if err := validateOneEnv(key, v); err == nil {
+			dst[key] = v
+		}
+	}
+}
+
+// EffectiveEnvForRun merges defaults.env → resolved defaults.secrets → step.env → resolved step.secrets → cliEnv → host HONEY_HOST_*.
+// When resolveSecrets is false (dry-run / plan), secret values are replaced with redacted placeholders and resolver may be nil.
+func EffectiveEnvForRun(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
+	merged := make(map[string]string)
+	if defaults != nil {
+		if err := mergeEnvLiteralsInto(merged, defaults.Env, "defaults.env"); err != nil {
+			return nil, err
+		}
+		if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, defaults.Secrets, "defaults.secrets"); err != nil {
+			return nil, err
+		}
+	}
+	if err := mergeEnvLiteralsInto(merged, step.Env, "step.env"); err != nil {
 		return nil, err
 	}
-	merged := make(map[string]string, len(out)+len(cliEnv)+10)
-	for k, v := range out {
-		merged[k] = v
+	if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, step.Secrets, "step.secrets"); err != nil {
+		return nil, err
 	}
 	for k, v := range cliEnv {
 		if err := validateOneEnv(k, v); err != nil {
@@ -102,47 +234,35 @@ func EffectiveEnvForRun(step RecipeStep, defaults *RecipeDefaults, cliEnv map[st
 		}
 		merged[k] = v
 	}
-
-	if r != nil {
-		merged["HONEY_HOST_NAME"] = r.Name
-		merged["HONEY_HOST_PRIMARY_IP"] = r.PrimaryIP
-		merged["HONEY_HOST_PROVIDER"] = r.Provider
-		if r.Zone != "" {
-			merged["HONEY_HOST_ZONE"] = r.Zone
-		}
-		if r.Region != "" {
-			merged["HONEY_HOST_REGION"] = r.Region
-		}
-		for k, v := range r.Meta {
-			key := "HONEY_HOST_META_" + sanitizeEnvKey(k)
-			// Avoid invalid env names (like those starting with numbers)
-			if err := validateOneEnv(key, v); err == nil {
-				merged[key] = v
-			}
-		}
-	}
-
+	appendHostEnvVars(merged, r)
 	return merged, nil
 }
 
-// EffectiveEnvForRemoteHook merges defaults.env, step.env, hook.env, then cliEnv, then host variables (same rules as EffectiveEnvForRun, with hook.env overlaying step env).
-func EffectiveEnvForRemoteHook(step RecipeStep, defaults *RecipeDefaults, hook *RecipeStepHook, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
+// EffectiveEnvForRemoteHook merges defaults env/secrets, step env/secrets, hook env/secrets, then cliEnv, then host variables.
+func EffectiveEnvForRemoteHook(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, hook *RecipeStepHook, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
 	if hook == nil {
-		return EffectiveEnvForRun(step, defaults, cliEnv, r)
+		return EffectiveEnvForRun(ctx, resolveSecrets, resolver, step, defaults, cliEnv, r)
 	}
-	out, err := EffectiveEnv(step, defaults)
-	if err != nil {
+	merged := make(map[string]string)
+	if defaults != nil {
+		if err := mergeEnvLiteralsInto(merged, defaults.Env, "defaults.env"); err != nil {
+			return nil, err
+		}
+		if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, defaults.Secrets, "defaults.secrets"); err != nil {
+			return nil, err
+		}
+	}
+	if err := mergeEnvLiteralsInto(merged, step.Env, "step.env"); err != nil {
 		return nil, err
 	}
-	for k, v := range hook.Env {
-		if err := validateOneEnv(k, v); err != nil {
-			return nil, fmt.Errorf("hooks.env: %w", err)
-		}
-		out[k] = v
+	if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, step.Secrets, "step.secrets"); err != nil {
+		return nil, err
 	}
-	merged := make(map[string]string, len(out)+len(cliEnv)+16)
-	for k, v := range out {
-		merged[k] = v
+	if err := mergeEnvLiteralsInto(merged, hook.Env, "hooks.env"); err != nil {
+		return nil, err
+	}
+	if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, hook.Secrets, "hooks.secrets"); err != nil {
+		return nil, err
 	}
 	for k, v := range cliEnv {
 		if err := validateOneEnv(k, v); err != nil {
@@ -150,24 +270,13 @@ func EffectiveEnvForRemoteHook(step RecipeStep, defaults *RecipeDefaults, hook *
 		}
 		merged[k] = v
 	}
-	if r != nil {
-		merged["HONEY_HOST_NAME"] = r.Name
-		merged["HONEY_HOST_PRIMARY_IP"] = r.PrimaryIP
-		merged["HONEY_HOST_PROVIDER"] = r.Provider
-		if r.Zone != "" {
-			merged["HONEY_HOST_ZONE"] = r.Zone
-		}
-		if r.Region != "" {
-			merged["HONEY_HOST_REGION"] = r.Region
-		}
-		for k, v := range r.Meta {
-			key := "HONEY_HOST_META_" + sanitizeEnvKey(k)
-			if err := validateOneEnv(key, v); err == nil {
-				merged[key] = v
-			}
-		}
-	}
+	appendHostEnvVars(merged, r)
 	return merged, nil
+}
+
+// EffectiveEnvHostOnly returns only HONEY_HOST_* variables derived from r (no recipe env or secrets).
+func EffectiveEnvHostOnly(r *hosts.Record) (map[string]string, error) {
+	return EffectiveEnvForRun(context.Background(), false, nil, RecipeStep{}, nil, nil, r)
 }
 
 // ShellExportPrefixForRemote prepends stable `export KEY='value'; ` assignments before inner (remote shell).
