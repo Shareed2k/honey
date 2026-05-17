@@ -34,7 +34,11 @@ func SSHClientCacheKey(user string, r hosts.Record) string {
 	if p, ok := hosts.MetaSSHPort(&r); ok {
 		port = strconv.Itoa(p)
 	}
-	return r.Provider + "\x00" + r.PrimaryIP + "\x00" + r.Name + "\x00" + user + "\x00" + port
+	identity := "-"
+	if id, ok := hosts.MetaSSHIdentityFile(&r); ok {
+		identity = id
+	}
+	return r.Provider + "\x00" + r.PrimaryIP + "\x00" + r.Name + "\x00" + user + "\x00" + port + "\x00" + identity
 }
 
 // GetOrDial returns an existing connection or dials a new one and stores it.

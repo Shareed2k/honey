@@ -21,6 +21,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/pvelxc"
 	"github.com/shareed2k/honey/internal/safepath"
 	k8sexec "k8s.io/client-go/util/exec"
@@ -1196,7 +1197,12 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		if err != nil {
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nread: " + err.Error()}
 		}
-		recipe, err := cuetry.ParseRemoteRecipe(raw, targets)
+		pluginMgr, perr := plugins.Open(context.Background(), honey)
+		if perr != nil {
+			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nplugins: " + perr.Error()}
+		}
+		defer func() { _ = pluginMgr.Close() }()
+		recipe, err := cuetry.ParseRemoteRecipeOpts(raw, targets, cuetry.ParseOptions{PluginManager: pluginMgr})
 		if err != nil {
 			return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nparse: " + err.Error()}
 		}
@@ -1204,11 +1210,11 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		if !execute {
 			var buf bytes.Buffer
 			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
-			secRes, err := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(honey))
+			secRes, err := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(honey), pluginMgr)
 			if err != nil {
 				return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nsecrets: " + err.Error()}
 			}
-			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, aiPrompt, secRes, nil)
+			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, aiPrompt, secRes, pluginMgr, nil)
 			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
 				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
 					if rec != nil {
@@ -1252,12 +1258,12 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		go func() {
 			defer close(ch)
 			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
-			secRes, err := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(honey))
+			secRes, err := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(honey), pluginMgr)
 			if err != nil {
 				ch <- HostExecResult{Name: "cue recipe", Success: false, ErrMsg: "secrets: " + err.Error()}
 				return
 			}
-			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, aiPrompt, secRes, ch)
+			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, aiPrompt, secRes, pluginMgr, true, ch)
 		}()
 
 		return streamStartMsg{

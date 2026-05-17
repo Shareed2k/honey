@@ -16,14 +16,14 @@ import (
 // @Summary Config JSON Schema
 // @Tags config
 // @Produce json
-// @Success 200 {object} map[string]interface{} "json_schema, ui_schema"
+// @Success 200 {object} ConfigSchemaResponse
 // @Router /api/v1/config/schema [get]
 // @Security BearerAuth
 func (s *Server) handleConfigSchema(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"json_schema": config.BuildJSONSchema(),
-		"ui_schema":   config.BuildUISchema(),
+	_ = json.NewEncoder(w).Encode(ConfigSchemaResponse{
+		JSONSchema: config.BuildJSONSchema(),
+		UISchema:   config.BuildUISchema(),
 	})
 }
 
@@ -62,7 +62,7 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 // @Tags config
 // @Produce json
 // @Param body body string true "Full YAML document (Content-Type application/yaml or text/plain)"
-// @Success 200 {object} map[string]string "status, path"
+// @Success 200 {object} StatusResponse
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/config [put]
@@ -95,5 +95,5 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 		hostexec.ReconfigureFromHoneyConfig(cfg)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "path": cfgPath})
+	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
 }

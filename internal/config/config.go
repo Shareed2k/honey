@@ -20,6 +20,7 @@ type File struct {
 	Defaults Defaults       `yaml:"defaults" json:"defaults"`
 	Backends Backends       `yaml:"backends" json:"backends"`
 	Transfer TransferConfig `yaml:"transfer" json:"transfer"`
+	Plugins  Plugins        `yaml:"plugins,omitempty" json:"plugins,omitempty"`
 }
 
 // Defaults apply when CLI flags are unset.

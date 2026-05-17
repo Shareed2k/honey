@@ -740,6 +740,33 @@ func buildAuthWithIdentityFiles(extraFiles []string) (goph.Auth, error) {
 	return methods, nil
 }
 
+// buildAuthExclusiveIdentityFile loads a single private key file (no ssh-agent, ssh_config
+// IdentityFile, HONEY_SSH_IDENTITY_FILES, or default ~/.ssh keys).
+func buildAuthExclusiveIdentityFile(path string) (goph.Auth, error) {
+	p, err := expandSSHPath(path)
+	if err != nil {
+		return nil, err
+	}
+	if p == "" {
+		return nil, fmt.Errorf("empty ssh private key path")
+	}
+	st, statErr := os.Stat(p)
+	if statErr != nil {
+		return nil, fmt.Errorf("ssh private key %q: %w", path, statErr)
+	}
+	if st.IsDir() {
+		return nil, fmt.Errorf("ssh private key %q is a directory", path)
+	}
+	k, keyErr := goph.Key(p, "")
+	if keyErr != nil {
+		return nil, fmt.Errorf("ssh private key %q: %w", path, keyErr)
+	}
+	if len(k) == 0 {
+		return nil, fmt.Errorf("ssh private key %q: no usable key", path)
+	}
+	return k, nil
+}
+
 func defaultLocalUser() string {
 	if u := strings.TrimSpace(os.Getenv("USER")); u != "" {
 		return u
@@ -866,7 +893,8 @@ func closeSSHStack(stack []*ssh.Client) {
 // available, resolution uses `ssh -G` so Match blocks apply; set HONEY_SSH_OPENSSH_G=0 to disable.
 // Auth also uses HONEY_SSH_IDENTITY_FILES and default ~/.ssh key names (see buildAuthWithIdentityFiles).
 // If overridePort is in 1..65535, it replaces the leaf port from resolution (e.g. from record meta.ssh_port).
-func DialHoneyClient(userOverride, hostAlias string, overridePort int) (*HoneyClient, error) {
+// When recipeIdentityFile is non-empty, auth uses only that private key (see buildAuthExclusiveIdentityFile).
+func DialHoneyClient(userOverride, hostAlias string, overridePort int, recipeIdentityFile string) (*HoneyClient, error) {
 	zap.L().Debug("dialing honey client", zap.String("host", hostAlias), zap.String("user", userOverride))
 	hostAlias = strings.TrimSpace(hostAlias)
 	if hostAlias == "" {
@@ -884,21 +912,30 @@ func DialHoneyClient(userOverride, hostAlias string, overridePort int) (*HoneyCl
 	if overridePort > 0 && overridePort < 65536 {
 		final.port = overridePort
 	}
-	idFiles := append([]string(nil), leafCfg.identityPaths...)
-	for _, hop := range parseProxyJumpChain(leafCfg.proxyJump) {
-		explicitUser, hopAlias, _, _, perr := parseJumpSpec(hop)
-		if perr != nil || hopAlias == "" {
-			continue
+	var auth goph.Auth
+	recipeIdentityFile = strings.TrimSpace(recipeIdentityFile)
+	if recipeIdentityFile != "" {
+		auth, err = buildAuthExclusiveIdentityFile(recipeIdentityFile)
+		if err != nil {
+			return nil, err
 		}
-		hopCfg, ierr := lookupHostSSHConfig(hopAlias, explicitUser)
-		if ierr != nil {
-			return nil, ierr
+	} else {
+		idFiles := append([]string(nil), leafCfg.identityPaths...)
+		for _, hop := range parseProxyJumpChain(leafCfg.proxyJump) {
+			explicitUser, hopAlias, _, _, perr := parseJumpSpec(hop)
+			if perr != nil || hopAlias == "" {
+				continue
+			}
+			hopCfg, ierr := lookupHostSSHConfig(hopAlias, explicitUser)
+			if ierr != nil {
+				return nil, ierr
+			}
+			idFiles = append(idFiles, hopCfg.identityPaths...)
 		}
-		idFiles = append(idFiles, hopCfg.identityPaths...)
-	}
-	auth, err := buildAuthWithIdentityFiles(idFiles)
-	if err != nil {
-		return nil, err
+		auth, err = buildAuthWithIdentityFiles(idFiles)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	jumps := parseProxyJumpChain(leafCfg.proxyJump)
@@ -996,8 +1033,8 @@ func DialHoneyClient(userOverride, hostAlias string, overridePort int) (*HoneyCl
 }
 
 // DialSSHClient returns the leaf *ssh.Client and a cleanup that closes the full ProxyJump chain.
-func DialSSHClient(userOverride, hostAlias string, overridePort int) (*ssh.Client, func(), error) {
-	h, err := DialHoneyClient(userOverride, hostAlias, overridePort)
+func DialSSHClient(userOverride, hostAlias string, overridePort int, recipeIdentityFile string) (*ssh.Client, func(), error) {
+	h, err := DialHoneyClient(userOverride, hostAlias, overridePort, recipeIdentityFile)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1041,7 +1078,7 @@ func RunTunnelGo(ctx context.Context, user, host string, sshPort int, localFwd s
 	if err != nil {
 		return err
 	}
-	client, cleanup, err := DialSSHClient(user, host, sshPort)
+	client, cleanup, err := DialSSHClient(user, host, sshPort, "")
 	if err != nil {
 		return err
 	}

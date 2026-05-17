@@ -54,6 +54,7 @@ type HostExecResult struct {
 	IP       string
 	Provider string
 	Success  bool
+	Skipped  bool // when CEL was false; no SSH/SFTP ran
 	ExitCode int
 	Output   string
 	ErrMsg   string // transport / spawn failure (not remote stderr)

@@ -1,4 +1,9 @@
-.PHONY: webui openapi
+.PHONY: webui openapi build-plugin-examples
+build-plugin-examples:
+	cd examples/plugins/echo && \
+	  GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .
+	cp examples/plugins/echo/plugin.wasm internal/plugins/testdata/echo/plugin.wasm
+
 webui:
 	cd webui && npm ci && npm run build
 

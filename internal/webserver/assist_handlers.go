@@ -29,16 +29,23 @@ const (
 	maxAssistLinesFromClient        = 500
 )
 
-type terminalAssistRequest struct {
+// TerminalAssistRequest is the JSON body for POST /api/v1/terminal-assist.
+type TerminalAssistRequest struct {
 	UserPrompt string `json:"user_prompt"`
 	Scrollback string `json:"scrollback"`
 	MaxLines   int    `json:"max_lines"`
 	Model      string `json:"model"`
 }
 
-type terminalAssistResponse struct {
+// TerminalAssistResponse is returned by POST /api/v1/terminal-assist.
+type TerminalAssistResponse struct {
 	Reply             string `json:"reply"`
 	ScrollbackClipped bool   `json:"scrollback_clipped"`
+}
+
+// TerminalAssistModelsResponse is returned by GET /api/v1/terminal-assist/models.
+type TerminalAssistModelsResponse struct {
+	Models []string `json:"models"`
 }
 
 func assistAPIKey() string {
@@ -230,8 +237,8 @@ Rules:
 // @Tags assist
 // @Accept json
 // @Produce json
-// @Param body body object true "scrollback, user_prompt, model, max_lines"
-// @Success 200 {object} map[string]string "reply"
+// @Param body body TerminalAssistRequest true "scrollback, user_prompt, model, max_lines"
+// @Success 200 {object} TerminalAssistResponse
 // @Failure 400 {object} map[string]string
 // @Failure 503 {object} map[string]string
 // @Router /api/v1/terminal-assist [post]
@@ -247,7 +254,7 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req terminalAssistRequest
+	var req TerminalAssistRequest
 	dec := json.NewDecoder(io.LimitReader(r.Body, maxAssistRequestBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
@@ -324,7 +331,7 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 		zap.Bool("scrollback_clipped_response", clippedLines || clippedRunes),
 	)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(terminalAssistResponse{
+	_ = json.NewEncoder(w).Encode(TerminalAssistResponse{
 		Reply:             reply,
 		ScrollbackClipped: clippedLines || clippedRunes,
 	})

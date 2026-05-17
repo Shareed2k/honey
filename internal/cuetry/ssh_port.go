@@ -26,15 +26,19 @@ func EffectiveSSHPort(defaults *RecipeDefaults, step RecipeStep, r hosts.Record)
 	return 0
 }
 
-// RecordForSSHDial returns r unchanged or a shallow copy with meta["ssh_port"] set
-// so hostexec and SSHClientCacheKey see the effective port after recipe precedence.
+// RecordForSSHDial returns r unchanged or a shallow copy with recipe SSH dial options
+// (meta ssh_port, ssh_identity_file) so hostexec and SSHClientCacheKey see effective settings.
 func RecordForSSHDial(defaults *RecipeDefaults, step RecipeStep, r hosts.Record) hosts.Record {
-	eff := EffectiveSSHPort(defaults, step, r)
-	if eff <= 0 {
-		return r
+	out := r
+	if eff := EffectiveSSHPort(defaults, step, r); eff > 0 {
+		if p, ok := hosts.MetaSSHPort(&out); !ok || p != eff {
+			out = hosts.CloneWithMetaSSHPort(out, eff)
+		}
 	}
-	if p, ok := hosts.MetaSSHPort(&r); ok && p == eff {
-		return r
+	if key := EffectiveSSHPrivateKey(defaults, step); key != "" {
+		if cur, ok := hosts.MetaSSHIdentityFile(&out); !ok || cur != key {
+			out = hosts.CloneWithMetaSSHIdentityFile(out, key)
+		}
 	}
-	return hosts.CloneWithMetaSSHPort(r, eff)
+	return out
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -29,7 +30,8 @@ const (
 	maxRecipeAssistPlanRunes   = 32000
 )
 
-type recipesAssistRequest struct {
+// RecipesAssistRequest is the JSON body for POST /api/v1/recipes/assist.
+type RecipesAssistRequest struct {
 	RecipePath string         `json:"recipe_path"`
 	Model      string         `json:"model"`
 	UserPrompt string         `json:"user_prompt"`
@@ -37,7 +39,8 @@ type recipesAssistRequest struct {
 	Records    []hosts.Record `json:"records"`
 }
 
-type recipesAssistResponse struct {
+// RecipesAssistResponse is the JSON body for a successful recipe assist reply.
+type RecipesAssistResponse struct {
 	Reply string `json:"reply"`
 }
 
@@ -80,8 +83,8 @@ func clipRunesForRecipeAssist(s string, maxRunes int) string {
 // @Tags recipes
 // @Accept json
 // @Produce json
-// @Param body body object true "recipe_path, model, user_prompt, ssh_user, records"
-// @Success 200 {object} map[string]string "reply"
+// @Param body body RecipesAssistRequest true "recipe assist request"
+// @Success 200 {object} RecipesAssistResponse
 // @Failure 400 {object} map[string]string
 // @Failure 503 {object} map[string]string
 // @Router /api/v1/recipes/assist [post]
@@ -96,12 +99,12 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body recipesAssistRequest
+	var body RecipesAssistRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxRecipeAssistRequestBody)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("invalid JSON: %w", err), http.StatusBadRequest)
 		return
 	}
-	body.Records = capRecipeAssistRecords(body.Records)
+	records := capRecipeAssistRecords(body.Records)
 
 	cp, err := normalizeRecipePath(body.RecipePath)
 	if err != nil {
@@ -141,7 +144,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs := filterConnectableRecords(body.Records)
+	jobs := filterConnectableRecords(records)
 	cueSrc := clipRunesForRecipeAssist(string(raw), maxRecipeAssistCueRunes)
 
 	var parseNote string
@@ -150,11 +153,17 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	if len(jobs) > 0 {
 		parseSlice = jobs
 	}
-	recipe, perr := cuetry.ParseRemoteRecipe(raw, parseSlice)
+	pluginMgr, plugErr := plugins.Open(r.Context(), s.opts.Config)
+	if plugErr != nil {
+		httpError(w, plugErr, http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = pluginMgr.Close() }()
+	recipe, perr := cuetry.ParseRemoteRecipeOpts(raw, parseSlice, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if perr != nil {
 		parseNote = perr.Error()
 		if len(jobs) > 0 {
-			if _, err2 := cuetry.ParseRemoteRecipe(raw, nil); err2 == nil {
+			if _, err2 := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{PluginManager: pluginMgr}); err2 == nil {
 				parseNote += "\n(Schema validates with an empty host list but not with the selected hosts.)"
 			}
 		}
@@ -168,11 +177,11 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			recipeDir := filepath.Dir(cp)
 			var buf bytes.Buffer
 			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-			secRes, resErr := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(s.opts.Config))
+			secRes, resErr := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(s.opts.Config), pluginMgr)
 			if resErr != nil {
 				planNote = "secret resolver: " + resErr.Error()
 			} else {
-				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, nil)
+				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil)
 				plan := buf.String()
 				if runErr != nil {
 					planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
@@ -220,5 +229,5 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(recipesAssistResponse{Reply: reply})
+	_ = json.NewEncoder(w).Encode(RecipesAssistResponse{Reply: reply})
 }

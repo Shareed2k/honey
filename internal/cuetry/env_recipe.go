@@ -61,15 +61,20 @@ func OverlapEnvSecrets(env, secrets map[string]string) error {
 
 // ValidateRecipeSecretsRefMap checks secret map keys and ref strings (refs are resolved at execute time).
 func ValidateRecipeSecretsRefMap(m map[string]string) error {
+	return ValidateRecipeSecretsRefMapPrefixes(m, nil)
+}
+
+// ValidateRecipeSecretsRefMapPrefixes allows secure:v1 refs and optional plugin-registered prefixes.
+func ValidateRecipeSecretsRefMapPrefixes(m map[string]string, allowedPrefixes []string) error {
 	for k, ref := range m {
-		if err := validateOneSecretRef(k, ref); err != nil {
+		if err := validateOneSecretRef(k, ref, allowedPrefixes); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateOneSecretRef(k, ref string) error {
+func validateOneSecretRef(k, ref string, allowedPrefixes []string) error {
 	if strings.TrimSpace(k) == "" {
 		return fmt.Errorf("secrets: empty key")
 	}
@@ -86,10 +91,15 @@ func validateOneSecretRef(k, ref string) error {
 	if len(ref) > maxSecretRefLen {
 		return fmt.Errorf("secrets ref for %q exceeds %d bytes", k, maxSecretRefLen)
 	}
-	if err := stack.ValidateSecureRef(ref); err != nil {
-		return fmt.Errorf("secrets ref for key %q: %w", k, err)
+	if stack.ValidateSecureRef(ref) == nil {
+		return nil
 	}
-	return nil
+	for _, p := range allowedPrefixes {
+		if p != "" && strings.HasPrefix(ref, p) {
+			return nil
+		}
+	}
+	return fmt.Errorf("secrets ref for key %q: must be secure:v1:… or a registered plugin prefix", k)
 }
 
 // RedactedSecretValueForDryRun returns a safe placeholder for dry-run / plans (truncated ref, never resolved material).
@@ -124,8 +134,11 @@ func MergeResolvedSecretsInto(ctx context.Context, resolve bool, resolver Secret
 		return nil
 	}
 	for k, ref := range secrets {
-		if err := validateOneSecretRef(k, ref); err != nil {
-			return fmt.Errorf("%s: %w", label, err)
+		if strings.TrimSpace(k) == "" {
+			return fmt.Errorf("%s: empty secret key", label)
+		}
+		if strings.TrimSpace(ref) == "" {
+			return fmt.Errorf("%s: empty ref for key %q", label, k)
 		}
 		var v string
 		var err error

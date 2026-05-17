@@ -40,5 +40,5 @@ func dialSSHToLXCGuest(user string, r hosts.Record) (hostexec.HostClient, error)
 	if ip == "" {
 		return nil, errProxmoxLXCNoGuestIP
 	}
-	return sshclient.DialHoneyClient(user, ip, 0)
+	return sshclient.DialHoneyClient(user, ip, 0, "")
 }

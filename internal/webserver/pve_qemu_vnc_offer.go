@@ -18,6 +18,17 @@ import (
 	"github.com/shareed2k/honey/internal/pvelxc"
 )
 
+// PveQemuVncOfferRequest is the JSON body for POST /api/v1/pve-qemu-vnc-offer.
+type PveQemuVncOfferRequest struct {
+	Record hosts.Record `json:"record"`
+}
+
+// PveQemuVncOfferResponse is returned on success.
+type PveQemuVncOfferResponse struct {
+	SessionID   string `json:"session_id"`
+	VNCPassword string `json:"vnc_password"`
+}
+
 const pveQemuVncOfferTTL = 90 * time.Second
 
 // pveQemuVncOfferSession holds one vncproxy result for a single WebSocket dial (ticket is short-lived on PVE too).
@@ -28,15 +39,6 @@ type pveQemuVncOfferSession struct {
 	Port        string
 	Ticket      string
 	Expires     time.Time
-}
-
-type pveQemuVncOfferRequest struct {
-	Record hosts.Record `json:"record"`
-}
-
-type pveQemuVncOfferResponse struct {
-	SessionID   string `json:"session_id"`
-	VNCPassword string `json:"vnc_password"`
 }
 
 func randomSessionID() (string, error) {
@@ -52,8 +54,8 @@ func randomSessionID() (string, error) {
 // @Tags proxmox
 // @Accept json
 // @Produce json
-// @Param body body object true "record for a QEMU VM on Proxmox"
-// @Success 200 {object} object "session_id, vnc_password"
+// @Param body body PveQemuVncOfferRequest true "record for a QEMU VM on Proxmox"
+// @Success 200 {object} PveQemuVncOfferResponse
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/pve-qemu-vnc-offer [post]
 // @Security BearerAuth
@@ -67,7 +69,7 @@ func (s *Server) handlePveQemuVncOffer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
-	var req pveQemuVncOfferRequest
+	var req PveQemuVncOfferRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return
@@ -117,7 +119,7 @@ func (s *Server) handlePveQemuVncOffer(w http.ResponseWriter, r *http.Request) {
 	s.pveQemuVncMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(pveQemuVncOfferResponse{
+	_ = json.NewEncoder(w).Encode(PveQemuVncOfferResponse{
 		SessionID:   id,
 		VNCPassword: vp.Ticket,
 	})

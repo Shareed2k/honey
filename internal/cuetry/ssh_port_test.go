@@ -26,9 +26,12 @@ func TestEffectiveSSHPort(t *testing.T) {
 func TestRecordForSSHDial(t *testing.T) {
 	t.Parallel()
 	r := hosts.Record{Name: "a", PrimaryIP: "10.0.0.1"}
-	out := RecordForSSHDial(&RecipeDefaults{SSHPort: 2222}, RecipeStep{Host: "*"}, r)
+	out := RecordForSSHDial(&RecipeDefaults{SSHPort: 2222, SSHPrivateKey: "/tmp/k"}, RecipeStep{Host: "*"}, r)
 	if p, ok := hosts.MetaSSHPort(&out); !ok || p != 2222 {
-		t.Fatalf("got %d ok=%v", p, ok)
+		t.Fatalf("port got %d ok=%v", p, ok)
+	}
+	if id, ok := hosts.MetaSSHIdentityFile(&out); !ok || id != "/tmp/k" {
+		t.Fatalf("identity got %q ok=%v", id, ok)
 	}
 	if r.Meta != nil {
 		t.Fatal("mutated input")

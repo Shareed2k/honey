@@ -16,6 +16,7 @@ const (
 	StepKindScript
 	StepKindAgentTransfer
 	StepKindAI
+	StepKindPlugin
 )
 
 // StepKindLabel returns a short stable name for defaults and logging.
@@ -33,12 +34,14 @@ func StepKindLabel(k StepKind) string {
 		return "agent_transfer"
 	case StepKindAI:
 		return "ai"
+	case StepKindPlugin:
+		return "plugin"
 	default:
 		return "unknown"
 	}
 }
 
-// ClassifyStep returns the step kind after validating exactly one of command / put / get / script / agent_transfer / ai.
+// ClassifyStep returns the step kind after validating exactly one of command / put / get / script / agent_transfer / ai / plugin.
 func ClassifyStep(s RecipeStep) (StepKind, error) {
 	cmd := strings.TrimSpace(s.Command)
 	hasPut := s.Put != nil
@@ -46,6 +49,7 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	hasScript := s.Script != nil
 	hasAgent := s.AgentTransfer != nil
 	hasAI := s.AI != nil
+	hasPlugin := s.Plugin != nil
 	n := 0
 	if cmd != "" {
 		n++
@@ -65,11 +69,14 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	if hasAI {
 		n++
 	}
+	if hasPlugin {
+		n++
+	}
 	if n == 0 {
-		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, or ai")
+		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, ai, or plugin")
 	}
 	if n > 1 {
-		return 0, fmt.Errorf("only one of command, put, get, script, agent_transfer, ai allowed")
+		return 0, fmt.Errorf("only one of command, put, get, script, agent_transfer, ai, plugin allowed")
 	}
 	if hasPut {
 		if err := validateFileTransfer("put", s.Put); err != nil {
@@ -94,6 +101,15 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	}
 	if hasAI {
 		return StepKindAI, nil
+	}
+	if hasPlugin {
+		if strings.TrimSpace(s.Plugin.ID) == "" {
+			return 0, fmt.Errorf("plugin.id is required")
+		}
+		if strings.TrimSpace(s.Plugin.Action) == "" {
+			return 0, fmt.Errorf("plugin.action is required")
+		}
+		return StepKindPlugin, nil
 	}
 	return StepKindCommand, nil
 }

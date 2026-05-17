@@ -25,6 +25,6 @@
 // @name token
 // @description Optional query token (same value) for URLs: `?token=<token>`.
 //
-//go:generate go run github.com/swaggo/swag/v2/cmd/swag@latest init -g doc.go -o swaggerdocs --parseInternal -ot go,json
+//go:generate go run github.com/swaggo/swag/v2/cmd/swag@latest init -g doc.go -o swaggerdocs --parseInternal --parseDependency -ot go,json
 //go:generate go run ./cmd/swag2openapi -in swaggerdocs/swagger.json -out swaggerdocs/openapi.json
 package webserver

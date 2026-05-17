@@ -70,6 +70,13 @@ type FilesAgentTransferResponse struct {
 	Events []ui.AgentTransferEvent `json:"events"`
 }
 
+// FilesCopyResponse is returned by POST /api/v1/files/copy.
+type FilesCopyResponse struct {
+	Status string `json:"status"`
+	Local  string `json:"local"`
+	Remote string `json:"remote"`
+}
+
 func (s *Server) localFilesRoot() string {
 	if root := strings.TrimSpace(s.opts.LocalFilesRoot); root != "" {
 		return root
@@ -83,7 +90,7 @@ func (s *Server) localFilesRoot() string {
 // @Accept json
 // @Produce json
 // @Param body body FilesLocalListRequest true "path relative to browser root"
-// @Success 200 {object} object "root, path, entries"
+// @Success 200 {object} FilesLocalListResponse
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/files/local/list [post]
 // @Security BearerAuth
@@ -116,8 +123,8 @@ func (s *Server) handleFilesLocalList(w http.ResponseWriter, r *http.Request) {
 // @Tags files
 // @Accept json
 // @Produce json
-// @Param body body object true "ssh_user, record, path"
-// @Success 200 {object} object "path, entries"
+// @Param body body FilesRemoteListRequest true "ssh_user, record, path"
+// @Success 200 {object} FilesRemoteListResponse
 // @Failure 400 {object} map[string]string
 // @Failure 502 {object} map[string]string
 // @Router /api/v1/files/remote/list [post]
@@ -161,8 +168,8 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 // @Tags files
 // @Accept json
 // @Produce json
-// @Param body body object true "direction, ssh_user, record, local_path, remote_path"
-// @Success 200 {object} map[string]string "status, local, remote"
+// @Param body body FilesCopyRequest true "copy between local and remote paths"
+// @Success 200 {object} FilesCopyResponse
 // @Failure 400 {object} map[string]string
 // @Failure 502 {object} map[string]string
 // @Router /api/v1/files/copy [post]
@@ -223,10 +230,10 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-		"local":  localAbs,
-		"remote": remotePath,
+	_ = json.NewEncoder(w).Encode(FilesCopyResponse{
+		Status: "ok",
+		Local:  localAbs,
+		Remote: remotePath,
 	})
 }
 
@@ -235,8 +242,8 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 // @Tags files
 // @Accept json
 // @Produce json
-// @Param body body object true "agent transfer request (see web UI)"
-// @Success 200 {object} object "events array"
+// @Param body body FilesAgentTransferRequest true "agent transfer request"
+// @Success 200 {object} FilesAgentTransferResponse
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/files/agent-transfer [post]
 // @Security BearerAuth

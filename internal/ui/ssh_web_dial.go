@@ -24,5 +24,9 @@ func DialSSHLeafForRecord(user string, r hosts.Record) (*ssh.Client, func(), err
 	if p, ok := hosts.MetaSSHPort(&r); ok {
 		sshPort = p
 	}
-	return sshclient.DialSSHClient(user, host, sshPort)
+	identity := ""
+	if id, ok := hosts.MetaSSHIdentityFile(&r); ok {
+		identity = id
+	}
+	return sshclient.DialSSHClient(user, host, sshPort, identity)
 }
