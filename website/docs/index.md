@@ -256,7 +256,9 @@ Adjust `ANSIBLE_INVENTORY_PLUGINS` to your checkout path, and edit the YAML (or 
 
 ### CUE recipes (experimental)
 
-Validate a playbook-shaped [CUE](https://cuelang.org/) file: each step has `host` and **exactly one** of `command`, `put` (SFTP upload), `get` (SFTP download), `script` (upload `local` → `remote`, then run `sh <remote>` on the **same** SSH connection), `agent_transfer` (A→cloud→B via the transfer agent; optional `cloud_backend_ref` needs honey config like the files API), or `ai` (terminal local summarizer; `host` `"_"`; `OPENAI_API_KEY` when executing). Optional `run_as` applies to `command` and `script` runs (not to SFTP-only `put`/`get`, `agent_transfer`, or `ai`). Optional `recipe.defaults.env` and per-step `env` are `export`’d on the remote before the command or script (step overrides duplicate keys from defaults); `env` is not supported on `put`/`get`/`agent_transfer`/`ai`. **Example recipes** live under [`examples/recipe/`](https://github.com/shareed2k/honey/tree/main/examples/recipe) — see that folder’s [`README.md`](https://github.com/shareed2k/honey/blob/main/examples/recipe/README.md) for a table of files (including `file_transfer.cue`, `script_step.cue`, `with_env.cue`, `agent_transfer.cue`, `high_load_processes.cue`, `postgres_replica_lag.cue`, `postgres_logical_replication_slots.cue`, `ai_summarize_hosts.cue`).
+Validate and run playbook-shaped [CUE](https://cuelang.org/) recipes against search results (`cue-validate`, `cue-exec`, TUI **r**, Web UI Recipes tab). Steps support `command`, `put`, `get`, `script`, `agent_transfer`, `ai`, and `plugin`; optional **graph mode** (`type: "graph"`, `id`, `depends`), **conditional `when`** expressions ([CEL](https://github.com/google/cel-spec)), `env_from`, and shared **KV tunnel**.
+
+**Full guide:** [CUE Recipes](./cue-recipes.md) · **WASM plugins:** [Plugin development](./plugins-development.md) · **Examples:** [`examples/recipe/`](https://github.com/shareed2k/honey/tree/main/examples/recipe) ([README](https://github.com/shareed2k/honey/blob/main/examples/recipe/README.md))
 
 ```bash
 ./honey cue-validate examples/recipe/recipe.cue
@@ -335,6 +337,8 @@ Loopback HTTP server with bearer token auth (see the repository **README** for `
 - `internal/ui` — Bubble Tea table + SSH actions
 - `internal/webserver` — embedded `honey web` UI (static SPA + REST + WebSocket terminal)
 - `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
+- `internal/plugins` — Extism WASM plugins (`cue_transform`, custom steps, secret backends)
+- `pkg/pluginpdk` — Go helpers for plugin authors (recipe KV, etc.)
 
 ## Tests
 

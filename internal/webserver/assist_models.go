@@ -117,7 +117,7 @@ func (s *Server) getAssistModelIDs(ctx context.Context, force bool) ([]string, e
 // @Summary Terminal assist models
 // @Tags assist
 // @Produce json
-// @Success 200 {object} map[string]interface{} "models: string array"
+// @Success 200 {object} TerminalAssistModelsResponse
 // @Failure 503 {object} map[string]string
 // @Router /api/v1/terminal-assist/models [get]
 // @Security BearerAuth
@@ -146,9 +146,7 @@ func (s *Server) handleTerminalAssistModels(w http.ResponseWriter, r *http.Reque
 		zap.Bool("stale_with_error", err != nil),
 	)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"models": ids,
-	})
+	_ = json.NewEncoder(w).Encode(TerminalAssistModelsResponse{Models: ids})
 }
 
 func modelIDInList(ids []string, want string) bool {

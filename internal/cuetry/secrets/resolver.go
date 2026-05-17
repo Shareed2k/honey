@@ -7,10 +7,9 @@ type Resolver interface {
 	Resolve(ctx context.Context, ref string) (string, error)
 }
 
-// NewResolver builds the default [Manager] using [DefaultProvider] and [Options].
+// NewResolver builds the default [Manager] from [Options].
 func NewResolver(opts Options) (Resolver, error) {
-	p := DefaultProvider{}
-	backends, err := p.Backends(context.Background(), opts)
+	backends, err := defaultBackends(context.Background(), opts)
 	if err != nil {
 		return nil, err
 	}

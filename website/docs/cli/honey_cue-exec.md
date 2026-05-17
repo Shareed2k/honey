@@ -91,6 +91,8 @@ invocation when recording is enabled: explicit --record-dir, or record_dir set i
 
 Secrets stay in the environment, not in CUE.
 
+**Conditional steps (`when`):** optional CEL expression per step; skipped hosts do not run SSH/SFTP. Requires step `id` when set; graph mode requires referenced step ids in `depends`. See [CUE Recipes — when + CEL](../cue-recipes.md#conditional-steps-when--cel).
+
 | Variable | Purpose |
 |----------|---------|
 | `HONEY_NOTIFY_HTTP_URL` | Comma-separated POST URLs; JSON body `{"subject","message"}` (default notify HTTP service). |

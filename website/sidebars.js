@@ -3,6 +3,8 @@ const sidebars = {
   tutorialSidebar: [
     'index',
     'web-ui',
+    'cue-recipes',
+    'plugins-development',
     'add-new-backend',
     {
       type: 'category',

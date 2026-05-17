@@ -102,6 +102,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
 	s.mux.HandleFunc("POST /api/v1/recipes/assist", s.withAuth(s.handleRecipesAssist))
 	s.mux.HandleFunc("POST /api/v1/recipes/validate-content", s.withAuth(s.handleRecipesValidateContent))
+	s.mux.HandleFunc("POST /api/v1/recipes/graph-plan", s.withAuth(s.handleRecipesGraphPlan))
 	s.mux.HandleFunc("POST /api/v1/recipes/parse", s.withAuth(s.handleRecipesParse))
 	s.mux.HandleFunc("GET /api/v1/recipes/recent-runs", s.withAuth(s.handleRecipesRecentRuns))
 	s.mux.HandleFunc("GET /api/v1/recordings", s.withAuth(s.handleRecordingsList))
@@ -169,19 +170,19 @@ func (s *Server) Start(ctx context.Context) error {
 // @Summary Server metadata
 // @Tags meta
 // @Produce json
-// @Success 200 {object} map[string]interface{} "version, commit, date, config_path, session_recording_available, terminal_assist_available"
+// @Success 200 {object} MetaResponse
 // @Router /api/v1/meta [get]
 // @Security BearerAuth
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"version":                     s.opts.Version,
-		"commit":                      s.opts.Commit,
-		"date":                        s.opts.Date,
-		"config_path":                 cfgPath,
-		"session_recording_available": strings.TrimSpace(s.opts.RecordDir) != "",
-		"terminal_assist_available":   terminalAssistConfigured(),
+	_ = json.NewEncoder(w).Encode(MetaResponse{
+		Version:                   s.opts.Version,
+		Commit:                    s.opts.Commit,
+		Date:                      s.opts.Date,
+		ConfigPath:                cfgPath,
+		SessionRecordingAvailable: strings.TrimSpace(s.opts.RecordDir) != "",
+		TerminalAssistAvailable:   terminalAssistConfigured(),
 	})
 }
 
@@ -189,14 +190,14 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 // @Summary List search provider IDs
 // @Tags meta
 // @Produce json
-// @Success 200 {object} map[string]interface{} "providers: string array"
+// @Success 200 {object} ProvidersResponse
 // @Router /api/v1/providers [get]
 // @Security BearerAuth
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string][]string{
-		"providers": searchrun.ListSearchProviderIDs(searchrun.ProviderFlags{}),
+	_ = json.NewEncoder(w).Encode(ProvidersResponse{
+		Providers: searchrun.ListSearchProviderIDs(searchrun.ProviderFlags{}),
 	})
 }
 
@@ -204,7 +205,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 // @Summary List configured backends
 // @Tags meta
 // @Produce json
-// @Success 200 {array} object
+// @Success 200 {object} hostapi.ListBackendsOutput
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/backends [get]
 // @Security BearerAuth
@@ -223,8 +224,8 @@ func (s *Server) handleBackends(w http.ResponseWriter, _ *http.Request) {
 // @Tags search
 // @Accept json
 // @Produce json
-// @Param body body object true "Search request (config_path, provider flags, name filters, etc.)"
-// @Success 200 {object} object "hostapi search result JSON"
+// @Param body body hostapi.SearchHostsInput true "search request"
+// @Success 200 {object} hostapi.SearchHostsOutput
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/search [post]
 // @Security BearerAuth

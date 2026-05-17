@@ -11,6 +11,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -90,7 +91,13 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search returned no hosts; widen filters or fix recipe host keys")
 	}
 
-	recipe, err := cuetry.ParseRemoteRecipe(raw, records)
+	pluginMgr, err := plugins.Open(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = pluginMgr.Close() }()
+
+	recipe, err := cuetry.ParseRemoteRecipeOpts(raw, records, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if err != nil {
 		return err
 	}
@@ -140,9 +147,9 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if cfg != nil {
 		aiPrompt = strings.TrimSpace(cfg.Defaults.AISystemPrompt)
 	}
-	secRes, err := cuetry.NewSecretResolver(cuetry.SecretResolverOptionsFromHoney(cfg))
+	secRes, err := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(cfg), pluginMgr)
 	if err != nil {
 		return err
 	}
-	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, secRes, rec)
+	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, secRes, pluginMgr, rec)
 }

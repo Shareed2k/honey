@@ -1,9 +1,12 @@
 // Package cuetry parses, validates, and resolves CUE remote recipes for honey.
 package cuetry
 
+import "encoding/json"
+
 // Recipe is the decoded "recipe" block from a CUE document.
 type Recipe struct {
 	Name     string          `json:"name"`
+	Type     string          `json:"type,omitempty"`
 	Defaults *RecipeDefaults `json:"defaults,omitempty"`
 	Steps    []RecipeStep    `json:"steps"`
 }
@@ -15,7 +18,9 @@ type RecipeDefaults struct {
 	Secrets       map[string]string `json:"secrets,omitempty"`
 	K8sDebugImage string            `json:"k8s_debug_image,omitempty"`
 	KVTunnel      *bool             `json:"kv_tunnel,omitempty"`
+	MaxParallel   int               `json:"max_parallel,omitempty"`
 	SSHPort       int               `json:"ssh_port,omitempty"`
+	SSHPrivateKey string            `json:"ssh_private_key,omitempty"`
 }
 
 // RecipeFileTransfer is a local ↔ remote path pair for SFTP put/get steps.
@@ -93,34 +98,56 @@ type RecipeStepHooks struct {
 	OnFailure *RecipeStepHook `json:"on_failure,omitempty"`
 }
 
+// RecipePluginHook configures a WASM plugin for a local hook (xor with command).
+type RecipePluginHook struct {
+	ID     string          `json:"id"`
+	Action string          `json:"action"`
+	Config json.RawMessage `json:"config,omitempty"`
+}
+
 // RecipeStepHook runs once per target host after that host's main step result is known.
 type RecipeStepHook struct {
 	Where   string            `json:"where"`
 	Command string            `json:"command,omitempty"`
+	Plugin  *RecipePluginHook `json:"plugin,omitempty"`
 	RunAs   string            `json:"run_as,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Secrets map[string]string `json:"secrets,omitempty"`
 	Notify  *RecipeNotify     `json:"notify,omitempty"`
 }
 
-// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, or ai.
+// RecipeStepPlugin configures a WASM custom_step plugin action.
+type RecipeStepPlugin struct {
+	ID     string          `json:"id"`
+	Action string          `json:"action"`
+	Config json.RawMessage `json:"config,omitempty"`
+}
+
+// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, or plugin.
 // Host selects targets: literal IP, exact name, "*", "re:…", or "_" for ai only (see resolve.go). For agent_transfer,
 // host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
 type RecipeStep struct {
+	ID            string               `json:"id,omitempty"`
+	Depends       []string             `json:"depends,omitempty"`
 	Host          string               `json:"host"`
 	SSHPort       int                  `json:"ssh_port,omitempty"`
+	SSHPrivateKey string               `json:"ssh_private_key,omitempty"`
 	Command       string               `json:"command,omitempty"`
 	Put           *RecipeFileTransfer  `json:"put,omitempty"`
 	Get           *RecipeFileTransfer  `json:"get,omitempty"`
 	Script        *RecipeFileTransfer  `json:"script,omitempty"`
 	AgentTransfer *RecipeAgentTransfer `json:"agent_transfer,omitempty"`
 	AI            *RecipeAI            `json:"ai,omitempty"`
+	Plugin        *RecipeStepPlugin    `json:"plugin,omitempty"`
 	Notify        *RecipeNotify        `json:"notify,omitempty"`
 	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`
 	KVTunnel      *bool                `json:"kv_tunnel,omitempty"`
+	MaxParallel   int                  `json:"max_parallel,omitempty"`
+	EnvFrom       []EnvFromRef         `json:"env_from,omitempty"`
 	RunAs         string               `json:"run_as,omitempty"`
 	Env           map[string]string    `json:"env,omitempty"`
 	Secrets       map[string]string    `json:"secrets,omitempty"`
+	When          string               `json:"when,omitempty"`
 }
 
 // NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).

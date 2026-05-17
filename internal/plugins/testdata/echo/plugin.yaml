@@ -1,0 +1,10 @@
+id: echo
+version: "0.1.0"
+capabilities:
+  - cue_transform
+  - custom_step
+  - secret
+secret_ref_prefixes:
+  - "echo:"
+allow_host_exec: true
+allow_kv: true

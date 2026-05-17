@@ -36,7 +36,7 @@ func (s *Server) resolveWritableConfigPath() (string, error) {
 // @Summary List backends from config
 // @Tags config
 // @Produce json
-// @Success 200 {object} object "backends map (gcp, aws, kubernetes, ...)"
+// @Success 200 {object} config.Backends
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/config/backends [get]
@@ -64,8 +64,8 @@ func (s *Server) handleConfigBackendsGet(w http.ResponseWriter, r *http.Request)
 // @Accept json
 // @Produce json
 // @Param kind path string true "backend kind (gcp, aws, kubernetes, consul, proxmox, local)"
-// @Param body body object true "Backend entry JSON"
-// @Success 200 {object} map[string]string "status, path"
+// @Param body body ConfigBackendEntryBody true "Backend entry JSON (shape depends on kind path param)"
+// @Success 200 {object} StatusResponse
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/config/backends/{kind} [post]
@@ -100,7 +100,7 @@ func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "path": cfgPath})
+	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
 }
 
 // handleConfigBackendsPut replaces a backend entry by index.
@@ -110,8 +110,8 @@ func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request
 // @Produce json
 // @Param kind path string true "backend kind"
 // @Param index path int true "0-based index in that kind's list"
-// @Param body body object true "Backend entry JSON"
-// @Success 200 {object} map[string]string "status, path"
+// @Param body body ConfigBackendEntryBody true "Backend entry JSON (shape depends on kind path param)"
+// @Success 200 {object} StatusResponse
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/config/backends/{kind}/{index} [put]
@@ -152,7 +152,7 @@ func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "path": cfgPath})
+	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
 }
 
 // handleConfigBackendsDelete removes a backend entry by index.
@@ -161,7 +161,7 @@ func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request)
 // @Produce json
 // @Param kind path string true "backend kind"
 // @Param index path int true "0-based index"
-// @Success 200 {object} map[string]string "status, path"
+// @Success 200 {object} StatusResponse
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/config/backends/{kind}/{index} [delete]
@@ -193,7 +193,7 @@ func (s *Server) handleConfigBackendsDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "path": cfgPath})
+	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
 }
 
 func appendBackendByKind(cfg *config.File, kind string, body []byte) error {

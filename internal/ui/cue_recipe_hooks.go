@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,9 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/plugins"
+	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
+	"github.com/shareed2k/honey/internal/stepkv"
 )
 
 const (
@@ -24,13 +28,13 @@ const (
 	maxHookOutputRunes    = 8000
 )
 
-func cueRecipeSSHPostHostResult(_ context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, secretResolver cuetry.SecretResolver) SSHPostHostResultFunc {
+func cueRecipeSSHPostHostResult(_ context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, secretResolver cuetry.SecretResolver, pluginMgr *plugins.Manager) SSHPostHostResultFunc {
 	return func(hctx context.Context, r hosts.Record, res *HostExecResult) {
-		runCueStepHooks(hctx, recipe, stepIdx, kind, step, r, res, recipeDir, sshUser, cliEnv, cache, recipeKV, recipeScopedKV, secretResolver)
+		runCueStepHooks(hctx, recipe, stepIdx, kind, step, r, res, recipeDir, sshUser, cliEnv, cache, recipeKV, recipeScopedKV, secretResolver, pluginMgr)
 	}
 }
 
-func runCueStepHooks(ctx context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, r hosts.Record, res *HostExecResult, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, secretResolver cuetry.SecretResolver) {
+func runCueStepHooks(ctx context.Context, recipe cuetry.Recipe, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, r hosts.Record, res *HostExecResult, recipeDir, sshUser string, cliEnv map[string]string, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, secretResolver cuetry.SecretResolver, pluginMgr *plugins.Manager) {
 	h := step.Hooks
 	if h == nil {
 		return
@@ -51,7 +55,7 @@ func runCueStepHooks(ctx context.Context, recipe cuetry.Recipe, stepIdx int, kin
 	res.HookPhase = phase
 	switch where {
 	case "local":
-		runCueStepHookLocal(ctx, recipe, stepIdx+1, kind, phase, r, res, hook, recipeDir)
+		runCueStepHookLocal(ctx, recipe, stepIdx+1, kind, phase, r, res, hook, recipeDir, recipeKV, recipeScopedKV, pluginMgr)
 	case "remote":
 		runCueStepHookRemote(ctx, recipe, stepIdx+1, kind, phase, step, r, res, hook, sshUser, cliEnv, cache, recipeKV, recipeScopedKV, secretResolver)
 	default:
@@ -108,7 +112,11 @@ func runCueStepHookRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int,
 	}
 }
 
-func runCueStepHookLocal(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, phase string, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeDir string) {
+func runCueStepHookLocal(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, phase string, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeDir string, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, pluginMgr *plugins.Manager) {
+	if hook.Plugin != nil {
+		runCueStepHookLocalPlugin(ctx, recipe, stepNo, kind, phase, r, stepRes, hook, recipeKV, recipeScopedKV, pluginMgr)
+		return
+	}
 	hctx, cancel := context.WithTimeout(ctx, cueLocalHookTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(hctx, "sh", "-c", strings.TrimSpace(hook.Command)) // #nosec G204 -- local hooks run arbitrary operator shell by design (cue-exec docs); trusted recipes only
@@ -257,4 +265,63 @@ func hookCommandPreview(cmd string) string {
 		return s[:120] + "…"
 	}
 	return s
+}
+
+func runCueStepHookLocalPlugin(ctx context.Context, recipe cuetry.Recipe, stepNo int, _ cuetry.StepKind, phase string, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, pluginMgr *plugins.Manager) {
+	if pluginMgr == nil || !pluginMgr.Enabled() {
+		stepRes.HookOutput = truncateRunes("hook plugin: plugins disabled", maxHookOutputRunes)
+		return
+	}
+	pl := hook.Plugin
+	hostJSON, err := json.Marshal(r)
+	if err != nil {
+		stepRes.HookOutput = truncateRunes("hook plugin: "+err.Error(), maxHookOutputRunes)
+		return
+	}
+	resJSON, err := json.Marshal(stepRes)
+	if err != nil {
+		stepRes.HookOutput = truncateRunes("hook plugin: "+err.Error(), maxHookOutputRunes)
+		return
+	}
+	env, err := buildLocalHookEnv(recipe.Name, stepNo, phase, *stepRes, r, hook)
+	if err != nil {
+		stepRes.HookOutput = truncateRunes(fmt.Sprintf("hook env: %v", err), maxHookOutputRunes)
+		return
+	}
+	envMap := make(map[string]string)
+	for _, kv := range env {
+		i := strings.IndexByte(kv, '=')
+		if i > 0 {
+			envMap[kv[:i]] = kv[i+1:]
+		}
+	}
+	var kvSess *stepkv.Session
+	if recipeScopedKV && recipeKV != nil {
+		var kvErr error
+		kvSess, kvErr = recipeKV.EnsureSession()
+		if kvErr != nil {
+			stepRes.HookOutput = truncateRunes("hook plugin kv: "+kvErr.Error(), maxHookOutputRunes)
+			return
+		}
+	}
+	hctx, cancel := context.WithTimeout(ctx, cueLocalHookTimeout)
+	defer cancel()
+	in := apiv1.OnStepResultInput{
+		RecipeName: recipe.Name,
+		StepIndex:  stepNo - 1,
+		Phase:      phase,
+		Host:       hostJSON,
+		Result:     resJSON,
+		Env:        envMap,
+	}
+	out, err := pluginMgr.OnStepResult(hctx, pl.ID, pl.Action, pl.Config, in, kvSess)
+	if err != nil {
+		stepRes.HookOutput = truncateRunes(err.Error(), maxHookOutputRunes)
+		return
+	}
+	stepRes.HookOutput = truncateRunes(strings.TrimSpace(out.Output), maxHookOutputRunes)
+	if out.Err != "" {
+		zap.L().Warn("cue recipe hook: plugin hook returned error",
+			zap.Int("step", stepNo), zap.String("phase", phase), zap.String("plugin", pl.ID), zap.String("err", out.Err))
+	}
 }

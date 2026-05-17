@@ -14,6 +14,11 @@ import (
 	"github.com/shareed2k/honey/internal/ui"
 )
 
+// UploadResponse is the non-stream JSON body for POST /api/v1/upload.
+type UploadResponse struct {
+	Results []ui.HostExecResult `json:"results"`
+}
+
 // UploadRequestMeta is the JSON in multipart field "meta" for POST /api/v1/upload.
 type UploadRequestMeta struct {
 	SSHUser    string       `json:"ssh_user"`
@@ -26,10 +31,10 @@ type UploadRequestMeta struct {
 // @Tags files
 // @Accept multipart/form-data
 // @Produce json
-// @Param meta formData string true "JSON: ssh_user, remote_path, record"
+// @Param meta formData string true "JSON UploadRequestMeta: ssh_user, remote_path, record (hosts.Record)"
 // @Param file formData file true "File contents"
 // @Param stream query int false "set to 1 for NDJSON streaming response"
-// @Success 200 {object} object "upload results or stream when stream=1"
+// @Success 200 {object} UploadResponse "JSON body; NDJSON progress lines when stream=1"
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/upload [post]
 // @Security BearerAuth
@@ -127,7 +132,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(results)
+	_ = json.NewEncoder(w).Encode(UploadResponse{Results: results})
 }
 
 // handleUploadStream streams NDJSON progress while copying the saved file to the host over SFTP.

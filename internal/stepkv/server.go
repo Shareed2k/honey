@@ -25,7 +25,14 @@ const (
 	defaultTTL      = 30 * time.Minute
 	defaultCap      = 50_000
 	shutdownTimeout = 5 * time.Second
+	healthKey       = "__health"
 )
+
+// ErrBadKey is returned when a key is empty, too long, contains '/', or is reserved.
+var ErrBadKey = errors.New("stepkv: bad key")
+
+// ErrValueTooLong is returned when a value exceeds maxValueLen.
+var ErrValueTooLong = errors.New("stepkv: value too long")
 
 // Session is one loopback HTTP listener + ttlcache instance + auth token.
 type Session struct {
@@ -96,24 +103,69 @@ func (s *Session) LocalTCPAddr() string {
 	return s.ln.Addr().String()
 }
 
+func validateKey(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" || strings.Contains(key, "/") {
+		return ErrBadKey
+	}
+	if len(key) > maxKeyLen {
+		return ErrBadKey
+	}
+	if key == healthKey {
+		return ErrBadKey
+	}
+	return nil
+}
+
+// Get returns the value for key and whether it was found.
+func (s *Session) Get(key string) (value string, found bool, err error) {
+	if s == nil || s.cache == nil {
+		return "", false, errors.New("stepkv: nil session")
+	}
+	if err := validateKey(key); err != nil {
+		return "", false, err
+	}
+	item := s.cache.Get(strings.TrimSpace(key))
+	if item == nil {
+		return "", false, nil
+	}
+	return item.Value(), true, nil
+}
+
+// Put stores value for key.
+func (s *Session) Put(key, value string) error {
+	if s == nil || s.cache == nil {
+		return errors.New("stepkv: nil session")
+	}
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	if len(value) > maxValueLen {
+		return ErrValueTooLong
+	}
+	s.cache.Set(strings.TrimSpace(key), value, ttlcache.DefaultTTL)
+	return nil
+}
+
+// Delete removes key if present.
+func (s *Session) Delete(key string) error {
+	if s == nil || s.cache == nil {
+		return errors.New("stepkv: nil session")
+	}
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	s.cache.Delete(strings.TrimSpace(key))
+	return nil
+}
+
 func (s *Session) handleKV(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	key := strings.TrimPrefix(r.URL.Path, "/v1/kv/")
-	key = strings.TrimSpace(key)
-	if key == "" || strings.Contains(key, "/") {
-		http.Error(w, "bad key", http.StatusBadRequest)
-		return
-	}
-	if len(key) > maxKeyLen {
-		http.Error(w, "key too long", http.StatusBadRequest)
-		return
-	}
-
-	// Reserved path documented for cue-exec / k8s kv_tunnel (matches k8s_kv_pod_server.py).
-	if key == "__health" {
+	key := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/v1/kv/"))
+	if key == healthKey {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -122,31 +174,45 @@ func (s *Session) handleKV(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	if err := validateKey(key); err != nil {
+		http.Error(w, "bad key", http.StatusBadRequest)
+		return
+	}
 
 	switch r.Method {
 	case http.MethodGet:
-		item := s.cache.Get(key)
-		if item == nil {
+		val, found, err := s.Get(key)
+		if err != nil {
+			http.Error(w, "bad key", http.StatusBadRequest)
+			return
+		}
+		if !found {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		_, _ = io.WriteString(w, item.Value()) // #nosec G705 -- opaque scratch value for curl/automation; not HTML (text/plain + nosniff)
+		_, _ = io.WriteString(w, val) // #nosec G705 -- opaque scratch value for curl/automation; not HTML (text/plain + nosniff)
 	case http.MethodPut:
 		b, err := io.ReadAll(io.LimitReader(r.Body, maxBodyRead))
 		if err != nil {
 			http.Error(w, "read body", http.StatusBadRequest)
 			return
 		}
-		if len(b) > maxValueLen {
-			http.Error(w, "value too long", http.StatusBadRequest)
+		if err := s.Put(key, string(b)); err != nil {
+			if errors.Is(err, ErrValueTooLong) {
+				http.Error(w, "value too long", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, "bad key", http.StatusBadRequest)
 			return
 		}
-		s.cache.Set(key, string(b), ttlcache.DefaultTTL)
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodDelete:
-		s.cache.Delete(key)
+		if err := s.Delete(key); err != nil {
+			http.Error(w, "bad key", http.StatusBadRequest)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.Header().Set("Allow", "GET, PUT, DELETE")

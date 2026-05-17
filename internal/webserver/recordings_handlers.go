@@ -13,7 +13,8 @@ import (
 	"github.com/shareed2k/honey/internal/recordings"
 )
 
-type recordingListEntry struct {
+// RecordingListEntry is one session recording file in a list response.
+type RecordingListEntry struct {
 	FileName       string `json:"file_name"`
 	ModifiedUnixMS int64  `json:"modified_unix_ms"`
 	SizeBytes      int64  `json:"size_bytes"`
@@ -25,15 +26,18 @@ type recordingListEntry struct {
 	User           string `json:"user,omitempty"`
 }
 
-type recordingsListResponse struct {
-	Items []recordingListEntry `json:"items"`
+// RecordingsListResponse is returned by GET /api/v1/recordings.
+type RecordingsListResponse struct {
+	Items []RecordingListEntry `json:"items"`
 }
 
-type recordingsPlayRequest struct {
+// RecordingsPlayRequest is the JSON body for POST /api/v1/recordings/play.
+type RecordingsPlayRequest struct {
 	FileName string `json:"file_name"`
 }
 
-type recordingsPlayResponse struct {
+// RecordingsPlayResponse is returned by POST /api/v1/recordings/play.
+type RecordingsPlayResponse struct {
 	FileName string             `json:"file_name"`
 	Events   []recordings.Event `json:"events"`
 }
@@ -45,7 +49,7 @@ type recordingsPlayResponse struct {
 // @Param provider query string false "filter by provider"
 // @Param host_name query string false "filter by host name"
 // @Param host_ip query string false "filter by host IP"
-// @Success 200 {object} object "items array"
+// @Success 200 {object} RecordingsListResponse
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recordings [get]
 // @Security BearerAuth
@@ -76,7 +80,7 @@ func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	out := make([]recordingListEntry, 0, len(entries))
+	out := make([]RecordingListEntry, 0, len(entries))
 	for _, de := range entries {
 		if de.IsDir() {
 			continue
@@ -89,7 +93,7 @@ func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 		if statErr != nil {
 			continue
 		}
-		entry := recordingListEntry{
+		entry := RecordingListEntry{
 			FileName:       name,
 			ModifiedUnixMS: st.ModTime().UnixMilli(),
 			SizeBytes:      st.Size(),
@@ -110,7 +114,7 @@ func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 		return out[i].ModifiedUnixMS > out[j].ModifiedUnixMS
 	})
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(recordingsListResponse{Items: out})
+	_ = json.NewEncoder(w).Encode(RecordingsListResponse{Items: out})
 }
 
 // handleRecordingsPlay loads events from a recording file.
@@ -118,8 +122,8 @@ func (s *Server) handleRecordingsList(w http.ResponseWriter, r *http.Request) {
 // @Tags recordings
 // @Accept json
 // @Produce json
-// @Param body body object true "file_name field"
-// @Success 200 {object} object "file_name and events"
+// @Param body body RecordingsPlayRequest true "recording file name"
+// @Success 200 {object} RecordingsPlayResponse
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recordings/play [post]
 // @Security BearerAuth
@@ -133,7 +137,7 @@ func (s *Server) handleRecordingsPlay(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("session recording is not enabled"), http.StatusBadRequest)
 		return
 	}
-	var body recordingsPlayRequest
+	var body RecordingsPlayRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -149,13 +153,13 @@ func (s *Server) handleRecordingsPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(recordingsPlayResponse{
+	_ = json.NewEncoder(w).Encode(RecordingsPlayResponse{
 		FileName: name,
 		Events:   events,
 	})
 }
 
-func fillRecordingMeta(dst *recordingListEntry, msg string) {
+func fillRecordingMeta(dst *RecordingListEntry, msg string) {
 	for _, part := range strings.Fields(strings.TrimSpace(msg)) {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) != 2 {

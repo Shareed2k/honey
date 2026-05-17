@@ -42,6 +42,19 @@ func NewRecipeKVCoordinator(ttl time.Duration) *RecipeKVCoordinator {
 	}
 }
 
+// EnsureSession returns the shared stepkv session, creating it if needed (no SSH forward).
+func (c *RecipeKVCoordinator) EnsureSession() (*stepkv.Session, error) {
+	if c == nil {
+		return nil, errors.New("recipe kv: nil coordinator")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, errors.New("recipe kv: coordinator closed")
+	}
+	return c.ensureSessionLocked()
+}
+
 // EnsureKVTunnelEnv returns HONEY_KV_* for this host's remote-forward into the shared session.
 func (c *RecipeKVCoordinator) EnsureKVTunnelEnv(user string, r hosts.Record, hc *sshclient.HoneyClient) (map[string]string, error) {
 	if c == nil {
@@ -79,13 +92,9 @@ func (c *RecipeKVCoordinator) ensureForward(user string, r hosts.Record, attach 
 		}
 		return maps.Clone(fwd.env), nil
 	}
-	if c.sess == nil {
-		sess, err := stepkv.Start(c.ttl)
-		if err != nil {
-			c.mu.Unlock()
-			return nil, err
-		}
-		c.sess = sess
+	if _, err := c.ensureSessionLocked(); err != nil {
+		c.mu.Unlock()
+		return nil, err
 	}
 	fwd := &recipeKVForward{ready: make(chan struct{})}
 	c.forwards[key] = fwd
@@ -163,4 +172,16 @@ func (c *RecipeKVCoordinator) Close() {
 	if sess != nil {
 		_ = sess.Close()
 	}
+}
+
+func (c *RecipeKVCoordinator) ensureSessionLocked() (*stepkv.Session, error) {
+	if c.sess != nil {
+		return c.sess, nil
+	}
+	sess, err := stepkv.Start(c.ttl)
+	if err != nil {
+		return nil, err
+	}
+	c.sess = sess
+	return c.sess, nil
 }

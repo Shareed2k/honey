@@ -6,6 +6,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry/secrets"
+	"github.com/shareed2k/honey/internal/plugins"
 )
 
 // SecretResolver resolves recipe secret refs (secure:v1:…) to plaintext at execute time.
@@ -34,10 +35,19 @@ func SecretResolverOptionsFromHoney(cfg *config.File) SecretResolverOptions {
 
 // NewSecretResolver builds the default resolver for recipe execution.
 func NewSecretResolver(opts SecretResolverOptions) (SecretResolver, error) {
-	return secrets.NewResolver(secrets.Options{
+	return NewSecretResolverWithPlugins(opts, nil)
+}
+
+// NewSecretResolverWithPlugins appends WASM plugin secret backends when mgr is non-nil.
+func NewSecretResolverWithPlugins(opts SecretResolverOptions, mgr *plugins.Manager) (SecretResolver, error) {
+	secOpts := secrets.Options{
 		SymmetricDataKey: opts.SymmetricDataKey,
 		SecretsProvider:  opts.SecretsProvider,
 		EncryptedKey:     opts.EncryptedKey,
 		AgeIdentityFile:  opts.AgeIdentityFile,
-	})
+	}
+	if mgr != nil {
+		secOpts.ExtraBackends = mgr.SecretRefBackends()
+	}
+	return secrets.NewResolver(secOpts)
 }

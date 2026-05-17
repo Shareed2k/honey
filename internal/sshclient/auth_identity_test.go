@@ -107,6 +107,53 @@ func TestBuildAuthWithIdentityFiles_envExtra(t *testing.T) {
 	}
 }
 
+func TestBuildAuthExclusiveIdentityFile(t *testing.T) {
+	src, err := os.ReadFile("testdata/id_ed25519")
+	if err != nil {
+		t.Fatalf("read test key: %v", err)
+	}
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "recipe_only")
+	if err := os.WriteFile(keyPath, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	auth, err := buildAuthExclusiveIdentityFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(auth) == 0 {
+		t.Fatal("expected signer auth")
+	}
+
+	_, err = buildAuthExclusiveIdentityFile(filepath.Join(dir, "missing"))
+	if err == nil {
+		t.Fatal("expected error for missing key")
+	}
+}
+
+func TestBuildAuthExclusiveIdentityFile_tilde(t *testing.T) {
+	home := t.TempDir()
+	src, err := os.ReadFile("testdata/id_ed25519")
+	if err != nil {
+		t.Fatalf("read test key: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "recipe_key"), src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	auth, err := buildAuthExclusiveIdentityFile("~/recipe_key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(auth) == 0 {
+		t.Fatal("expected auth from ~/recipe_key")
+	}
+}
+
 func TestBuildAuthWithIdentityFiles_noAuthError(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
