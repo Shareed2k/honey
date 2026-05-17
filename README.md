@@ -226,7 +226,7 @@ export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
 
 **TUI tip:** Connect SSH to the VM in the table first (`c`); Honey reuses that session for `via_local` Docker backends instead of opening a second SSH connection.
 
-**Linux VMs:** either add the SSH user to the `docker` group, or set `run_as: root` on honey-ssh docker backends / `--docker-discover-run-as root` for auto-discover (uses `sudo -n` + `docker system dial-stdio`, Engine 23+, same idea as recipe [`run_as`](examples/recipe/with_run_as.cue)).
+**Linux VMs:** either add the SSH user to the `docker` group, or set `run_as: root` on honey-ssh docker backends / `--docker-discover-run-as root` for auto-discover (uses `sudo -n` + `docker system dial-stdio`, Engine 23+, same idea as recipe [`run_as`](https://github.com/shareed2k/honey/blob/main/examples/recipe/with_run_as.cue)).
 
 **Interactive terminal (TUI / web):** On a selected docker row with `meta.container_id`, **Enter** opens a TTY shell via **`docker exec`** (`sh` on Linux, `powershell.exe` on Windows containers)—not SSH into the container network. The web UI uses the same exec attach over **`GET /ws/ssh`** (see [Web UI](#web-ui-honey-web)). File browser and **Run command** use Engine API copy/exec.
 
