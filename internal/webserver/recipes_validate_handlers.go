@@ -38,39 +38,12 @@ type ResolvedStepSummary struct {
 	Preview string   `json:"preview"`
 }
 
-// GraphPlanNodeDoc is one node in RecipeGraphPlanResponse (mirrors cuetry.GraphPlanNode).
-type GraphPlanNodeDoc struct {
-	Index    int    `json:"index"`
-	ID       string `json:"id"`
-	Kind     string `json:"kind"`
-	Host     string `json:"host"`
-	Wave     int    `json:"wave,omitempty"`
-	When     string `json:"when,omitempty"`
-	KVTunnel bool   `json:"kv_tunnel,omitempty"`
-	Preview  string `json:"preview,omitempty"`
-}
-
-// GraphPlanEdgeDoc is a depends edge (mirrors cuetry.GraphPlanEdge).
-type GraphPlanEdgeDoc struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-
-// RecipeGraphPlanResponse is the OpenAPI shape for graph plan endpoints (mirrors cuetry.RecipeGraphPlan).
-type RecipeGraphPlanResponse struct {
-	Type    string               `json:"type"`
-	Waves   [][]GraphPlanNodeDoc `json:"waves,omitempty"`
-	Nodes   []GraphPlanNodeDoc   `json:"nodes"`
-	Edges   []GraphPlanEdgeDoc   `json:"edges"`
-	Mermaid string               `json:"mermaid,omitempty"`
-}
-
 // ValidateContentResponse is returned on success or validation failure.
 type ValidateContentResponse struct {
-	Plan   string                   `json:"plan,omitempty"`
-	Steps  []ResolvedStepSummary    `json:"steps,omitempty"`
-	Graph  *RecipeGraphPlanResponse `json:"graph,omitempty"`
-	Errors []ValidateContentError   `json:"errors,omitempty"`
+	Plan   string                  `json:"plan,omitempty"`
+	Steps  []ResolvedStepSummary   `json:"steps,omitempty"`
+	Graph  *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
+	Errors []ValidateContentError  `json:"errors,omitempty"`
 }
 
 // GraphPlanRequest is the JSON body for POST /api/v1/recipes/graph-plan.
@@ -144,7 +117,7 @@ func (*Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Reque
 	resp := ValidateContentResponse{Plan: plan, Steps: steps}
 	if mode, merr := cuetry.RecipeExecutionMode(*recipe); merr == nil && mode == cuetry.ExecutionModeGraph {
 		if gp, gerr := cuetry.BuildRecipeGraphPlan(*recipe); gerr == nil {
-			resp.Graph = graphPlanToResponse(gp)
+			resp.Graph = gp
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -157,7 +130,7 @@ func (*Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Reque
 // @Accept json
 // @Produce json
 // @Param body body GraphPlanRequest true "path or recipe_content"
-// @Success 200 {object} RecipeGraphPlanResponse
+// @Success 200 {object} cuetry.RecipeGraphPlan
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/graph-plan [post]
 // @Security BearerAuth
@@ -219,7 +192,7 @@ func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(graphPlanToResponse(plan))
+	_ = json.NewEncoder(w).Encode(plan)
 }
 
 func writeValidationErrors(w http.ResponseWriter, errs []ValidateContentError) {

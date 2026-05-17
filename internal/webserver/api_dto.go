@@ -51,37 +51,3 @@ func recipeFromContentMap(m map[string]interface{}) (*cuetry.Recipe, error) {
 	}
 	return &recipe, nil
 }
-
-func graphPlanToResponse(gp *cuetry.RecipeGraphPlan) *RecipeGraphPlanResponse {
-	if gp == nil {
-		return nil
-	}
-	out := &RecipeGraphPlanResponse{
-		Type:    gp.Type,
-		Mermaid: gp.Mermaid,
-		Nodes:   make([]GraphPlanNodeDoc, len(gp.Nodes)),
-		Edges:   make([]GraphPlanEdgeDoc, len(gp.Edges)),
-	}
-	for i, n := range gp.Nodes {
-		out.Nodes[i] = GraphPlanNodeDoc{
-			Index: n.Index, ID: n.ID, Kind: n.Kind, Host: n.Host,
-			Wave: n.Wave, When: n.When, KVTunnel: n.KVTunnel, Preview: n.Preview,
-		}
-	}
-	for i, e := range gp.Edges {
-		out.Edges[i] = GraphPlanEdgeDoc{From: e.From, To: e.To}
-	}
-	if len(gp.Waves) > 0 {
-		out.Waves = make([][]GraphPlanNodeDoc, len(gp.Waves))
-		for w, wave := range gp.Waves {
-			out.Waves[w] = make([]GraphPlanNodeDoc, len(wave))
-			for i, n := range wave {
-				out.Waves[w][i] = GraphPlanNodeDoc{
-					Index: n.Index, ID: n.ID, Kind: n.Kind, Host: n.Host,
-					Wave: n.Wave, When: n.When, KVTunnel: n.KVTunnel, Preview: n.Preview,
-				}
-			}
-		}
-	}
-	return out
-}
