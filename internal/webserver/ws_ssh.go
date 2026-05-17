@@ -130,20 +130,24 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	if isK8sPodWebTerminal(hello.Record) {
 		// Use a non-cancelled context: the HTTP request context can be cancelled after hijack
 		// in some setups, which would abort the SPDY exec stream immediately.
+		defer s.trackWSConnection("k8s")()
 		handleWebK8sTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
 		return
 	}
 
 	if hosts.IsDockerRecord(hello.Record) {
+		defer s.trackWSConnection("docker")()
 		handleWebDockerTTY(context.Background(), conn, user, hello.Record, cols, rows, recorder)
 		return
 	}
 
 	if isProxmoxSerialWebPVE(hello.Record) {
+		defer s.trackWSConnection("pve_serial")()
 		handleWebProxmoxPVESerialTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
 		return
 	}
 
+	defer s.trackWSConnection("ssh")()
 	client, cleanup, err := ui.DialSSHLeafForRecord(user, hello.Record)
 	if err != nil {
 		recorder.RecordError(err)

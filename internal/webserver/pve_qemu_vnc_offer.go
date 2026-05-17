@@ -171,6 +171,7 @@ func (s *Server) handleWebProxmoxQemuVNC(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer func() { _ = conn.Close() }()
+	defer s.trackWSConnection("pve_vnc")()
 
 	pveConn, err := pvelxc.DialQemuGraphicsVNCWS(context.Background(), b, sess.Node, sess.VMID, sess.Port, sess.Ticket)
 	if err != nil {

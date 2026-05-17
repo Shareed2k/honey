@@ -27,6 +27,7 @@ Optional flags:
 | `--files-root` | Local filesystem root for the file browser (default: `$HONEY_FILES_ROOT` or `$HOME`) |
 | `--agent-bin` | Explicit path to the `honey-transfer-agent` binary (optional) |
 | `--agent-build-cache-dir` | Cache directory when the server auto-builds the transfer agent |
+| `--metrics-listen` | Optional loopback `host:port` for Prometheus **`GET /metrics`** (e.g. `127.0.0.1:9091`); disabled when unset |
 
 On startup, Honey prints the URL and auth hints on stderr:
 
@@ -36,9 +37,32 @@ Honey Web UI (Ctrl+C to stop)
   API:   Authorization: Bearer <token>  or  X-Honey-Token: <token>
   WS:    /ws/ssh?token=<token>
   Assist: OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
+  Metrics: http://127.0.0.1:9091/metrics
 ```
 
 Open the **URL** in your browser (the query string includes the token).
+
+### Prometheus metrics
+
+When **`--metrics-listen`** is set (loopback addresses only, same rule as `--listen`), honey serves an **unauthenticated** Prometheus scrape endpoint on a **separate port**:
+
+```bash
+honey web --listen 127.0.0.1:8765 --metrics-listen 127.0.0.1:9091
+curl -s http://127.0.0.1:9091/metrics | head
+```
+
+`GET /api/v1/meta` includes **`metrics_url`** when metrics are enabled.
+
+Exposed series include HTTP request latency/counts, search duration and result counts, active WebSocket terminals (`ssh`, `k8s`, `docker`, …), plus standard Go/process collectors.
+
+Example Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: honey
+    static_configs:
+      - targets: ["127.0.0.1:9091"]
+```
 
 ### Authentication
 
