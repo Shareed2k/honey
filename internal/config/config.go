@@ -54,6 +54,7 @@ type Backends struct {
 	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40" validate:"dive"`
 	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50" validate:"dive"`
 	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60" validate:"dive"`
+	Docker     []DockerBackend     `yaml:"docker" json:"docker" honey:"label=Docker;order=35" validate:"dive"`
 }
 
 // LocalBackend configures manually defined host lists.
@@ -115,6 +116,31 @@ type ProxmoxBackend struct {
 	// ExecMode: ssh (default) = guest SSH for commands/SFTP/tunnels; pve = QEMU commands via guest agent API, LXC commands/SFTP over guest SSH (PVE has no LXC REST exec; web UI LXC console uses termproxy when token_id is set);
 	// hybrid = QEMU via guest agent + SSH for files; LXC uses guest SSH for commands and files.
 	ExecMode string `yaml:"exec_mode" json:"exec_mode" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning"`
+}
+
+// DockerViaSSH configures an explicit SSH hop for Honey's SSH stack (not Moby ssh://).
+type DockerViaSSH struct {
+	Host         string `yaml:"host" json:"host" honey:"label=SSH host"`
+	Port         int    `yaml:"port,omitempty" json:"port,omitempty" honey:"label=SSH port (0 = ssh_config default)"`
+	User         string `yaml:"user,omitempty" json:"user,omitempty" honey:"label=SSH user"`
+	IdentityFile string `yaml:"identity_file,omitempty" json:"identity_file,omitempty" honey:"label=SSH identity file"`
+}
+
+// DockerBackend configures one Docker Engine API endpoint (local socket, tcp, ssh://, or Honey SSH).
+type DockerBackend struct {
+	Name          string       `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Host          string       `yaml:"host" json:"host" honey:"label=Host (unix://, tcp://, ssh://; empty = DOCKER_HOST / local socket)"`
+	ViaLocal      string       `yaml:"via_local,omitempty" json:"via_local,omitempty" honey:"label=Local backend name (SSH hop via backends.local)"`
+	ViaSSH        DockerViaSSH `yaml:"via_ssh,omitempty" json:"via_ssh,omitempty" honey:"label=SSH hop (overrides via_local when host set)"`
+	Socket        string       `yaml:"socket,omitempty" json:"socket,omitempty" honey:"label=Remote Engine socket (default /var/run/docker.sock on linux)"`
+	Platform      string       `yaml:"platform,omitempty" json:"platform,omitempty" honey:"label=Remote OS;enum=linux|windows;enum_as_warning;default=linux"`
+	RunAs         string       `yaml:"run_as,omitempty" json:"run_as,omitempty" honey:"label=Remote user for docker.sock via sudo (honey-ssh only)"`
+	Mode          string       `yaml:"mode" json:"mode" honey:"label=Mode;enum=containers|swarm|both;enum_as_warning;default=containers"`
+	AllContainers bool         `yaml:"all_containers" json:"all_containers" honey:"label=Include stopped containers;default=false"`
+	TLSVerify     bool         `yaml:"tls_verify" json:"tls_verify" honey:"label=Verify TLS (tcp hosts);default=true"`
+	CACert        string       `yaml:"ca_cert" json:"ca_cert" honey:"label=CA certificate path"`
+	Cert          string       `yaml:"cert" json:"cert" honey:"label=Client certificate path"`
+	Key           string       `yaml:"key" json:"key" honey:"label=Client key path;secret"`
 }
 
 // Save serializes the config and writes it to path.
@@ -183,7 +209,8 @@ func (f *File) HasAnyBackend() bool {
 		len(f.Backends.Kubernetes) > 0 ||
 		len(f.Backends.Consul) > 0 ||
 		len(f.Backends.Proxmox) > 0 ||
-		len(f.Backends.Local) > 0
+		len(f.Backends.Local) > 0 ||
+		len(f.Backends.Docker) > 0
 }
 
 // ResolvePath returns an explicit path from --config or HONEY_CONFIG

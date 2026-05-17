@@ -1,6 +1,6 @@
 # honey
 
-CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), **Consul** catalog nodes, and **Proxmox VE** instances **in parallel**, optionally cache results, then use a **terminal UI** to SSH or open an **SSH local forward** (`-L`) via the system `ssh` binary.
+CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods), **Docker Engine** (containers and Swarm tasks), **Consul** catalog nodes, and **Proxmox VE** instances **in parallel**, optionally cache results, then use a **terminal UI** to SSH, **`docker exec`** into containers, or open an **SSH local forward** (`-L`) via the system `ssh` binary.
 
 ## Prerequisites
 
@@ -161,7 +161,101 @@ backends:
       url: "https://10.0.0.11:8006/api2/json"
       token_id: "root@pam!mytoken"
       token_secret: "1234abcd-1234-abcd-1234-abcd1234abcd"
+  docker:
+    - name: local
+      host: ""              # default: DOCKER_HOST / local socket
+      mode: containers      # containers | swarm | both
+    - name: vm-docker
+      via_local: lab          # backends.local[].name (or host name, or lab/vm1)
+      socket: /var/run/docker.sock
+      run_as: root            # optional: SSH as defaults.ssh_user, Docker API via sudo + docker system dial-stdio
+      platform: linux       # linux | windows (daemon host OS)
+      mode: containers
+    - name: builder
+      via_ssh:
+        host: 10.0.0.1
+        port: 2222
+        user: lab
+        identity_file: ~/.ssh/id_ed25519
+      socket: /var/run/docker.sock
+    - name: moby-ssh
+      host: ssh://ops@other-host   # Moby built-in SSH (not Honey SSH)
+      mode: both
 ```
+
+### Docker provider
+
+`honey search --provider docker` lists **containers** and/or **Swarm tasks** via the Docker Engine API (not SSH into container networks). Interactive sessions use **`docker exec`**; the TUI/web file browser uses **`docker cp`** semantics (`CopyTo`/`CopyFrom` API) plus exec helpers for directory listing.
+
+| Connection | Config / flags | SSH stack | Notes |
+|------------|----------------|-----------|--------|
+| Local / `DOCKER_HOST` | `host: ""` or `unix://` / `tcp://` | — | Default socket |
+| Moby `ssh://` | `host: ssh://user@host` | Docker SDK only | No ProxyJump / `~/.ssh/config` integration |
+| **Honey SSH** | `via_local` or `via_ssh` + `socket` | Honey `sshclient` | Dials remote Engine socket over SSH; reuses TUI SSH session when already connected |
+| **Auto-discover** | `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1` + `--docker-discover-providers gcp,aws` | Honey SSH | Second search pass; not configurable in YAML |
+
+```bash
+# Local Docker Desktop / Colima (default socket or DOCKER_HOST)
+./honey search --provider docker
+
+# Remote daemon over Moby ssh:// (Docker SDK SSH)
+./honey search --provider docker --docker-host ssh://ops@docker-host.internal
+
+# Honey SSH to a VM's docker.sock (CLI overrides for default backend)
+./honey search --provider docker --docker-via-local ssh-target --docker-socket /var/run/docker.sock
+
+# Windows daemon host (often needs explicit TCP socket)
+./honey search --provider docker --docker-via-ssh-host winvm --docker-platform windows --docker-socket tcp://127.0.0.1:2375
+
+# Auto-discover containers on GCP/AWS VMs (feature flag required)
+export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
+./honey search --provider gcp,aws,docker --docker-discover-providers gcp,aws
+
+# GCP/AWS: SSH as ubuntu, docker.sock only for root (passwordless sudo required)
+./honey search --provider gcp,aws,docker \
+  --docker-discover-providers gcp,aws \
+  --ssh-user ubuntu \
+  --docker-discover-run-as root
+
+# Swarm tasks only
+./honey search --provider docker --docker-mode swarm
+
+# Include stopped containers
+./honey search --provider docker --docker-all
+```
+
+**TUI tip:** Connect SSH to the VM in the table first (`c`); Honey reuses that session for `via_local` Docker backends instead of opening a second SSH connection.
+
+**Linux VMs:** either add the SSH user to the `docker` group, or set `run_as: root` on honey-ssh docker backends / `--docker-discover-run-as root` for auto-discover (uses `sudo -n` + `docker system dial-stdio`, Engine 23+, same idea as recipe [`run_as`](examples/recipe/with_run_as.cue)).
+
+**Interactive terminal (TUI / web):** On a selected docker row with `meta.container_id`, **Enter** opens a TTY shell via **`docker exec`** (`sh` on Linux, `powershell.exe` on Windows containers)—not SSH into the container network. The web UI uses the same exec attach over **`GET /ws/ssh`** (see [Web UI](#web-ui-honey-web)). File browser and **Run command** use Engine API copy/exec.
+
+**Parallel `e` and `*` marks:** Scope includes every **executable** row: VMs/pods with an IP, k8s pods, and docker containers with `container_id` (no `PrimaryIP` required). **Ctrl+a** marks all executable rows. Commands run through the same executor as **Enter** (`docker exec` for containers).
+
+**Auto-discover and `--backends`:** Discover runs as a **second pass** only on VM records already returned by the first search (respecting `--provider`, `--backends`, and name filters). Example:
+
+```bash
+export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
+./honey search --backends gcp-stg2 --docker-discover-providers gcp \
+  --ssh-user ubuntu --docker-discover-run-as root my-app
+```
+
+**Discovered container metadata** (JSON `meta`):
+
+| Key | Meaning |
+|-----|---------|
+| `container_id` | Engine container ID (required for exec / terminal) |
+| `docker_host` | API endpoint (`honey-ssh://…` or `unix://` / `tcp://`) |
+| `docker_transport` | `honey_ssh` when dialed via VM SSH |
+| `docker_vm` | Source VM name from the cloud search |
+| `docker_vm_ip` | Internal IP used for Honey SSH dial to the daemon |
+| `docker_vm_external_ip` | Public IP when the VM has one |
+| `via_provider` | Cloud provider that owned the VM (`gcp`, `aws`, …) |
+| `docker_discover` | `"1"` when the row came from auto-discover |
+
+The table **IP** column may show the VM’s **external** address while Honey SSH still dials **`docker_vm_ip`** (internal). `extra_ips` can hold the internal address when both exist.
+
+**Limitations:** **`t`** (SSH `-L` tunnels) is not supported on pure docker container rows. **`cue-exec`** / TUI **r** still resolve step `host` by **name**, literal IP, `*`, or `re:`—match the container **name** (or a VM IP for SSH-backed steps); there is no separate docker-specific host syntax beyond normal executor routing when the row matches.
 
 ## Usage
 
@@ -278,13 +372,13 @@ From the **search TUI**, **r** runs a recipe against **marked `*` rows (with IP)
 
 ### TUI keys
 
-- **Enter**: `ssh <user>@<ip>` (user from `--ssh-user`, default `$USER`) for the **selected** row
-- **t**: enter `-L` spec (e.g. `8080:localhost:8080`), then **Enter** to run `ssh -L ... user@ip` on the selected host
-- **x**: toggle a `*` mark on the current table row (for parallel SSH only). The first column shows `*` for marked rows.
-- **Ctrl+a**: mark all rows that have an IP (replaces the previous mark set).
+- **Enter**: interactive shell on the **selected** row—`ssh <user>@<ip>` for VMs (user from `--ssh-user`, default `$USER`), **k8s pod exec** for pods, **`docker exec`** TTY for docker container/swarm rows with `container_id`. Uses the system `ssh` binary where applicable (`~/.ssh/config` honored).
+- **t**: enter `-L` spec (e.g. `8080:localhost:8080`), then **Enter** to run `ssh -L ... user@ip` on the selected host (not supported for pure docker container rows)
+- **x**: toggle a `*` mark on the current table row (for parallel **e** / recipes). The first column shows `*` for marked rows.
+- **Ctrl+a**: mark all **executable** rows (IP, k8s pod, or docker container with `container_id`; replaces the previous mark set).
 - **c**: clear all `*` marks.
-- **e**: run the **same** remote shell command in parallel via [goph](https://github.com/melbahja/goph) (`golang.org/x/crypto/ssh`): **only** on marked rows that have an IP; if **nothing** is marked, it runs on **every** listed host that has an IP. **known_hosts** host-key checking; auth from **ssh-agent** (`SSH_AUTH_SOCK`), `IdentityFile` entries from `~/.ssh/config` for the host/IP honey dials, optional comma-separated **`HONEY_SSH_IDENTITY_FILES`** (extra private key paths), then default keys under `~/.ssh`: `id_ed25519`, `id_rsa`, `id_ecdsa`, `google_compute_engine` (GCE), `id_dsa` if present. **`Match` in `~/.ssh/config`** is honored when **`ssh` is on `PATH`** (honey uses `ssh -G`); set **`HONEY_SSH_OPENSSH_G=0`** to use the built-in parser only (**`Match` ignored**—duplicate `IdentityFile` under a plain `Host` if needed). Non-interactive; one host failing does not stop the others. The command prompt shows the current scope; results include a short scope line. **Esc** from the prompt returns to the table; **Esc** from results returns to the table; **q** / **Ctrl+C** quits without opening a single-host SSH session. (Single-host **Enter** / **t** still use the system `ssh` binary, including `~/.ssh/config`.)
-- **r**: run a **CUE recipe** (same as `honey cue-exec`) against a **chosen subset** of the table: **only `*`‑marked rows that have an IP** if you marked any rows; **otherwise every row that has an IP** (same scope as **e**). **No second search.** Append `!` to the recipe path to execute for real; without `!` it is a dry-run plan. Uses the same `--ssh-user` as the table.
+- **e**: run the **same** remote shell command in parallel: **only** on marked executable rows; if **nothing** is marked, on **every** executable row in the table. SSH targets use [goph](https://github.com/melbahja/goph) (`golang.org/x/crypto/ssh`) with **known_hosts** checking; docker rows use **`docker exec`**. Auth from **ssh-agent** (`SSH_AUTH_SOCK`), `IdentityFile` entries from `~/.ssh/config` for the host/IP honey dials, optional comma-separated **`HONEY_SSH_IDENTITY_FILES`** (extra private key paths), then default keys under `~/.ssh`: `id_ed25519`, `id_rsa`, `id_ecdsa`, `google_compute_engine` (GCE), `id_dsa` if present. **`Match` in `~/.ssh/config`** is honored when **`ssh` is on `PATH`** (honey uses `ssh -G`); set **`HONEY_SSH_OPENSSH_G=0`** to use the built-in parser only (**`Match` ignored**—duplicate `IdentityFile` under a plain `Host` if needed). Non-interactive; one host failing does not stop the others. The command prompt shows the current scope; results include a short scope line. **Esc** from the prompt returns to the table; **Esc** from results returns to the table; **q** / **Ctrl+C** quits without opening a single-host session.
+- **r**: run a **CUE recipe** (same as `honey cue-exec`) against a **chosen subset** of the table: **only `*`‑marked executable rows** if you marked any rows; **otherwise every executable row** (same scope as **e**). **No second search.** Append `!` to the recipe path to execute for real; without `!` it is a dry-run plan. Uses the same `--ssh-user` as the table.
 - **q** / **Ctrl+C**: quit without SSH (from the table or from the parallel-results view)
 
 Parallel SSH (**e**), CUE recipes, and **`cue-exec`** share the same in-process host-key check (`~/.ssh/known_hosts`, etc.). **By default**, if the server host key changed (e.g. VM rebuild), honey **rewrites writable known_hosts files** (in-process, same idea as `ssh-keygen -R`) and appends the new key instead of failing. Set **`HONEY_SSH_RENEW_STALE_HOST_KEYS=0`** to turn that off and require manual `ssh-keygen -R <host>` on mismatch.
@@ -297,21 +391,21 @@ Parallel SSH (**e**), CUE recipes, and **`cue-exec`** share the same in-process 
 |----------|----------------|
 | **GCP** | Application Default Credentials; set `GOOGLE_CLOUD_PROJECT` or `GCP_PROJECT`, or pass `--gcp-project`. Optional `--gcp-zone` (default: all zones, aggregated list). |
 | **AWS** | Default credential chain; `--aws-profile`, `--aws-region`. |
-| **Kubernetes** | Current kubeconfig; `--kube-context`, `--kubeconfig`, `--k8s-mode=nodes` (default) or `pods`. For pods, `honey` seamlessly utilizes Kubernetes `exec` directly without needing SSH or SFTP. |
-
-...
-
-When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `honey` provides advanced, transparent execution capabilities without needing any server daemons:
-
-...
-
-2. **Ephemeral Containers:** To avoid permission issues (like read-only root filesystems), `honey` injects a lightweight, short-lived `alpine` Ephemeral Container (`honey-debug-*`) into the target pod. This container shares the process and filesystem namespace but has its own writable overlay.
-3. **Transparent File Transfers:** CUE `put` and `get` operations, as well as `script` step uploads, are implemented securely by dynamically streaming `tar` archives over the `exec` connection into the ephemeral container (similar to `kubectl cp`). No SFTP server required!
-4. **Seamless Experience:** Your interactive sessions, parallel commands, and CUE recipes work identically to actual SSH nodes, preserving context, streams, and file permissions, completely daemonless.
+| **Kubernetes** | Current kubeconfig; `--kube-context`, `--kubeconfig`, `--k8s-mode=nodes` (default) or `pods`. See [Kubernetes pods](#kubernetes-pods---k8s-mode-pods) below. |
+| **Docker** | `DOCKER_HOST` or `--docker-host` (`unix://`, `tcp://`, Moby `ssh://`); `--docker-mode` (`containers`, `swarm`, `both`); `--docker-all`. Honey SSH: `--docker-via-local`, `--docker-via-ssh-host`, `--docker-socket`, `--docker-platform`. Auto-discover: `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1`, `--docker-discover-providers`, `--docker-discover-run-as`. See [Docker provider](#docker-provider). |
 | **Consul** | `CONSUL_HTTP_ADDR` or `--consul-addr`; `--consul-datacenter`, `--consul-token` / `CONSUL_HTTP_TOKEN`. |
 | **Proxmox** | `--proxmox-url` (e.g. `https://10.0.0.1:8006/api2/json`); Auth via `--proxmox-user` / `--proxmox-password` OR `--proxmox-token-id` / `--proxmox-token-secret`. Add `--proxmox-insecure` to bypass TLS verification. Both LXC and QEMU (VM) types are fully supported.<br /><br />**Token Creation Example**: Proxmox requires the `PVEVMRO` (Read Only) role to list VMs and fetch networking information. <br />1. Log into your Proxmox web UI.<br />2. Navigate to **Datacenter** > **Permissions** > **API Tokens**.<br />3. Click **Add** and select your User (e.g., `root@pam`), name the token `honey`.<br />4. Uncheck **Privilege Separation** if you want the token to inherit full user privileges, OR assign the `PVEVMRO` role to `/vms` explicitly.<br />5. Copy the Secret ID.<br />Your `token_id` in the YAML config will be formatted exactly as `user@realm!tokenname` (e.g. `root@pam!honey`). |
 
 If a provider is unreachable, the command fails (use `--provider` to narrow scope).
+
+#### Kubernetes pods (`--k8s-mode pods`)
+
+When searching for Kubernetes pods (`--provider k8s --k8s-mode pods`), `honey` provides advanced, transparent execution capabilities without needing any server daemons:
+
+1. **Direct Pod Exec:** Honey talks directly to the Kubernetes API to spawn an interactive shell or run commands inside the pod's primary container.
+2. **Ephemeral Containers:** To avoid permission issues (like read-only root filesystems), `honey` injects a lightweight, short-lived `alpine` Ephemeral Container (`honey-debug-*`) into the target pod. This container shares the process and filesystem namespace but has its own writable overlay.
+3. **Transparent File Transfers:** CUE `put` and `get` operations, as well as `script` step uploads, are implemented securely by dynamically streaming `tar` archives over the `exec` connection into the ephemeral container (similar to `kubectl cp`). No SFTP server required!
+4. **Seamless Experience:** Your interactive sessions, parallel commands, and CUE recipes work identically to actual SSH nodes, preserving context, streams, and file permissions, completely daemonless.
 
 ## Layout
 
@@ -323,7 +417,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 - `internal/searchrun` — shared search + provider wiring
 - `internal/config` — optional YAML (`backends`, `defaults`)
 - `internal/hosts` — `Record`, `Query`, cache, parallel orchestration
-- `internal/provider/*` — GCP, AWS, k8s, Consul integrations
+- `internal/provider/*` — GCP, AWS, k8s, Consul, Docker, Proxmox, local integrations
 - `internal/ui` — Bubble Tea table + SSH actions
 - `internal/cuetry` — CUE validation + decode for remote recipes (`cue-validate`, `cue-exec`)
 - `website/docs/add-new-backend.md` — contributor guide for adding a new backend (Docusaurus source)
@@ -331,7 +425,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 
 ## Web UI (`honey web`)
 
-Embedded **loopback-only** web server with a random bearer token (override with `HONEY_WEB_TOKEN`). Serves a React UI for backends list, search, provider/backend filters, YAML config edit, structured **backends** CRUD, browser terminal (**SSH** and **Kubernetes** exec TTY), optional **session recording** (`--record-dir`), local/remote **file browser** and **agent-based** cloud transfer (`honey-transfer-agent`), **CUE recipe** run/view, and optional **AI assist** for the terminal and recipes when **`OPENAI_API_KEY`** is set (optional **`OPENAI_BASE_URL`** for compatible gateways or local inference).
+Embedded **loopback-only** web server with a random bearer token (override with `HONEY_WEB_TOKEN`). Serves a React UI for backends list, search, provider/backend filters, YAML config edit, structured **backends** CRUD, browser terminal (**SSH**, **Kubernetes** exec TTY, and **Docker** `exec` attach), optional **session recording** (`--record-dir`), local/remote **file browser** and **agent-based** cloud transfer (`honey-transfer-agent`), **CUE recipe** run/view, and optional **AI assist** for the terminal and recipes when **`OPENAI_API_KEY`** is set (optional **`OPENAI_BASE_URL`** for compatible gateways or local inference).
 
 **Full documentation:** published site [Web UI & AI assist](https://honey.shareed2k.win/web-ui) (built from [`website/docs/web-ui.md`](https://github.com/shareed2k/honey/blob/main/website/docs/web-ui.md)).
 

@@ -7,11 +7,11 @@ require (
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.3
-	cloud.google.com/go/compute v1.62.0
+	cloud.google.com/go/compute v1.63.0
 	cloud.google.com/go/storage v1.62.1
 	cuelang.org/go v0.16.1
 	filippo.io/age v1.3.1
-	github.com/Telmate/proxmox-api-go v0.0.0-20260511163835-b191a9388ac5
+	github.com/Telmate/proxmox-api-go v0.0.0-20260515213007-6e450d70bd0f
 	github.com/atotto/clipboard v0.1.4
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
@@ -35,6 +35,8 @@ require (
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/melbahja/goph v1.5.0
+	github.com/moby/moby/api v1.54.2
+	github.com/moby/moby/client v0.4.1
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 	github.com/nikoksr/notify v1.5.0
 	github.com/olekukonko/tablewriter v1.1.4
@@ -71,6 +73,7 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.56.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.56.0 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
@@ -101,9 +104,14 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
 	github.com/cockroachdb/apd/v3 v3.2.3 // indirect
+	github.com/containerd/errdefs v1.0.0 // indirect
+	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/distribution/reference v0.6.0 // indirect
+	github.com/docker/go-connections v0.7.0 // indirect
+	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240819160327-2d926c5d788a // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
@@ -159,6 +167,7 @@ require (
 	github.com/hashicorp/serf v0.10.2 // indirect
 	github.com/ianlancetaylor/demangle v0.0.0-20240805132620-81f5be970eca // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kr/fs v0.1.0 // indirect
@@ -172,6 +181,7 @@ require (
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/spdystream v0.5.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
@@ -183,6 +193,8 @@ require (
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
 	github.com/olekukonko/errors v1.3.0 // indirect
 	github.com/olekukonko/ll v0.1.8 // indirect
+	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

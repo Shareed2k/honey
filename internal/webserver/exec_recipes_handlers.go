@@ -225,7 +225,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	}
 	jobs := filterConnectableRecords(body.Records)
 	if len(jobs) == 0 {
-		httpError(w, fmt.Errorf("no connectable hosts in selection (need IP or k8s pod)"), http.StatusBadRequest)
+		httpError(w, fmt.Errorf("no connectable hosts in selection (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
 	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
@@ -279,7 +279,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 func filterConnectableRecords(recs []hosts.Record) []hosts.Record {
 	var out []hosts.Record
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && strings.EqualFold(r.Meta["kind"], "pod")) {
+		if hosts.IsConnectableRecord(r) {
 			out = append(out, r)
 		}
 	}
@@ -410,7 +410,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	}
 	jobs := filterConnectableRecords(body.Records)
 	if len(jobs) == 0 {
-		httpError(w, fmt.Errorf("no connectable hosts in selection (need IP or k8s pod)"), http.StatusBadRequest)
+		httpError(w, fmt.Errorf("no connectable hosts in selection (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
 

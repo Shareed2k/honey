@@ -103,8 +103,8 @@ func ListLocalDirUnderRoot(root, requested string) (string, []LocalFileEntry, er
 
 // RemoteListDir lists a directory on the remote host using a cached SSH/k8s client.
 func RemoteListDir(user string, record hosts.Record, remotePath string, cache *ClientCache) ([]RemoteFileEntry, error) {
-	if strings.TrimSpace(record.PrimaryIP) == "" {
-		return nil, fmt.Errorf("record has no IP")
+	if !hosts.IsConnectableRecord(record) {
+		return nil, fmt.Errorf("record is not connectable")
 	}
 	client, err := cache.GetOrDial(user, record)
 	if err != nil {

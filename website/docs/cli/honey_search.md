@@ -56,7 +56,12 @@ Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) i
       --refresh              Ignore cached entries and refresh (host discovery)
 ```
 
+### Docker auto-discover
+
+Experimental second pass: list containers on GCP/AWS VMs found in the same search. Requires `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1`, `--docker-discover-providers`, and matching `--provider` values. See [Docker auto-discover](../docker-auto-discover.md).
+
 ### SEE ALSO
 
 * [honey](honey.md)	 - DevOps tool to help find an instance in sea of clouds
+* [Docker auto-discover](../docker-auto-discover.md) - Search containers on cloud VMs via SSH
 

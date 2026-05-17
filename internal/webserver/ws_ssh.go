@@ -3,6 +3,7 @@ package webserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -133,6 +134,11 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if hosts.IsDockerRecord(hello.Record) {
+		handleWebDockerTTY(context.Background(), conn, user, hello.Record, cols, rows, recorder)
+		return
+	}
+
 	if isProxmoxSerialWebPVE(hello.Record) {
 		handleWebProxmoxPVESerialTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
 		return
@@ -218,6 +224,68 @@ func isK8sPodWebTerminal(rec hosts.Record) bool {
 		return false
 	}
 	return true
+}
+
+func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, rec hosts.Record, cols, rows int, recorder *ui.SessionRecorder) {
+	if strings.TrimSpace(rec.Meta["container_id"]) == "" {
+		err := fmt.Errorf("docker record missing container_id")
+		recorder.RecordError(err)
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+		return
+	}
+	stdinPipeR, stdinPipeW := io.Pipe()
+	resizeCh := make(chan ui.DockerTerminalSize, 32)
+	outWriter := &wsWriter{conn: conn, mu: &sync.Mutex{}}
+	stdout := ui.WrapRecordingWriter(outWriter, recorder, "stdout")
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- ui.RunDockerWebTTY(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh)
+	}()
+
+	go pumpWebSocketToStdinDocker(conn, stdinPipeW, resizeCh, recorder)
+
+	waitErr := <-waitDone
+	_ = stdinPipeW.Close()
+	if waitErr != nil {
+		recorder.RecordError(waitErr)
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true,"error":"`+escapeJSON(waitErr.Error())+`"}`))
+	} else {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true}`))
+	}
+}
+
+func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- ui.DockerTerminalSize, recorder *ui.SessionRecorder) {
+	defer close(resizeCh)
+	for {
+		mt, payload, err := conn.ReadMessage()
+		if err != nil {
+			recorder.RecordError(err)
+			_ = stdinPipeW.CloseWithError(err)
+			return
+		}
+		switch mt {
+		case websocket.BinaryMessage:
+			recorder.RecordData("stdin", payload)
+			if _, werr := stdinPipeW.Write(payload); werr != nil {
+				recorder.RecordError(werr)
+				return
+			}
+		case websocket.TextMessage:
+			var rz wsResize
+			if json.Unmarshal(payload, &rz) != nil || rz.Type != "resize" {
+				continue
+			}
+			c, rw := rz.Cols, rz.Rows
+			if c > 0 && rw > 0 {
+				recorder.RecordResize(c, rw)
+				select {
+				case resizeCh <- ui.DockerTerminalSize{Cols: c, Rows: rw}:
+				default:
+				}
+			}
+		}
+	}
 }
 
 func handleWebK8sTTY(ctx context.Context, conn *websocket.Conn, rec hosts.Record, cols, rows int, recorder *ui.SessionRecorder) {
@@ -335,9 +403,12 @@ func newWebSessionRecorder(recordDir string, requestRecord bool, rec hosts.Recor
 		return nil
 	}
 	mode := "ssh"
-	if isK8sPodWebTerminal(rec) {
+	switch {
+	case isK8sPodWebTerminal(rec):
 		mode = "k8s"
-	} else if isProxmoxSerialWebPVE(rec) {
+	case hosts.IsDockerRecord(rec):
+		mode = "docker"
+	case isProxmoxSerialWebPVE(rec):
 		mode = "proxmox"
 	}
 	r, err := ui.NewSessionRecorder(ui.SessionRecorderOptions{

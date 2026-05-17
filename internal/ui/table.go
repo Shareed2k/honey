@@ -1356,7 +1356,7 @@ func readNextStreamResult(ch chan HostExecResult) tea.Cmd {
 // one table row is marked (*), only marked rows that have PrimaryIP are used.
 // If nothing is marked, every row with PrimaryIP is used.
 func isExecutableHost(r hosts.Record) bool {
-	return strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod")
+	return hosts.IsConnectableRecord(r)
 }
 
 func (m *model) parallelExecTargets() ([]hosts.Record, string) {
@@ -1467,7 +1467,11 @@ func (m *model) recordingOptions(trigger, mode string) *SessionRecorderOptions {
 }
 
 func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorderOptions) error {
-	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !pvelxc.ShouldUsePVETTY(r) {
+	if hosts.IsDockerRecord(r) {
+		if strings.TrimSpace(r.Meta["container_id"]) == "" {
+			return fmt.Errorf("docker record missing container_id")
+		}
+	} else if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !pvelxc.ShouldUsePVETTY(r) {
 		return fmt.Errorf("no IP for selected host")
 	}
 	var recorder *SessionRecorder
@@ -1479,6 +1483,9 @@ func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorde
 	}
 	if recorder != nil {
 		defer recorder.Close()
+	}
+	if hosts.IsDockerRecord(r) {
+		return runDockerInteractiveWithRecorder(user, r, recorder)
 	}
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
 		return runK8sInteractiveWithRecorder(user, r, recorder)

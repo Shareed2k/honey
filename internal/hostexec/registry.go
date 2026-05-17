@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -22,6 +24,26 @@ const (
 	ProxmoxExecHybrid ProxmoxExecMode = "hybrid"
 )
 
+// DockerBackendRuntime holds Docker API connection settings (TLS paths stay in config, not records).
+type DockerBackendRuntime struct {
+	Name          string
+	Host          string
+	ViaLocal      string
+	ViaSSH        config.DockerViaSSH
+	Socket        string
+	Platform      string
+	RunAs         string
+	Transport     string
+	LocalBackends []config.LocalBackend
+	TLSVerify     bool
+	CACert        string
+	Cert          string
+	Key           string
+}
+
+// DockerSSHBorrower returns a shared SSH client for a hop record when available (e.g. TUI cache).
+type DockerSSHBorrower func(user string, hop hosts.Record) (*ssh.Client, bool)
+
 // ProxmoxBackendRuntime holds in-memory Proxmox API credentials (never put secrets in hosts.Record JSON).
 type ProxmoxBackendRuntime struct {
 	Name     string
@@ -35,10 +57,13 @@ type ProxmoxBackendRuntime struct {
 }
 
 var (
-	regMu       sync.RWMutex
-	proxmoxBack []ProxmoxBackendRuntime
+	regMu            sync.RWMutex
+	proxmoxBack      []ProxmoxBackendRuntime
+	dockerBack       []DockerBackendRuntime
+	configuredLocals []config.LocalBackend
 
-	k8sExecutor Executor
+	k8sExecutor    Executor
+	dockerExecutor Executor
 
 	// dialHoneyHost connects to PrimaryIP (or alias) via SSH; wired by internal/sshclient init.
 	dialHoneyHost func(user, hostAlias string, overridePort int, identityFile string) (HostClient, error)
@@ -50,6 +75,8 @@ var (
 	sshRunTunnel func(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error
 
 	proxmoxPickExecutor func(r hosts.Record) Executor
+
+	dockerSSHBorrower DockerSSHBorrower
 )
 
 // SetK8sExecutor registers the Kubernetes pod executor (typically from ui.init).
@@ -57,6 +84,13 @@ func SetK8sExecutor(ex Executor) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	k8sExecutor = ex
+}
+
+// SetDockerExecutor registers the Docker container executor (typically from ui.init).
+func SetDockerExecutor(ex Executor) {
+	regMu.Lock()
+	defer regMu.Unlock()
+	dockerExecutor = ex
 }
 
 // SetDialHoney registers the SSH HostClient dialer (from sshclient.init).
@@ -80,6 +114,36 @@ func SetSSHRunTunnel(fn func(ctx context.Context, user, host string, sshPort int
 	sshRunTunnel = fn
 }
 
+// RegisterDockerSSHBorrower registers an optional SSH client borrower for honey-ssh Docker transport.
+func RegisterDockerSSHBorrower(fn DockerSSHBorrower) {
+	regMu.Lock()
+	defer regMu.Unlock()
+	dockerSSHBorrower = fn
+}
+
+// BorrowDockerSSH returns a shared SSH client when a borrower is registered and has a match.
+func BorrowDockerSSH(user string, hop hosts.Record) (*ssh.Client, bool) {
+	regMu.RLock()
+	fn := dockerSSHBorrower
+	regMu.RUnlock()
+	if fn == nil {
+		return nil, false
+	}
+	return fn(user, hop)
+}
+
+// ConfiguredLocalBackends returns backends.local from the last ReconfigureFromHoneyConfig call.
+func ConfiguredLocalBackends() []config.LocalBackend {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	if len(configuredLocals) == 0 {
+		return nil
+	}
+	out := make([]config.LocalBackend, len(configuredLocals))
+	copy(out, configuredLocals)
+	return out
+}
+
 // RegisterProxmoxExecutor registers a resolver that returns a non-nil Executor when
 // this process should use Proxmox API transport for the given record (from proxmoxprovider.init).
 func RegisterProxmoxExecutor(fn func(r hosts.Record) Executor) {
@@ -94,8 +158,34 @@ func ReconfigureFromHoneyConfig(cfg *config.File) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	proxmoxBack = proxmoxBack[:0]
+	dockerBack = dockerBack[:0]
+	configuredLocals = nil
 	if cfg == nil {
 		return
+	}
+	locals := cfg.Backends.Local
+	if len(locals) > 0 {
+		configuredLocals = append([]config.LocalBackend(nil), locals...)
+	}
+	for _, e := range cfg.Backends.Docker {
+		rt := DockerBackendRuntime{
+			Name:          strings.TrimSpace(e.Name),
+			Host:          strings.TrimSpace(e.Host),
+			ViaLocal:      strings.TrimSpace(e.ViaLocal),
+			ViaSSH:        e.ViaSSH,
+			Socket:        strings.TrimSpace(e.Socket),
+			Platform:      strings.TrimSpace(e.Platform),
+			RunAs:         strings.TrimSpace(e.RunAs),
+			LocalBackends: locals,
+			TLSVerify:     e.TLSVerify,
+			CACert:        strings.TrimSpace(e.CACert),
+			Cert:          strings.TrimSpace(e.Cert),
+			Key:           strings.TrimSpace(e.Key),
+		}
+		if strings.TrimSpace(e.ViaLocal) != "" || strings.TrimSpace(e.ViaSSH.Host) != "" {
+			rt.Transport = "honey_ssh"
+		}
+		dockerBack = append(dockerBack, rt)
 	}
 	for _, e := range cfg.Backends.Proxmox {
 		mode := ProxmoxExecMode(strings.ToLower(strings.TrimSpace(e.ExecMode)))
@@ -134,6 +224,25 @@ func ProxmoxBackendByName(name string) (ProxmoxBackendRuntime, bool) {
 		}
 	}
 	return ProxmoxBackendRuntime{}, false
+}
+
+// DockerBackendByName returns runtime config for a named Docker backend (empty name matches first entry).
+func DockerBackendByName(name string) (DockerBackendRuntime, bool) {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	name = strings.TrimSpace(name)
+	if len(dockerBack) == 0 {
+		return DockerBackendRuntime{}, false
+	}
+	if name == "" {
+		return dockerBack[0], true
+	}
+	for _, b := range dockerBack {
+		if b.Name == name {
+			return b, true
+		}
+	}
+	return DockerBackendRuntime{}, false
 }
 
 // RunSSHTunnel runs the SSH local-forward tunnel registered by sshclient (used for Proxmox hybrid/pve tunnel fallback).
@@ -192,14 +301,26 @@ func (sshExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, l
 
 var defaultSSHExecutor = sshExecutor{}
 
+func dockerRecordKind(r hosts.Record) bool {
+	if r.Provider != "docker" {
+		return false
+	}
+	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
+	return k == "container" || k == "swarm_task"
+}
+
 // ForRecord returns the Executor for a search row (SSH to IP, k8s exec, or Proxmox API when configured).
 func ForRecord(r hosts.Record) Executor {
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" && k8sExecutor != nil {
 		return k8sExecutor
 	}
 	regMu.RLock()
+	dex := dockerExecutor
 	pick := proxmoxPickExecutor
 	regMu.RUnlock()
+	if r.Provider == "docker" && dockerRecordKind(r) && dex != nil {
+		return dex
+	}
 	if pick != nil {
 		if ex := pick(r); ex != nil {
 			return ex
