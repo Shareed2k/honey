@@ -188,7 +188,7 @@ func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Param stream query int false "set to 1 for NDJSON streaming"
 // @Param body body ExecRequest true "remote exec request"
-// @Success 200 {object} ExecResponse "JSON body; NDJSON stream of HostExecResultDoc when stream=1"
+// @Success 200 {object} ExecResponse "JSON body; NDJSON stream of ui.HostExecResult when stream=1"
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/exec [post]
 // @Security BearerAuth

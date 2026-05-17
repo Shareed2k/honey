@@ -497,7 +497,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "JSON body; NDJSON stream of HostExecResultDoc when stream=1",
+                        "description": "JSON body; NDJSON stream of ui.HostExecResult when stream=1",
                         "schema": {
                             "$ref": "#/definitions/webserver.ExecResponse"
                         }
@@ -983,7 +983,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/webserver.RecipeGraphPlanResponse"
+                            "$ref": "#/definitions/cuetry.RecipeGraphPlan"
                         }
                     },
                     "400": {
@@ -1854,6 +1854,78 @@ const docTemplate = `{
                 }
             }
         },
+        "cuetry.GraphPlanEdge": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "cuetry.GraphPlanNode": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "index": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "kv_tunnel": {
+                    "type": "boolean"
+                },
+                "preview": {
+                    "type": "string"
+                },
+                "wave": {
+                    "type": "integer"
+                },
+                "when": {
+                    "type": "string"
+                }
+            }
+        },
+        "cuetry.RecipeGraphPlan": {
+            "type": "object",
+            "properties": {
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cuetry.GraphPlanEdge"
+                    }
+                },
+                "mermaid": {
+                    "type": "string"
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cuetry.GraphPlanNode"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                },
+                "waves": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/cuetry.GraphPlanNode"
+                        }
+                    }
+                }
+            }
+        },
         "hostapi.ListBackendsOutput": {
             "type": "object",
             "properties": {
@@ -2439,46 +2511,6 @@ const docTemplate = `{
                 }
             }
         },
-        "webserver.GraphPlanEdgeDoc": {
-            "type": "object",
-            "properties": {
-                "from": {
-                    "type": "string"
-                },
-                "to": {
-                    "type": "string"
-                }
-            }
-        },
-        "webserver.GraphPlanNodeDoc": {
-            "type": "object",
-            "properties": {
-                "host": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "index": {
-                    "type": "integer"
-                },
-                "kind": {
-                    "type": "string"
-                },
-                "kv_tunnel": {
-                    "type": "boolean"
-                },
-                "preview": {
-                    "type": "string"
-                },
-                "wave": {
-                    "type": "integer"
-                },
-                "when": {
-                    "type": "string"
-                }
-            }
-        },
         "webserver.GraphPlanRequest": {
             "type": "object",
             "properties": {
@@ -2599,38 +2631,6 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/webserver.RecentRunEntry"
-                    }
-                }
-            }
-        },
-        "webserver.RecipeGraphPlanResponse": {
-            "type": "object",
-            "properties": {
-                "edges": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/webserver.GraphPlanEdgeDoc"
-                    }
-                },
-                "mermaid": {
-                    "type": "string"
-                },
-                "nodes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/webserver.GraphPlanNodeDoc"
-                    }
-                },
-                "type": {
-                    "type": "string"
-                },
-                "waves": {
-                    "type": "array",
-                    "items": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/definitions/webserver.GraphPlanNodeDoc"
-                        }
                     }
                 }
             }
@@ -2964,7 +2964,7 @@ const docTemplate = `{
                     }
                 },
                 "graph": {
-                    "$ref": "#/definitions/webserver.RecipeGraphPlanResponse"
+                    "$ref": "#/definitions/cuetry.RecipeGraphPlan"
                 },
                 "plan": {
                     "type": "string"
