@@ -11,11 +11,13 @@ import (
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
-type validateContentRequest struct {
-	RecipeContent *cuetry.Recipe `json:"recipe_content"`
+// ValidateContentRequest is the JSON body for POST /api/v1/recipes/validate-content.
+type ValidateContentRequest struct {
+	RecipeContent map[string]interface{} `json:"recipe_content"`
 }
 
-type validateContentError struct {
+// ValidateContentError is one validation issue.
+type ValidateContentError struct {
 	Path    string `json:"path,omitempty"`
 	Kind    string `json:"kind"`
 	Message string `json:"message"`
@@ -32,19 +34,59 @@ type ResolvedStepSummary struct {
 	Kind    string   `json:"kind"`
 	Host    string   `json:"host"`
 	RunAs   string   `json:"run_as,omitempty"`
+	When    string   `json:"when,omitempty"`
 	Preview string   `json:"preview"`
 }
 
-type validateContentResponse struct {
-	Plan   string                  `json:"plan,omitempty"`
-	Steps  []ResolvedStepSummary   `json:"steps,omitempty"`
-	Graph  *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
-	Errors []validateContentError  `json:"errors,omitempty"`
+// GraphPlanNodeDoc is one node in RecipeGraphPlanResponse (mirrors cuetry.GraphPlanNode).
+type GraphPlanNodeDoc struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Host     string `json:"host"`
+	Wave     int    `json:"wave,omitempty"`
+	When     string `json:"when,omitempty"`
+	KVTunnel bool   `json:"kv_tunnel,omitempty"`
+	Preview  string `json:"preview,omitempty"`
 }
 
-type graphPlanRequest struct {
-	Path          string         `json:"path"`
-	RecipeContent *cuetry.Recipe `json:"recipe_content"`
+// GraphPlanEdgeDoc is a depends edge (mirrors cuetry.GraphPlanEdge).
+type GraphPlanEdgeDoc struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// RecipeGraphPlanResponse is the OpenAPI shape for graph plan endpoints (mirrors cuetry.RecipeGraphPlan).
+type RecipeGraphPlanResponse struct {
+	Type    string               `json:"type"`
+	Waves   [][]GraphPlanNodeDoc `json:"waves,omitempty"`
+	Nodes   []GraphPlanNodeDoc   `json:"nodes"`
+	Edges   []GraphPlanEdgeDoc   `json:"edges"`
+	Mermaid string               `json:"mermaid,omitempty"`
+}
+
+// ValidateContentResponse is returned on success or validation failure.
+type ValidateContentResponse struct {
+	Plan   string                   `json:"plan,omitempty"`
+	Steps  []ResolvedStepSummary    `json:"steps,omitempty"`
+	Graph  *RecipeGraphPlanResponse `json:"graph,omitempty"`
+	Errors []ValidateContentError   `json:"errors,omitempty"`
+}
+
+// GraphPlanRequest is the JSON body for POST /api/v1/recipes/graph-plan.
+type GraphPlanRequest struct {
+	Path          string                 `json:"path,omitempty"`
+	RecipeContent map[string]interface{} `json:"recipe_content,omitempty"`
+}
+
+// RecipesParseRequest is the JSON body for POST /api/v1/recipes/parse.
+type RecipesParseRequest struct {
+	Path string `json:"path"`
+}
+
+// RecipesParseResponse is the JSON body for a successful recipe parse.
+type RecipesParseResponse struct {
+	Recipe map[string]interface{} `json:"recipe"`
 }
 
 // handleRecipesValidateContent validates in-editor recipe JSON and returns plan/steps or errors.
@@ -52,9 +94,9 @@ type graphPlanRequest struct {
 // @Tags recipes
 // @Accept json
 // @Produce json
-// @Param body body object true "recipe_content object"
-// @Success 200 {object} object "plan and steps on success"
-// @Failure 400 {object} object "errors array in validateContentResponse shape"
+// @Param body body ValidateContentRequest true "recipe object"
+// @Success 200 {object} ValidateContentResponse
+// @Failure 400 {object} ValidateContentResponse
 // @Router /api/v1/recipes/validate-content [post]
 // @Security BearerAuth
 func (*Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Request) {
@@ -62,22 +104,27 @@ func (*Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var body validateContentRequest
+	var body ValidateContentRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
-		writeValidationErrors(w, []validateContentError{{Kind: "json", Message: err.Error()}})
+		writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
 		return
 	}
-	if body.RecipeContent == nil {
-		writeValidationErrors(w, []validateContentError{{Kind: "schema", Message: "recipe_content required"}})
-		return
-	}
-	if err := cuetry.ValidateParsedRecipe(*body.RecipeContent, nil); err != nil {
-		writeValidationErrors(w, []validateContentError{{Kind: "validation", Message: err.Error()}})
-		return
-	}
-	plan, summaries, err := cuetry.RenderDryRunPlan(*body.RecipeContent)
+	recipe, err := recipeFromContentMap(body.RecipeContent)
 	if err != nil {
-		writeValidationErrors(w, []validateContentError{{Kind: "resolve", Message: err.Error()}})
+		writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
+		return
+	}
+	if recipe == nil {
+		writeValidationErrors(w, []ValidateContentError{{Kind: "schema", Message: "recipe_content required"}})
+		return
+	}
+	if err := cuetry.ValidateParsedRecipe(*recipe, nil); err != nil {
+		writeValidationErrors(w, []ValidateContentError{{Kind: "validation", Message: err.Error()}})
+		return
+	}
+	plan, summaries, err := cuetry.RenderDryRunPlan(*recipe)
+	if err != nil {
+		writeValidationErrors(w, []ValidateContentError{{Kind: "resolve", Message: err.Error()}})
 		return
 	}
 	steps := make([]ResolvedStepSummary, len(summaries))
@@ -90,13 +137,14 @@ func (*Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Reque
 			Kind:    s.Kind,
 			Host:    s.Host,
 			RunAs:   s.RunAs,
+			When:    s.When,
 			Preview: s.Preview,
 		}
 	}
-	resp := validateContentResponse{Plan: plan, Steps: steps}
-	if mode, merr := cuetry.RecipeExecutionMode(*body.RecipeContent); merr == nil && mode == cuetry.ExecutionModeGraph {
-		if gp, gerr := cuetry.BuildRecipeGraphPlan(*body.RecipeContent); gerr == nil {
-			resp.Graph = gp
+	resp := ValidateContentResponse{Plan: plan, Steps: steps}
+	if mode, merr := cuetry.RecipeExecutionMode(*recipe); merr == nil && mode == cuetry.ExecutionModeGraph {
+		if gp, gerr := cuetry.BuildRecipeGraphPlan(*recipe); gerr == nil {
+			resp.Graph = graphPlanToResponse(gp)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -108,8 +156,8 @@ func (*Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Reque
 // @Tags recipes
 // @Accept json
 // @Produce json
-// @Param body body object true "path or recipe_content"
-// @Success 200 {object} cuetry.RecipeGraphPlan
+// @Param body body GraphPlanRequest true "path or recipe_content"
+// @Success 200 {object} RecipeGraphPlanResponse
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/graph-plan [post]
 // @Security BearerAuth
@@ -118,7 +166,7 @@ func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var body graphPlanRequest
+	var body GraphPlanRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -126,7 +174,16 @@ func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 	var recipe cuetry.Recipe
 	switch {
 	case body.RecipeContent != nil:
-		recipe = *body.RecipeContent
+		parsed, perr := recipeFromContentMap(body.RecipeContent)
+		if perr != nil {
+			httpError(w, perr, http.StatusBadRequest)
+			return
+		}
+		if parsed == nil {
+			httpError(w, fmt.Errorf("recipe_content required"), http.StatusBadRequest)
+			return
+		}
+		recipe = *parsed
 	case strings.TrimSpace(body.Path) != "":
 		cp, err := normalizeRecipePath(body.Path)
 		if err != nil {
@@ -162,17 +219,13 @@ func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(plan)
+	_ = json.NewEncoder(w).Encode(graphPlanToResponse(plan))
 }
 
-func writeValidationErrors(w http.ResponseWriter, errs []validateContentError) {
+func writeValidationErrors(w http.ResponseWriter, errs []ValidateContentError) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	_ = json.NewEncoder(w).Encode(validateContentResponse{Errors: errs})
-}
-
-type recipesParseRequest struct {
-	Path string `json:"path"`
+	_ = json.NewEncoder(w).Encode(ValidateContentResponse{Errors: errs})
 }
 
 // handleRecipesParse reads and parses a recipe file from an allowed path.
@@ -180,8 +233,8 @@ type recipesParseRequest struct {
 // @Tags recipes
 // @Accept json
 // @Produce json
-// @Param body body object true "path field: absolute recipe file"
-// @Success 200 {object} map[string]interface{} "recipe object"
+// @Param body body RecipesParseRequest true "absolute recipe file path"
+// @Success 200 {object} RecipesParseResponse
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/parse [post]
 // @Security BearerAuth
@@ -190,7 +243,7 @@ func (*Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var body recipesParseRequest
+	var body RecipesParseRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
@@ -214,6 +267,16 @@ func (*Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("parse recipe: %w", err), http.StatusBadRequest)
 		return
 	}
+	b, err := json.Marshal(recipe)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	var recipeMap map[string]interface{}
+	if err := json.Unmarshal(b, &recipeMap); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"recipe": recipe})
+	_ = json.NewEncoder(w).Encode(RecipesParseResponse{Recipe: recipeMap})
 }

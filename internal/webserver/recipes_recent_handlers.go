@@ -13,20 +13,6 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 )
 
-type recentRunEntry struct {
-	RecipeName        string `json:"recipe_name"`
-	RecipePath        string `json:"recipe_path"`
-	HostCount         int    `json:"host_count"`
-	StartedAt         string `json:"started_at"`
-	RecordingID       string `json:"recording_id"`
-	RecipeContentHash string `json:"recipe_content_hash,omitempty"`
-	Edited            bool   `json:"edited"`
-}
-
-type recentRunsResponse struct {
-	Runs []recentRunEntry `json:"runs"`
-}
-
 type recipeMetaEvent struct {
 	Type   string          `json:"type"`
 	Result json.RawMessage `json:"result"`
@@ -39,12 +25,28 @@ type recipeMetaPayload struct {
 	StartedAt         string `json:"started_at"`
 }
 
+// RecentRunEntry is one recent recipe run.
+type RecentRunEntry struct {
+	RecipeName        string `json:"recipe_name"`
+	RecipePath        string `json:"recipe_path"`
+	HostCount         int    `json:"host_count"`
+	StartedAt         string `json:"started_at"`
+	RecordingID       string `json:"recording_id"`
+	RecipeContentHash string `json:"recipe_content_hash,omitempty"`
+	Edited            bool   `json:"edited"`
+}
+
+// RecentRunsResponse is returned by GET /api/v1/recipes/recent-runs.
+type RecentRunsResponse struct {
+	Runs []RecentRunEntry `json:"runs"`
+}
+
 // handleRecipesRecentRuns lists recent recipe runs from session recording dir.
 // @Summary Recent recipe runs
 // @Tags recipes
 // @Produce json
 // @Param limit query int false "max entries (default 20, max 200)"
-// @Success 200 {object} object "runs array"
+// @Success 200 {object} RecentRunsResponse
 // @Router /api/v1/recipes/recent-runs [get]
 // @Security BearerAuth
 func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request) {
@@ -60,15 +62,15 @@ func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request)
 	}
 	dir := strings.TrimSpace(s.opts.RecordDir)
 	if dir == "" {
-		writeJSONOK(w, recentRunsResponse{Runs: []recentRunEntry{}})
+		writeJSONOK(w, RecentRunsResponse{Runs: []RecentRunEntry{}})
 		return
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		writeJSONOK(w, recentRunsResponse{Runs: []recentRunEntry{}})
+		writeJSONOK(w, RecentRunsResponse{Runs: []RecentRunEntry{}})
 		return
 	}
-	runs := make([]recentRunEntry, 0, len(entries))
+	runs := make([]RecentRunEntry, 0, len(entries))
 	for _, e := range entries {
 		name := e.Name()
 		if !strings.HasSuffix(name, ".hrec.jsonl") {
@@ -82,7 +84,7 @@ func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request)
 		if !ok {
 			continue
 		}
-		runs = append(runs, recentRunEntry{
+		runs = append(runs, RecentRunEntry{
 			RecipeName:        filepath.Base(meta.RecipePath),
 			RecipePath:        meta.RecipePath,
 			HostCount:         meta.HostCount,
@@ -96,7 +98,7 @@ func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request)
 	if len(runs) > limit {
 		runs = runs[:limit]
 	}
-	writeJSONOK(w, recentRunsResponse{Runs: runs})
+	writeJSONOK(w, RecentRunsResponse{Runs: runs})
 }
 
 // readRecipeMeta scans the first ~10 lines of the recording file for a

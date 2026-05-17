@@ -1,10 +1,1002 @@
 {
   "components": {
     "schemas": {
+      "config.AWSBackend": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "config.BackendRow": {
+        "properties": {
+          "hint": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "config.Backends": {
+        "properties": {
+          "aws": {
+            "items": {
+              "$ref": "#/components/schemas/config.AWSBackend"
+            },
+            "type": "array"
+          },
+          "consul": {
+            "items": {
+              "$ref": "#/components/schemas/config.ConsulBackend"
+            },
+            "type": "array"
+          },
+          "gcp": {
+            "items": {
+              "$ref": "#/components/schemas/config.GCPBackend"
+            },
+            "type": "array"
+          },
+          "kubernetes": {
+            "items": {
+              "$ref": "#/components/schemas/config.KubernetesBackend"
+            },
+            "type": "array"
+          },
+          "local": {
+            "items": {
+              "$ref": "#/components/schemas/config.LocalBackend"
+            },
+            "type": "array"
+          },
+          "proxmox": {
+            "items": {
+              "$ref": "#/components/schemas/config.ProxmoxBackend"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "config.ConsulBackend": {
+        "properties": {
+          "addr": {
+            "type": "string"
+          },
+          "datacenter": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "addr",
+          "name"
+        ],
+        "type": "object"
+      },
+      "config.GCPBackend": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "zone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "project"
+        ],
+        "type": "object"
+      },
+      "config.KubernetesBackend": {
+        "properties": {
+          "context": {
+            "type": "string"
+          },
+          "debug_image": {
+            "type": "string"
+          },
+          "kubeconfig": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "config.LocalBackend": {
+        "properties": {
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/config.LocalHost"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "config.LocalHost": {
+        "properties": {
+          "extra_ips": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "meta": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "primary_ip": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "zone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "primary_ip"
+        ],
+        "type": "object"
+      },
+      "config.ProxmoxBackend": {
+        "properties": {
+          "exec_mode": {
+            "description": "ExecMode: ssh (default) = guest SSH for commands/SFTP/tunnels; pve = QEMU commands via guest agent API, LXC commands/SFTP over guest SSH (PVE has no LXC REST exec; web UI LXC console uses termproxy when token_id is set);\nhybrid = QEMU via guest agent + SSH for files; LXC uses guest SSH for commands and files.",
+            "type": "string"
+          },
+          "insecure": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "token_id": {
+            "type": "string"
+          },
+          "token_secret": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "type": "object"
+      },
+      "hostapi.ListBackendsOutput": {
+        "properties": {
+          "backends": {
+            "items": {
+              "$ref": "#/components/schemas/config.BackendRow"
+            },
+            "type": "array"
+          },
+          "config_path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "hostapi.SearchHostsInput": {
+        "properties": {
+          "aws_profile": {
+            "type": "string"
+          },
+          "aws_region": {
+            "type": "string"
+          },
+          "backends": {
+            "type": "string"
+          },
+          "cache_dir": {
+            "type": "string"
+          },
+          "cache_ttl": {
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "consul_addr": {
+            "type": "string"
+          },
+          "consul_datacenter": {
+            "type": "string"
+          },
+          "consul_token": {
+            "type": "string"
+          },
+          "gcp_project": {
+            "type": "string"
+          },
+          "gcp_zone": {
+            "type": "string"
+          },
+          "k8s_debug_image": {
+            "type": "string"
+          },
+          "k8s_mode": {
+            "type": "string"
+          },
+          "kube_context": {
+            "type": "string"
+          },
+          "kubeconfig": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_regex": {
+            "type": "string"
+          },
+          "no_cache": {
+            "type": "boolean"
+          },
+          "providers": {
+            "type": "string"
+          },
+          "proxmox_insecure": {
+            "type": "boolean"
+          },
+          "proxmox_password": {
+            "type": "string"
+          },
+          "proxmox_token_id": {
+            "type": "string"
+          },
+          "proxmox_token_secret": {
+            "type": "string"
+          },
+          "proxmox_url": {
+            "type": "string"
+          },
+          "proxmox_user": {
+            "type": "string"
+          },
+          "refresh": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "hostapi.SearchHostsOutput": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/hosts.Record"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "hosts.Record": {
+        "properties": {
+          "extra_ips": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "meta": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "primary_ip": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "zone": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "recordings.Event": {
+        "properties": {
+          "cols": {
+            "type": "integer"
+          },
+          "data_b64": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "result": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "type": "integer"
+          },
+          "time_ms": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ui.AgentCloudBackend": {
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ui.AgentTransferEvent": {
+        "properties": {
+          "attempt": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ui.CloudBackendRef": {
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ui.HostExecResult": {
+        "properties": {
+          "errMsg": {
+            "description": "transport / spawn failure (not remote stderr)",
+            "type": "string"
+          },
+          "exitCode": {
+            "type": "integer"
+          },
+          "hookOutput": {
+            "description": "captured stdout+stderr from the hook (local or remote)",
+            "type": "string"
+          },
+          "hookPhase": {
+            "description": "HookPhase / HookOutput are set when a CUE step hook ran after the main result (command/script only).",
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "skipped": {
+            "description": "when CEL was false; no SSH/SFTP ran",
+            "type": "boolean"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ui.LocalFileEntry": {
+        "properties": {
+          "is_dir": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "modified_at": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "ui.RemoteFileEntry": {
+        "properties": {
+          "is_dir": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "modified_at": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ActiveTunnel": {
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "mapping": {
+            "type": "string"
+          },
+          "record_key": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ConfigBackendEntryBody": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "webserver.ConfigSchemaResponse": {
+        "properties": {
+          "json_schema": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "ui_schema": {}
+        },
+        "type": "object"
+      },
+      "webserver.CueExecDryRunResponse": {
+        "properties": {
+          "plan": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.CueExecExecuteResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ui.HostExecResult"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.CueExecRequest": {
+        "properties": {
+          "env": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "execute": {
+            "type": "boolean"
+          },
+          "recipe_content": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "recipe_path": {
+            "type": "string"
+          },
+          "record_session": {
+            "type": "boolean"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/hosts.Record"
+            },
+            "type": "array"
+          },
+          "ssh_user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ExecRequest": {
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "record_session": {
+            "type": "boolean"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/hosts.Record"
+            },
+            "type": "array"
+          },
+          "ssh_user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ExecResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ui.HostExecResult"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.FilesAgentTransferRequest": {
+        "properties": {
+          "agent_local_path": {
+            "type": "string"
+          },
+          "agent_remote_dir": {
+            "type": "string"
+          },
+          "cloud": {
+            "$ref": "#/components/schemas/ui.AgentCloudBackend"
+          },
+          "cloud_backend_ref": {
+            "$ref": "#/components/schemas/ui.CloudBackendRef"
+          },
+          "credentials": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "dest_path": {
+            "type": "string"
+          },
+          "dest_record": {
+            "$ref": "#/components/schemas/hosts.Record"
+          },
+          "keep_object": {
+            "type": "boolean"
+          },
+          "max_retries": {
+            "type": "integer"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "source_record": {
+            "$ref": "#/components/schemas/hosts.Record"
+          },
+          "ssh_user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.FilesAgentTransferResponse": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ui.AgentTransferEvent"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.FilesCopyRequest": {
+        "properties": {
+          "direction": {
+            "type": "string"
+          },
+          "local_path": {
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/hosts.Record"
+          },
+          "remote_path": {
+            "type": "string"
+          },
+          "ssh_user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.FilesCopyResponse": {
+        "properties": {
+          "local": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "webserver.FilesLocalListRequest": {
         "properties": {
           "path": {
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.FilesLocalListResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ui.LocalFileEntry"
+            },
+            "type": "array"
+          },
+          "path": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.FilesRemoteListRequest": {
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/hosts.Record"
+          },
+          "ssh_user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.FilesRemoteListResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ui.RemoteFileEntry"
+            },
+            "type": "array"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.GraphPlanEdgeDoc": {
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.GraphPlanNodeDoc": {
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "kv_tunnel": {
+            "type": "boolean"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "wave": {
+            "type": "integer"
+          },
+          "when": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.GraphPlanRequest": {
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "recipe_content": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.HostPortsRequest": {
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/hosts.Record"
+          },
+          "ssh_user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.HostPortsResponse": {
+        "properties": {
+          "ports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.MetaResponse": {
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "session_recording_available": {
+            "type": "boolean"
+          },
+          "terminal_assist_available": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ProvidersResponse": {
+        "properties": {
+          "providers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.PveQemuVncOfferRequest": {
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/hosts.Record"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.PveQemuVncOfferResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "vnc_password": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecentRunEntry": {
+        "properties": {
+          "edited": {
+            "type": "boolean"
+          },
+          "host_count": {
+            "type": "integer"
+          },
+          "recipe_content_hash": {
+            "type": "string"
+          },
+          "recipe_name": {
+            "type": "string"
+          },
+          "recipe_path": {
+            "type": "string"
+          },
+          "recording_id": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecentRunsResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/webserver.RecentRunEntry"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecipeGraphPlanResponse": {
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/webserver.GraphPlanEdgeDoc"
+            },
+            "type": "array"
+          },
+          "mermaid": {
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/webserver.GraphPlanNodeDoc"
+            },
+            "type": "array"
+          },
+          "type": {
+            "type": "string"
+          },
+          "waves": {
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/webserver.GraphPlanNodeDoc"
+              },
+              "type": "array"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -36,11 +1028,315 @@
         },
         "type": "object"
       },
+      "webserver.RecipesAssistRequest": {
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "recipe_path": {
+            "type": "string"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/hosts.Record"
+            },
+            "type": "array"
+          },
+          "ssh_user": {
+            "type": "string"
+          },
+          "user_prompt": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecipesAssistResponse": {
+        "properties": {
+          "reply": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "webserver.RecipesListResponse": {
         "properties": {
           "recipes": {
             "items": {
               "$ref": "#/components/schemas/webserver.RecipeListEntry"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecipesParseRequest": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecipesParseResponse": {
+        "properties": {
+          "recipe": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecordingListEntry": {
+        "properties": {
+          "file_name": {
+            "type": "string"
+          },
+          "host_ip": {
+            "type": "string"
+          },
+          "host_name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "modified_unix_ms": {
+            "type": "integer"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecordingsListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/webserver.RecordingListEntry"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecordingsPlayRequest": {
+        "properties": {
+          "file_name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecordingsPlayResponse": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/recordings.Event"
+            },
+            "type": "array"
+          },
+          "file_name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ResolvedStepSummary": {
+        "properties": {
+          "depends": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "run_as": {
+            "type": "string"
+          },
+          "wave": {
+            "type": "integer"
+          },
+          "when": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.StartTunnelRequest": {
+        "properties": {
+          "mapping": {
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/hosts.Record"
+          },
+          "ssh_user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.StatusResponse": {
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.TerminalAssistModelsResponse": {
+        "properties": {
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.TerminalAssistRequest": {
+        "properties": {
+          "max_lines": {
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "scrollback": {
+            "type": "string"
+          },
+          "user_prompt": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.TerminalAssistResponse": {
+        "properties": {
+          "reply": {
+            "type": "string"
+          },
+          "scrollback_clipped": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.TunnelDeleteResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.TunnelLogsResponse": {
+        "properties": {
+          "logs": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.TunnelStartResponse": {
+        "properties": {
+          "tunnel": {
+            "$ref": "#/components/schemas/webserver.ActiveTunnel"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.TunnelsListResponse": {
+        "properties": {
+          "tunnels": {
+            "items": {
+              "$ref": "#/components/schemas/webserver.ActiveTunnel"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.UploadResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ui.HostExecResult"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ValidateContentError": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ValidateContentRequest": {
+        "properties": {
+          "recipe_content": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.ValidateContentResponse": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/webserver.ValidateContentError"
+            },
+            "type": "array"
+          },
+          "graph": {
+            "$ref": "#/components/schemas/webserver.RecipeGraphPlanResponse"
+          },
+          "plan": {
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/webserver.ResolvedStepSummary"
             },
             "type": "array"
           }
@@ -86,10 +1382,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "type": "object"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/hostapi.ListBackendsOutput"
                 }
               }
             },
@@ -201,14 +1494,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.StatusResponse"
                 }
               }
             },
-            "description": "status, path"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -255,11 +1545,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/config.Backends"
                 }
               }
             },
-            "description": "backends map (gcp, aws, kubernetes, ...)"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -316,11 +1606,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.ConfigBackendEntryBody"
               }
             }
           },
-          "description": "Backend entry JSON",
+          "description": "Backend entry JSON (shape depends on kind path param)",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -329,14 +1619,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.StatusResponse"
                 }
               }
             },
-            "description": "status, path"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -403,14 +1690,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.StatusResponse"
                 }
               }
             },
-            "description": "status, path"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -474,11 +1758,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.ConfigBackendEntryBody"
               }
             }
           },
-          "description": "Backend entry JSON",
+          "description": "Backend entry JSON (shape depends on kind path param)",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -487,14 +1771,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.StatusResponse"
                 }
               }
             },
-            "description": "status, path"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -541,12 +1822,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.ConfigSchemaResponse"
                 }
               }
             },
-            "description": "json_schema, ui_schema"
+            "description": "OK"
           }
         },
         "security": [
@@ -576,11 +1856,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.CueExecRequest"
               }
             }
           },
-          "description": "recipe_path or recipe_content, execute, ssh_user, records, env",
+          "description": "cue-exec request",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -589,11 +1869,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.CueExecExecuteResponse"
                 }
               }
             },
-            "description": "CueExecDryRunResponse or CueExecExecuteResponse or NDJSON stream"
+            "description": "host results when execute=true and stream is not set"
           },
           "400": {
             "content": {
@@ -636,11 +1916,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.ExecRequest"
               }
             }
           },
-          "description": "ssh_user, command, records, record_session",
+          "description": "remote exec request",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -649,11 +1929,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.ExecResponse"
                 }
               }
             },
-            "description": "ExecResponse JSON or NDJSON stream when stream=1"
+            "description": "JSON body; NDJSON stream of HostExecResultDoc when stream=1"
           },
           "400": {
             "content": {
@@ -686,11 +1966,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.FilesAgentTransferRequest"
               }
             }
           },
-          "description": "agent transfer request (see web UI)",
+          "description": "agent transfer request",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -699,11 +1979,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.FilesAgentTransferResponse"
                 }
               }
             },
-            "description": "events array"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -736,11 +2016,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.FilesCopyRequest"
               }
             }
           },
-          "description": "direction, ssh_user, record, local_path, remote_path",
+          "description": "copy between local and remote paths",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -749,14 +2029,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.FilesCopyResponse"
                 }
               }
             },
-            "description": "status, local, remote"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -815,11 +2092,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.FilesLocalListResponse"
                 }
               }
             },
-            "description": "root, path, entries"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -852,7 +2129,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.FilesRemoteListRequest"
               }
             }
           },
@@ -865,11 +2142,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.FilesRemoteListResponse"
                 }
               }
             },
-            "description": "path, entries"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -915,11 +2192,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.HostPortsRequest"
               }
             }
           },
-          "description": "ssh_user and record (see web UI types)",
+          "description": "ssh_user and host record",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -928,12 +2205,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.HostPortsResponse"
                 }
               }
             },
-            "description": "ports: string array"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -980,12 +2256,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.MetaResponse"
                 }
               }
             },
-            "description": "version, commit, date, config_path, session_recording_available, terminal_assist_available"
+            "description": "OK"
           }
         },
         "security": [
@@ -1006,12 +2281,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.ProvidersResponse"
                 }
               }
             },
-            "description": "providers: string array"
+            "description": "OK"
           }
         },
         "security": [
@@ -1031,7 +2305,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.PveQemuVncOfferRequest"
               }
             }
           },
@@ -1044,11 +2318,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.PveQemuVncOfferResponse"
                 }
               }
             },
-            "description": "session_id, vnc_password"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1106,11 +2380,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.RecipesAssistRequest"
               }
             }
           },
-          "description": "recipe_path, model, user_prompt, ssh_user, records",
+          "description": "recipe assist request",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -1119,14 +2393,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.RecipesAssistResponse"
                 }
               }
             },
-            "description": "reply"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1166,17 +2437,17 @@
         ]
       }
     },
-    "/api/v1/recipes/parse": {
+    "/api/v1/recipes/graph-plan": {
       "post": {
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.GraphPlanRequest"
               }
             }
           },
-          "description": "path field: absolute recipe file",
+          "description": "path or recipe_content",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -1185,12 +2456,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
+                  "$ref": "#/components/schemas/webserver.RecipeGraphPlanResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
                   "type": "object"
                 }
               }
             },
-            "description": "recipe object"
+            "description": "Bad Request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Build graph recipe plan",
+        "tags": [
+          "recipes"
+        ]
+      }
+    },
+    "/api/v1/recipes/parse": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/webserver.RecipesParseRequest"
+              }
+            }
+          },
+          "description": "absolute recipe file path",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/webserver.RecipesParseResponse"
+                }
+              }
+            },
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1234,11 +2554,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.RecentRunsResponse"
                 }
               }
             },
-            "description": "runs array"
+            "description": "OK"
           }
         },
         "security": [
@@ -1258,11 +2578,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.ValidateContentRequest"
               }
             }
           },
-          "description": "recipe_content object",
+          "description": "recipe object",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -1271,21 +2591,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.ValidateContentResponse"
                 }
               }
             },
-            "description": "plan and steps on success"
+            "description": "OK"
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.ValidateContentResponse"
                 }
               }
             },
-            "description": "errors array in validateContentResponse shape"
+            "description": "Bad Request"
           }
         },
         "security": [
@@ -1382,11 +2702,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.RecordingsListResponse"
                 }
               }
             },
-            "description": "items array"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1419,11 +2739,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.RecordingsPlayRequest"
               }
             }
           },
-          "description": "file_name field",
+          "description": "recording file name",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -1432,11 +2752,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.RecordingsPlayResponse"
                 }
               }
             },
-            "description": "file_name and events"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1469,11 +2789,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/hostapi.SearchHostsInput"
               }
             }
           },
-          "description": "Search request (config_path, provider flags, name filters, etc.)",
+          "description": "search request",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -1482,11 +2802,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/hostapi.SearchHostsOutput"
                 }
               }
             },
-            "description": "hostapi search result JSON"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1519,7 +2839,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.TerminalAssistRequest"
               }
             }
           },
@@ -1532,14 +2852,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.TerminalAssistResponse"
                 }
               }
             },
-            "description": "reply"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1586,12 +2903,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.TerminalAssistModelsResponse"
                 }
               }
             },
-            "description": "models: string array"
+            "description": "OK"
           },
           "503": {
             "content": {
@@ -1625,12 +2941,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.TunnelsListResponse"
                 }
               }
             },
-            "description": "tunnels array"
+            "description": "OK"
           }
         },
         "security": [
@@ -1648,7 +2963,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/webserver.StartTunnelRequest"
               }
             }
           },
@@ -1661,12 +2976,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.TunnelStartResponse"
                 }
               }
             },
-            "description": "tunnel descriptor"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1711,14 +3025,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "boolean"
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.TunnelDeleteResponse"
                 }
               }
             },
-            "description": "success"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1776,12 +3087,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.TunnelLogsResponse"
                 }
               }
             },
-            "description": "logs"
+            "description": "OK"
           },
           "400": {
             "content": {
@@ -1845,7 +3155,7 @@
                     "x-formData-name": "file"
                   },
                   "meta": {
-                    "description": "JSON: ssh_user, remote_path, record",
+                    "description": "JSON UploadRequestMeta: ssh_user, remote_path, record (hosts.Record)",
                     "type": "string",
                     "x-formData-name": "meta"
                   }
@@ -1864,11 +3174,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/webserver.UploadResponse"
                 }
               }
             },
-            "description": "upload results or stream when stream=1"
+            "description": "JSON body; NDJSON progress lines when stream=1"
           },
           "400": {
             "content": {

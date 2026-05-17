@@ -64,13 +64,13 @@ type ExecResponse struct {
 
 // CueExecRequest is the JSON body for POST /api/v1/cue-exec.
 type CueExecRequest struct {
-	RecipePath    string         `json:"recipe_path,omitempty"`
-	RecipeContent *cuetry.Recipe `json:"recipe_content,omitempty"`
-	Execute       bool           `json:"execute"`
-	SSHUser       string         `json:"ssh_user"`
-	Records       []hosts.Record `json:"records"`
-	Env           []string       `json:"env,omitempty"`
-	RecordSession bool           `json:"record_session"`
+	RecipePath    string                 `json:"recipe_path,omitempty"`
+	RecipeContent map[string]interface{} `json:"recipe_content,omitempty"`
+	Execute       bool                   `json:"execute"`
+	SSHUser       string                 `json:"ssh_user"`
+	Records       []hosts.Record         `json:"records"`
+	Env           []string               `json:"env,omitempty"`
+	RecordSession bool                   `json:"record_session"`
 }
 
 // CueExecDryRunResponse is the JSON body when cue-exec runs in dry-run mode.
@@ -187,8 +187,8 @@ func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Param stream query int false "set to 1 for NDJSON streaming"
-// @Param body body object true "ssh_user, command, records, record_session"
-// @Success 200 {object} object "ExecResponse JSON or NDJSON stream when stream=1"
+// @Param body body ExecRequest true "remote exec request"
+// @Success 200 {object} ExecResponse "JSON body; NDJSON stream of HostExecResultDoc when stream=1"
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/exec [post]
 // @Security BearerAuth
@@ -323,14 +323,21 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 // the parsed/validated recipe, its on-disk source path (empty for inline),
 // and the recipe's directory (empty for inline). All errors are caller-fixable
 // (HTTP 400 from the handler).
-func resolveCueExecRecipe(body CueExecRequest, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
+func resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
 	switch {
 	case body.RecipeContent != nil:
 		if strings.TrimSpace(body.RecipePath) != "" {
 			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_path and recipe_content are mutually exclusive")
 		}
-		recipe := *body.RecipeContent
-		if err := cuetry.ValidateParsedRecipe(recipe, body.Records); err != nil {
+		parsed, err := recipeFromContentMap(body.RecipeContent)
+		if err != nil {
+			return cuetry.Recipe{}, "", "", err
+		}
+		if parsed == nil {
+			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_content required")
+		}
+		recipe := *parsed
+		if err := cuetry.ValidateParsedRecipe(recipe, records); err != nil {
 			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_content: %w", err)
 		}
 		return recipe, "", "", nil
@@ -347,7 +354,7 @@ func resolveCueExecRecipe(body CueExecRequest, parseOpts cuetry.ParseOptions) (c
 		if err != nil {
 			return cuetry.Recipe{}, "", "", err
 		}
-		parsed, err := cuetry.ParseRemoteRecipeOpts(raw, body.Records, parseOpts)
+		parsed, err := cuetry.ParseRemoteRecipeOpts(raw, records, parseOpts)
 		if err != nil {
 			return cuetry.Recipe{}, "", "", fmt.Errorf("parse recipe: %w", err)
 		}
@@ -363,8 +370,9 @@ func resolveCueExecRecipe(body CueExecRequest, parseOpts cuetry.ParseOptions) (c
 // @Accept json
 // @Produce json
 // @Param stream query int false "set to 1 for NDJSON streaming when execute=true"
-// @Param body body object true "recipe_path or recipe_content, execute, ssh_user, records, env"
-// @Success 200 {object} object "CueExecDryRunResponse or CueExecExecuteResponse or NDJSON stream"
+// @Param body body CueExecRequest true "cue-exec request"
+// @Success 200 {object} CueExecDryRunResponse "dry-run plan when execute=false"
+// @Success 200 {object} CueExecExecuteResponse "host results when execute=true and stream is not set"
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/cue-exec [post]
 // @Security BearerAuth
@@ -386,7 +394,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = pluginMgr.Close() }()
 
-	recipe, recipeSourcePath, recipeDir, err := resolveCueExecRecipe(body, cuetry.ParseOptions{PluginManager: pluginMgr})
+	recipe, recipeSourcePath, recipeDir, err := resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return

@@ -30,7 +30,8 @@ const (
 	maxRecipeAssistPlanRunes   = 32000
 )
 
-type recipesAssistRequest struct {
+// RecipesAssistRequest is the JSON body for POST /api/v1/recipes/assist.
+type RecipesAssistRequest struct {
 	RecipePath string         `json:"recipe_path"`
 	Model      string         `json:"model"`
 	UserPrompt string         `json:"user_prompt"`
@@ -38,7 +39,8 @@ type recipesAssistRequest struct {
 	Records    []hosts.Record `json:"records"`
 }
 
-type recipesAssistResponse struct {
+// RecipesAssistResponse is the JSON body for a successful recipe assist reply.
+type RecipesAssistResponse struct {
 	Reply string `json:"reply"`
 }
 
@@ -81,8 +83,8 @@ func clipRunesForRecipeAssist(s string, maxRunes int) string {
 // @Tags recipes
 // @Accept json
 // @Produce json
-// @Param body body object true "recipe_path, model, user_prompt, ssh_user, records"
-// @Success 200 {object} map[string]string "reply"
+// @Param body body RecipesAssistRequest true "recipe assist request"
+// @Success 200 {object} RecipesAssistResponse
 // @Failure 400 {object} map[string]string
 // @Failure 503 {object} map[string]string
 // @Router /api/v1/recipes/assist [post]
@@ -97,12 +99,12 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body recipesAssistRequest
+	var body RecipesAssistRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxRecipeAssistRequestBody)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("invalid JSON: %w", err), http.StatusBadRequest)
 		return
 	}
-	body.Records = capRecipeAssistRecords(body.Records)
+	records := capRecipeAssistRecords(body.Records)
 
 	cp, err := normalizeRecipePath(body.RecipePath)
 	if err != nil {
@@ -142,7 +144,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs := filterConnectableRecords(body.Records)
+	jobs := filterConnectableRecords(records)
 	cueSrc := clipRunesForRecipeAssist(string(raw), maxRecipeAssistCueRunes)
 
 	var parseNote string
@@ -227,5 +229,5 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(recipesAssistResponse{Reply: reply})
+	_ = json.NewEncoder(w).Encode(RecipesAssistResponse{Reply: reply})
 }
