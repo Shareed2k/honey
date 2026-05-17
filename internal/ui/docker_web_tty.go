@@ -36,11 +36,6 @@ func RunDockerWebTTY(
 		return fmt.Errorf("unexpected client type %T", client)
 	}
 
-	env, _ := cuetry.EffectiveEnvForRun(context.Background(), false, nil, cuetry.RecipeStep{}, nil, nil, &r)
-	shell := "sh"
-	if dc.isWindowsContainer() {
-		shell = "powershell.exe"
-	}
-	cmd, _ := cuetry.ShellExportPrefixForRemote(env, shell)
-	return dc.execInteractive(ctx, dc.execArgv(cmd), stdin, stdout, cols, rows, resizeCh)
+	execEnv, _ := cuetry.EnvForDockerInteractive(&r)
+	return dc.execInteractive(ctx, dockerInteractiveShellCmd(dc), execEnv, stdin, stdout, cols, rows, resizeCh)
 }

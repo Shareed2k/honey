@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -188,9 +189,15 @@ func RunTable(records []hosts.Record, sshUser string, opts RunTableOptions) erro
 				// but let's check both the formal interface and the string to be safe.
 				_, isK8sExitErr := err.(k8sexec.ExitError)
 				isK8sStringErr := strings.Contains(err.Error(), "command terminated with exit code")
+				isBenignDetach := errors.Is(err, context.Canceled) ||
+					strings.Contains(strings.ToLower(err.Error()), "context canceled")
 
-				if !isSSHExitErr && !isK8sExitErr && !isK8sStringErr {
-					fmt.Fprintf(os.Stderr, "\r\n[honey] SSH Connection Error: %v\r\n", err)
+				if !isSSHExitErr && !isK8sExitErr && !isK8sStringErr && !isBenignDetach {
+					errLabel := "SSH Connection Error"
+					if hosts.IsDockerRecord(r) {
+						errLabel = "Docker exec error"
+					}
+					fmt.Fprintf(os.Stderr, "\r\n[honey] %s: %v\r\n", errLabel, err)
 					fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
 					var b [1]byte
 					_, _ = os.Stdin.Read(b[:])

@@ -9,6 +9,7 @@ func TestIsConnectableRecord(t *testing.T) {
 		want bool
 	}{
 		{"docker container", Record{Provider: "docker", Meta: map[string]string{"kind": "container", "container_id": "abc"}}, true},
+		{"docker id only", Record{Provider: "docker", Meta: map[string]string{"container_id": "abc"}}, true},
 		{"docker missing id", Record{Provider: "docker", Meta: map[string]string{"kind": "container"}}, false},
 		{"vm ip", Record{Provider: "gcp", PrimaryIP: "10.0.0.1"}, true},
 		{"k8s pod", Record{Provider: "k8s", Meta: map[string]string{"kind": "pod"}}, true},

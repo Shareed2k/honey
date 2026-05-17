@@ -19,7 +19,11 @@ func IsDockerRecord(r Record) bool {
 		return false
 	}
 	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
-	return k == "container" || k == "swarm_task"
+	if k == "container" || k == "swarm_task" {
+		return true
+	}
+	// Rows from older builds or clients that omit meta.kind but include container_id.
+	return strings.TrimSpace(r.Meta["container_id"]) != ""
 }
 
 // IsConnectableRecord reports whether honey can exec, upload, or open a terminal on r.

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -54,20 +55,37 @@ func (dockerExecutor) RunInteractive(user string, r hosts.Record) error {
 	return runDockerInteractiveWithRecorder(user, r, nil)
 }
 
+// DialDockerCheck verifies that a docker record can reach the Engine API (dial + close).
+func DialDockerCheck(user string, r hosts.Record) error {
+	client, err := dockerExecutor{}.Dial(user, r)
+	if err != nil {
+		return err
+	}
+	return client.Close()
+}
+
 func (dockerExecutor) RunTunnel(context.Context, string, hosts.Record, string, io.Writer) error {
 	return fmt.Errorf("docker provider does not support SSH-style tunnels; publish ports on the container instead")
 }
 
+func effectiveDockerSSHUser(user string, r hosts.Record) string {
+	if u := strings.TrimSpace(user); u != "" {
+		return u
+	}
+	return strings.TrimSpace(r.Meta["docker_ssh_user"])
+}
+
 func dialDockerClient(user string, r hosts.Record) (*client.Client, error) {
+	user = effectiveDockerSSHUser(user, r)
 	opts := dockerprovider.APIClientOptions{SSHUser: user}
 	transport := strings.TrimSpace(r.Meta["docker_transport"])
 	host := strings.TrimSpace(r.Meta["docker_host"])
 	backend := strings.TrimSpace(r.Meta["docker_backend"])
 
 	if transport == "honey_ssh" || strings.HasPrefix(host, "honey-ssh://") {
-		if rt, ok := hostexec.DockerBackendByName(backend); ok {
-			return dockerprovider.NewAPIClientFromRuntime(context.Background(), rt, opts)
-		}
+		// Auto-discover rows leave docker_backend empty; DockerBackendByName("")
+		// would match the first YAML backends.docker entry (often local DOCKER_HOST).
+		// Prefer the VM hop whenever discover metadata is present.
 		if vm, ok := vmRecordForHoneyDocker(r); ok {
 			bc := dockerprovider.BackendConfig{
 				SSHUser: user,
@@ -75,6 +93,11 @@ func dialDockerClient(user string, r hosts.Record) (*client.Client, error) {
 			}
 			opts.VMRecord = &vm
 			return dockerprovider.NewAPIClient(context.Background(), bc, opts)
+		}
+		if backend != "" {
+			if rt, ok := hostexec.DockerBackendByName(backend); ok {
+				return dockerprovider.NewAPIClientFromRuntime(context.Background(), rt, opts)
+			}
 		}
 		return nil, fmt.Errorf("honey-ssh docker record missing backend or vm metadata")
 	}
@@ -154,10 +177,58 @@ func (c *dockerNativeClient) execInContainer(ctx context.Context, cmd []string, 
 	return err
 }
 
+func dockerInteractiveShellCmd(dc *dockerNativeClient) []string {
+	if dc.isWindowsContainer() {
+		return []string{"powershell.exe", "-NoLogo"}
+	}
+	return []string{"sh"}
+}
+
+// cancelOnContext wraps r so Read returns io.EOF when ctx is canceled (unblocks TTY after remote shell exits).
+type cancelOnContext struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *cancelOnContext) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, io.EOF
+	}
+	type readResult struct {
+		n   int
+		err error
+	}
+	ch := make(chan readResult, 1)
+	go func() {
+		n, err := c.r.Read(p)
+		ch <- readResult{n, err}
+	}()
+	select {
+	case <-c.ctx.Done():
+		return 0, io.EOF
+	case res := <-ch:
+		return res.n, res.err
+	}
+}
+
+func benignExecStreamErr(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "context canceled") ||
+		strings.Contains(msg, "use of closed network connection") ||
+		strings.Contains(msg, "connection reset")
+}
+
 // execInteractive runs a TTY exec with bidirectional I/O and optional resize events.
 func (c *dockerNativeClient) execInteractive(
 	ctx context.Context,
 	cmd []string,
+	execEnv []string,
 	stdin io.Reader,
 	stdout io.Writer,
 	cols, rows int,
@@ -172,6 +243,7 @@ func (c *dockerNativeClient) execInteractive(
 		AttachStderr: false,
 		TTY:          true,
 		Cmd:          cmd,
+		Env:          execEnv,
 	})
 	if err != nil {
 		return err
@@ -197,6 +269,23 @@ func (c *dockerNativeClient) execInteractive(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				inspect, ierr := c.cli.ExecInspect(context.Background(), execID, client.ExecInspectOptions{})
+				if ierr == nil && !inspect.Running {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
 	if resizeCh != nil {
 		go func() {
 			for {
@@ -215,14 +304,15 @@ func (c *dockerNativeClient) execInteractive(
 		}()
 	}
 
-	g, gctx := errgroup.WithContext(ctx)
+	g, _ := errgroup.WithContext(ctx)
 	if stdin != nil {
+		stdinCtx := &cancelOnContext{ctx: ctx, r: stdin}
 		g.Go(func() error {
-			_, copyErr := io.Copy(attach.Conn, stdin)
+			_, copyErr := io.Copy(attach.Conn, stdinCtx)
 			if cw, ok := attach.Conn.(interface{ CloseWrite() error }); ok {
 				_ = cw.CloseWrite()
 			}
-			if copyErr != nil && copyErr != io.EOF {
+			if copyErr != nil && copyErr != io.EOF && !benignExecStreamErr(copyErr) {
 				return copyErr
 			}
 			return nil
@@ -230,30 +320,22 @@ func (c *dockerNativeClient) execInteractive(
 	}
 	g.Go(func() error {
 		_, copyErr := io.Copy(stdout, attach.Reader)
+		cancel()
 		return copyErr
 	})
 	streamErr := g.Wait()
 
-	for {
-		if gctx.Err() != nil {
-			return gctx.Err()
-		}
-		inspect, ierr := c.cli.ExecInspect(ctx, execID, client.ExecInspectOptions{})
-		if ierr != nil {
-			return ierr
-		}
-		if !inspect.Running {
-			if inspect.ExitCode != 0 && streamErr == nil {
-				return fmt.Errorf("exec exited with code %d", inspect.ExitCode)
-			}
-			return streamErr
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
+	inspect, ierr := c.cli.ExecInspect(context.Background(), execID, client.ExecInspectOptions{})
+	if ierr != nil {
+		return ierr
 	}
+	if inspect.ExitCode == 0 || benignExecStreamErr(streamErr) {
+		return nil
+	}
+	if streamErr != nil {
+		return streamErr
+	}
+	return fmt.Errorf("exec exited with code %d", inspect.ExitCode)
 }
 
 func (c *dockerNativeClient) isWindowsContainer() bool {
@@ -543,8 +625,8 @@ func dockerShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-func runDockerInteractiveWithRecorder(_ string, r hosts.Record, recorder *SessionRecorder) error {
-	client, err := dockerExecutor{}.Dial("", r)
+func runDockerInteractiveWithRecorder(user string, r hosts.Record, recorder *SessionRecorder) error {
+	client, err := dockerExecutor{}.Dial(user, r)
 	if err != nil {
 		if recorder != nil {
 			recorder.RecordError(err)
@@ -579,12 +661,7 @@ func runDockerInteractiveWithRecorder(_ string, r hosts.Record, recorder *Sessio
 	}
 	defer func() { _ = termRestore(fd, oldState) }()
 
-	env, _ := cuetry.EffectiveEnvForRun(context.Background(), false, nil, cuetry.RecipeStep{}, nil, nil, &r)
-	shell := "sh"
-	if dc.isWindowsContainer() {
-		shell = "powershell.exe"
-	}
-	cmd, _ := cuetry.ShellExportPrefixForRemote(env, shell)
+	execEnv, _ := cuetry.EnvForDockerInteractive(&r)
 
 	var stdin io.Reader = os.Stdin
 	var stdout io.Writer = os.Stdout
@@ -592,7 +669,7 @@ func runDockerInteractiveWithRecorder(_ string, r hosts.Record, recorder *Sessio
 		stdin = WrapRecordingReader(os.Stdin, recorder, "stdin")
 		stdout = WrapRecordingWriter(os.Stdout, recorder, "stdout")
 	}
-	execErr := dc.execInteractive(context.Background(), dc.execArgv(cmd), stdin, stdout, 0, 0, nil)
+	execErr := dc.execInteractive(context.Background(), dockerInteractiveShellCmd(dc), execEnv, stdin, stdout, 0, 0, nil)
 	if execErr != nil && recorder != nil {
 		recorder.RecordError(execErr)
 	}

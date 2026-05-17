@@ -252,5 +252,8 @@ func RecordMetaBase(bc BackendConfig, hop SSHHop, discover bool) map[string]stri
 	if ra := strings.TrimSpace(bc.RunAs); ra != "" {
 		meta["docker_run_as"] = ra
 	}
+	if u := strings.TrimSpace(bc.SSHUser); u != "" {
+		meta["docker_ssh_user"] = u
+	}
 	return meta
 }

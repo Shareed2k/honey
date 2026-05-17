@@ -292,6 +292,42 @@ func EffectiveEnvHostOnly(r *hosts.Record) (map[string]string, error) {
 	return EffectiveEnvForRun(context.Background(), false, nil, RecipeStep{}, nil, nil, r)
 }
 
+// EnvForDockerInteractive returns a small env slice for docker exec TTY sessions.
+// Full EffectiveEnvForRun includes every meta label and can exceed Engine limits or break shells.
+func EnvForDockerInteractive(r *hosts.Record) ([]string, error) {
+	if r == nil {
+		return nil, nil
+	}
+	m := map[string]string{
+		"HONEY_HOST_NAME":     r.Name,
+		"HONEY_HOST_PROVIDER": r.Provider,
+	}
+	if ip := strings.TrimSpace(r.PrimaryIP); ip != "" {
+		m["HONEY_HOST_PRIMARY_IP"] = ip
+	}
+	return EnvMapForDockerExec(m)
+}
+
+// EnvMapForDockerExec formats env for Moby ExecCreateOptions.Env (KEY=value entries).
+func EnvMapForDockerExec(env map[string]string) ([]string, error) {
+	if len(env) == 0 {
+		return nil, nil
+	}
+	if err := ValidateRecipeEnvMap(env); err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k+"="+env[k])
+	}
+	return out, nil
+}
+
 // ShellExportPrefixForRemote prepends stable `export KEY='value'; ` assignments before inner (remote shell).
 func ShellExportPrefixForRemote(env map[string]string, inner string) (string, error) {
 	if len(env) == 0 {
