@@ -8,6 +8,11 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 - `with_ssh_key.cue`: Minimal recipe showing `ssh_private_key` on defaults and a per-step override.
 - `graph_parallel.cue`: **`type: "graph"`** with per-step **`id`** and **`depends`** for parallel waves (see below).
 - `graph_env_from.cue`: Graph mode **`env_from`** — map dependency step **stdout** into env (per host).
+- `template_render.cue`: Graph **`template`** step — Go `text/template` locally (`host: "_"`), **`template.output`** capture + **`env_from.from_output`**.
+- `template_var_expand.cue`: **`${VAR}`** expansion in **`template.data`** string values (not in the template body).
+- `template_per_host.cue`: Per-host **`template`** (`host: "*"`) with host-scoped **`env_from.step`** (no `template.output` on multi-host).
+- `template_kv.cue`: **`kv_tunnel`** command writes KV; local **`template`** reads **`kvGet`** / **`kvHas`**.
+- `template_linear.cue`: Linear recipe with a single local template step (smoke test).
 - `graph_kv_tunnel.cue`: Graph mode **`defaults.kv_tunnel`** shared across waves; namespace keys with **`HONEY_STEP_ID`** and **`HONEY_HOST_NAME`**.
 - `graph_when.cue`: Graph mode **`when`** (CEL) — run a step per host only if a CEL expression is true (e.g. prior step stdout).
 - `graph_when_kv.cue`: **`when`** with **`kv_get` / `kv_has`** against operator-local recipe KV (`defaults.kv_tunnel`).
@@ -67,7 +72,8 @@ By default recipes run **linearly** (steps in array order). Set **`type: "graph"
 - Optional **`depends: [id, ...]`** lists prerequisite steps (must form a **DAG**, no cycles).
 - Honey runs steps in **waves** (all steps in a wave may run concurrently; default up to 8 steps at once).
 - Optional **`max_parallel`** (1–128) on `defaults` or a step caps **host-level** SSH/SFTP/plugin concurrency for that step (default 32); it does **not** limit how many steps run in one graph wave.
-- Optional **`env_from`** on a step maps env vars from a dependency step’s captured **stdout** (per host); each `env_from[].step` must appear in that step’s **`depends`**.
+- Optional **`env_from`** on a step maps env vars from a dependency step’s captured **stdout** (per host) or from a **`template.output`** capture name via **`from_output`**; each ref must appear in that step’s **`depends`** (exactly one of **`step`** or **`from_output`** per entry).
+- Optional **`template`** step (local): **`host: "_"`** for a single render, or **`host: "*"`** / literal / **`re:`** for per-host renders. Block fields: **`template`** (body), **`data`**, **`output`** (capture name only, requires **`host: "_"`**). Template body uses Go **`text/template`** + slim-sprig; **`${VAR}`** in **`data`** values is expanded from captures / env (not in the template body).
 - Graph mode sets **`HONEY_STEP_ID`** on remote command/script/plugin env when the step has an **`id`** (use with shared KV keys).
 - **`kv_tunnel`** may be enabled on multiple graph steps (or via `defaults.kv_tunnel`); one shared stepkv session for the run — dependency waves order reads; **same-wave** steps may race (namespace keys per host/step).
 - If a step **fails** (or all hosts hit transient SSH errors), **descendants are skipped**; other branches continue.

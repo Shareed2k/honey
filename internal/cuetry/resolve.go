@@ -19,8 +19,17 @@ const MatchAllSearchHosts = "*"
 // Use (?i) inside the pattern for case-insensitive matching.
 const MatchHostRegexPrefix = "re:"
 
-// MatchLocalAIHost is the only valid host value for a recipe step with kind ai (local summarizer, no SSH).
+// MatchLocalAIHost is the only valid host value for local steps (ai, template).
 const MatchLocalAIHost = "_"
+
+// MatchLocalAIHostRecord is the synthetic host row for MatchLocalAIHost expansion.
+func MatchLocalAIHostRecord() hosts.Record {
+	return hosts.Record{
+		Provider:  "local",
+		Name:      MatchLocalAIHost,
+		PrimaryIP: "-",
+	}
+}
 
 // DefaultRecipeAISystemPrompt is used when neither recipe ai.system_prompt nor config defaults.ai_system_prompt is set.
 const DefaultRecipeAISystemPrompt = `You summarize operational diagnostics from Honey CUE recipe run transcripts for SRE and DevOps users.
@@ -70,11 +79,7 @@ func ExpandStepHosts(host string, records []hosts.Record) ([]hosts.Record, error
 		return nil, fmt.Errorf("empty host key")
 	}
 	if host == MatchLocalAIHost {
-		return []hosts.Record{{
-			Provider:  "local",
-			Name:      "ai",
-			PrimaryIP: "-",
-		}}, nil
+		return []hosts.Record{MatchLocalAIHostRecord()}, nil
 	}
 	if host == MatchAllSearchHosts {
 		var out []hosts.Record
@@ -164,6 +169,14 @@ func CountRecipeStreamResults(recipe Recipe, records []hosts.Record) (int, error
 		}
 		if kind == StepKindAgentTransfer || kind == StepKindAI {
 			total++
+			continue
+		}
+		if kind == StepKindTemplate {
+			targets, err := ExpandStepHosts(step.Host, records)
+			if err != nil {
+				return 0, err
+			}
+			total += len(targets)
 			continue
 		}
 		targets, err := ExpandStepHosts(step.Host, records)
