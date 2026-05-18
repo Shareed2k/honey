@@ -101,6 +101,11 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	}
 	user := strings.TrimSpace(hello.SSHUser)
 	if user == "" {
+		if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
+			user = cfg.Defaults.SSHUser
+		}
+	}
+	if user == "" {
 		user = os.Getenv("USER")
 	}
 	cols, rows := hello.Cols, hello.Rows
