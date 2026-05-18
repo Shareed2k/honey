@@ -101,6 +101,12 @@ func TestConfigBackendsCRUD(t *testing.T) {
 			t.Fatalf("POST %d: %s", rec.Code, rec.Body.String())
 		}
 	}
+	if s.opts.Config == nil {
+		t.Fatal("after POST: s.opts.Config is nil")
+	}
+	if len(s.opts.Config.Backends.GCP) != 2 || s.opts.Config.Backends.GCP[1].Name != "two" {
+		t.Fatalf("after POST in-memory: %+v", s.opts.Config.Backends.GCP)
+	}
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

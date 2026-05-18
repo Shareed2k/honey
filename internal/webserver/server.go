@@ -286,6 +286,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Refresh {
 		in.Refresh = true
 	}
+	in.SSHUser = s.sshUser(in.SSHUser)
 	ctx := r.Context()
 	start := time.Now()
 	out, err := hostapi.SearchHosts(ctx, &in)
@@ -308,4 +309,14 @@ func httpError(w http.ResponseWriter, err error, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+func (s *Server) sshUser(requested string) string {
+	user := strings.TrimSpace(requested)
+	if user == "" {
+		if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
+			user = cfg.Defaults.SSHUser
+		}
+	}
+	return user
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -219,10 +218,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("too many hosts (max %d)", maxWebExecRecords), http.StatusBadRequest)
 		return
 	}
-	user := strings.TrimSpace(body.SSHUser)
-	if user == "" {
-		user = os.Getenv("USER")
-	}
+	user := s.sshUser(body.SSHUser)
 	jobs := filterConnectableRecords(body.Records)
 	if len(jobs) == 0 {
 		httpError(w, fmt.Errorf("no connectable hosts in selection (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
@@ -421,10 +417,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	}
 	mergeK8sDebugImageFromRecipe(recipe, jobs)
 
-	user := strings.TrimSpace(body.SSHUser)
-	if user == "" {
-		user = os.Getenv("USER")
-	}
+	user := s.sshUser(body.SSHUser)
 	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
 
 	recordRecipeMeta := func(rec *ui.SessionRecorder) {

@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 
@@ -99,9 +98,10 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"invalid hello json"}`))
 		return
 	}
-	user := strings.TrimSpace(hello.SSHUser)
-	if user == "" {
-		user = os.Getenv("USER")
+	user := s.sshUser(hello.SSHUser)
+	hello.SSHUser = user
+	if patched, err := json.Marshal(hello); err == nil {
+		helloRaw = patched
 	}
 	cols, rows := hello.Cols, hello.Rows
 	if cols <= 0 {

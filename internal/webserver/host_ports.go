@@ -39,7 +39,7 @@ func (s *Server) handleHostPorts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := strings.TrimSpace(req.SSHUser)
+	user := s.sshUser(req.SSHUser)
 
 	client, err := s.fileClientCache.GetOrDial(user, req.Record)
 	if err != nil || client == nil {

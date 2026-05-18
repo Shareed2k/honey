@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -170,10 +169,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	} else {
 		if len(jobs) > 0 {
 			mergeK8sDebugImageFromRecipe(recipe, jobs)
-			user := strings.TrimSpace(body.SSHUser)
-			if user == "" {
-				user = os.Getenv("USER")
-			}
+			user := s.sshUser(body.SSHUser)
 			recipeDir := filepath.Dir(cp)
 			var buf bytes.Buffer
 			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)

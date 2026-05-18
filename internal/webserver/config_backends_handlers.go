@@ -99,6 +99,7 @@ func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
+	s.applyInMemoryConfig(cfgPath, cfg)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
 }
@@ -151,6 +152,7 @@ func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request)
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
+	s.applyInMemoryConfig(cfgPath, cfg)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
 }
@@ -192,6 +194,7 @@ func (s *Server) handleConfigBackendsDelete(w http.ResponseWriter, r *http.Reque
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
+	s.applyInMemoryConfig(cfgPath, cfg)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
 }

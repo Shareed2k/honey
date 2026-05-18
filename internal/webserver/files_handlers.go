@@ -139,10 +139,7 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	user := strings.TrimSpace(req.SSHUser)
-	if user == "" {
-		user = os.Getenv("USER")
-	}
+	user := s.sshUser(req.SSHUser)
 	if !hosts.IsConnectableRecord(req.Record) {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
@@ -184,10 +181,7 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	user := strings.TrimSpace(req.SSHUser)
-	if user == "" {
-		user = os.Getenv("USER")
-	}
+	user := s.sshUser(req.SSHUser)
 	if !hosts.IsConnectableRecord(req.Record) {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
@@ -257,6 +251,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
+	user := s.sshUser(req.SSHUser)
 	signingHints, err := ui.ResolveAgentTransferSigningHints(s.opts.ConfigPath, req.Cloud, req.CloudBackendRef)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -291,7 +286,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		_, err := ui.RunAgentTransferWithFallback(
 			r.Context(),
 			s.fileClientCache,
-			req.SSHUser,
+			user,
 			strings.TrimSpace(req.AgentLocalPath),
 			strings.TrimSpace(s.opts.AgentBinaryPath),
 			strings.TrimSpace(s.opts.AgentBuildCacheDir),
@@ -321,7 +316,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	events, err := ui.RunAgentTransferWithFallback(
 		r.Context(),
 		s.fileClientCache,
-		req.SSHUser,
+		user,
 		strings.TrimSpace(req.AgentLocalPath),
 		strings.TrimSpace(s.opts.AgentBinaryPath),
 		strings.TrimSpace(s.opts.AgentBuildCacheDir),
