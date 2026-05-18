@@ -427,20 +427,16 @@ func stageAgentBinary(
 	return nil
 }
 
-func isK8sPodRecord(r hosts.Record) bool {
-	return r.Provider == "k8s" && strings.EqualFold(r.Meta["kind"], "pod")
-}
-
-// HostConnectableForTransfer reports whether a record can be dialed for SSH or Kubernetes pod exec.
+// HostConnectableForTransfer reports whether a record can be dialed for SSH, k8s exec, or docker exec.
 func HostConnectableForTransfer(r hosts.Record) bool {
-	return strings.TrimSpace(r.PrimaryIP) != "" || isK8sPodRecord(r)
+	return hosts.IsConnectableRecord(r)
 }
 
 func validateAgentTransferJob(job AgentTransferJob) error {
-	if strings.TrimSpace(job.Source.Record.PrimaryIP) == "" && !isK8sPodRecord(job.Source.Record) {
+	if !hosts.IsConnectableRecord(job.Source.Record) {
 		return newAgentTransferValidationError("source record has no connectable target")
 	}
-	if strings.TrimSpace(job.Destination.Record.PrimaryIP) == "" && !isK8sPodRecord(job.Destination.Record) {
+	if !hosts.IsConnectableRecord(job.Destination.Record) {
 		return newAgentTransferValidationError("destination record has no connectable target")
 	}
 	if job.FallbackPlan == nil && strings.TrimSpace(job.AgentLocalPath) == "" {

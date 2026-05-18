@@ -5,6 +5,7 @@ import (
 	// Register all providers
 	_ "github.com/shareed2k/honey/internal/provider/awsprovider"
 	_ "github.com/shareed2k/honey/internal/provider/consulprovider"
+	_ "github.com/shareed2k/honey/internal/provider/dockerprovider"
 	_ "github.com/shareed2k/honey/internal/provider/gcp"
 	_ "github.com/shareed2k/honey/internal/provider/k8sprovider"
 	_ "github.com/shareed2k/honey/internal/provider/localprovider"

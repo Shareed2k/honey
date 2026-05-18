@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -55,6 +56,8 @@ type RunTableOptions struct {
 	Config *config.File
 	// ConfigPath is the resolved honey YAML path (may be empty); CUE agent_transfer steps with cloud_backend_ref need it.
 	ConfigPath string
+	// ClientCache is an optional shared SSH client cache. If nil, one is created.
+	ClientCache *ClientCache
 }
 
 type model struct {
@@ -188,9 +191,15 @@ func RunTable(records []hosts.Record, sshUser string, opts RunTableOptions) erro
 				// but let's check both the formal interface and the string to be safe.
 				_, isK8sExitErr := err.(k8sexec.ExitError)
 				isK8sStringErr := strings.Contains(err.Error(), "command terminated with exit code")
+				isBenignDetach := errors.Is(err, context.Canceled) ||
+					strings.Contains(strings.ToLower(err.Error()), "context canceled")
 
-				if !isSSHExitErr && !isK8sExitErr && !isK8sStringErr {
-					fmt.Fprintf(os.Stderr, "\r\n[honey] SSH Connection Error: %v\r\n", err)
+				if !isSSHExitErr && !isK8sExitErr && !isK8sStringErr && !isBenignDetach {
+					errLabel := "SSH Connection Error"
+					if hosts.IsDockerRecord(r) {
+						errLabel = "Docker exec error"
+					}
+					fmt.Fprintf(os.Stderr, "\r\n[honey] %s: %v\r\n", errLabel, err)
 					fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
 					var b [1]byte
 					_, _ = os.Stdin.Read(b[:])
@@ -1356,7 +1365,7 @@ func readNextStreamResult(ch chan HostExecResult) tea.Cmd {
 // one table row is marked (*), only marked rows that have PrimaryIP are used.
 // If nothing is marked, every row with PrimaryIP is used.
 func isExecutableHost(r hosts.Record) bool {
-	return strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod")
+	return hosts.IsConnectableRecord(r)
 }
 
 func (m *model) parallelExecTargets() ([]hosts.Record, string) {
@@ -1467,7 +1476,11 @@ func (m *model) recordingOptions(trigger, mode string) *SessionRecorderOptions {
 }
 
 func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorderOptions) error {
-	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !pvelxc.ShouldUsePVETTY(r) {
+	if hosts.IsDockerRecord(r) {
+		if strings.TrimSpace(r.Meta["container_id"]) == "" {
+			return fmt.Errorf("docker record missing container_id")
+		}
+	} else if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !pvelxc.ShouldUsePVETTY(r) {
 		return fmt.Errorf("no IP for selected host")
 	}
 	var recorder *SessionRecorder
@@ -1479,6 +1492,9 @@ func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorde
 	}
 	if recorder != nil {
 		defer recorder.Close()
+	}
+	if hosts.IsDockerRecord(r) {
+		return runDockerInteractiveWithRecorder(user, r, recorder)
 	}
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
 		return runK8sInteractiveWithRecorder(user, r, recorder)

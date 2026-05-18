@@ -42,29 +42,36 @@ func (proxmoxFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []
 		default:
 			execMode = "ssh"
 		}
-		out = append(out, &Proxmox{
-			Name:        e.Name,
-			URL:         url,
-			User:        user,
-			Password:    pass,
-			TokenID:     tid,
-			TokenSecret: tsec,
-			Insecure:    insecure,
-			ExecMode:    execMode,
-		})
+		b := searchrun.WithDockerDiscover(
+			&Proxmox{
+				Name:        e.Name,
+				URL:         url,
+				User:        user,
+				Password:    pass,
+				TokenID:     tid,
+				TokenSecret: tsec,
+				Insecure:    insecure,
+				ExecMode:    execMode,
+			},
+			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
+		)
+		out = append(out, b)
 	}
 	return out
 }
 
 func (proxmoxFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	return &Proxmox{
-		URL:         f.ProxmoxURL,
-		User:        f.ProxmoxUser,
-		Password:    f.ProxmoxPassword,
-		TokenID:     f.ProxmoxTokenID,
-		TokenSecret: f.ProxmoxTokenSecret,
-		Insecure:    f.ProxmoxInsecure,
-	}
+	return searchrun.WithDockerDiscover(
+		&Proxmox{
+			URL:         f.ProxmoxURL,
+			User:        f.ProxmoxUser,
+			Password:    f.ProxmoxPassword,
+			TokenID:     f.ProxmoxTokenID,
+			TokenSecret: f.ProxmoxTokenSecret,
+			Insecure:    f.ProxmoxInsecure,
+		},
+		config.DockerDiscover{},
+	)
 }
 
 func (proxmoxFactory) BackendRows(cfg *config.File) []config.BackendRow {

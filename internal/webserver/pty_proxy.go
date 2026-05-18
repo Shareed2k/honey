@@ -1,6 +1,7 @@
 package webserver
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -10,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -89,40 +92,58 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 		zap.L().Error("handleWebPtyProxy: failed to start pty", zap.Error(err))
 		return fmt.Errorf("failed to start pty: %w", err)
 	}
-	zap.L().Debug("handleWebPtyProxy: pty started successfully")
-	defer ptmx.Close()
+
+	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
+	bridgeCtx, bridgeCancel := context.WithCancel(context.Background())
+	defer bridgeCancel()
 
 	ws := ptyWinsize(hello.Cols, hello.Rows)
 	if err := pty.Setsize(ptmx, &ws); err != nil {
 		zap.L().Warn("failed to resize pty", zap.Error(err))
 	}
 
-	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	// Read from PTY -> Write to WS
+	ptyExited := make(chan struct{})
+
+	// PTY -> WebSocket (single writer via wsOut).
 	go func() {
-		defer close(done)
+		defer wg.Done()
+		innerExited := false
+		defer func() {
+			if innerExited {
+				close(ptyExited)
+			}
+		}()
 		buf := make([]byte, 4096)
 		for {
+			select {
+			case <-bridgeCtx.Done():
+				return
+			default:
+			}
 			n, err := ptmx.Read(buf)
 			if n > 0 {
 				out := buf[:n]
-				if recorder != nil {
-					recorder.RecordData("stdout", out)
-				}
-				if werr := conn.WriteMessage(websocket.BinaryMessage, out); werr != nil {
+				recorder.RecordData("stdout", out)
+				if _, werr := wsOut.Write(out); werr != nil {
+					bridgeCancel()
 					return
 				}
 			}
 			if err != nil {
+				innerExited = true
 				return
 			}
 		}
 	}()
 
-	// Read from WS -> Write to PTY
+	// WebSocket -> PTY. On browser refresh/disconnect, stop bridging but leave the
+	// tmux/zellij server session running so the next attach reuses docker/k8s/ssh state.
 	go func() {
-		defer ptmx.Close() // Force PTY to close if WS drops!
+		defer wg.Done()
+		defer bridgeCancel()
 		for {
 			mt, payload, err := conn.ReadMessage()
 			if err != nil {
@@ -130,31 +151,45 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 			}
 			switch mt {
 			case websocket.BinaryMessage:
-				if recorder != nil {
-					recorder.RecordData("stdin", payload)
+				recorder.RecordData("stdin", payload)
+				if _, werr := ptmx.Write(payload); werr != nil {
+					return
 				}
-				_, _ = ptmx.Write(payload)
 			case websocket.TextMessage:
 				var rz wsResize
-				if json.Unmarshal(payload, &rz) == nil && rz.Type == "resize" {
+				if json.Unmarshal(payload, &rz) != nil {
+					continue
+				}
+				switch rz.Type {
+				case "resize":
 					if rz.Cols > 0 && rz.Rows > 0 {
-						if recorder != nil {
-							recorder.RecordResize(rz.Cols, rz.Rows)
-						}
+						recorder.RecordResize(rz.Cols, rz.Rows)
 						ws := ptyWinsize(rz.Cols, rz.Rows)
 						_ = pty.Setsize(ptmx, &ws)
 					}
-				} else if rz.Type == "detach" {
-					return // Just stop pumping, let PTY live (it will close via defer)
+				case "detach":
+					return
 				}
 			}
 		}
 	}()
 
-	<-done
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+	wg.Wait()
+
+	// Unblock a stuck ptmx.Read when the bridge ended before the inner shell exited.
+	_ = ptmx.SetReadDeadline(time.Now())
+
+	select {
+	case <-ptyExited:
+		// Inner command finished; tear down the attach client.
+		_ = ptmx.Close()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}
+	default:
+		// Browser left (refresh/close/detach): detach our client only; multiplexer session persists.
+		_ = ptmx.Close()
 	}
 	return nil
 }

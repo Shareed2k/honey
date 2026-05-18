@@ -63,6 +63,74 @@ function fieldsByKey(fields: ConfigSchemaFieldSpec[]): Map<string, ConfigSchemaF
   return new Map(fields.map((f) => [f.key, f]));
 }
 
+function checkFields(
+  diagnostics: Diagnostic[],
+  mapNode: YAMLMap<unknown, unknown>,
+  fields: ConfigSchemaFieldSpec[],
+  pathPrefix: string,
+  text: string
+) {
+  const fieldMap = fieldsByKey(fields);
+  for (const item of mapNode.items) {
+    const k = scalarString(item.key);
+    if (!k) continue;
+    const fieldSpec = fieldMap.get(k);
+    if (!fieldSpec) {
+      const r = nodeRange(item.key);
+      pushDiag(diagnostics, `Unknown key "${k}" in ${pathPrefix}.`, 'warning', r.from, r.to, text.length);
+      continue;
+    }
+
+    if (fieldSpec.type === 'object') {
+      if (!isMap(item.value)) {
+        const r = nodeRange(item.value ?? item.key);
+        pushDiag(diagnostics, `${pathPrefix}.${k} must be an object.`, 'error', r.from, r.to, text.length);
+      } else if (fieldSpec.items) {
+        checkFields(diagnostics, item.value as YAMLMap<unknown, unknown>, fieldSpec.items, `${pathPrefix}.${k}`, text);
+      }
+      continue;
+    }
+
+    if (fieldSpec.type === 'array') {
+      if (!isSeq(item.value)) {
+        const r = nodeRange(item.value ?? item.key);
+        pushDiag(diagnostics, `${pathPrefix}.${k} must be a list/array.`, 'error', r.from, r.to, text.length);
+      }
+      continue;
+    }
+
+    if (!isScalar(item.value)) {
+      const r = nodeRange(item.value ?? item.key);
+      pushDiag(diagnostics, `${pathPrefix}.${k} must be a ${fieldSpec.type}.`, 'error', r.from, r.to, text.length);
+      continue;
+    }
+
+    if (fieldSpec.type === 'string' && typeof item.value.value !== 'string') {
+      const r = nodeRange(item.value ?? item.key);
+      pushDiag(diagnostics, `${pathPrefix}.${k} must be a string.`, 'error', r.from, r.to, text.length);
+    }
+    if (fieldSpec.type === 'boolean' && typeof item.value.value !== 'boolean') {
+      const r = nodeRange(item.value ?? item.key);
+      pushDiag(diagnostics, `${pathPrefix}.${k} must be a boolean.`, 'error', r.from, r.to, text.length);
+    }
+    if (fieldSpec.type === 'integer' && (typeof item.value.value !== 'number' || !Number.isInteger(item.value.value))) {
+      const r = nodeRange(item.value ?? item.key);
+      pushDiag(diagnostics, `${pathPrefix}.${k} must be an integer.`, 'error', r.from, r.to, text.length);
+    }
+    if (fieldSpec.enum && fieldSpec.enum.length > 0 && typeof item.value.value === 'string' && !fieldSpec.enum.includes(item.value.value)) {
+      const r = nodeRange(item.value ?? item.key);
+      pushDiag(
+        diagnostics,
+        `${pathPrefix}.${k} should be one of: ${fieldSpec.enum.join(', ')}.`,
+        fieldSpec.enum_as_warning ? 'warning' : 'error',
+        r.from,
+        r.to,
+        text.length,
+      );
+    }
+  }
+}
+
 function lintHoneyConfig(text: string, schema: ConfigUISchema | null, backendError?: string | null): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const doc = parseDocument(text, { strict: false });
@@ -116,7 +184,6 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null, backendErr
 
   const root = doc.contents as YAMLMap<unknown, unknown>;
   const rootAllowed = new Set(schema.top_level_keys || []);
-  const defaultFieldMap = fieldsByKey(schema.defaults || []);
 
   for (const pair of root.items) {
     const key = scalarString(pair.key);
@@ -156,54 +223,7 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null, backendErr
         pushDiag(diagnostics, 'defaults must be a mapping/object.', 'error', r.from, r.to, text.length);
         continue;
       }
-      const defaultsMap = pair.value as YAMLMap<unknown, unknown>;
-      for (const item of defaultsMap.items) {
-        const k = scalarString(item.key);
-        if (!k) {
-          continue;
-        }
-        const fieldSpec = defaultFieldMap.get(k);
-        if (!fieldSpec) {
-          const r = nodeRange(item.key);
-          pushDiag(
-            diagnostics,
-            `Unknown defaults key "${k}".`,
-            'warning',
-            r.from,
-            r.to,
-            text.length,
-          );
-          continue;
-        }
-        if (!isScalar(item.value)) {
-          const r = nodeRange(item.value ?? item.key);
-          pushDiag(diagnostics, `defaults.${k} must be a ${fieldSpec.type}.`, 'error', r.from, r.to, text.length);
-          continue;
-        }
-        if (fieldSpec.type === 'string' && typeof item.value.value !== 'string') {
-          const r = nodeRange(item.value ?? item.key);
-          pushDiag(diagnostics, `defaults.${k} must be a string.`, 'error', r.from, r.to, text.length);
-        }
-        if (fieldSpec.type === 'boolean' && typeof item.value.value !== 'boolean') {
-          const r = nodeRange(item.value ?? item.key);
-          pushDiag(diagnostics, `defaults.${k} must be a boolean.`, 'error', r.from, r.to, text.length);
-        }
-        if (fieldSpec.type === 'integer' && (typeof item.value.value !== 'number' || !Number.isInteger(item.value.value))) {
-          const r = nodeRange(item.value ?? item.key);
-          pushDiag(diagnostics, `defaults.${k} must be an integer.`, 'error', r.from, r.to, text.length);
-        }
-        if (fieldSpec.enum && fieldSpec.enum.length > 0 && typeof item.value.value === 'string' && !fieldSpec.enum.includes(item.value.value)) {
-          const r = nodeRange(item.value ?? item.key);
-          pushDiag(
-            diagnostics,
-            `defaults.${k} should be one of: ${fieldSpec.enum.join(', ')}.`,
-            fieldSpec.enum_as_warning ? 'warning' : 'error',
-            r.from,
-            r.to,
-            text.length,
-          );
-        }
-      }
+      checkFields(diagnostics, pair.value as YAMLMap<unknown, unknown>, schema.defaults || [], 'defaults', text);
       continue;
     }
 
@@ -247,7 +267,6 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null, backendErr
         }
 
         const seq = backendPair.value as YAMLSeq<unknown>;
-        const fieldMap = fieldsByKey(backendSchema.fields);
         seq.items.forEach((entry, index) => {
           if (!isMap(entry)) {
             const r = nodeRange(entry ?? backendPair.key);
@@ -262,99 +281,7 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null, backendErr
             return;
           }
 
-          const entryMap = entry as YAMLMap<unknown, unknown>;
-          for (const fieldPair of entryMap.items) {
-            const fieldKey = scalarString(fieldPair.key);
-            if (!fieldKey) {
-              continue;
-            }
-            const fieldSpec = fieldMap.get(fieldKey);
-            if (!fieldSpec) {
-              const r = nodeRange(fieldPair.key);
-              pushDiag(
-                diagnostics,
-                `Unknown field "${fieldKey}" in backends.${backendKey}[${index}].`,
-                'warning',
-                r.from,
-                r.to,
-                text.length,
-              );
-              continue;
-            }
-            if (fieldSpec.type === 'array') {
-              if (!isSeq(fieldPair.value)) {
-                const r = nodeRange(fieldPair.value ?? fieldPair.key);
-                pushDiag(
-                  diagnostics,
-                  `backends.${backendKey}[${index}].${fieldKey} must be a list/array.`,
-                  'error',
-                  r.from,
-                  r.to,
-                  text.length,
-                );
-              }
-              continue;
-            }
-
-            if (!isScalar(fieldPair.value)) {
-              const r = nodeRange(fieldPair.value ?? fieldPair.key);
-              pushDiag(
-                diagnostics,
-                `backends.${backendKey}[${index}].${fieldKey} must be a ${fieldSpec.type}.`,
-                'error',
-                r.from,
-                r.to,
-                text.length,
-              );
-              continue;
-            }
-            if (fieldSpec.type === 'string' && typeof fieldPair.value.value !== 'string') {
-              const r = nodeRange(fieldPair.value);
-              pushDiag(
-                diagnostics,
-                `backends.${backendKey}[${index}].${fieldKey} must be a string.`,
-                'error',
-                r.from,
-                r.to,
-                text.length,
-              );
-            }
-            if (fieldSpec.type === 'boolean' && typeof fieldPair.value.value !== 'boolean') {
-              const r = nodeRange(fieldPair.value);
-              pushDiag(
-                diagnostics,
-                `backends.${backendKey}[${index}].${fieldKey} must be a boolean.`,
-                'error',
-                r.from,
-                r.to,
-                text.length,
-              );
-            }
-            if (fieldSpec.type === 'integer' && (typeof fieldPair.value.value !== 'number' || !Number.isInteger(fieldPair.value.value))) {
-              const r = nodeRange(fieldPair.value);
-              pushDiag(
-                diagnostics,
-                `backends.${backendKey}[${index}].${fieldKey} must be an integer.`,
-                'error',
-                r.from,
-                r.to,
-                text.length,
-              );
-            }
-            if (fieldSpec.enum && fieldSpec.enum.length > 0 && typeof fieldPair.value.value === 'string') {
-              if (!fieldSpec.enum.includes(fieldPair.value.value)) {
-                const r = nodeRange(fieldPair.value);
-                pushDiag(
-                  diagnostics,
-                  `backends.${backendKey}[${index}].${fieldKey} should be one of: ${fieldSpec.enum.join(', ')}.`,
-                  fieldSpec.enum_as_warning ? 'warning' : 'error',
-                  r.from,
-                  r.to,
-                  text.length,
-                );
-              }
-            }
-          }
+          checkFields(diagnostics, entry as YAMLMap<unknown, unknown>, backendSchema.fields, `backends.${backendKey}[${index}]`, text);
         });
       }
     }

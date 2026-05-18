@@ -167,6 +167,12 @@ backends:
       token_secret: "1234abcd-1234-abcd-1234-abcd1234abcd"
 ```
 
+## Guides
+
+- [Docker auto-discover on cloud VMs](./docker-auto-discover.md) — find containers on GCP/AWS instances with `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1`
+- [Web UI & AI assist](./web-ui.md)
+- [CUE recipes](./cue-recipes.md)
+
 ## Usage
 
 ```bash

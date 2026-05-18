@@ -16,6 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -34,11 +35,16 @@ type Options struct {
 	Commit             string
 	Date               string
 	MaxUploadSize      int64 // default 100 << 20
+	MetricsListenAddr  string
+	Metrics            *metrics.Registry
+	NoCache            bool
+	Refresh            bool
 }
 
 // Server is the honey web UI HTTP server.
 type Server struct {
 	opts     Options
+	metrics  *metrics.Registry
 	mux      *http.ServeMux
 	assistRL *slidingRL
 	tunnels  *tunnelManager
@@ -66,11 +72,13 @@ func NewServer(opts Options) (*Server, error) {
 
 	s := &Server{
 		opts:            opts,
+		metrics:         opts.Metrics,
 		mux:             http.NewServeMux(),
 		assistRL:        newSlidingRL(),
 		tunnels:         newTunnelManager(),
 		fileClientCache: ui.NewClientCache(),
 	}
+	ui.SetDockerSSHBorrowCache(s.fileClientCache)
 	s.routes()
 	return s, nil
 }
@@ -134,35 +142,65 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 
 // Start listens and serves until ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
+	handler := http.Handler(s.mux)
+	if s.metrics != nil {
+		handler = s.metrics.Middleware(handler)
+	}
+
 	srv := &http.Server{
 		Addr:              s.opts.ListenAddr,
-		Handler:           s.mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	errCh := make(chan error, 1)
+
+	var metricsSrv *http.Server
+	errCh := make(chan error, 2)
+	if addr := strings.TrimSpace(s.opts.MetricsListenAddr); addr != "" && s.metrics != nil {
+		metricsSrv = &http.Server{
+			Addr:              addr,
+			Handler:           s.metrics.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			zap.L().Info("honey metrics listening", zap.String("addr", addr))
+			errCh <- metricsSrv.ListenAndServe()
+		}()
+	}
+
 	go func() {
 		zap.L().Info("honey web listening", zap.String("addr", s.opts.ListenAddr))
-		err := srv.ListenAndServe()
-		errCh <- err
+		errCh <- srv.ListenAndServe()
 	}()
-	select {
-	case <-ctx.Done():
-		if s.fileClientCache != nil {
-			s.fileClientCache.CloseAll()
-		}
-		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shCtx)
-		err := <-errCh
-		if err != nil && err != http.ErrServerClosed {
+
+	nListeners := 1
+	if metricsSrv != nil {
+		nListeners = 2
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			if s.fileClientCache != nil {
+				s.fileClientCache.CloseAll()
+			}
+			shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = srv.Shutdown(shCtx)
+			if metricsSrv != nil {
+				_ = metricsSrv.Shutdown(shCtx)
+			}
+			cancel()
+			for i := 0; i < nListeners; i++ {
+				err := <-errCh
+				if err != nil && err != http.ErrServerClosed {
+					return err
+				}
+			}
+			return nil
+		case err := <-errCh:
+			if err == http.ErrServerClosed {
+				return nil
+			}
 			return err
 		}
-		return nil
-	case err := <-errCh:
-		if err == http.ErrServerClosed {
-			return nil
-		}
-		return err
 	}
 }
 
@@ -176,14 +214,18 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(MetaResponse{
+	meta := MetaResponse{
 		Version:                   s.opts.Version,
 		Commit:                    s.opts.Commit,
 		Date:                      s.opts.Date,
 		ConfigPath:                cfgPath,
 		SessionRecordingAvailable: strings.TrimSpace(s.opts.RecordDir) != "",
 		TerminalAssistAvailable:   terminalAssistConfigured(),
-	})
+	}
+	if addr := strings.TrimSpace(s.opts.MetricsListenAddr); addr != "" {
+		meta.MetricsURL = "http://" + addr + "/metrics"
+	}
+	_ = json.NewEncoder(w).Encode(meta)
 }
 
 // handleProviders returns supported provider IDs for search.
@@ -238,8 +280,22 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(in.ConfigPath) == "" && strings.TrimSpace(s.opts.ConfigPath) != "" {
 		in.ConfigPath = s.opts.ConfigPath
 	}
+	if s.opts.NoCache {
+		in.NoCache = true
+	}
+	if s.opts.Refresh {
+		in.Refresh = true
+	}
 	ctx := r.Context()
+	start := time.Now()
 	out, err := hostapi.SearchHosts(ctx, &in)
+	if s.metrics != nil {
+		n := 0
+		if err == nil {
+			n = len(out.Records)
+		}
+		s.metrics.ObserveSearch(err, time.Since(start), n)
+	}
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return

@@ -143,8 +143,8 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 	if user == "" {
 		user = os.Getenv("USER")
 	}
-	if strings.TrimSpace(req.Record.PrimaryIP) == "" {
-		httpError(w, fmt.Errorf("record has no connectable IP"), http.StatusBadRequest)
+	if !hosts.IsConnectableRecord(req.Record) {
+		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
 	path := strings.TrimSpace(req.Path)
@@ -188,8 +188,8 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 	if user == "" {
 		user = os.Getenv("USER")
 	}
-	if strings.TrimSpace(req.Record.PrimaryIP) == "" {
-		httpError(w, fmt.Errorf("record has no connectable IP"), http.StatusBadRequest)
+	if !hosts.IsConnectableRecord(req.Record) {
+		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
 	localAbs, err := ui.ResolveLocalPathUnderRoot(s.localFilesRoot(), req.LocalPath)

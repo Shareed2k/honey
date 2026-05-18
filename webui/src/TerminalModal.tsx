@@ -270,6 +270,7 @@ function TerminalSession({
         try {
           const j = JSON.parse(ev.data) as { closed?: boolean; error?: string };
           if (j.error) {
+            sawServerError = true;
             term.writeln(`\r\n\x1b[31m${j.error}\x1b[0m`);
           }
           if (j.closed) {
@@ -284,13 +285,22 @@ function TerminalSession({
       term.write(buf);
     };
 
+    let sawServerError = false;
     ws.onerror = () => {
       dismissConnectOverlay();
-      term.writeln('\r\n\x1b[31m[websocket error]\x1b[0m');
+      if (!sawServerError) {
+        term.writeln('\r\n\x1b[31m[websocket error]\x1b[0m');
+      }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       dismissConnectOverlay();
+      if (!sawServerError && ev.code !== 1000) {
+        const hint =
+          ev.reason?.trim() ||
+          (ev.code ? `code ${ev.code}` : 'connection closed before the server replied');
+        term.writeln(`\r\n\x1b[31m${hint}\x1b[0m`);
+      }
       term.writeln('\r\n\x1b[33m[disconnected]\x1b[0m');
     };
 

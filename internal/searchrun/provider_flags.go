@@ -21,4 +21,12 @@ type ProviderFlags struct {
 	ProxmoxTokenID     string
 	ProxmoxTokenSecret string
 	ProxmoxInsecure    bool
+
+	DockerHost          string
+	DockerMode          string
+	DockerAllContainers bool
+	DockerViaLocal      string
+	DockerViaSSHHost    string
+	DockerSocket        string
+	DockerPlatform      string
 }
