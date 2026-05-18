@@ -235,7 +235,15 @@ func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := strings.TrimSpace(req.SSHUser)
+user := strings.TrimSpace(req.SSHUser)
+	if user == "" {
+		if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
+			user = cfg.Defaults.SSHUser
+		}
+	}
+	if user == "" {
+		user = os.Getenv("USER")
+	}
 	tunnel := s.tunnels.start(user, req.Record, req.Mapping)
 
 	w.Header().Set("Content-Type", "application/json")
