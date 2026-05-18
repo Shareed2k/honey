@@ -61,10 +61,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("invalid remote_path"), http.StatusBadRequest)
 		return
 	}
-	user := strings.TrimSpace(meta.SSHUser)
-	if user == "" {
-		user = os.Getenv("USER")
-	}
+	user := s.sshUser(meta.SSHUser)
 	f, hdr, err := r.FormFile("file")
 	if err != nil {
 		httpError(w, fmt.Errorf("file: %w", err), http.StatusBadRequest)

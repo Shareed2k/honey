@@ -88,7 +88,7 @@ func TestRecipesParse_diskRecipe(t *testing.T) {
 	if pickedPath == "" {
 		t.Skip("no default recipes registered in this test environment")
 	}
-	body := fmt.Sprintf(`{"path":%q}`, pickedPath)
+	body := fmt.Sprintf(`{"path":%q, "records": []}`, pickedPath)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/parse", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer tok")
 	req.Header.Set("Content-Type", "application/json")
