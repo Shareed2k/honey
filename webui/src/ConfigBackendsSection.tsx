@@ -15,6 +15,10 @@ type Props = {
 function initDraft(fields: ConfigSchemaFieldSpec[]): Record<string, unknown> {
   const draft: Record<string, unknown> = {};
   for (const field of fields) {
+    if (field.type === 'object') {
+      draft[field.key] = initDraft(field.items || []);
+      continue;
+    }
     if (field.type === 'array') {
       draft[field.key] = [];
       continue;
@@ -70,6 +74,8 @@ function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
       } else {
         fieldSchema = z.union([strSchema, z.literal(''), z.undefined()]).optional();
       }
+    } else if (f.type === 'object') {
+      fieldSchema = buildZodSchema(f.items || []);
     } else if (f.type === 'integer') {
       fieldSchema = z.coerce.number().int();
     } else if (f.type === 'boolean') {
@@ -102,7 +108,7 @@ function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
       fieldSchema = z.enum(f.enum as [string, ...string[]]);
     }
 
-    if (f.type !== 'string') {
+    if (f.type !== 'string' && f.type !== 'object') {
       if (!f.required) {
         fieldSchema = z.union([fieldSchema, z.literal(''), z.undefined()]).optional();
       }
@@ -381,6 +387,17 @@ function BackendFormFields({
         // Deep error resolution for nested arrays
         const error = fieldPath.split('.').reduce((obj: any, key) => (obj ? obj[key] : undefined), errors);
         const errorMessage = error?.message as string | undefined;
+
+        if (field.type === 'object') {
+          return (
+            <div key={field.key} style={{ marginBottom: '1rem', padding: '0.5rem', borderLeft: '2px solid #444', marginLeft: '0.25rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <strong style={{ opacity: 0.9 }}>{label}</strong>
+              </div>
+              <BackendFormFields fields={field.items || []} path={fieldPath} />
+            </div>
+          );
+        }
 
         if (field.type === 'array') {
           return (

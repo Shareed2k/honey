@@ -85,6 +85,8 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		Date:               BuildDate(),
 		MetricsListenAddr:  strings.TrimSpace(webMetricsListen),
 		Metrics:            prom,
+		NoCache:            flagNoCache,
+		Refresh:            flagRefresh,
 	})
 	if err != nil {
 		return err

@@ -24,13 +24,20 @@ func (gcpFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 		if zone == "" {
 			zone = f.GCPZone
 		}
-		out = append(out, &GCP{Name: e.Name, Project: proj, Zone: zone})
+		b := searchrun.WithDockerDiscover(
+			&GCP{Name: e.Name, Project: proj, Zone: zone},
+			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
+		)
+		out = append(out, b)
 	}
 	return out
 }
 
 func (gcpFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	return &GCP{Project: f.GCPProject, Zone: f.GCPZone}
+	return searchrun.WithDockerDiscover(
+		&GCP{Project: f.GCPProject, Zone: f.GCPZone},
+		config.DockerDiscover{}, // no defaults available in Default() since cfg is nil
+	)
 }
 
 func (gcpFactory) BackendRows(cfg *config.File) []config.BackendRow {

@@ -56,6 +56,8 @@ type RunTableOptions struct {
 	Config *config.File
 	// ConfigPath is the resolved honey YAML path (may be empty); CUE agent_transfer steps with cloud_backend_ref need it.
 	ConfigPath string
+	// ClientCache is an optional shared SSH client cache. If nil, one is created.
+	ClientCache *ClientCache
 }
 
 type model struct {

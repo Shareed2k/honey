@@ -53,15 +53,6 @@ func RunSearch(
 		zap.L().Debug("completed search run", zap.Int("total_records", len(records)), zap.Error(err))
 		return records, err
 	}
-	if len(q.DockerDiscoverProviders) > 0 && !discoverProvidersIncluded(q) {
-		zap.L().Warn(
-			"docker auto-discover needs cloud providers in --provider",
-			zap.Strings("docker_discover_providers", q.DockerDiscoverProviders),
-			zap.Strings("provider", q.Providers),
-		)
-		return records, nil
-	}
-	records, err = appendDockerDiscover(ctx, q, records)
 	zap.L().Debug("completed search run", zap.Int("total_records", len(records)), zap.Error(err))
 	return records, err
 }

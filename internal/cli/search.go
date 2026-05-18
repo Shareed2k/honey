@@ -18,45 +18,43 @@ import (
 )
 
 var (
-	flagName                    string
-	flagNameRegex               string
-	flagProviders               string
-	flagOutput                  string
-	flagNoUI                    bool
-	flagJSON                    bool
-	flagSSHUser                 string
-	flagCacheTTL                time.Duration
-	flagNoCache                 bool
-	flagRefresh                 bool
-	flagCacheDir                string
-	flagGCPProject              string
-	flagGCPZone                 string
-	flagAWSProfile              string
-	flagAWSRegion               string
-	flagKubeContext             string
-	flagK8sMode                 string
-	flagK8sDebugImg             string
-	flagConsulAddr              string
-	flagConsulDC                string
-	flagConsulToken             string
-	flagKubeconfig              string
-	flagConfig                  string
-	flagBackends                string
-	flagProxmoxURL              string
-	flagProxmoxUser             string
-	flagProxmoxPassword         string
-	flagProxmoxTokenID          string
-	flagProxmoxTokenSecret      string
-	flagProxmoxInsecure         bool
-	flagDockerHost              string
-	flagDockerMode              string
-	flagDockerAll               bool
-	flagDockerViaLocal          string
-	flagDockerViaSSHHost        string
-	flagDockerSocket            string
-	flagDockerPlatform          string
-	flagDockerDiscoverProviders string
-	flagDockerDiscoverRunAs     string
+	flagName               string
+	flagNameRegex          string
+	flagProviders          string
+	flagOutput             string
+	flagNoUI               bool
+	flagJSON               bool
+	flagSSHUser            string
+	flagCacheTTL           time.Duration
+	flagNoCache            bool
+	flagRefresh            bool
+	flagCacheDir           string
+	flagGCPProject         string
+	flagGCPZone            string
+	flagAWSProfile         string
+	flagAWSRegion          string
+	flagKubeContext        string
+	flagK8sMode            string
+	flagK8sDebugImg        string
+	flagConsulAddr         string
+	flagConsulDC           string
+	flagConsulToken        string
+	flagKubeconfig         string
+	flagConfig             string
+	flagBackends           string
+	flagProxmoxURL         string
+	flagProxmoxUser        string
+	flagProxmoxPassword    string
+	flagProxmoxTokenID     string
+	flagProxmoxTokenSecret string
+	flagProxmoxInsecure    bool
+	flagDockerHost         string
+	flagDockerMode         string
+	flagDockerAll          bool
+	flagDockerViaLocal     string
+	flagDockerViaSSHHost   string
+	flagDockerSocket       string
+	flagDockerPlatform     string
 )
 
 var searchCmd = &cobra.Command{
@@ -106,8 +104,6 @@ func init() {
 	searchCmd.Flags().StringVar(&flagDockerViaSSHHost, "docker-via-ssh-host", "", "Docker via Honey SSH: explicit host")
 	searchCmd.Flags().StringVar(&flagDockerSocket, "docker-socket", "", "Remote Docker socket (default /var/run/docker.sock on linux)")
 	searchCmd.Flags().StringVar(&flagDockerPlatform, "docker-platform", "linux", "Remote Docker host OS: linux or windows")
-	searchCmd.Flags().StringVar(&flagDockerDiscoverProviders, "docker-discover-providers", "", "Auto-discover containers on cloud VMs (requires HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1)")
-	searchCmd.Flags().StringVar(&flagDockerDiscoverRunAs, "docker-discover-run-as", "", "Remote user for docker.sock via sudo on discovered VMs (e.g. root when SSH user is ubuntu)")
 }
 
 // runSearchCore runs the same search pipeline as search (flags, config, cache,
@@ -116,35 +112,33 @@ func init() {
 // The returned configPath is the resolved honey YAML path (may be empty).
 func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, string, *config.File, string, error) {
 	q := hosts.Query{
-		NameSubstring:           flagName,
-		NameRegex:               flagNameRegex,
-		Providers:               hosts.ParseProviders(flagProviders),
-		GCPProject:              flagGCPProject,
-		GCPZone:                 flagGCPZone,
-		AWSProfile:              flagAWSProfile,
-		AWSRegion:               flagAWSRegion,
-		KubeContext:             flagKubeContext,
-		K8sMode:                 flagK8sMode,
-		K8sDebugImage:           flagK8sDebugImg,
-		ConsulAddr:              flagConsulAddr,
-		ConsulDatacenter:        flagConsulDC,
-		ConsulToken:             flagConsulToken,
-		ProxmoxURL:              flagProxmoxURL,
-		ProxmoxUser:             flagProxmoxUser,
-		ProxmoxPassword:         flagProxmoxPassword,
-		ProxmoxTokenID:          flagProxmoxTokenID,
-		ProxmoxTokenSecret:      flagProxmoxTokenSecret,
-		ProxmoxInsecure:         flagProxmoxInsecure,
-		DockerHost:              flagDockerHost,
-		DockerMode:              flagDockerMode,
-		DockerAllContainers:     flagDockerAll,
-		DockerViaLocal:          flagDockerViaLocal,
-		DockerViaSSHHost:        flagDockerViaSSHHost,
-		DockerSocket:            flagDockerSocket,
-		DockerPlatform:          flagDockerPlatform,
-		DockerDiscoverProviders: hosts.ParseProviders(flagDockerDiscoverProviders),
-		DockerSSHUser:           flagSSHUser,
-		DockerDiscoverRunAs:     flagDockerDiscoverRunAs,
+		NameSubstring:       flagName,
+		NameRegex:           flagNameRegex,
+		Providers:           hosts.ParseProviders(flagProviders),
+		GCPProject:          flagGCPProject,
+		GCPZone:             flagGCPZone,
+		AWSProfile:          flagAWSProfile,
+		AWSRegion:           flagAWSRegion,
+		KubeContext:         flagKubeContext,
+		K8sMode:             flagK8sMode,
+		K8sDebugImage:       flagK8sDebugImg,
+		ConsulAddr:          flagConsulAddr,
+		ConsulDatacenter:    flagConsulDC,
+		ConsulToken:         flagConsulToken,
+		ProxmoxURL:          flagProxmoxURL,
+		ProxmoxUser:         flagProxmoxUser,
+		ProxmoxPassword:     flagProxmoxPassword,
+		ProxmoxTokenID:      flagProxmoxTokenID,
+		ProxmoxTokenSecret:  flagProxmoxTokenSecret,
+		ProxmoxInsecure:     flagProxmoxInsecure,
+		DockerHost:          flagDockerHost,
+		DockerMode:          flagDockerMode,
+		DockerAllContainers: flagDockerAll,
+		DockerViaLocal:      flagDockerViaLocal,
+		DockerViaSSHHost:    flagDockerViaSSHHost,
+		DockerSocket:        flagDockerSocket,
+		DockerPlatform:      flagDockerPlatform,
+		DockerSSHUser:       flagSSHUser,
 	}
 
 	cfgPath, err := config.ResolvePath(flagConfig)
@@ -211,8 +205,12 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
+	clientCache := ui.NewClientCache()
+	ui.SetDockerSSHBorrowCache(clientCache)
+
 	records, sshUser, cfg, cfgPath, err := runSearchCore(cmd, args)
 	if err != nil {
+		clientCache.CloseAll()
 		return err
 	}
 
@@ -227,6 +225,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	switch flagOutput {
 	case "json":
+		defer clientCache.CloseAll()
 		if records == nil {
 			records = make([]hosts.Record, 0)
 		}
@@ -234,6 +233,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(records)
 	case "table":
+		defer clientCache.CloseAll()
 		return ui.PrintStaticTable(records)
 	default:
 		recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
@@ -243,6 +243,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			RecordEnabled: recordOnStart,
 			Config:        cfg,
 			ConfigPath:    cfgPath,
+			ClientCache:   clientCache,
 		})
 	}
 }

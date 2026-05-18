@@ -2,10 +2,10 @@ package searchrun
 
 import (
 	"context"
-	"slices"
 
 	"go.uber.org/zap"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -19,48 +19,68 @@ func RegisterDockerDiscover(fn DockerDiscoverFunc) {
 	dockerDiscover = fn
 }
 
-// appendDockerDiscover runs a second pass over VM records from the first search when
-// --docker-discover-providers is set. VM records are already limited by --backends and
-// --provider filters applied before the initial RunParallel.
-func appendDockerDiscover(ctx context.Context, q hosts.Query, records []hosts.Record) ([]hosts.Record, error) {
-	if len(q.DockerDiscoverProviders) == 0 || dockerDiscover == nil {
-		return records, nil
-	}
-	want := make(map[string]struct{}, len(q.DockerDiscoverProviders))
-	for _, p := range q.DockerDiscoverProviders {
-		want[p] = struct{}{}
-	}
-	var vms []hosts.Record
-	for _, r := range records {
-		if _, ok := want[r.Provider]; ok {
-			vms = append(vms, r)
-		}
-	}
-	if len(vms) == 0 {
-		zap.L().Debug("docker discover: no VM records from selected providers in this search")
-		return records, nil
-	}
-	zap.L().Debug("docker discover starting", zap.Int("vm_count", len(vms)), zap.Strings("providers", q.DockerDiscoverProviders))
-	dockerRecs, err := dockerDiscover(ctx, q, vms)
-	if err != nil {
-		return nil, err
-	}
-	if len(dockerRecs) == 0 {
-		return records, nil
-	}
-	return hosts.MergeDedupe(records, dockerRecs), nil
+type dockerDiscoverWrapper struct {
+	hosts.Backend
+	discover config.DockerDiscover
 }
 
-// discoverProvidersIncluded returns true when every provider id in discover is also
-// listed in q.Providers (when that list is non-empty).
-func discoverProvidersIncluded(q hosts.Query) bool {
-	if len(q.Providers) == 0 || len(q.DockerDiscoverProviders) == 0 {
-		return true
+func (w *dockerDiscoverWrapper) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
+	recs, err := w.Backend.Search(ctx, q)
+	if err != nil || len(recs) == 0 {
+		return recs, err
 	}
-	for _, p := range q.DockerDiscoverProviders {
-		if !slices.Contains(q.Providers, p) {
-			return false
+	if !w.discover.Enabled {
+		return recs, nil
+	}
+	for i := range recs {
+		if recs[i].Meta == nil {
+			recs[i].Meta = make(map[string]string)
+		}
+		recs[i].Meta["docker_discover_enabled"] = "1"
+		if w.discover.RunAs != "" {
+			recs[i].Meta["docker_discover_run_as"] = w.discover.RunAs
+		}
+		if w.discover.Socket != "" {
+			recs[i].Meta["docker_discover_socket"] = w.discover.Socket
+		}
+		if w.discover.Platform != "" {
+			recs[i].Meta["docker_discover_platform"] = w.discover.Platform
 		}
 	}
-	return true
+
+	if dockerDiscover != nil {
+		zap.L().Debug("docker discover starting for backend", zap.String("backend", w.ID()), zap.Int("vm_count", len(recs)))
+		dockerRecs, derr := dockerDiscover(ctx, q, recs)
+		if derr != nil {
+			return nil, derr
+		}
+		if len(dockerRecs) > 0 {
+			recs = append(recs, dockerRecs...)
+		}
+	}
+
+	return recs, nil
+}
+
+// WithDockerDiscover wraps a backend to inject Docker auto-discover metadata into its records.
+func WithDockerDiscover(b hosts.Backend, d config.DockerDiscover) hosts.Backend {
+	return &dockerDiscoverWrapper{Backend: b, discover: d}
+}
+
+// MergeDockerDiscover merges a backend-specific discover config over defaults.
+func MergeDockerDiscover(defaults, override config.DockerDiscover) config.DockerDiscover {
+	out := defaults
+	if override.Enabled {
+		out.Enabled = true
+	}
+	if override.RunAs != "" {
+		out.RunAs = override.RunAs
+	}
+	if override.Socket != "" {
+		out.Socket = override.Socket
+	}
+	if override.Platform != "" {
+		out.Platform = override.Platform
+	}
+	return out
 }

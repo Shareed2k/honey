@@ -277,7 +277,7 @@ func (c *dockerNativeClient) execInteractive(
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				inspect, ierr := c.cli.ExecInspect(context.Background(), execID, client.ExecInspectOptions{})
+				inspect, ierr := c.cli.ExecInspect(ctx, execID, client.ExecInspectOptions{})
 				if ierr == nil && !inspect.Running {
 					cancel()
 					return

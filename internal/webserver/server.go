@@ -37,6 +37,8 @@ type Options struct {
 	MaxUploadSize      int64 // default 100 << 20
 	MetricsListenAddr  string
 	Metrics            *metrics.Registry
+	NoCache            bool
+	Refresh            bool
 }
 
 // Server is the honey web UI HTTP server.
@@ -76,6 +78,7 @@ func NewServer(opts Options) (*Server, error) {
 		tunnels:         newTunnelManager(),
 		fileClientCache: ui.NewClientCache(),
 	}
+	ui.SetDockerSSHBorrowCache(s.fileClientCache)
 	s.routes()
 	return s, nil
 }
@@ -276,6 +279,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(in.ConfigPath) == "" && strings.TrimSpace(s.opts.ConfigPath) != "" {
 		in.ConfigPath = s.opts.ConfigPath
+	}
+	if s.opts.NoCache {
+		in.NoCache = true
+	}
+	if s.opts.Refresh {
+		in.Refresh = true
 	}
 	ctx := r.Context()
 	start := time.Now()

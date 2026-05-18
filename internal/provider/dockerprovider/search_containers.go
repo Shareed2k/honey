@@ -113,29 +113,35 @@ func searchBackend(ctx context.Context, bc BackendConfig, q hosts.Query, opts AP
 
 // searchVMContainers lists containers on one cloud VM via Honey SSH (auto-discover pass).
 func searchVMContainers(ctx context.Context, vm hosts.Record, q hosts.Query) ([]hosts.Record, error) {
+	socket := strings.TrimSpace(vm.Meta["docker_discover_socket"])
+	if socket == "" {
+		socket = strings.TrimSpace(q.DockerSocket)
+	}
+	platform := strings.TrimSpace(vm.Meta["docker_discover_platform"])
+	if platform == "" {
+		platform = strings.TrimSpace(q.DockerPlatform)
+	}
+	runAs := strings.TrimSpace(vm.Meta["docker_discover_run_as"])
+
 	bc := BackendConfig{
 		SSHUser:  strings.TrimSpace(q.DockerSSHUser),
-		Socket:   strings.TrimSpace(q.DockerSocket),
-		Platform: strings.TrimSpace(q.DockerPlatform),
-		RunAs:    strings.TrimSpace(q.DockerDiscoverRunAs),
+		Socket:   socket,
+		Platform: platform,
+		RunAs:    runAs,
 		Mode:     q.DockerMode,
 	}
 	opts := APIClientOptions{
-		SSHUser:      q.DockerSSHUser,
-		VMRecord:     &vm,
-		DiscoverOpts: discoverOptsFromQuery(q),
+		SSHUser:  q.DockerSSHUser,
+		VMRecord: &vm,
+		DiscoverOpts: &DiscoverOpts{
+			Socket:   socket,
+			Platform: platform,
+			RunAs:    runAs,
+		},
 	}
 	recs, err := searchBackend(ctx, bc, q, opts)
 	if err != nil {
 		return nil, fmt.Errorf("%s/%s: %w", vm.Provider, vm.Name, err)
 	}
 	return recs, nil
-}
-
-func discoverOptsFromQuery(q hosts.Query) *DiscoverOpts {
-	return &DiscoverOpts{
-		Socket:   q.DockerSocket,
-		Platform: q.DockerPlatform,
-		RunAs:    q.DockerDiscoverRunAs,
-	}
 }

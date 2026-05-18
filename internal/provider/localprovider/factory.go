@@ -18,16 +18,23 @@ func (localFactory) FromConfig(cfg *config.File, _ searchrun.ProviderFlags) []ho
 	}
 	var out []hosts.Backend
 	for _, b := range cfg.Backends.Local {
-		out = append(out, &Local{
-			Name:  b.Name,
-			Hosts: b.Hosts,
-		})
+		bk := searchrun.WithDockerDiscover(
+			&Local{
+				Name:  b.Name,
+				Hosts: b.Hosts,
+			},
+			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, b.DockerDiscover),
+		)
+		out = append(out, bk)
 	}
 	return out
 }
 
 func (localFactory) Default(_ searchrun.ProviderFlags) hosts.Backend {
-	return &Local{}
+	return searchrun.WithDockerDiscover(
+		&Local{},
+		config.DockerDiscover{},
+	)
 }
 
 func (localFactory) BackendRows(cfg *config.File) []config.BackendRow {

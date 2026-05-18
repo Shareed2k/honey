@@ -27,14 +27,12 @@ type Query struct {
 	ProxmoxTokenSecret string
 	ProxmoxInsecure    bool
 
-	DockerHost              string
-	DockerMode              string
-	DockerAllContainers     bool
-	DockerViaLocal          string
-	DockerViaSSHHost        string
-	DockerSocket            string
-	DockerPlatform          string
-	DockerDiscoverProviders []string // feature-flag only; provider ids e.g. gcp, aws
-	DockerSSHUser           string
-	DockerDiscoverRunAs     string // sudo -u user for docker.sock when SSH user lacks access
+	DockerHost          string
+	DockerMode          string
+	DockerAllContainers bool
+	DockerViaLocal      string
+	DockerViaSSHHost    string
+	DockerSocket        string
+	DockerPlatform      string
+	DockerSSHUser       string
 }
