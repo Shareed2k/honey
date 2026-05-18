@@ -39,7 +39,15 @@ func (s *Server) handleHostPorts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := strings.TrimSpace(req.SSHUser)
+user := strings.TrimSpace(req.SSHUser)
+	if user == "" {
+		if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
+			user = cfg.Defaults.SSHUser
+		}
+	}
+	if user == "" {
+		user = os.Getenv("USER")
+	}
 
 	client, err := s.fileClientCache.GetOrDial(user, req.Record)
 	if err != nil || client == nil {
