@@ -172,6 +172,11 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			mergeK8sDebugImageFromRecipe(recipe, jobs)
 			user := strings.TrimSpace(body.SSHUser)
 			if user == "" {
+				if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
+					user = cfg.Defaults.SSHUser
+				}
+			}
+			if user == "" {
 				user = os.Getenv("USER")
 			}
 			recipeDir := filepath.Dir(cp)
