@@ -24,19 +24,26 @@ func (awsFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 		if reg == "" {
 			reg = f.AWSRegion
 		}
-		out = append(out, &AWS{Name: e.Name, Profile: prof, Region: reg})
+		b := searchrun.WithDockerDiscover(
+			&AWS{Name: e.Name, Profile: prof, Region: reg},
+			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
+		)
+		out = append(out, b)
 	}
 	return out
 }
 
 func (awsFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	return &AWS{Profile: f.AWSProfile, Region: f.AWSRegion}
+	return searchrun.WithDockerDiscover(
+		&AWS{Profile: f.AWSProfile, Region: f.AWSRegion},
+		config.DockerDiscover{},
+	)
 }
 
 func (awsFactory) BackendRows(cfg *config.File) []config.BackendRow {
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.AWS))
 	for _, e := range cfg.Backends.AWS {
-		rows = append(rows, config.BackendRow{Kind: "aws", Name: e.Name, Hint: strings.TrimSpace(e.Profile + " " + e.Region)})
+		rows = append(rows, config.BackendRow{Kind: "aws", Name: e.Name, Hint: strings.TrimSpace(e.Profile)})
 	}
 	return rows
 }

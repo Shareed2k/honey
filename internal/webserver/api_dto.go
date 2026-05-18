@@ -15,6 +15,7 @@ type MetaResponse struct {
 	ConfigPath                string `json:"config_path"`
 	SessionRecordingAvailable bool   `json:"session_recording_available"`
 	TerminalAssistAvailable   bool   `json:"terminal_assist_available"`
+	MetricsURL                string `json:"metrics_url,omitempty"`
 }
 
 // ProvidersResponse is returned by GET /api/v1/providers.

@@ -231,7 +231,7 @@ export type RecordingEvent = {
   result?: HostExecResultRow;
 };
 
-export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer' | 'array';
+export type ConfigSchemaFieldType = 'string' | 'boolean' | 'integer' | 'array' | 'object';
 
 export type FileBrowserEntry = {
   name: string;

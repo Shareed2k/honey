@@ -27,13 +27,20 @@ func (consulFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []h
 		if tok == "" {
 			tok = f.ConsulToken
 		}
-		out = append(out, &Consul{Name: e.Name, Addr: addr, Datacenter: dc, Token: tok})
+		b := searchrun.WithDockerDiscover(
+			&Consul{Name: e.Name, Addr: addr, Datacenter: dc, Token: tok},
+			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
+		)
+		out = append(out, b)
 	}
 	return out
 }
 
 func (consulFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	return &Consul{Addr: f.ConsulAddr, Datacenter: f.ConsulDatacenter, Token: f.ConsulToken}
+	return searchrun.WithDockerDiscover(
+		&Consul{Addr: f.ConsulAddr, Datacenter: f.ConsulDatacenter, Token: f.ConsulToken},
+		config.DockerDiscover{},
+	)
 }
 
 func (consulFactory) BackendRows(cfg *config.File) []config.BackendRow {

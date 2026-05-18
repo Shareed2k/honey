@@ -49,6 +49,10 @@ func RunSearch(
 	}
 
 	records, err := hosts.RunParallel(ctx, q, provs, fc, noCache, refresh, hosts.DefaultCacheKey)
+	if err != nil {
+		zap.L().Debug("completed search run", zap.Int("total_records", len(records)), zap.Error(err))
+		return records, err
+	}
 	zap.L().Debug("completed search run", zap.Int("total_records", len(records)), zap.Error(err))
 	return records, err
 }

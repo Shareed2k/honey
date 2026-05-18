@@ -2,6 +2,7 @@
 const sidebars = {
   tutorialSidebar: [
     'index',
+    'docker-auto-discover',
     'web-ui',
     'cue-recipes',
     'plugins-development',

@@ -27,6 +27,7 @@ Optional flags:
 | `--files-root` | Local filesystem root for the file browser (default: `$HONEY_FILES_ROOT` or `$HOME`) |
 | `--agent-bin` | Explicit path to the `honey-transfer-agent` binary (optional) |
 | `--agent-build-cache-dir` | Cache directory when the server auto-builds the transfer agent |
+| `--metrics-listen` | Optional loopback `host:port` for Prometheus **`GET /metrics`** (e.g. `127.0.0.1:9091`); disabled when unset |
 
 On startup, Honey prints the URL and auth hints on stderr:
 
@@ -36,9 +37,32 @@ Honey Web UI (Ctrl+C to stop)
   API:   Authorization: Bearer <token>  or  X-Honey-Token: <token>
   WS:    /ws/ssh?token=<token>
   Assist: OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
+  Metrics: http://127.0.0.1:9091/metrics
 ```
 
 Open the **URL** in your browser (the query string includes the token).
+
+### Prometheus metrics
+
+When **`--metrics-listen`** is set (loopback addresses only, same rule as `--listen`), honey serves an **unauthenticated** Prometheus scrape endpoint on a **separate port**:
+
+```bash
+honey web --listen 127.0.0.1:8765 --metrics-listen 127.0.0.1:9091
+curl -s http://127.0.0.1:9091/metrics | head
+```
+
+`GET /api/v1/meta` includes **`metrics_url`** when metrics are enabled.
+
+Exposed series include HTTP request latency/counts, search duration and result counts, active WebSocket terminals (`ssh`, `k8s`, `docker`, …), plus standard Go/process collectors.
+
+Example Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: honey
+    static_configs:
+      - targets: ["127.0.0.1:9091"]
+```
 
 ### Authentication
 
@@ -56,12 +80,16 @@ Open the **URL** in your browser (the query string includes the token).
 
 ### Browser terminal
 
-- WebSocket **`GET /ws/ssh?token=…`**: interactive session to **SSH hosts** (system `ssh` behavior) and **Kubernetes pods** (ephemeral exec TTY), aligned with the TUI.
+- WebSocket **`GET /ws/ssh?token=…`**: interactive session to **SSH hosts** (system `ssh` behavior), **Kubernetes pods** (ephemeral exec TTY), and **Docker containers** (Engine API exec attach with terminal resize), aligned with the TUI.
+- **Docker rows** must have `provider: docker` and `meta.container_id` (as returned by `honey search --provider docker` or auto-discover). Honey dials the daemon the same way as the CLI (local `DOCKER_HOST`, Moby `ssh://`, or Honey SSH to a VM’s `docker.sock`).
 - Optional **session recording** when `--record-dir` is set; recordings can be listed and replayed from the UI.
+
+Docker search, Honey SSH backends, and **auto-discover on cloud VMs** are documented in [Docker auto-discover](./docker-auto-discover.md) and the [GitHub README Docker provider](https://github.com/shareed2k/honey#docker-provider) section.
 
 ### Files and transfer
 
 - Browse **local** paths under `--files-root` and **remote** paths on connected hosts.
+- **Run command** and remote file operations use the same **connectable** rules as the CLI: docker rows need `container_id`; copy/list uses Engine API (`CopyTo` / `CopyFrom` / exec) rather than SFTP.
 - **Agent-based transfer** (`honey-transfer-agent`): copies between local, remote, and cloud storage using the separate agent binary (paths via `--agent-bin` / build cache).
 
 **Prebuilt agents (no local checkout):** CI publishes `honey-transfer-agent-<goos>-<goarch>` assets (see `.github/workflows/honey-transfer-agent.yml`), built static then **compressed with UPX** (`--best --lzma`). When a local `go build` is not possible or fails, Honey **downloads** a prebuilt binary. **No env is required by default:** the URL uses the **same release tag as the running `honey` binary** (the link-time version from `honey --version`):

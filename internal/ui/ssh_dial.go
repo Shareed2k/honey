@@ -19,6 +19,7 @@ import (
 
 func init() {
 	hostexec.SetK8sExecutor(&k8sPodExecutor{})
+	hostexec.SetDockerExecutor(dockerExecutor{})
 	hostexec.SetSSHRunInteractive(func(user string, r hosts.Record, rec any) error {
 		var sr *SessionRecorder
 		if rec != nil {
@@ -32,6 +33,9 @@ func init() {
 func RunTerminalInteractive(user string, r hosts.Record) error {
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
 		return runK8sInteractiveWithRecorder(user, r, nil)
+	}
+	if hosts.IsDockerRecord(r) {
+		return runDockerInteractiveWithRecorder(user, r, nil)
 	}
 	return runSSHInteractive(user, r, nil)
 }

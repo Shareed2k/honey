@@ -99,9 +99,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rec := meta.Record
-	k8sPod := rec.Provider == "k8s" && strings.EqualFold(rec.Meta["kind"], "pod")
-	if strings.TrimSpace(rec.PrimaryIP) == "" && !k8sPod {
-		httpError(w, fmt.Errorf("record has no connectable target"), http.StatusBadRequest)
+	if !hosts.IsConnectableRecord(rec) {
+		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
 

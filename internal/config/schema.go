@@ -19,6 +19,7 @@ const (
 	SchemaFieldTypeBoolean SchemaFieldType = "boolean"
 	SchemaFieldTypeInteger SchemaFieldType = "integer"
 	SchemaFieldTypeArray   SchemaFieldType = "array"
+	SchemaFieldTypeObject  SchemaFieldType = "object"
 )
 
 // SchemaField describes one editable key in defaults/backends schema.
@@ -115,7 +116,14 @@ func jsonSchemaField(f SchemaField) map[string]any {
 	out := map[string]any{
 		"type": string(f.Type),
 	}
-	if f.Type == SchemaFieldTypeArray && len(f.Items) > 0 {
+	if f.Type == SchemaFieldTypeObject {
+		itemProps := map[string]any{}
+		for _, item := range f.Items {
+			itemProps[item.Key] = jsonSchemaField(item)
+		}
+		out["properties"] = itemProps
+		out["additionalProperties"] = false
+	} else if f.Type == SchemaFieldTypeArray && len(f.Items) > 0 {
 		// Differentiate between array of objects and array of primitive types
 		if f.Items[0].Key == "" && f.Items[0].Type == SchemaFieldTypeString {
 			out["items"] = map[string]any{
@@ -212,6 +220,9 @@ func schemaFieldsFromStruct(t reflect.Type) []SchemaField {
 		var items []SchemaField
 
 		switch f.Type.Kind() {
+		case reflect.Struct:
+			fieldType = SchemaFieldTypeObject
+			items = schemaFieldsFromStruct(f.Type)
 		case reflect.Slice:
 			// Basic support for slice of structs (or slice of basic types if we ever need it)
 			fieldType = SchemaFieldTypeArray

@@ -20,6 +20,7 @@ honey web [flags]
       --files-root string              Local filesystem root for the web file browser (default: $HONEY_FILES_ROOT or $HOME)
   -h, --help                           help for web
       --listen string                  Listen address (host:port); must be loopback for safe default (default "127.0.0.1:8765")
+      --metrics-listen string          Optional loopback host:port for Prometheus /metrics (e.g. 127.0.0.1:9091)
 ```
 
 ### Options inherited from parent commands

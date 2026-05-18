@@ -23,18 +23,27 @@ type File struct {
 	Plugins  Plugins        `yaml:"plugins,omitempty" json:"plugins,omitempty"`
 }
 
+// DockerDiscover configures auto-discovery of containers on cloud VMs.
+type DockerDiscover struct {
+	Enabled  bool   `yaml:"enabled" json:"enabled" honey:"label=Enable auto-discover"`
+	RunAs    string `yaml:"run_as,omitempty" json:"run_as,omitempty" honey:"label=Remote user for docker.sock via sudo (e.g. root)"`
+	Socket   string `yaml:"socket,omitempty" json:"socket,omitempty" honey:"label=Remote Docker socket"`
+	Platform string `yaml:"platform,omitempty" json:"platform,omitempty" honey:"label=Remote OS;enum=linux|windows"`
+}
+
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
-	SSHUser        string `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
-	CacheTTL       string `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL"` // e.g. "5m", "1h"
-	K8sMode        string `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
-	K8sDebugImage  string `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
-	CacheDir       string `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
-	RecordDir      string `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory"`
-	Output         string `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
-	Name           string `yaml:"name" json:"name" honey:"label=Name filter"`
-	NameRegex      string `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
-	AISystemPrompt string `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step"`
+	SSHUser        string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
+	CacheTTL       string         `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL"` // e.g. "5m", "1h"
+	K8sMode        string         `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
+	K8sDebugImage  string         `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
+	CacheDir       string         `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
+	RecordDir      string         `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory"`
+	Output         string         `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
+	Name           string         `yaml:"name" json:"name" honey:"label=Name filter"`
+	NameRegex      string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
+	AISystemPrompt string         `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step"`
+	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover Defaults"`
 
 	// secretsprovider unwraps the stack AES data key (see internal/cuetry/secrets/doc.go).
 	// Examples: gcpkms://projects/…/cryptoKeys/…, awskms://, vault-transit://mount/key,
@@ -54,12 +63,14 @@ type Backends struct {
 	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40" validate:"dive"`
 	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50" validate:"dive"`
 	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60" validate:"dive"`
+	Docker     []DockerBackend     `yaml:"docker" json:"docker" honey:"label=Docker;order=35" validate:"dive"`
 }
 
 // LocalBackend configures manually defined host lists.
 type LocalBackend struct {
-	Name  string      `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Hosts []LocalHost `yaml:"hosts" json:"hosts" honey:"label=Hosts" validate:"dive"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Hosts          []LocalHost    `yaml:"hosts" json:"hosts" honey:"label=Hosts" validate:"dive"`
+	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // LocalHost represents a manually defined static server.
@@ -74,16 +85,18 @@ type LocalHost struct {
 
 // GCPBackend configures one Google Cloud Compute Engine listing.
 type GCPBackend struct {
-	Name    string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Project string `yaml:"project" json:"project" honey:"label=Project" validate:"required"`
-	Zone    string `yaml:"zone" json:"zone" honey:"label=Zone"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Project        string         `yaml:"project" json:"project" honey:"label=Project" validate:"required"`
+	Zone           string         `yaml:"zone" json:"zone" honey:"label=Zone"`
+	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // AWSBackend configures one Amazon EC2 listing.
 type AWSBackend struct {
-	Name    string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Profile string `yaml:"profile" json:"profile" honey:"label=Profile" validate:"required"`
-	Region  string `yaml:"region" json:"region" honey:"label=Region"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Profile        string         `yaml:"profile" json:"profile" honey:"label=Profile" validate:"required"`
+	Region         string         `yaml:"region" json:"region" honey:"label=Region"`
+	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // KubernetesBackend configures one Kubernetes nodes/pods listing.
@@ -97,24 +110,49 @@ type KubernetesBackend struct {
 
 // ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
-	Name       string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Addr       string `yaml:"addr" json:"addr" honey:"label=Address" validate:"required,url"`
-	Datacenter string `yaml:"datacenter" json:"datacenter" honey:"label=Datacenter"`
-	Token      string `yaml:"token" json:"token" honey:"label=Token;secret"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Addr           string         `yaml:"addr" json:"addr" honey:"label=Address" validate:"required,url"`
+	Datacenter     string         `yaml:"datacenter" json:"datacenter" honey:"label=Datacenter"`
+	Token          string         `yaml:"token" json:"token" honey:"label=Token;secret"`
+	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // ProxmoxBackend configures one Proxmox VE listing.
 type ProxmoxBackend struct {
-	Name        string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	URL         string `yaml:"url" json:"url" honey:"label=URL" validate:"required,url"`
-	User        string `yaml:"user" json:"user" honey:"label=User" validate:"required_without=TokenID"`
-	Password    string `yaml:"password" json:"password" honey:"label=Password;secret" validate:"required_without=TokenSecret"`
-	TokenID     string `yaml:"token_id" json:"token_id" honey:"label=Token ID" validate:"required_without=User"`
-	TokenSecret string `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret" validate:"required_without=Password"`
-	Insecure    bool   `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
-	// ExecMode: ssh (default) = guest SSH for commands/SFTP/tunnels; pve = QEMU commands via guest agent API, LXC commands/SFTP over guest SSH (PVE has no LXC REST exec; web UI LXC console uses termproxy when token_id is set);
-	// hybrid = QEMU via guest agent + SSH for files; LXC uses guest SSH for commands and files.
-	ExecMode string `yaml:"exec_mode" json:"exec_mode" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	URL            string         `yaml:"url" json:"url" honey:"label=URL" validate:"required,url"`
+	User           string         `yaml:"user" json:"user" honey:"label=User" validate:"required_without=TokenID"`
+	Password       string         `yaml:"password" json:"password" honey:"label=Password;secret" validate:"required_without=TokenSecret"`
+	TokenID        string         `yaml:"token_id" json:"token_id" honey:"label=Token ID" validate:"required_without=User"`
+	TokenSecret    string         `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret" validate:"required_without=Password"`
+	Insecure       bool           `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
+	ExecMode       string         `yaml:"exec_mode" json:"exec_mode" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning"`
+	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
+}
+
+// DockerViaSSH configures an explicit SSH hop for Honey's SSH stack (not Moby ssh://).
+type DockerViaSSH struct {
+	Host         string `yaml:"host" json:"host" honey:"label=SSH host"`
+	Port         int    `yaml:"port,omitempty" json:"port,omitempty" honey:"label=SSH port (0 = ssh_config default)"`
+	User         string `yaml:"user,omitempty" json:"user,omitempty" honey:"label=SSH user"`
+	IdentityFile string `yaml:"identity_file,omitempty" json:"identity_file,omitempty" honey:"label=SSH identity file"`
+}
+
+// DockerBackend configures one Docker Engine API endpoint (local socket, tcp, ssh://, or Honey SSH).
+type DockerBackend struct {
+	Name          string       `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	Host          string       `yaml:"host" json:"host" honey:"label=Host (unix://, tcp://, ssh://; empty = DOCKER_HOST / local socket)"`
+	ViaLocal      string       `yaml:"via_local,omitempty" json:"via_local,omitempty" honey:"label=Local backend name (SSH hop via backends.local)"`
+	ViaSSH        DockerViaSSH `yaml:"via_ssh,omitempty" json:"via_ssh,omitempty" honey:"label=SSH hop (overrides via_local when host set)"`
+	Socket        string       `yaml:"socket,omitempty" json:"socket,omitempty" honey:"label=Remote Engine socket (default /var/run/docker.sock on linux)"`
+	Platform      string       `yaml:"platform,omitempty" json:"platform,omitempty" honey:"label=Remote OS;enum=linux|windows;enum_as_warning;default=linux"`
+	RunAs         string       `yaml:"run_as,omitempty" json:"run_as,omitempty" honey:"label=Remote user for docker.sock via sudo (honey-ssh only)"`
+	Mode          string       `yaml:"mode" json:"mode" honey:"label=Mode;enum=containers|swarm|both;enum_as_warning;default=containers"`
+	AllContainers bool         `yaml:"all_containers" json:"all_containers" honey:"label=Include stopped containers;default=false"`
+	TLSVerify     bool         `yaml:"tls_verify" json:"tls_verify" honey:"label=Verify TLS (tcp hosts);default=true"`
+	CACert        string       `yaml:"ca_cert" json:"ca_cert" honey:"label=CA certificate path"`
+	Cert          string       `yaml:"cert" json:"cert" honey:"label=Client certificate path"`
+	Key           string       `yaml:"key" json:"key" honey:"label=Client key path;secret"`
 }
 
 // Save serializes the config and writes it to path.
@@ -183,7 +221,8 @@ func (f *File) HasAnyBackend() bool {
 		len(f.Backends.Kubernetes) > 0 ||
 		len(f.Backends.Consul) > 0 ||
 		len(f.Backends.Proxmox) > 0 ||
-		len(f.Backends.Local) > 0
+		len(f.Backends.Local) > 0 ||
+		len(f.Backends.Docker) > 0
 }
 
 // ResolvePath returns an explicit path from --config or HONEY_CONFIG

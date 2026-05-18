@@ -48,6 +48,13 @@ var (
 	flagProxmoxTokenID     string
 	flagProxmoxTokenSecret string
 	flagProxmoxInsecure    bool
+	flagDockerHost         string
+	flagDockerMode         string
+	flagDockerAll          bool
+	flagDockerViaLocal     string
+	flagDockerViaSSHHost   string
+	flagDockerSocket       string
+	flagDockerPlatform     string
 )
 
 var searchCmd = &cobra.Command{
@@ -61,7 +68,7 @@ func init() {
 	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
 	searchCmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
 	searchCmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
-	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox (default: all)")
+	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,docker,local (default: all)")
 	searchCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	searchCmd.Flags().StringVarP(&flagOutput, "output", "o", "tui", "Output format: tui, table, json")
 	searchCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Skip interactive UI (same as --output=json)")
@@ -89,6 +96,14 @@ func init() {
 	searchCmd.Flags().StringVar(&flagProxmoxTokenID, "proxmox-token-id", "", "Proxmox token ID (e.g. root@pam!token)")
 	searchCmd.Flags().StringVar(&flagProxmoxTokenSecret, "proxmox-token-secret", "", "Proxmox token secret")
 	searchCmd.Flags().BoolVar(&flagProxmoxInsecure, "proxmox-insecure", false, "Skip TLS verification for Proxmox")
+
+	searchCmd.Flags().StringVar(&flagDockerHost, "docker-host", "", "Docker host (unix://, tcp://, ssh://; default: DOCKER_HOST / local socket)")
+	searchCmd.Flags().StringVar(&flagDockerMode, "docker-mode", "containers", "Docker search mode: containers, swarm, or both")
+	searchCmd.Flags().BoolVar(&flagDockerAll, "docker-all", false, "Include stopped containers in docker search")
+	searchCmd.Flags().StringVar(&flagDockerViaLocal, "docker-via-local", "", "Docker via Honey SSH: backends.local name")
+	searchCmd.Flags().StringVar(&flagDockerViaSSHHost, "docker-via-ssh-host", "", "Docker via Honey SSH: explicit host")
+	searchCmd.Flags().StringVar(&flagDockerSocket, "docker-socket", "", "Remote Docker socket (default /var/run/docker.sock on linux)")
+	searchCmd.Flags().StringVar(&flagDockerPlatform, "docker-platform", "linux", "Remote Docker host OS: linux or windows")
 }
 
 // runSearchCore runs the same search pipeline as search (flags, config, cache,
@@ -97,25 +112,33 @@ func init() {
 // The returned configPath is the resolved honey YAML path (may be empty).
 func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, string, *config.File, string, error) {
 	q := hosts.Query{
-		NameSubstring:      flagName,
-		NameRegex:          flagNameRegex,
-		Providers:          hosts.ParseProviders(flagProviders),
-		GCPProject:         flagGCPProject,
-		GCPZone:            flagGCPZone,
-		AWSProfile:         flagAWSProfile,
-		AWSRegion:          flagAWSRegion,
-		KubeContext:        flagKubeContext,
-		K8sMode:            flagK8sMode,
-		K8sDebugImage:      flagK8sDebugImg,
-		ConsulAddr:         flagConsulAddr,
-		ConsulDatacenter:   flagConsulDC,
-		ConsulToken:        flagConsulToken,
-		ProxmoxURL:         flagProxmoxURL,
-		ProxmoxUser:        flagProxmoxUser,
-		ProxmoxPassword:    flagProxmoxPassword,
-		ProxmoxTokenID:     flagProxmoxTokenID,
-		ProxmoxTokenSecret: flagProxmoxTokenSecret,
-		ProxmoxInsecure:    flagProxmoxInsecure,
+		NameSubstring:       flagName,
+		NameRegex:           flagNameRegex,
+		Providers:           hosts.ParseProviders(flagProviders),
+		GCPProject:          flagGCPProject,
+		GCPZone:             flagGCPZone,
+		AWSProfile:          flagAWSProfile,
+		AWSRegion:           flagAWSRegion,
+		KubeContext:         flagKubeContext,
+		K8sMode:             flagK8sMode,
+		K8sDebugImage:       flagK8sDebugImg,
+		ConsulAddr:          flagConsulAddr,
+		ConsulDatacenter:    flagConsulDC,
+		ConsulToken:         flagConsulToken,
+		ProxmoxURL:          flagProxmoxURL,
+		ProxmoxUser:         flagProxmoxUser,
+		ProxmoxPassword:     flagProxmoxPassword,
+		ProxmoxTokenID:      flagProxmoxTokenID,
+		ProxmoxTokenSecret:  flagProxmoxTokenSecret,
+		ProxmoxInsecure:     flagProxmoxInsecure,
+		DockerHost:          flagDockerHost,
+		DockerMode:          flagDockerMode,
+		DockerAllContainers: flagDockerAll,
+		DockerViaLocal:      flagDockerViaLocal,
+		DockerViaSSHHost:    flagDockerViaSSHHost,
+		DockerSocket:        flagDockerSocket,
+		DockerPlatform:      flagDockerPlatform,
+		DockerSSHUser:       flagSSHUser,
 	}
 
 	cfgPath, err := config.ResolvePath(flagConfig)
@@ -182,8 +205,12 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
+	clientCache := ui.NewClientCache()
+	ui.SetDockerSSHBorrowCache(clientCache)
+
 	records, sshUser, cfg, cfgPath, err := runSearchCore(cmd, args)
 	if err != nil {
+		clientCache.CloseAll()
 		return err
 	}
 
@@ -198,6 +225,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	switch flagOutput {
 	case "json":
+		defer clientCache.CloseAll()
 		if records == nil {
 			records = make([]hosts.Record, 0)
 		}
@@ -205,6 +233,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(records)
 	case "table":
+		defer clientCache.CloseAll()
 		return ui.PrintStaticTable(records)
 	default:
 		recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
@@ -214,6 +243,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			RecordEnabled: recordOnStart,
 			Config:        cfg,
 			ConfigPath:    cfgPath,
+			ClientCache:   clientCache,
 		})
 	}
 }

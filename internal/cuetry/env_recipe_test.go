@@ -102,6 +102,28 @@ func TestEffectiveEnvForRun_withHostRecord(t *testing.T) {
 	}
 }
 
+func TestEnvForDockerInteractive_omitsMetaLabels(t *testing.T) {
+	r := hosts.Record{
+		Provider:  "docker",
+		Name:      "c1",
+		PrimaryIP: "10.0.0.1",
+		Meta: map[string]string{
+			"kind":         "container",
+			"container_id": "abc",
+			"label_foo":    "bar",
+		},
+	}
+	env, err := EnvForDockerInteractive(&r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range env {
+		if strings.HasPrefix(e, "HONEY_HOST_META_") {
+			t.Fatalf("unexpected meta env %q", e)
+		}
+	}
+}
+
 func TestShellExportPrefixForRemote_sortsKeys(t *testing.T) {
 	got, err := ShellExportPrefixForRemote(
 		map[string]string{"Z": "1", "A": "2"},
