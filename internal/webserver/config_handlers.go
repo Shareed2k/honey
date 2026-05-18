@@ -12,6 +12,13 @@ import (
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
+// applyInMemoryConfig updates server options and hostexec after a config file write.
+func (s *Server) applyInMemoryConfig(cfgPath string, cfg *config.File) {
+	s.opts.ConfigPath = strings.TrimSpace(cfgPath)
+	s.opts.Config = cfg
+	hostexec.ReconfigureFromHoneyConfig(cfg)
+}
+
 // handleConfigSchema returns JSON Schema and UI schema for the config editor.
 // @Summary Config JSON Schema
 // @Tags config
@@ -91,9 +98,12 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
-	if cfg, lerr := config.Load(cfgPath); lerr == nil {
-		hostexec.ReconfigureFromHoneyConfig(cfg)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		httpError(w, fmt.Errorf("config saved but reload failed: %w", err), http.StatusInternalServerError)
+		return
 	}
+	s.applyInMemoryConfig(cfgPath, cfg)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
 }

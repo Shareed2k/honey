@@ -1,37 +1,45 @@
 package webserver
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-func TestShouldUseWebPtyProxy(t *testing.T) {
-	sshRec := hosts.Record{Provider: "gcp", Name: "vm1", PrimaryIP: "10.0.0.1"}
-	dockerRec := hosts.Record{
-		Provider: "docker",
-		Meta:     map[string]string{"kind": "container", "container_id": "abc"},
+func TestWebSSHHelloResolvesDefaultSSHUserForPtyProxy(t *testing.T) {
+	t.Parallel()
+	s := &Server{opts: Options{Config: &config.File{Defaults: config.Defaults{SSHUser: "ops"}}}}
+	helloIn := WSHello{
+		SessionID: "abc",
+		SSHUser:   "",
+		Record:    hosts.Record{Provider: "local", Name: "vm", PrimaryIP: "10.0.0.1"},
+		Cols:      80,
+		Rows:      24,
 	}
-	k8sRec := hosts.Record{
-		Provider: "k8s",
-		Meta:     map[string]string{"kind": "pod", "namespace": "ns", "pod_name": "p"},
+	rawIn, err := json.Marshal(helloIn)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	tests := []struct {
-		name  string
-		hello WSHello
-		want  bool
-	}{
-		{"empty session", WSHello{Record: sshRec}, false},
-		{"ssh with tab id", WSHello{SessionID: "tab-1", Record: sshRec}, true},
-		{"docker with tab id", WSHello{SessionID: "tab-2", Record: dockerRec}, true},
-		{"k8s pod with tab id", WSHello{SessionID: "tab-3", Record: k8sRec}, true},
+	var hello WSHello
+	if err := json.Unmarshal(rawIn, &hello); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldUseWebPtyProxy(tc.hello); got != tc.want {
-				t.Fatalf("shouldUseWebPtyProxy() = %v, want %v", got, tc.want)
-			}
-		})
+	user := s.sshUser(hello.SSHUser)
+	hello.SSHUser = user
+	rawOut, err := json.Marshal(hello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded WSHello
+	if err := json.Unmarshal(rawOut, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SSHUser != "ops" {
+		t.Fatalf("pty-proxy payload ssh_user = %q, want ops", decoded.SSHUser)
+	}
+	if user != "ops" {
+		t.Fatalf("resolved user = %q, want ops", user)
 	}
 }

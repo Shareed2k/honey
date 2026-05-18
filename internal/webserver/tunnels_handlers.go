@@ -235,7 +235,7 @@ func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := strings.TrimSpace(req.SSHUser)
+	user := s.sshUser(req.SSHUser)
 	tunnel := s.tunnels.start(user, req.Record, req.Mapping)
 
 	w.Header().Set("Content-Type", "application/json")
