@@ -141,6 +141,11 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 	}
 	user := strings.TrimSpace(req.SSHUser)
 	if user == "" {
+		if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
+			user = cfg.Defaults.SSHUser
+		}
+	}
+	if user == "" {
 		user = os.Getenv("USER")
 	}
 	if !hosts.IsConnectableRecord(req.Record) {
@@ -185,6 +190,11 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := strings.TrimSpace(req.SSHUser)
+	if user == "" {
+		if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
+			user = cfg.Defaults.SSHUser
+		}
+	}
 	if user == "" {
 		user = os.Getenv("USER")
 	}
