@@ -251,6 +251,18 @@ func EffectiveEnvForRun(ctx context.Context, resolveSecrets bool, resolver Secre
 	return merged, nil
 }
 
+// EffectiveEnvForRunWithVarExpand merges env then expands ${VAR} in values using merged map as vars.
+func EffectiveEnvForRunWithVarExpand(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record, strict bool) (map[string]string, error) {
+	merged, err := EffectiveEnvForRun(ctx, resolveSecrets, resolver, step, defaults, cliEnv, r)
+	if err != nil {
+		return nil, err
+	}
+	if err := ExpandRecipeEnvValues(merged, merged, strict); err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
 // EffectiveEnvForRemoteHook merges defaults env/secrets, step env/secrets, hook env/secrets, then cliEnv, then host variables.
 func EffectiveEnvForRemoteHook(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, hook *RecipeStepHook, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
 	if hook == nil {

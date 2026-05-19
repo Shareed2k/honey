@@ -96,6 +96,11 @@ const schemaSource = `
 		max_output_tokens?:  int
 		max_input_chars?:    int
 	})
+	template?: close({
+		template: string
+		data?: {...}
+		output?: string
+	})
 	plugin?: close({
 		id:     string
 		action: string
@@ -108,7 +113,8 @@ const schemaSource = `
 	kv_tunnel?: bool
 	max_parallel?: int
 	env_from?: [...close({
-		step: string
+		step?: string
+		from_output?: string
 		map: {[string]: string}
 	})]
 	env?: {[string]: string}
@@ -211,15 +217,18 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 	if err := validateStepAI(i, nSteps, kind, s, mode); err != nil {
 		return err
 	}
+	if err := validateStepTemplate(i, kind, s, mode); err != nil {
+		return err
+	}
 	return validateStepHooksAndKVTunnel(i, kind, s, defaults, secretPrefixes)
 }
 
 func validateStepEnvAndSecrets(i int, kind StepKind, s RecipeStep, secretPrefixes []string) error {
 	if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI) {
-		return fmt.Errorf("cuetry: steps[%d]: env is only supported for command, script, and plugin steps", i)
+		return fmt.Errorf("cuetry: steps[%d]: env is only supported for command, script, plugin, and template steps", i)
 	}
-	if len(s.Secrets) > 0 && kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin {
-		return fmt.Errorf("cuetry: steps[%d]: secrets are only supported for command, script, and plugin steps", i)
+	if len(s.Secrets) > 0 && kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin && kind != StepKindTemplate {
+		return fmt.Errorf("cuetry: steps[%d]: secrets are only supported for command, script, plugin, and template steps", i)
 	}
 	if len(s.Env) > 0 {
 		if err := ValidateRecipeEnvMap(s.Env); err != nil {
@@ -256,6 +265,32 @@ func validateStepAI(i, nSteps int, kind StepKind, s RecipeStep, mode ExecutionMo
 	}
 	if strings.TrimSpace(s.AI.Prompt) == "" {
 		return fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
+	}
+	return nil
+}
+
+func validateStepTemplate(i int, kind StepKind, s RecipeStep, mode ExecutionMode) error {
+	if kind != StepKindTemplate {
+		return nil
+	}
+	if err := ValidateHostField(s.Host); err != nil {
+		return fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
+	}
+	if s.Template == nil {
+		return fmt.Errorf("cuetry: steps[%d]: internal template step", i)
+	}
+	if strings.TrimSpace(s.Template.Template) == "" {
+		return fmt.Errorf("cuetry: steps[%d].template.template is required", i)
+	}
+	host := strings.TrimSpace(s.Host)
+	outName := strings.TrimSpace(s.Template.Output)
+	if outName != "" && host != MatchLocalAIHost {
+		return fmt.Errorf("cuetry: steps[%d].template.output requires host %q (per-host templates cannot register a global capture name)", i, MatchLocalAIHost)
+	}
+	if mode == ExecutionModeGraph {
+		if strings.TrimSpace(s.ID) == "" && (len(s.Depends) > 0 || len(s.EnvFrom) > 0) {
+			return fmt.Errorf("cuetry: steps[%d]: template step with depends or env_from requires a non-empty id", i)
+		}
 	}
 	return nil
 }

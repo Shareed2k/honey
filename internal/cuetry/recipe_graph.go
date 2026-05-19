@@ -209,21 +209,21 @@ func ValidateRecipeGraph(r Recipe) error {
 		}
 		return nil
 	case ExecutionModeGraph:
+		if err := validateUniqueTemplateOutputs(r.Steps); err != nil {
+			return err
+		}
+		outputByName := templateOutputProducers(r.Steps)
 		sg, err := BuildStepGraph(r.Steps)
 		if err != nil {
 			return err
 		}
 		for i, s := range r.Steps {
-			kind, kerr := ClassifyStep(s)
-			if kerr != nil {
+			if _, kerr := ClassifyStep(s); kerr != nil {
 				return fmt.Errorf("cuetry: steps[%d]: %w", i, kerr)
 			}
 			if len(s.EnvFrom) > 0 {
-				if err := validateEnvFromRefs(i, s, sg); err != nil {
+				if err := validateEnvFromRefs(i, s, sg, outputByName); err != nil {
 					return err
-				}
-				if kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin {
-					return fmt.Errorf("cuetry: steps[%d]: env_from is only supported for command, script, and plugin steps", i)
 				}
 			}
 			if KVTunnelEnabled(s, r.Defaults) && strings.TrimSpace(s.ID) == "" {

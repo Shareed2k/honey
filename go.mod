@@ -27,6 +27,7 @@ require (
 	github.com/getkin/kin-openapi v0.138.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-playground/validator/v10 v10.30.2
+	github.com/go-task/slim-sprig/v3 v3.0.0
 	github.com/google/cel-go v0.28.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674

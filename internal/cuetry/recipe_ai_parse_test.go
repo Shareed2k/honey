@@ -92,7 +92,7 @@ func TestExpandStepHosts_localAI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Name != "ai" {
+	if len(got) != 1 || got[0].Name != MatchLocalAIHost {
 		t.Fatalf("got %#v", got)
 	}
 }

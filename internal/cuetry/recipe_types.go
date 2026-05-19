@@ -46,6 +46,13 @@ type RecipeCloudBackendRef struct {
 	Index *int   `json:"index,omitempty"`
 }
 
+// RecipeStepTemplate configures a local Go text/template render step (host must be "_").
+type RecipeStepTemplate struct {
+	Template string         `json:"template"`
+	Data     map[string]any `json:"data,omitempty"`
+	Output   string         `json:"output,omitempty"`
+}
+
 // RecipeAI configures the terminal local LLM summarizer step (must be last in recipe; host must be "_").
 type RecipeAI struct {
 	Prompt          string `json:"prompt"`
@@ -123,7 +130,7 @@ type RecipeStepPlugin struct {
 	Config json.RawMessage `json:"config,omitempty"`
 }
 
-// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, or plugin.
+// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, template, or plugin.
 // Host selects targets: literal IP, exact name, "*", "re:…", or "_" for ai only (see resolve.go). For agent_transfer,
 // host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
 type RecipeStep struct {
@@ -138,6 +145,7 @@ type RecipeStep struct {
 	Script        *RecipeFileTransfer  `json:"script,omitempty"`
 	AgentTransfer *RecipeAgentTransfer `json:"agent_transfer,omitempty"`
 	AI            *RecipeAI            `json:"ai,omitempty"`
+	Template      *RecipeStepTemplate  `json:"template,omitempty"`
 	Plugin        *RecipeStepPlugin    `json:"plugin,omitempty"`
 	Notify        *RecipeNotify        `json:"notify,omitempty"`
 	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`

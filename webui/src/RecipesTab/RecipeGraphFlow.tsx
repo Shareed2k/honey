@@ -22,7 +22,7 @@ type StepNodeData = {
 function RecipeStepNode({ data }: NodeProps<Node<StepNodeData>>) {
   const n = data.node;
   return (
-    <div className={'rcp-graph-node' + (n.kv_tunnel ? ' rcp-graph-node--kv' : '')}>
+    <div className={'rcp-graph-node' + (n.kv_tunnel ? ' rcp-graph-node--kv' : '') + (n.kind === 'template' ? ' rcp-graph-node--template' : '')}>
       <Handle type="target" position={Position.Left} className="rcp-graph-handle" />
       <div className="rcp-graph-node__id">{n.id}</div>
       <div className="rcp-graph-node__kind">{n.kind}</div>
