@@ -1,20 +1,17 @@
 ---
-id: honey_version
-title: honey version
+id: honey_plugins
+title: honey plugins
 ---
 
-## honey version
+## honey plugins
 
-Print version, commit, date, and logo
-
-```
-honey version [flags]
-```
+List loaded WASM plugins
 
 ### Options
 
 ```
-  -h, --help   help for version
+      --config string   Path to honey YAML (optional; also HONEY_CONFIG or default paths)
+  -h, --help            help for plugins
 ```
 
 ### Options inherited from parent commands
@@ -31,4 +28,5 @@ honey version [flags]
 ### SEE ALSO
 
 * [honey](honey.md)	 - DevOps tool to help find an instance in sea of clouds
+* [honey plugins list](honey_plugins_list.md)	 - Show plugin id, capabilities, and path
 

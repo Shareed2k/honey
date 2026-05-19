@@ -1,0 +1,10 @@
+# Consul: HTTP API; add token when ACLs are enabled.
+# Docs: website/docs/providers/consul.md
+# Verify: honey search --config examples/config/consul.yaml --provider consul -o json
+version: 1
+backends:
+  consul:
+    - name: consul-prod
+      addr: "http://127.0.0.1:8500"
+      # datacenter: dc1
+      # token: "REPLACE_ME"

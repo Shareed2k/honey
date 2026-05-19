@@ -62,6 +62,7 @@ type Backends struct {
 	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes" honey:"label=Kubernetes;order=30" validate:"dive"`
 	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40" validate:"dive"`
 	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50" validate:"dive"`
+	TrueNAS    []TrueNASBackend    `yaml:"truenas" json:"truenas" honey:"label=TrueNAS;order=55" validate:"dive"`
 	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60" validate:"dive"`
 	Docker     []DockerBackend     `yaml:"docker" json:"docker" honey:"label=Docker;order=35" validate:"dive"`
 }
@@ -128,6 +129,19 @@ type ProxmoxBackend struct {
 	Insecure       bool           `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
 	ExecMode       string         `yaml:"exec_mode" json:"exec_mode" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
+}
+
+// TrueNASBackend configures one TrueNAS SCALE controller (WebSocket API 25.04+).
+type TrueNASBackend struct {
+	Name             string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
+	URL              string `yaml:"url" json:"url" honey:"label=URL" validate:"required,url"`
+	Username         string `yaml:"username,omitempty" json:"username,omitempty" honey:"label=API key username (default root)"`
+	APIKey           string `yaml:"api_key" json:"api_key" honey:"label=API key;secret" validate:"required"`
+	Insecure         bool   `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
+	IncludeAppliance *bool  `yaml:"include_appliance,omitempty" json:"include_appliance,omitempty" honey:"label=List appliance;default=true"`
+	IncludeVMs       *bool  `yaml:"include_vms,omitempty" json:"include_vms,omitempty" honey:"label=List KVM VMs;default=true"`
+	IncludeVirt      *bool  `yaml:"include_virt,omitempty" json:"include_virt,omitempty" honey:"label=List virt instances;default=true"`
+	SSHUser          string `yaml:"ssh_user,omitempty" json:"ssh_user,omitempty" honey:"label=SSH user for appliance"`
 }
 
 // DockerViaSSH configures an explicit SSH hop for Honey's SSH stack (not Moby ssh://).

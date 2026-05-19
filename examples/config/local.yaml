@@ -1,0 +1,12 @@
+# Local: static host list; no API auth.
+# Docs: website/docs/providers/local.md
+# Verify: honey search --config examples/config/local.yaml --provider local -o json
+version: 1
+backends:
+  local:
+    - name: lab
+      hosts:
+        - name: web1
+          primary_ip: 10.0.0.10
+        - name: db1
+          primary_ip: 10.0.0.11

@@ -29,8 +29,6 @@ ANSIBLE_INVENTORY_PLUGINS to that directory and use a plugin YAML with -i, or us
 honey inventory [name] [flags]
 ```
 
-Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) uses the same **global** flags as `honey search` (see **Global Flags** in `honey inventory --help`). Default cache TTL is **10 minutes** unless overridden by `defaults.cache_ttl` in honey YAML.
-
 ### Options
 
 ```
@@ -42,6 +40,13 @@ Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) u
       --consul-addr string            Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)
       --consul-datacenter string      Consul datacenter
       --consul-token string           Consul ACL token (or CONSUL_HTTP_TOKEN)
+      --docker-all                    Include stopped containers in docker search
+      --docker-host string            Docker host (unix://, tcp://, ssh://; default: DOCKER_HOST / local socket)
+      --docker-mode string            Docker search mode: containers, swarm, or both (default "containers")
+      --docker-platform string        Remote Docker host OS: linux or windows (default "linux")
+      --docker-socket string          Remote Docker socket (default /var/run/docker.sock on linux)
+      --docker-via-local string       Docker via Honey SSH: backends.local name
+      --docker-via-ssh-host string    Docker via Honey SSH: explicit host
       --gcp-project string            GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)
       --gcp-zone string               Limit GCP to a single zone (default: all zones)
   -h, --help                          help for inventory
@@ -56,18 +61,22 @@ Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) u
       --name-regex string             Regex filter on name (overrides --name substring)
       --no-ui                         Skip interactive UI (same as --output=json)
   -o, --output string                 Output format: tui, table, json (default "tui")
-      --provider string               Comma-separated: gcp,aws,k8s,consul,proxmox (default: all)
+      --provider string               Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)
       --proxmox-insecure              Skip TLS verification for Proxmox
       --proxmox-password string       Proxmox password
       --proxmox-token-id string       Proxmox token ID (e.g. root@pam!token)
       --proxmox-token-secret string   Proxmox token secret
       --proxmox-url string            Proxmox API URL (e.g. https://10.0.0.1:8006/api2/json)
       --proxmox-user string           Proxmox user (e.g. root@pam)
-      --ssh-user string               Default SSH user for connect actions (default "shareed2k")
+      --ssh-user string               Default SSH user for connect actions (defaults to config or OS user)
       --strip-prefix                  Remove 'honey_' prefix from Ansible groups and host variables
+      --truenas-api-key string        TrueNAS API key (or TRUENAS_API_KEY)
+      --truenas-insecure              Skip TLS verification for TrueNAS
+      --truenas-url string            TrueNAS SCALE URL (https://host or wss://host/api/current)
+      --truenas-user string           TrueNAS API key username (default root)
 ```
 
-### Global flags
+### Options inherited from parent commands
 
 ```
       --cache-dir string     Override cache directory (default: XDG_CACHE_HOME/honey)

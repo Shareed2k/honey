@@ -33,7 +33,9 @@ Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox
 * [honey cue-validate](honey_cue-validate.md)	 - Validate a CUE remote recipe (commands and/or SFTP put/get steps)
 * [honey inventory](honey_inventory.md)	 - Print Ansible-compatible JSON dynamic inventory from the same search as honey search
 * [honey mcp](honey_mcp.md)	 - Run the Model Context Protocol (stdio) server
+* [honey plugins](honey_plugins.md)	 - List loaded WASM plugins
 * [honey search](honey_search.md)	 - Search instances across providers in parallel
+* [honey secrets](honey_secrets.md)	 - Encrypt and decrypt recipe secure:v1 secret refs
 * [honey version](honey_version.md)	 - Print version, commit, date, and logo
 * [honey web](honey_web.md)	 - Start embedded web UI (loopback + token) for backends, search, config, SSH terminal, and uploads
 

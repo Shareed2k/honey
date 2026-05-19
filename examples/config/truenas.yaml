@@ -1,0 +1,17 @@
+# TrueNAS SCALE 25.04+: API key (UI → Credentials → API Keys).
+# Docs: website/docs/providers/truenas.md
+# Verify: honey search --config examples/config/truenas.yaml --provider truenas -o json
+version: 1
+defaults:
+  ssh_user: root
+backends:
+  truenas:
+    - name: lab-nas
+      url: https://truenas.example.com
+      username: root
+      api_key: "1-REPLACE_ME"
+      insecure: false
+      include_appliance: true
+      include_vms: true
+      include_virt: true
+      ssh_user: root

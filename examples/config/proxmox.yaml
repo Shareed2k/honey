@@ -1,0 +1,12 @@
+# Proxmox: API URL + token (or user/password). VM read role e.g. PVEVMRO.
+# Docs: website/docs/providers/proxmox.md
+# Verify: honey search --config examples/config/proxmox.yaml --provider proxmox -o json
+version: 1
+backends:
+  proxmox:
+    - name: pve-home
+      url: "https://10.0.0.10:8006/api2/json"
+      token_id: "root@pam!honey"
+      token_secret: "REPLACE_ME"
+      insecure: true
+      exec_mode: ssh
