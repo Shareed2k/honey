@@ -65,6 +65,23 @@ func (s *StepResultStore) RecordHost(stepID, hostName string, r HostStepResult) 
 	s.byStep[stepID][hostName] = r
 }
 
+// FirstStdout returns the first non-empty stdout captured for stepID across any host.
+func (s *StepResultStore) FirstStdout(stepID string) (string, bool) {
+	if s == nil || s.byStep == nil {
+		return "", false
+	}
+	m := s.byStep[strings.TrimSpace(stepID)]
+	if m == nil {
+		return "", false
+	}
+	for _, r := range m {
+		if strings.TrimSpace(r.Stdout) != "" {
+			return r.Stdout, true
+		}
+	}
+	return "", false
+}
+
 // Get returns captured stdout for stepID and hostName.
 func (s *StepResultStore) Get(stepID, hostName string) (string, bool) {
 	if s == nil || s.byStep == nil {

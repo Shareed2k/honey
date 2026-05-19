@@ -24,7 +24,7 @@ func TestMergeEnvFromInto_dryRun(t *testing.T) {
 		}},
 	}
 	dst := map[string]string{}
-	if err := MergeEnvFromInto(dst, step, nil, "h1", true); err != nil {
+	if err := MergeEnvFromInto(dst, step, nil, nil, "h1", true); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(dst["TAG"], "fetch") {
@@ -40,7 +40,7 @@ func TestMergeEnvFromInto_missingStdout(t *testing.T) {
 			Map:  map[string]string{"TAG": "stdout"},
 		}},
 	}
-	err := MergeEnvFromInto(map[string]string{}, step, NewStepOutputStore(), "h1", false)
+	err := MergeEnvFromInto(map[string]string{}, step, NewStepOutputStore(), nil, "h1", false)
 	if err == nil || !strings.Contains(err.Error(), "no stdout") {
 		t.Fatalf("got %v", err)
 	}
@@ -59,11 +59,12 @@ func TestValidateEnvFromRefs_requiresDepends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateEnvFromRefs(1, steps[1], sg); err != nil {
+	producers := templateOutputProducers(steps)
+	if err := validateEnvFromRefs(1, steps[1], sg, producers); err != nil {
 		t.Fatal(err)
 	}
 	steps[1].Depends = nil
-	if err := validateEnvFromRefs(1, steps[1], sg); err == nil {
+	if err := validateEnvFromRefs(1, steps[1], sg, producers); err == nil {
 		t.Fatal("expected depends error")
 	}
 }

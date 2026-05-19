@@ -1,5 +1,15 @@
 package cuetry
 
+// RecipeHasTemplateStep reports whether any step uses template rendering.
+func RecipeHasTemplateStep(r Recipe) bool {
+	for _, s := range r.Steps {
+		if s.Template != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // RecipeHasKVTunnel reports whether any step in the recipe uses kv_tunnel.
 func RecipeHasKVTunnel(r Recipe) bool {
 	for _, s := range r.Steps {

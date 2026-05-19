@@ -130,6 +130,18 @@ export type ParsedRecipe = {
   steps: ParsedRecipeStep[];
 };
 
+export type ParsedRecipeEnvFrom = {
+  step?: string;
+  from_output?: string;
+  map: Record<string, string>;
+};
+
+export type ParsedRecipeStepTemplate = {
+  template: string;
+  data?: Record<string, unknown>;
+  output?: string;
+};
+
 export type ParsedRecipeStep = {
   id?: string;
   depends?: string[];
@@ -137,11 +149,12 @@ export type ParsedRecipeStep = {
   command?: string;
   script?: { body?: string; path?: string; local?: string; remote?: string };
   ai?: { model?: string; prompt?: string };
+  template?: ParsedRecipeStepTemplate;
   run_as?: string;
   env?: Record<string, string>;
   max_parallel?: number;
   kv_tunnel?: boolean;
-  env_from?: { step: string; map: Record<string, string> }[];
+  env_from?: ParsedRecipeEnvFrom[];
   when?: string;
   hooks?: { on_success?: ParsedRecipeStep; on_failure?: ParsedRecipeStep };
   // Step kinds that v1 does NOT support editing — preserved verbatim by the form.
