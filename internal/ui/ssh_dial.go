@@ -15,6 +15,7 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/pvelxc"
 	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/truenasshell"
 )
 
 func init() {
@@ -29,13 +30,16 @@ func init() {
 	})
 }
 
-// RunTerminalInteractive opens an interactive session (SSH, K8s, or Proxmox) on os.Stdin/Stdout.
-func RunTerminalInteractive(user string, r hosts.Record) error {
+// RunTerminalInteractive opens an interactive session (SSH, K8s, Docker, TrueNAS API shell, or Proxmox) on os.Stdin/Stdout.
+func RunTerminalInteractive(user string, r hosts.Record, console string) error {
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
 		return runK8sInteractiveWithRecorder(user, r, nil)
 	}
 	if hosts.IsDockerRecord(r) {
 		return runDockerInteractiveWithRecorder(user, r, nil)
+	}
+	if truenasshell.ShouldUseTrueNASShell(r, console) {
+		return runTrueNASShellInteractive(context.Background(), console, r, nil)
 	}
 	return runSSHInteractive(user, r, nil)
 }

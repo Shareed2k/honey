@@ -80,7 +80,11 @@ func (t *TrueNAS) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, er
 		}
 	}
 	if t.IncludeVMs {
-		recs, err := searchVMs(ctx, client, q)
+		virtByName, err := virtInstanceNameIndex(ctx, client)
+		if err != nil {
+			return nil, err
+		}
+		recs, err := searchVMs(ctx, client, q, virtByName)
 		if err != nil {
 			return nil, err
 		}
@@ -155,7 +159,23 @@ type vmRow struct {
 	State string `json:"state"`
 }
 
-func searchVMs(ctx context.Context, client *Client, q hosts.Query) ([]hosts.Record, error) {
+func virtInstanceNameIndex(ctx context.Context, client *Client) (map[string]string, error) {
+	var rows []virtRow
+	if err := client.Call(ctx, "virt.instance.query", nil, &rows); err != nil {
+		return nil, fmt.Errorf("truenas virt.instance.query: %w", err)
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		name := strings.TrimSpace(row.Name)
+		id := strings.TrimSpace(row.ID)
+		if name != "" && id != "" {
+			out[name] = id
+		}
+	}
+	return out, nil
+}
+
+func searchVMs(ctx context.Context, client *Client, q hosts.Query, virtByName map[string]string) ([]hosts.Record, error) {
 	var rows []vmRow
 	if err := client.Call(ctx, "vm.query", nil, &rows); err != nil {
 		return nil, fmt.Errorf("truenas vm.query: %w", err)
@@ -182,6 +202,11 @@ func searchVMs(ctx context.Context, client *Client, q hosts.Query) ([]hosts.Reco
 			"vm_id":  fmt.Sprintf("%d", row.ID),
 			"state":  strings.TrimSpace(row.State),
 			"status": strings.TrimSpace(row.State),
+		}
+		if virtByName != nil {
+			if vid, ok := virtByName[name]; ok {
+				meta["virt_instance_id"] = vid
+			}
 		}
 		out = append(out, hosts.Record{
 			Provider: "truenas",

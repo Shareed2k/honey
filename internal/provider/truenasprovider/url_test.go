@@ -10,9 +10,11 @@ func TestNormalizeWSURL(t *testing.T) {
 		wantHost string
 	}{
 		{"https://nas.example.com", false, "wss://nas.example.com/api/current", "nas.example.com"},
-		{"http://10.0.0.5", true, "ws://10.0.0.5/api/current", "10.0.0.5"},
+		{"http://10.0.0.5", true, "wss://10.0.0.5/api/current", "10.0.0.5"},
+		{"http://192.168.88.79", true, "wss://192.168.88.79/api/current", "192.168.88.79"},
 		{"wss://nas.example.com/api/current", false, "wss://nas.example.com/api/current", "nas.example.com"},
 		{"10.0.0.8:443", false, "wss://10.0.0.8:443/api/current", "10.0.0.8"},
+		{"192.168.88.79", true, "wss://192.168.88.79/api/current", "192.168.88.79"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {

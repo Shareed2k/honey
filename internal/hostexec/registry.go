@@ -56,9 +56,19 @@ type ProxmoxBackendRuntime struct {
 	Insecure bool
 }
 
+// TrueNASBackendRuntime holds in-memory TrueNAS API credentials (never put secrets in hosts.Record JSON).
+type TrueNASBackendRuntime struct {
+	Name     string
+	URL      string
+	Username string
+	APIKey   string
+	Insecure bool
+}
+
 var (
 	regMu            sync.RWMutex
 	proxmoxBack      []ProxmoxBackendRuntime
+	truenasBack      []TrueNASBackendRuntime
 	dockerBack       []DockerBackendRuntime
 	configuredLocals []config.LocalBackend
 
@@ -158,6 +168,7 @@ func ReconfigureFromHoneyConfig(cfg *config.File) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	proxmoxBack = proxmoxBack[:0]
+	truenasBack = truenasBack[:0]
 	dockerBack = dockerBack[:0]
 	configuredLocals = nil
 	if cfg == nil {
@@ -205,6 +216,34 @@ func ReconfigureFromHoneyConfig(cfg *config.File) {
 			Insecure: e.Insecure,
 		})
 	}
+	for _, e := range cfg.Backends.TrueNAS {
+		truenasBack = append(truenasBack, TrueNASBackendRuntime{
+			Name:     strings.TrimSpace(e.Name),
+			URL:      strings.TrimSpace(e.URL),
+			Username: strings.TrimSpace(e.Username),
+			APIKey:   strings.TrimSpace(e.APIKey),
+			Insecure: e.Insecure,
+		})
+	}
+}
+
+// TrueNASBackendByName returns API runtime config for a named TrueNAS backend (empty name matches first entry).
+func TrueNASBackendByName(name string) (TrueNASBackendRuntime, bool) {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	name = strings.TrimSpace(name)
+	if len(truenasBack) == 0 {
+		return TrueNASBackendRuntime{}, false
+	}
+	if name == "" {
+		return truenasBack[0], true
+	}
+	for _, b := range truenasBack {
+		if b.Name == name {
+			return b, true
+		}
+	}
+	return TrueNASBackendRuntime{}, false
 }
 
 // ProxmoxBackendByName returns API runtime config for a named Proxmox backend (empty name matches first entry).

@@ -20,6 +20,8 @@ type NovncRfbHandle = {
 
 export type PveConsoleMode = 'serial' | 'vnc';
 
+export type TrueNASConsoleMode = 'ssh' | 'api';
+
 type SessionProps = {
   sessionId: string;
   record: HostRecord;
@@ -27,13 +29,16 @@ type SessionProps = {
   recordSession: boolean;
   assistAvailable?: boolean;
   pveConsole?: PveConsoleMode;
+  truenasConsole?: TrueNASConsoleMode;
   isActive: boolean;
+  registerCloseTabSender?: (id: string, sender: (() => void) | null) => void;
 };
 
 export type TerminalSessionConfig = {
   id: string;
   record: HostRecord;
   pve: PveConsoleMode;
+  truenasConsole?: TrueNASConsoleMode;
 };
 
 type TabsProps = {
@@ -58,6 +63,10 @@ function isProxmoxPveSerialConsole(r: HostRecord): boolean {
   return r.provider === 'proxmox' && (k === 'lxc' || k === 'qemu') && (m === 'pve' || m === 'hybrid');
 }
 
+function isTrueNASAPIShellSession(r: HostRecord, mode: TrueNASConsoleMode): boolean {
+  return r.provider === 'truenas' && mode === 'api';
+}
+
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
 function collectScrollback(term: Terminal, maxLines: number): string {
@@ -80,12 +89,15 @@ function TerminalSession({
   recordSession,
   assistAvailable,
   pveConsole = 'serial',
+  truenasConsole = 'ssh',
   isActive,
+  registerCloseTabSender,
 }: SessionProps) {
   const ref = useRef<HTMLDivElement>(null);
   const vncHostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const rfbRef = useRef<NovncRfbHandle | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const [showConnectOverlay, setShowConnectOverlay] = useState(true);
 
   const [assistPrompt, setAssistPrompt] = useState('');
@@ -240,21 +252,24 @@ function TerminalSession({
     const u = new URL(`/ws/ssh?token=${encodeURIComponent(token)}`, window.location.href);
     u.protocol = proto;
     const ws = new WebSocket(u.toString());
+    wsRef.current = ws;
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       fit.fit();
       const cols = term.cols;
       const rows = term.rows;
-      ws.send(
-        JSON.stringify({
-          session_id: sessionId,
-          ssh_user: sshUser,
-          record,
-          cols,
-          rows,
-          record_session: recordSession,
-        }),
-      );
+      const hello: Record<string, unknown> = {
+        session_id: sessionId,
+        ssh_user: sshUser,
+        record,
+        cols,
+        rows,
+        record_session: recordSession,
+      };
+      if (truenasConsole === 'api') {
+        hello.console = 'truenas_api';
+      }
+      ws.send(JSON.stringify(hello));
       requestAnimationFrame(() => {
         fit.fit();
         if (ws.readyState === WebSocket.OPEN) {
@@ -330,16 +345,24 @@ function TerminalSession({
     };
     window.addEventListener('resize', onResize);
 
+    registerCloseTabSender?.(sessionId, () => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'close_tab' }));
+      }
+    });
+
     return () => {
+      registerCloseTabSender?.(sessionId, null);
       if (fallbackTimer !== undefined) {
         clearTimeout(fallbackTimer);
       }
       window.removeEventListener('resize', onResize);
+      wsRef.current = null;
       ws.close();
       term.dispose();
       termRef.current = null;
     };
-  }, [assistAvailable, isVnc, record, recordSession, sshUser, sessionId, isActive]);
+  }, [assistAvailable, isVnc, record, recordSession, registerCloseTabSender, sshUser, sessionId, isActive, truenasConsole]);
 
   // Refit terminal when it becomes active
   useEffect(() => {
@@ -591,7 +614,16 @@ export function TerminalTabsModal({
   onCloseModal,
 }: TabsProps) {
   const [isMaximized, setIsMaximized] = useState(false);
-  
+
+  const closeTabSendersRef = useRef(new Map<string, () => void>());
+  const registerCloseTabSender = useCallback((id: string, sender: (() => void) | null) => {
+    if (sender) {
+      closeTabSendersRef.current.set(id, sender);
+    } else {
+      closeTabSendersRef.current.delete(id);
+    }
+  }, []);
+
   const tabsRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -668,7 +700,7 @@ export function TerminalTabsModal({
                   key={t.id}
                   className={`terminal-tab ${t.id === activeTermId ? 'active' : ''}`}
                   onClick={() => onSetActive(t.id)}
-                  title={`${t.record.name} (${t.pve})`}
+                  title={`${t.record.name} (${t.truenasConsole === 'api' ? 'truenas-api' : t.pve})`}
                 >
                   <span className="terminal-tab-title">{t.record.name}</span>
                   <button
@@ -676,7 +708,14 @@ export function TerminalTabsModal({
                     className="terminal-tab-close"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onCloseTerminal(t.id);
+                      const sendClose = closeTabSendersRef.current.get(t.id);
+                      if (sendClose) {
+                        sendClose();
+                        // Let the close_tab frame flush before unmount closes the WebSocket.
+                        window.setTimeout(() => onCloseTerminal(t.id), 50);
+                      } else {
+                        onCloseTerminal(t.id);
+                      }
                     }}
                     title="Close Terminal"
                   >
@@ -712,6 +751,11 @@ export function TerminalTabsModal({
             <kbd>exit</kbd> may immediately open a new shell — that is normal on the guest.
           </p>
         ) : null}
+        {isTrueNASAPIShellSession(activeTerm.record, activeTerm.truenasConsole ?? 'ssh') && !isVnc ? (
+          <p className="term-pve-hint" style={{ margin: '0.35rem 1rem', fontSize: '0.82rem', color: '#9aa4b2', flexShrink: 0 }}>
+            TrueNAS API shell: use <kbd>Ctrl+]</kbd> to disconnect. Requires Web Shell privilege for the API key user.
+          </p>
+        ) : null}
 
         <div className="modal-terminal-sessions-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0.5rem' }}>
           {terminals.map((t) => (
@@ -723,7 +767,9 @@ export function TerminalTabsModal({
               recordSession={recordSession}
               assistAvailable={assistAvailable}
               pveConsole={t.pve}
+              truenasConsole={t.truenasConsole ?? 'ssh'}
               isActive={t.id === activeTermId}
+              registerCloseTabSender={registerCloseTabSender}
             />
           ))}
         </div>

@@ -8,18 +8,21 @@ import (
 
 const apiCurrentPath = "/api/current"
 
-// normalizeWSURL converts a user URL (https://host, wss://host/api/current) into a WebSocket dial URL.
+// NormalizeWSURL converts a user URL (https://host, http://host) into a WSS dial URL for /api/current.
+func NormalizeWSURL(raw string, insecure bool) (wsURL string, host string, err error) {
+	return normalizeWSURL(raw, insecure)
+}
+
+// normalizeWSURL converts a user URL (https://host, http://host) into a WSS dial URL.
+// TrueNAS requires TLS for API key auth; insecure only skips certificate verification in the client.
 func normalizeWSURL(raw string, insecure bool) (wsURL string, host string, err error) {
+	_ = insecure // reserved for TLS verify in NewClient; URL always uses wss for API keys
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", "", fmt.Errorf("truenas url is empty")
 	}
 	if !strings.Contains(raw, "://") {
-		if insecure {
-			raw = "http://" + raw
-		} else {
-			raw = "https://" + raw
-		}
+		raw = "https://" + raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -29,12 +32,9 @@ func normalizeWSURL(raw string, insecure bool) (wsURL string, host string, err e
 		return "", "", fmt.Errorf("truenas url: missing host")
 	}
 
-	scheme := strings.ToLower(u.Scheme)
-	switch scheme {
-	case "https", "wss":
+	switch strings.ToLower(u.Scheme) {
+	case "https", "wss", "http", "ws":
 		u.Scheme = "wss"
-	case "http", "ws":
-		u.Scheme = "ws"
 	default:
 		return "", "", fmt.Errorf("truenas url: unsupported scheme %q", u.Scheme)
 	}

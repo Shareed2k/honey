@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gorilla/websocket"
@@ -14,7 +13,7 @@ import (
 
 func TestSearchApplianceAndVirt(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -48,12 +47,12 @@ func TestSearchApplianceAndVirt(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/current"
 	b := &TrueNAS{
 		Name:             "lab",
-		URL:              wsURL,
+		URL:              srv.URL,
 		Username:         "root",
 		APIKey:           "1-test",
+		Insecure:         true,
 		IncludeAppliance: true,
 		IncludeVMs:       true,
 		IncludeVirt:      true,

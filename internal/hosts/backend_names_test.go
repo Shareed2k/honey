@@ -51,3 +51,43 @@ func TestFilterBackendsByNames(t *testing.T) {
 		t.Fatal("nil want should keep all")
 	}
 }
+
+func TestFilterBackendsByNamesKindName(t *testing.T) {
+	t.Parallel()
+	provs := []Backend{
+		stubBackend{id: "truenas", name: "prod"},
+		stubBackend{id: "proxmox", name: "prod"},
+		stubBackend{id: "k8s", name: "prod"},
+	}
+	out := FilterBackendsByNames(provs, []string{"truenas:prod"})
+	if len(out) != 1 {
+		t.Fatalf("len %d, want 1", len(out))
+	}
+	if out[0].(stubBackend).id != "truenas" {
+		t.Fatalf("got %#v", out[0])
+	}
+	out = FilterBackendsByNames(provs, []string{"proxmox:prod"})
+	if len(out) != 1 || out[0].(stubBackend).id != "proxmox" {
+		t.Fatalf("proxmox: %#v", out)
+	}
+	out = FilterBackendsByNames(provs, []string{"kubernetes:prod"})
+	if len(out) != 1 || out[0].(stubBackend).id != "k8s" {
+		t.Fatalf("kubernetes: %#v", out)
+	}
+	out = FilterBackendsByNames(provs, []string{"k8s:prod"})
+	if len(out) != 1 || out[0].(stubBackend).id != "k8s" {
+		t.Fatalf("k8s: %#v", out)
+	}
+}
+
+func TestFilterBackendsByNamesLegacyNameOnly(t *testing.T) {
+	t.Parallel()
+	provs := []Backend{
+		stubBackend{id: "truenas", name: "prod"},
+		stubBackend{id: "proxmox", name: "prod"},
+	}
+	out := FilterBackendsByNames(provs, []string{"prod"})
+	if len(out) != 2 {
+		t.Fatalf("legacy name-only should match both: len %d", len(out))
+	}
+}
