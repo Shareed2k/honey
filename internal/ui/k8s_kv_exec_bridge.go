@@ -213,21 +213,69 @@ func runHkvBridgeLoop(ctx context.Context, prOut io.Reader, pwIn io.Writer, dial
 }
 
 func readReadyLine(br *bufio.Reader) (int, error) {
-	line, err := br.ReadString('\n')
-	if err != nil {
-		return 0, fmt.Errorf("kv bridge: read READY: %w", err)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			return 0, fmt.Errorf("kv bridge: read READY: %w", err)
+		}
+		if port, ok := parseReadyPort(line); ok {
+			return port, nil
+		}
 	}
-	line = strings.TrimSpace(line)
-	const pfx = "READY "
-	if !strings.HasPrefix(line, pfx) {
-		return 0, fmt.Errorf("kv bridge: bad READY line %q", line)
+}
+
+const readyLinePrefix = "READY "
+
+// stripKVBridgeLine removes common terminal escape sequences from a PTY line.
+func stripKVBridgeLine(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\x1b' {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		if i >= len(s) {
+			break
+		}
+		switch s[i] {
+		case '[':
+			i++
+			for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == ';' || s[i] == '?') {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+		case ']':
+			i++
+			for i < len(s) && s[i] != '\x07' {
+				i++
+			}
+		default:
+			b.WriteByte('\x1b')
+			b.WriteByte(s[i])
+		}
 	}
-	portStr := strings.TrimSpace(strings.TrimPrefix(line, pfx))
+	return strings.TrimSpace(b.String())
+}
+
+func parseReadyPort(line string) (int, bool) {
+	line = stripKVBridgeLine(line)
+	idx := strings.Index(line, readyLinePrefix)
+	if idx < 0 {
+		return 0, false
+	}
+	portStr := strings.TrimSpace(line[idx+len(readyLinePrefix):])
+	if end := strings.IndexFunc(portStr, func(r rune) bool { return r < '0' || r > '9' }); end >= 0 {
+		portStr = portStr[:end]
+	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port <= 0 || port > 65535 {
-		return 0, fmt.Errorf("kv bridge: bad READY port %q", portStr)
+		return 0, false
 	}
-	return port, nil
+	return port, true
 }
 
 func dispatchHkvFrame(ctx context.Context, connsMu *sync.Mutex, conns map[uint32]*hkvConn, closedByUs map[uint32]struct{}, stdinMu *sync.Mutex, pwIn io.Writer, dialAddr string, typ hkvFrameKind, cid uint32, payload []byte, fail func(error)) {

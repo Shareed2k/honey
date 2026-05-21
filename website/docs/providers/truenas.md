@@ -91,6 +91,8 @@ The usual **Terminal** button still uses **SSH** when `primary_ip` is set. API s
 
 When the honey web server host has **tmux** or **zellij**, API shell tabs support the same session reattach on browser refresh as SSH terminals (local pty-proxy). Closing a tab with the **×** button ends the background session; refreshing the page reattaches while the tab stays open. The modal **Close** button only hides the window; use **×** on each tab to end sessions, or the floating **Open Terminals** button to reopen.
 
+In the **`honey search` TUI**, **Enter** on a TrueNAS row opens the API shell (same targets as the web API shell button). Press **`s`** on a TrueNAS row with `primary_ip` set to SSH to the management IP (same as the web **Terminal** button). Parallel command (**`e`**) and CUE recipes (**`r`**) run commands through the API shell on TrueNAS rows (not SSH). With **`kv_tunnel`**, an **appliance** with `primary_ip` prefers an SSH remote-forward to stepkv when SSH dial succeeds; if SSH is unavailable, honey falls back to the same in-shell Python bridge used for guests. **Virt instances** and **VMs** always use that API-shell bridge (same `HONEY_KV_URL` / `HONEY_KV_TOKEN` env vars as other providers).
+
 Protocol reference: [truenas/middleware `webshell_app.py`](https://github.com/truenas/middleware/blob/master/src/middlewared/middlewared/apps/webshell_app.py).
 
 ## Notes

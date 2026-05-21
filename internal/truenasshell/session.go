@@ -76,11 +76,30 @@ func (s *Session) Resize(cols, rows int) error {
 
 // ReadMessage reads the next message from the shell websocket.
 func (s *Session) ReadMessage() (messageType int, p []byte, err error) {
-	return s.shell.ReadMessage()
+	s.mu.Lock()
+	conn := s.shell
+	s.mu.Unlock()
+	if conn == nil {
+		return 0, nil, fmt.Errorf("truenas shell connection closed")
+	}
+	return conn.ReadMessage()
 }
 
-// Close closes shell and API connections.
+// SetReadDeadline sets the read deadline on the shell websocket.
+func (s *Session) SetReadDeadline(t time.Time) error {
+	s.mu.Lock()
+	conn := s.shell
+	s.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("truenas shell connection closed")
+	}
+	return conn.SetReadDeadline(t)
+}
+
+// Close closes shell and API connections. Safe to call more than once.
 func (s *Session) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var err error
 	if s.shell != nil {
 		err = s.shell.Close()

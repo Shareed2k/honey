@@ -14,6 +14,11 @@ type virtInstanceRow struct {
 	Name string `json:"name"`
 }
 
+// RecordSupportsAPIShell reports whether rec has the metadata shape for TrueNAS /websocket/shell.
+func RecordSupportsAPIShell(rec hosts.Record) bool {
+	return hosts.IsTrueNASAPIShellRecord(rec)
+}
+
 // shellOptionsSupported reports whether rec can use TrueNAS /websocket/shell (before API resolve).
 func shellOptionsSupported(rec hosts.Record) error {
 	kind := strings.ToLower(strings.TrimSpace(rec.Meta["kind"]))

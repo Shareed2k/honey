@@ -26,10 +26,35 @@ func IsDockerRecord(r Record) bool {
 	return strings.TrimSpace(r.Meta["container_id"]) != ""
 }
 
+// IsTrueNASAPIShellRecord reports whether r is a TrueNAS row that can use /websocket/shell
+// (shape only; backend config is checked at runtime).
+func IsTrueNASAPIShellRecord(r Record) bool {
+	if r.Provider != "truenas" {
+		return false
+	}
+	kind := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
+	switch kind {
+	case "appliance":
+		return true
+	case "virt_instance":
+		return strings.TrimSpace(r.Meta["id"]) != ""
+	case "vm":
+		if strings.TrimSpace(r.Meta["virt_instance_id"]) != "" {
+			return true
+		}
+		return strings.TrimSpace(r.Name) != ""
+	default:
+		return false
+	}
+}
+
 // IsConnectableRecord reports whether honey can exec, upload, or open a terminal on r.
 func IsConnectableRecord(r Record) bool {
 	if IsDockerRecord(r) {
 		return strings.TrimSpace(r.Meta["container_id"]) != ""
+	}
+	if IsTrueNASAPIShellRecord(r) {
+		return true
 	}
 	if strings.TrimSpace(r.PrimaryIP) != "" {
 		return true

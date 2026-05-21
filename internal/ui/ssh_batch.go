@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/truenasshell"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -84,7 +86,12 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kv
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := runOneRemoteSSH(user, r, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+			var res HostExecResult
+			if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
+				res = runOneRemoteTrueNAS(ctx, user, r, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+			} else {
+				res = runOneRemoteSSH(user, r, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+			}
 			if post != nil {
 				post(ctx, r, &res)
 			}
@@ -123,6 +130,57 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hos
 		out = append(out, res)
 	}
 	return out, nil
+}
+
+func runOneRemoteTrueNAS(ctx context.Context, user string, r hosts.Record, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
+	res := HostExecResult{
+		Name:     r.Name,
+		IP:       r.PrimaryIP,
+		Provider: r.Provider,
+	}
+	if !truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
+		res.Success = false
+		res.ErrMsg = "truenas api shell not available for this record"
+		return res
+	}
+	b, ok := hostexec.TrueNASBackendByName(r.Meta["backend_name"])
+	if !ok {
+		res.Success = false
+		res.ErrMsg = "truenas backend not configured"
+		return res
+	}
+	var kv map[string]string
+	var stopKV func()
+	if kvTunnel {
+		var kvErr error
+		kv, stopKV, kvErr = attachTrueNASKVTunnel(ctx, user, r, kvTunnel, recipeScopedKV, recipeKV, cache)
+		if kvErr != nil {
+			res.Success = false
+			res.ErrMsg = "kv_tunnel: " + kvErr.Error()
+			return res
+		}
+		if stopKV != nil {
+			defer stopKV()
+		}
+	}
+	remoteCmd := strings.TrimSpace(cmd(r, kv))
+	if remoteCmd == "" {
+		res.Success = true
+		return res
+	}
+	out, code, runErr := truenasshell.RunRemoteCommand(ctx, b, r, remoteCmd)
+	if runErr != nil {
+		res.Success = false
+		res.ErrMsg = runErr.Error()
+		return res
+	}
+	res.Output = strings.TrimSpace(string(out))
+	res.ExitCode = code
+	res.Success = code == 0
+	if code != 0 {
+		res.ErrMsg = fmt.Sprintf("exit %d", code)
+	}
+	return res
 }
 
 func runOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
