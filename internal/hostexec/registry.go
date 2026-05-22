@@ -365,5 +365,8 @@ func ForRecord(r hosts.Record) Executor {
 			return ex
 		}
 	}
+	if TruenasTunnelUsesAPIShell(r) {
+		return truenasAPIShellExecutor
+	}
 	return defaultSSHExecutor
 }

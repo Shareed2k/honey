@@ -95,6 +95,17 @@ In the **`honey search` TUI**, **Enter** on a TrueNAS row opens the API shell (s
 
 Protocol reference: [truenas/middleware `webshell_app.py`](https://github.com/truenas/middleware/blob/master/src/middlewared/middlewared/apps/webshell_app.py).
 
+## Port-forward (Tunnel)
+
+The **Tunnel** action (TUI **`t`**, web **Tunnel** button, **Tunnels** tab) maps a local port to a remote `host:port` the same way as SSH `-L`:
+
+| Row | Transport |
+|-----|-----------|
+| **Appliance** (or any row) with `primary_ip` | SSH to the management IP; remote host is resolved **from the NAS** (e.g. `8080:127.0.0.1:80` reaches a service on the controller). |
+| **Virt instance** / **VM** without `primary_ip` | **API shell** plus an in-guest Python TCP dial bridge: honey listens on `127.0.0.1:<local>` and each connection is dialed inside the guest to `remoteHost:remotePort` (e.g. `8080:127.0.0.1:443` for a service in the container). |
+
+The API-shell tunnel path requires **`python3`** in the guest. Mapping format is `localPort:remoteHost:remotePort` (same as other providers).
+
 ## Notes
 
 - **Virt/LXC-style instances** on SCALE appear under `virt_instance`, not `vm`.

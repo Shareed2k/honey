@@ -48,6 +48,11 @@ func IsTrueNASAPIShellRecord(r Record) bool {
 	}
 }
 
+// PrimaryIPTrimmed returns r.PrimaryIP with surrounding whitespace removed.
+func PrimaryIPTrimmed(r Record) string {
+	return strings.TrimSpace(r.PrimaryIP)
+}
+
 // IsConnectableRecord reports whether honey can exec, upload, or open a terminal on r.
 func IsConnectableRecord(r Record) bool {
 	if IsDockerRecord(r) {

@@ -77,6 +77,20 @@ function canTrueNASAPIShell(rec: HostRecord): boolean {
   return k === 'appliance' || k === 'vm' || k === 'virt_instance';
 }
 
+/** Whether the Tunnel (port-forward) action can run for this search row. */
+function canPortForwardTunnel(rec: HostRecord): boolean {
+  if ((rec.primary_ip || '').trim()) {
+    return true;
+  }
+  if (rec.provider === 'k8s') {
+    return true;
+  }
+  if (rec.provider === 'truenas') {
+    return canTrueNASAPIShell(rec);
+  }
+  return false;
+}
+
 function truenasAPIShellLabel(rec: HostRecord): string {
   const k = (rec.meta?.kind || '').toLowerCase();
   switch (k) {
@@ -1735,7 +1749,17 @@ export function App() {
                   Upload
                 </button>
                 {' '}
-                <button type="button" style={tunnelBtnStyle} onClick={() => openTunnelModal(rec)}>
+                <button
+                  type="button"
+                  style={tunnelBtnStyle}
+                  disabled={!canPortForwardTunnel(rec)}
+                  title={
+                    !canPortForwardTunnel(rec)
+                      ? 'Port-forward requires SSH IP or a TrueNAS API shell target'
+                      : undefined
+                  }
+                  onClick={() => openTunnelModal(rec)}
+                >
                   {tunnelBtnText}
                 </button>
                 {meta?.session_recording_available ? (

@@ -43,4 +43,3 @@ func TestTruenasEnterUsesAPIForExec(t *testing.T) {
 		t.Fatal("expected connectable without IP")
 	}
 }
-

@@ -843,7 +843,7 @@ func (m *model) View() tea.View {
 			}
 			recHint = "   R: record " + recState + "   p: play recording"
 		}
-		help := helpStyle.Render("enter: connect (truenas: API shell)   s: truenas SSH (needs IP)   a: A→cloud→B   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
+		help := helpStyle.Render("enter: connect (truenas: API shell)   s: truenas SSH (needs IP)   a: A→cloud→B   t: tunnel (truenas guest: API forward)   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
@@ -1537,7 +1537,7 @@ func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorde
 }
 
 func runTunnel(user string, r hosts.Record, localFwd string) error {
-	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") {
+	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !CanTrueNASTunnel(r) {
 		return fmt.Errorf("no IP for selected host")
 	}
 	if localFwd == "" || !strings.Contains(localFwd, ":") {
