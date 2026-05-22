@@ -399,9 +399,9 @@ Parallel SSH (**e**), CUE recipes, and **`cue-exec`** share the same in-process 
 
 Per-provider setup (minimal auth, YAML, and CLI flags):
 
-- **Example configs:** [`examples/config/`](examples/config/) (one YAML per provider)
-- **Docs site:** [Providers](https://shareed2k.github.io/honey/providers/) — or [`website/docs/providers/index.md`](website/docs/providers/index.md) in the repo
-- **Quick index:** [GCP](website/docs/providers/gcp.md) · [AWS](website/docs/providers/aws.md) · [Kubernetes](website/docs/providers/kubernetes.md) · [Consul](website/docs/providers/consul.md) · [Proxmox](website/docs/providers/proxmox.md) · [TrueNAS](website/docs/providers/truenas.md) · [Local](website/docs/providers/local.md) · [Docker](website/docs/providers/docker.md)
+- **Example configs:** [`examples/config/`](https://github.com/shareed2k/honey/tree/main/examples/config) (one YAML per provider)
+- **Docs site:** [Providers](https://shareed2k.github.io/honey/providers/) — or [provider docs source](https://github.com/shareed2k/honey/blob/main/website/docs/providers/index.md) in the repo
+- **Quick index:** [GCP](https://shareed2k.github.io/honey/providers/gcp) · [AWS](https://shareed2k.github.io/honey/providers/aws) · [Kubernetes](https://shareed2k.github.io/honey/providers/kubernetes) · [Consul](https://shareed2k.github.io/honey/providers/consul) · [Proxmox](https://shareed2k.github.io/honey/providers/proxmox) · [TrueNAS](https://shareed2k.github.io/honey/providers/truenas) · [Local](https://shareed2k.github.io/honey/providers/local) · [Docker](https://shareed2k.github.io/honey/providers/docker)
 
 | Provider | Search ID | Minimal auth (summary) |
 |----------|-----------|-------------------------|
