@@ -15,14 +15,14 @@ func TestSSHKeyscanCLIPrompt(t *testing.T) {
 }
 
 func TestParseLocalForward(t *testing.T) {
-	lp, rh, rp, err := parseLocalForward("8080:db.internal:5432")
+	lp, rh, rp, err := ParseLocalForward("8080:db.internal:5432")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if lp != "8080" || rh != "db.internal" || rp != "5432" {
 		t.Fatalf("got %q %q %q", lp, rh, rp)
 	}
-	_, _, _, err = parseLocalForward("bad")
+	_, _, _, err = ParseLocalForward("bad")
 	if err == nil {
 		t.Fatal("expected error")
 	}

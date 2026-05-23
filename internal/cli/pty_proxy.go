@@ -9,9 +9,14 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 	"github.com/shareed2k/honey/internal/webserver"
 )
+
+var ptyProxyConfig string
 
 var ptyProxyCmd = &cobra.Command{
 	Use:    "pty-proxy <base64_payload>",
@@ -20,6 +25,11 @@ var ptyProxyCmd = &cobra.Command{
 	Args:   cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		zap.L().Debug("honey pty-proxy invoked")
+
+		if err := loadHostexecFromHoneyConfig(ptyProxyConfig); err != nil {
+			ptyProxyPauseOnError(err)
+			return nil
+		}
 
 		payloadBytes, err := base64.StdEncoding.DecodeString(args[0])
 		if err != nil {
@@ -33,19 +43,25 @@ var ptyProxyCmd = &cobra.Command{
 			return nil
 		}
 
-		zap.L().Debug("honey pty-proxy starting", zap.String("session", hello.SessionID), zap.String("host", hello.Record.Name))
+		zap.L().Debug("honey pty-proxy starting",
+			zap.String("session", hello.SessionID),
+			zap.String("host", hello.Record.Name),
+			zap.String("console", hello.Console),
+		)
+
+		if truenasshell.ShouldUseTrueNASShell(hello.Record, hello.Console) {
+			if _, ok := hostexec.TrueNASBackendByName(hello.Record.Meta["backend_name"]); !ok {
+				ptyProxyPauseOnError(fmt.Errorf("TrueNAS API shell: backend %q not found in config (check --config / HONEY_CONFIG)",
+					hello.Record.Meta["backend_name"]))
+				return nil
+			}
+		}
 
 		// Run Terminal Interactive handles pure SSH, Proxmox Serial, and Kubernetes pods natively
 		// using os.Stdin/Stdout/Stderr and registers for SIGWINCH to handle resizes forwarded by tmux/zellij!
-		err = ui.RunTerminalInteractive(hello.SSHUser, hello.Record)
+		err = ui.RunTerminalInteractive(hello.SSHUser, hello.Record, hello.Console)
 		if err != nil {
-			fmt.Printf("\r\n\033[31m[honey] Connection Error: %v\033[0m\r\n", err)
-
-			// We MUST pause before returning! If we return instantly, tmux will destroy the window
-			// before the browser has a chance to read the error message off the PTY pipe!
-			fmt.Printf("\r\n[honey] Press ENTER to close this terminal...")
-			var b [1]byte
-			_, _ = os.Stdin.Read(b[:])
+			ptyProxyPauseOnError(err)
 		}
 
 		return nil
@@ -53,5 +69,32 @@ var ptyProxyCmd = &cobra.Command{
 }
 
 func init() {
+	ptyProxyCmd.Flags().StringVar(&ptyProxyConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths)")
 	rootCmd.AddCommand(ptyProxyCmd)
+}
+
+func ptyProxyPauseOnError(err error) {
+	fmt.Printf("\r\n\033[31m[honey] Connection Error: %v\033[0m\r\n", err)
+	// Pause before returning so tmux keeps the pane open long enough for the browser to read the PTY.
+	fmt.Printf("\r\n[honey] Press ENTER to close this terminal...")
+	var b [1]byte
+	_, _ = os.Stdin.Read(b[:])
+}
+
+// loadHostexecFromHoneyConfig loads backend credentials into hostexec for pty-proxy subprocesses.
+func loadHostexecFromHoneyConfig(explicit string) error {
+	cfgPath, err := config.ResolvePath(explicit)
+	if err != nil {
+		return err
+	}
+	if cfgPath == "" {
+		hostexec.ReconfigureFromHoneyConfig(nil)
+		return nil
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	hostexec.ReconfigureFromHoneyConfig(cfg)
+	return nil
 }

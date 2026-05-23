@@ -6,6 +6,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/truenasshell"
 )
 
 func TestWebSSHHelloResolvesDefaultSSHUserForPtyProxy(t *testing.T) {
@@ -41,5 +42,29 @@ func TestWebSSHHelloResolvesDefaultSSHUserForPtyProxy(t *testing.T) {
 	}
 	if user != "ops" {
 		t.Fatalf("resolved user = %q, want ops", user)
+	}
+}
+
+func TestShouldUseWebPtyProxy_includesTrueNASAPIConsole(t *testing.T) {
+	hello := WSHello{
+		SessionID: "tab-1",
+		Console:   truenasshell.ConsoleTrueNASAPI,
+		Record: hosts.Record{
+			Provider: "truenas",
+			Name:     "web",
+			Meta: map[string]string{
+				"kind":         "virt_instance",
+				"id":           "abc123",
+				"backend_name": "lab",
+			},
+		},
+	}
+	if !shouldUseWebPtyProxy(hello) {
+		t.Fatal("truenas_api console with session_id should use pty-proxy")
+	}
+
+	hello.SessionID = ""
+	if shouldUseWebPtyProxy(hello) {
+		t.Fatal("expected no pty-proxy without session_id")
 	}
 }

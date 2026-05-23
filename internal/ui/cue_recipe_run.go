@@ -366,7 +366,7 @@ func WriteCueKVTunnelDryLine(out io.Writer, recipe cuetry.Recipe, stepIdx int, s
 		_, _ = fmt.Fprintf(out, "  step %d kv_tunnel: enabled — shared stepkv for the whole graph run (dependency waves order writes; same-wave steps share the session and may race — namespace with HONEY_STEP_ID and HONEY_HOST_NAME); remote env: HONEY_KV_URL, HONEY_KV_TOKEN\n", stepIdx)
 		return
 	}
-	_, _ = fmt.Fprintf(out, "  step %d kv_tunnel: enabled — one operator stepkv for the whole cue-exec (SSH remote-forward per host; kubernetes pods reach the same session via a long-lived exec multiplex; keys shared across steps, SSH hosts, and pods; parallel hosts may race); remote env: HONEY_KV_URL, HONEY_KV_TOKEN (see docs)\n", stepIdx)
+	_, _ = fmt.Fprintf(out, "  step %d kv_tunnel: enabled — one operator stepkv for the whole cue-exec (SSH remote-forward, TrueNAS API shell bridge, or k8s exec multiplex per host; keys shared across steps and hosts; parallel hosts may race); remote env: HONEY_KV_URL, HONEY_KV_TOKEN (see docs)\n", stepIdx)
 }
 
 func streamCueStepCommand(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, cliEnv map[string]string, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, execCache *ClientCache, recipeKV *RecipeKVCoordinator, outputStore *cuetry.StepOutputStore, outputCapture *cuetry.RecipeOutputCapture, secretResolver cuetry.SecretResolver, pluginMgr *plugins.Manager) error {

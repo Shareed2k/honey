@@ -9,7 +9,7 @@ CLI to search **GCP Compute Engine**, **AWS EC2**, **Kubernetes** (nodes or pods
 ## Prerequisites
 
 - Go 1.26.2+ (see `go` directive in `go.mod`; use this toolchain or newer so `govulncheck` reports clean stdlib fixes from Go 1.26.1/1.26.2)
-- Credentials for each backend you enable (see below)
+- Credentials for each backend you enable — see **[Providers](./providers)** for minimal auth and YAML per backend (GCP, AWS, Kubernetes, Consul, Proxmox, TrueNAS, local, Docker)
 
 After cloning, generate checksums:
 

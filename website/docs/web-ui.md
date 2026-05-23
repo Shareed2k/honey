@@ -81,6 +81,7 @@ scrape_configs:
 ### Browser terminal
 
 - WebSocket **`GET /ws/ssh?token=…`**: interactive session to **SSH hosts** (system `ssh` behavior), **Kubernetes pods** (ephemeral exec TTY), and **Docker containers** (Engine API exec attach with terminal resize), aligned with the TUI.
+- When the honey host has **tmux** or **zellij**, each tab uses a local `honey_*` multiplexer session so **browser refresh** can reattach. Closing a tab with **×** ends that background session; refreshing the page keeps it running. The modal **Close** button only hides the terminal window (use the floating **Open Terminals** control to reopen); background sessions keep running until you close each tab with **×**.
 - **Docker rows** must have `provider: docker` and `meta.container_id` (as returned by `honey search --provider docker` or auto-discover). Honey dials the daemon the same way as the CLI (local `DOCKER_HOST`, Moby `ssh://`, or Honey SSH to a VM’s `docker.sock`).
 - Optional **session recording** when `--record-dir` is set; recordings can be listed and replayed from the UI.
 

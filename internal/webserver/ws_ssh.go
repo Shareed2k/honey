@@ -18,6 +18,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
@@ -64,6 +65,7 @@ type WSHello struct {
 	Cols          int          `json:"cols"`
 	Rows          int          `json:"rows"`
 	RecordSession bool         `json:"record_session"`
+	Console       string       `json:"console,omitempty"` // "truenas_api" for TrueNAS /websocket/shell
 }
 
 type wsResize struct {
@@ -118,7 +120,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 
 	if shouldUseWebPtyProxy(hello) {
 		zap.L().Debug("web ssh: session ID provided, attempting pty proxy", zap.String("session_id", hello.SessionID))
-		err := handleWebPtyProxy(conn, helloRaw, hello, recorder)
+		err := handleWebPtyProxy(conn, helloRaw, hello, recorder, s.opts.ConfigPath)
 		if err == nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true}`))
 			return
@@ -150,6 +152,12 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	if isProxmoxSerialWebPVE(hello.Record) {
 		defer s.trackWSConnection("pve_serial")()
 		handleWebProxmoxPVESerialTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
+		return
+	}
+
+	if truenasshell.ShouldUseTrueNASShell(hello.Record, hello.Console) {
+		defer s.trackWSConnection("truenas_shell")()
+		handleWebTrueNASShellTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
 		return
 	}
 
@@ -224,7 +232,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 }
 
 // shouldUseWebPtyProxy reports whether to wrap the session in local tmux/zellij so a
-// browser refresh can re-attach (SSH, Docker, and Kubernetes pods).
+// browser refresh can re-attach (SSH, Docker, Kubernetes pods, and TrueNAS API shells).
 func shouldUseWebPtyProxy(hello WSHello) bool {
 	return strings.TrimSpace(hello.SessionID) != ""
 }

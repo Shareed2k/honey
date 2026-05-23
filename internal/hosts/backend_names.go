@@ -18,25 +18,69 @@ func ParseBackendNames(s string) []string {
 	return out
 }
 
-// FilterBackendsByNames keeps only backends whose BackendName() matches one of want (case-insensitive).
+type backendFilter struct {
+	name string
+	kind string // empty = match any provider kind (legacy name-only token)
+}
+
+func parseBackendFilter(token string) backendFilter {
+	token = strings.TrimSpace(strings.ToLower(token))
+	if i := strings.Index(token, ":"); i >= 0 {
+		return backendFilter{
+			kind: strings.TrimSpace(token[:i]),
+			name: strings.TrimSpace(token[i+1:]),
+		}
+	}
+	return backendFilter{name: token}
+}
+
+func providerKindMatches(p Backend, kind string) bool {
+	id := strings.ToLower(strings.TrimSpace(p.ID()))
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind == "" {
+		return true
+	}
+	if id == kind {
+		return true
+	}
+	// YAML backends.kubernetes vs search provider id k8s
+	if (kind == "kubernetes" || kind == "k8s") && id == "k8s" {
+		return true
+	}
+	return false
+}
+
+func backendMatchesFilter(p Backend, f backendFilter) bool {
+	n := strings.TrimSpace(strings.ToLower(p.BackendName()))
+	if n == "" || f.name == "" || n != f.name {
+		return false
+	}
+	if f.kind == "" {
+		return true
+	}
+	return providerKindMatches(p, f.kind)
+}
+
+// FilterBackendsByNames keeps backends matching any token in want (case-insensitive).
+// Tokens without ":" match BackendName() across all kinds (legacy --backends / URL behavior).
+// Tokens with "kind:name" match a single YAML backend kind and name (e.g. truenas:prod, kubernetes:prod).
 // Unnamed backends (BackendName() empty) are excluded when want is non-empty.
 // When want is empty, provs is returned unchanged.
 func FilterBackendsByNames(provs []Backend, want []string) []Backend {
 	if len(want) == 0 {
 		return provs
 	}
-	set := make(map[string]struct{}, len(want))
+	filters := make([]backendFilter, 0, len(want))
 	for _, w := range want {
-		set[w] = struct{}{}
+		filters = append(filters, parseBackendFilter(w))
 	}
 	var out []Backend
 	for _, p := range provs {
-		n := strings.TrimSpace(strings.ToLower(p.BackendName()))
-		if n == "" {
-			continue
-		}
-		if _, ok := set[n]; ok {
-			out = append(out, p)
+		for _, f := range filters {
+			if backendMatchesFilter(p, f) {
+				out = append(out, p)
+				break
+			}
 		}
 	}
 	return out

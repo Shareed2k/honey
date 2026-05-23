@@ -161,6 +161,16 @@ backends:
       url: "https://10.0.0.11:8006/api2/json"
       token_id: "root@pam!mytoken"
       token_secret: "1234abcd-1234-abcd-1234-abcd1234abcd"
+  truenas:
+    - name: scale-lab
+      url: "https://truenas.example.com"
+      username: root
+      api_key: "1-REPLACE_ME"
+      insecure: false
+      include_appliance: true
+      include_vms: true
+      include_virt: true
+      ssh_user: root
   docker:
     - name: local
       host: ""              # default: DOCKER_HOST / local socket
@@ -387,14 +397,22 @@ Parallel SSH (**e**), CUE recipes, and **`cue-exec`** share the same in-process 
 
 ### Provider auth / flags
 
-| Provider | Auth / config |
-|----------|----------------|
-| **GCP** | Application Default Credentials; set `GOOGLE_CLOUD_PROJECT` or `GCP_PROJECT`, or pass `--gcp-project`. Optional `--gcp-zone` (default: all zones, aggregated list). |
-| **AWS** | Default credential chain; `--aws-profile`, `--aws-region`. |
-| **Kubernetes** | Current kubeconfig; `--kube-context`, `--kubeconfig`, `--k8s-mode=nodes` (default) or `pods`. See [Kubernetes pods](#kubernetes-pods---k8s-mode-pods) below. |
-| **Docker** | `DOCKER_HOST` or `--docker-host` (`unix://`, `tcp://`, Moby `ssh://`); `--docker-mode` (`containers`, `swarm`, `both`); `--docker-all`. Honey SSH: `--docker-via-local`, `--docker-via-ssh-host`, `--docker-socket`, `--docker-platform`. Auto-discover: `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1`, `--docker-discover-providers`, `--docker-discover-run-as`. See [Docker provider](#docker-provider). |
-| **Consul** | `CONSUL_HTTP_ADDR` or `--consul-addr`; `--consul-datacenter`, `--consul-token` / `CONSUL_HTTP_TOKEN`. |
-| **Proxmox** | `--proxmox-url` (e.g. `https://10.0.0.1:8006/api2/json`); Auth via `--proxmox-user` / `--proxmox-password` OR `--proxmox-token-id` / `--proxmox-token-secret`. Add `--proxmox-insecure` to bypass TLS verification. Both LXC and QEMU (VM) types are fully supported.<br /><br />**Token Creation Example**: Proxmox requires the `PVEVMRO` (Read Only) role to list VMs and fetch networking information. <br />1. Log into your Proxmox web UI.<br />2. Navigate to **Datacenter** > **Permissions** > **API Tokens**.<br />3. Click **Add** and select your User (e.g., `root@pam`), name the token `honey`.<br />4. Uncheck **Privilege Separation** if you want the token to inherit full user privileges, OR assign the `PVEVMRO` role to `/vms` explicitly.<br />5. Copy the Secret ID.<br />Your `token_id` in the YAML config will be formatted exactly as `user@realm!tokenname` (e.g. `root@pam!honey`). |
+Per-provider setup (minimal auth, YAML, and CLI flags):
+
+- **Example configs:** [`examples/config/`](https://github.com/shareed2k/honey/tree/main/examples/config) (one YAML per provider)
+- **Docs site:** [Providers](https://shareed2k.github.io/honey/providers/) — or [provider docs source](https://github.com/shareed2k/honey/blob/main/website/docs/providers/index.md) in the repo
+- **Quick index:** [GCP](https://shareed2k.github.io/honey/providers/gcp) · [AWS](https://shareed2k.github.io/honey/providers/aws) · [Kubernetes](https://shareed2k.github.io/honey/providers/kubernetes) · [Consul](https://shareed2k.github.io/honey/providers/consul) · [Proxmox](https://shareed2k.github.io/honey/providers/proxmox) · [TrueNAS](https://shareed2k.github.io/honey/providers/truenas) · [Local](https://shareed2k.github.io/honey/providers/local) · [Docker](https://shareed2k.github.io/honey/providers/docker)
+
+| Provider | Search ID | Minimal auth (summary) |
+|----------|-----------|-------------------------|
+| GCP | `gcp` | Application Default Credentials; `roles/compute.viewer` (or `compute.instances.list`) |
+| AWS | `aws` | AWS profile / credential chain; `ec2:DescribeInstances` |
+| Kubernetes | `k8s` | kubeconfig + context; `get nodes` (pods mode: `get pods`, ephemeral debug) |
+| Consul | `consul` | HTTP API; ACL token if enabled |
+| Proxmox | `proxmox` | API URL + password or API token; VM read (`PVEVMRO`) |
+| TrueNAS | `truenas` | SCALE 25.04+ API key |
+| Local | `local` | None (static list) |
+| Docker | `docker` | Engine API (socket, `DOCKER_HOST`, or SSH hop) |
 
 If a provider is unreachable, the command fails (use `--provider` to narrow scope).
 
