@@ -27,12 +27,13 @@ func streamCueRecipeStepsGraph(
 	out chan<- HostExecResult,
 	cache *ClientCache,
 	recipeKV *RecipeKVCoordinator,
+	tunnelCoord *RecipeTunnelCoordinator,
 ) error {
 	sg, err := cuetry.BuildStepGraphFromRecipe(recipe)
 	if err != nil {
 		return err
 	}
-	if err := ensureKVSessionForRecipe(recipe, recipeKV); err != nil {
+	if err := ensureKVSessionForRecipe(recipe, recipeKV, execute); err != nil {
 		return err
 	}
 	outputStore := cuetry.NewStepOutputStore()
@@ -50,7 +51,7 @@ func streamCueRecipeStepsGraph(
 		if len(batch) == 0 {
 			continue
 		}
-		if err := runGraphWave(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, out, cache, recipeKV, outputStore, outputCapture, sg, state, historyByIndex, batch); err != nil {
+		if err := runGraphWave(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, batch); err != nil {
 			return err
 		}
 	}
@@ -119,6 +120,7 @@ func runGraphWave(
 	out chan<- HostExecResult,
 	cache *ClientCache,
 	recipeKV *RecipeKVCoordinator,
+	tunnelCoord *RecipeTunnelCoordinator,
 	outputStore *cuetry.StepOutputStore,
 	outputCapture *cuetry.RecipeOutputCapture,
 	sg *cuetry.StepGraph,
@@ -141,7 +143,7 @@ func runGraphWave(
 			case <-ctx.Done():
 				return
 			}
-			graphRunOneStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, out, cache, recipeKV, outputStore, outputCapture, sg, state, historyByIndex, &stateMu, &historyMu, idx)
+			graphRunOneStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, &stateMu, &historyMu, idx)
 		}(idx)
 	}
 	wg.Wait()
@@ -163,6 +165,7 @@ func graphRunOneStep(
 	out chan<- HostExecResult,
 	cache *ClientCache,
 	recipeKV *RecipeKVCoordinator,
+	tunnelCoord *RecipeTunnelCoordinator,
 	outputStore *cuetry.StepOutputStore,
 	outputCapture *cuetry.RecipeOutputCapture,
 	sg *cuetry.StepGraph,
@@ -190,7 +193,7 @@ func graphRunOneStep(
 	case cuetry.StepKindTemplate:
 		rows, stepErr = graphRunTemplateStep(ctx, recipe, recipeDir, idx, step, records, outputStore, outputCapture, secretResolver, recipeKV, execute, out)
 	default:
-		rows, stepErr = streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, idx, step, out, cache, recipeKV, outputStore, outputCapture, secretResolver, pluginMgr, execute)
+		rows, stepErr = streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, idx, step, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, secretResolver, pluginMgr, execute)
 	}
 
 	failed := stepErr != nil || (len(rows) > 0 && cueStepAllTargetsTransientTransportFailed(rows))

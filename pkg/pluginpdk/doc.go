@@ -6,6 +6,8 @@
 //   - recipe step or defaults: kv_tunnel: true
 //
 // Without both, KV* functions return an error from the host (e.g. "kv not available for this call").
+// RemoteExec/RemoteUpload/RemoteStat require allow_remote_exec / allow_sftp in plugin.yaml.
+// PostgresQuery/PostgresExec require allow_postgres in plugin.yaml.
 // Keys are shared with remote command/script steps that use HONEY_KV_URL on the same cue-exec run.
 //
 // Build plugins for WASI:

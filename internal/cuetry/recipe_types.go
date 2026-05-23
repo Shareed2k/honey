@@ -130,7 +130,7 @@ type RecipeStepPlugin struct {
 	Config json.RawMessage `json:"config,omitempty"`
 }
 
-// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, template, or plugin.
+// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, template, plugin, or tunnel.
 // Host selects targets: literal IP, exact name, "*", "re:…", or "_" for ai only (see resolve.go). For agent_transfer,
 // host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
 type RecipeStep struct {
@@ -147,6 +147,7 @@ type RecipeStep struct {
 	AI            *RecipeAI            `json:"ai,omitempty"`
 	Template      *RecipeStepTemplate  `json:"template,omitempty"`
 	Plugin        *RecipeStepPlugin    `json:"plugin,omitempty"`
+	Tunnel        *RecipeStepTunnel    `json:"tunnel,omitempty"`
 	Notify        *RecipeNotify        `json:"notify,omitempty"`
 	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`
 	KVTunnel      *bool                `json:"kv_tunnel,omitempty"`

@@ -27,6 +27,10 @@ type Manifest struct {
 	Capabilities         []string          `yaml:"capabilities"`
 	SecretRefPrefixes    []string          `yaml:"secret_ref_prefixes,omitempty"`
 	AllowHostExec        bool              `yaml:"allow_host_exec,omitempty"`
+	AllowRemoteExec      bool              `yaml:"allow_remote_exec,omitempty"`
+	AllowSFTP            bool              `yaml:"allow_sftp,omitempty"`
+	AllowTemplateRender  bool              `yaml:"allow_template_render,omitempty"`
+	AllowPostgres        bool              `yaml:"allow_postgres,omitempty"`
 	AllowKV              bool              `yaml:"allow_kv,omitempty"`
 	AllowedEnv           []string          `yaml:"allowed_env,omitempty"`
 	AllowedHosts         []string          `yaml:"allowed_hosts,omitempty"`

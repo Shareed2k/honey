@@ -23,6 +23,15 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 - `k8s_node_pod_cpu_hint.cue`: For **Kubernetes worker** nodes over SSH: load, top PIDs, `/proc/<pid>/cgroup` snippets (pod UID hints), optional `crictl stats` / `crictl pods`, then optional **`ai`** summary; see file header for `sudo`/PATH and cgroup caveats.
 - `postgres_replica_lag.cue`: Read-only Postgres triage (replication lag snapshot, long-running `pg_stat_activity` sessions over 5 minutes, postgres process snapshot); set `PG*` via `defaults.env` and pass **`PGPASSWORD` via `cue-exec -e`**; see file header.
 - `kv_tunnel_multistep_example.cue`: Three **`command`** steps with **`defaults.kv_tunnel: true`** — one operator `stepkv` for the whole `cue-exec` on **SSH and Kubernetes** (pods use a long-lived exec bridge to that session). Per-host keys sanitize `HONEY_HOST_NAME` for `/` and `:`.
+- `postgres_module_demo.cue`: **`plugin:`** postgres WASM query via operator-side pgx; see file header for `make build-plugin-modules` and sealed `PG_DSN`.
+- `postgres_tunnel_demo.cue`: Graph recipe with a **`tunnel`** step (SSH local forward) and postgres **`tunnel_step`** DSN rewrite for loopback Postgres on remote hosts; optional **`share_key`** for cross-run reuse.
+- `postgres_tunnel_ssh_config.cue`: Tunnel via **`use_ssh_config`** + **`ssh_config_match`** / **`ssh_config_env`** (`ssh -G`, Match exec).
+- `postgres_tunnel_k8s.cue`: k8s pod **`tunnel`** (API port-forward) + postgres consumer.
+- `tunnel_local_forward.cue`: Standalone SSH **local forward** (e.g. Redis on remote loopback) — connect from the operator; optional hold step pattern.
+- `tunnel_socks.cue`: **SOCKS5** via bastion to internal HTTP (Grafana/Jenkins-style); `curl --socks5-hostname` and browser notes.
+- `tunnel_udp_dns.cue`: **UDP** relay to internal DNS (kube-dns / corporate resolver); requires `socat` on target; SSH to a **node/worker** (not k8s pod).
+- `tunnel_k8s_dns_tcp.cue`: **TCP** DNS via k8s port-forward to a **CoreDNS pod**; `dig +tcp` on operator.
+- `tunnel_tun_datacenter.cue`: **L3 tun** (`ssh -w`) to a private subnet; manual `ip addr` / `ip route` on operator after tunnel stdout.
 - `echo_plugin_demo.cue` / `echo_plugin_kv_demo.cue`: **`plugin:`** steps with the echo WASM plugin (`noop`, `host_exec`, and **`kv_ping`** via `pkg/pluginpdk` + remote `curl` for shared KV); requires `plugins.enabled` and echo installed — see `examples/plugins/echo/README.md` and `examples/plugins/README.md` (Recipe KV from Go plugins).
 - `postgres_logical_replication_slots.cue`: Read-only logical replication triage (`pg_replication_slots`, `pg_publication`, `pg_replication_slot_advance` in `pg_stat_activity`, primary-only WAL distance); same `PG*` / `-e PGPASSWORD` pattern; see file header for Grafana/Wazuh and destructive follow-ups not in the recipe.
 - `ai_summarize_hosts.cue`: Sample `command` steps on `host: "*"` then a final **`ai`** step (`host: "_"`); needs `OPENAI_API_KEY` for `--execute`; optional **`notify`** (`notify_subject`, `message`, `services` allowlist, `slack.channel_id`) + `HONEY_NOTIFY_*` env for [notify](https://github.com/nikoksr/notify); see file header and `honey cue-exec` docs.
@@ -82,6 +91,47 @@ By default recipes run **linearly** (steps in array order). Set **`type: "graph"
 - Web UI: in the recipe wizard (Step ③ Review plan), use the **Graph** tab for a read-only DAG (powered by `POST /api/v1/recipes/validate-content` → `graph` field).
 
 See [`graph_parallel.cue`](graph_parallel.cue) for a fetch → parallel restarts → verify → ai example.
+
+## Tunnel steps (operator-side port forward)
+
+Optional **`tunnel:`** on a step opens a listen address on the **operator** (where `honey cue-exec` runs). Use this to reach services on remote loopback, inside k8s pods, or via SOCKS/UDP/tun — not only for Postgres. See [`tunnel_local_forward.cue`](tunnel_local_forward.cue) and [CUE Recipes — Tunnel steps](https://github.com/shareed2k/honey/blob/main/website/docs/cue-recipes.md#tunnel-steps) (Docusaurus).
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | `local` (default, SSH `-L`), `remote` (`-R`), `dynamic` (SOCKS), `udp`, `tun` (`ssh -w`, L3 only) |
+| `remote_host` / `remote_port` | Remote side of a local forward (default host `localhost`) |
+| `local_port` | Operator listen port (`0` = auto) |
+| `bind` | Operator bind address (loopback only unless `tunnels.allow_non_loopback_bind` in honey config) |
+| `use_ssh_config` | Pick `LocalForward` / `RemoteForward` from `~/.ssh/config` via `ssh -G` |
+| `ssh_config_match` | Optional substring match on remote port when multiple forwards exist |
+| `ssh_config_env` | Env vars for `ssh -G` (Match exec predicates) |
+| `share_key` | Reuse the same tunnel across unrelated `cue-exec` runs (process-wide pool, idle TTL 30m) |
+
+**Provider dispatch:** k8s pod targets use the Kubernetes port-forward API; TrueNAS API-shell hosts use the TrueNAS tunnel backend; everything else uses SSH.
+
+Tunnel step **stdout** (JSON) includes `host`, `port`, `mode`, and optional `tun_name` — usable from **`env_from`** like command steps.
+
+### Postgres `tunnel_step`
+
+Postgres connects on the operator via pgx. Set sealed `dsn_secret` to the real credentials/database; honey rewrites host/port at runtime:
+
+```cue
+plugin: {
+  id: "postgres"
+  action: "query"
+  config: {
+    dsn_secret:  "PG_DSN"
+    tunnel_step: "pg_tunnel"   // step id of a tunnel step in the same run
+    // optional overrides after tunnel_step:
+    host: "127.0.0.1"
+    port: "15432"
+  }
+}
+```
+
+Precedence: resolve DSN from secrets → apply **`tunnel_step`** endpoint → apply explicit **`host`** / **`port`**. TCP tunnels only (`mode: tun` / UDP are not used for postgres).
+
+See [`postgres_tunnel_demo.cue`](postgres_tunnel_demo.cue), [`postgres_tunnel_ssh_config.cue`](postgres_tunnel_ssh_config.cue), [`postgres_tunnel_k8s.cue`](postgres_tunnel_k8s.cue), [`tunnel_local_forward.cue`](tunnel_local_forward.cue), [`tunnel_socks.cue`](tunnel_socks.cue), [`tunnel_udp_dns.cue`](tunnel_udp_dns.cue), and [`tunnel_tun_datacenter.cue`](tunnel_tun_datacenter.cue).
 
 ## Conditional steps (`when` + CEL)
 

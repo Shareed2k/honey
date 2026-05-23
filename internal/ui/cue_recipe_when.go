@@ -180,12 +180,8 @@ func allHostsWhenSkipped(rows []HostExecResult) bool {
 	return true
 }
 
-func recipeNeedsKVSession(recipe cuetry.Recipe) bool {
-	return cuetry.RecipeHasKVTunnel(recipe) || cuetry.RecipeUsesKVInWhen(recipe) || cuetry.RecipeHasTemplateStep(recipe)
-}
-
-func ensureKVSessionForRecipe(recipe cuetry.Recipe, recipeKV *RecipeKVCoordinator) error {
-	if recipeKV == nil || !recipeNeedsKVSession(recipe) {
+func ensureKVSessionForRecipe(_ cuetry.Recipe, recipeKV *RecipeKVCoordinator, execute bool) error {
+	if recipeKV == nil || !execute {
 		return nil
 	}
 	_, err := recipeKV.EnsureSession()

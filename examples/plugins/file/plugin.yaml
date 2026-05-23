@@ -1,0 +1,6 @@
+id: file
+version: "0.1.0"
+capabilities:
+  - custom_step
+allow_remote_exec: true
+allow_sftp: true

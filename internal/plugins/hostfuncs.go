@@ -102,6 +102,62 @@ func hostFunctions(m Manifest, pluginTimeoutMS int) []extism.HostFunction {
 			[]extism.ValueType{extism.ValueTypeI64},
 		))
 	}
+	if m.AllowRemoteExec {
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"remote_exec",
+			remoteExecCallback(m.ID),
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+	}
+	if m.AllowSFTP {
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"remote_upload",
+			remoteUploadCallback(m.ID),
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"remote_download",
+			remoteDownloadCallback(m.ID),
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"remote_stat",
+			remoteStatCallback(m.ID),
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+	}
+	if m.AllowTemplateRender {
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"template_render",
+			templateRenderCallback(m.ID),
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+	}
+	if m.AllowPostgres {
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"postgres_query",
+			postgresQueryCallback(m.ID),
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"postgres_exec",
+			postgresExecCallback(m.ID),
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"postgres_migrate",
+			postgresMigrateCallback(m.ID),
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+	}
 	return fns
 }
 

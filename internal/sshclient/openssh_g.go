@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -50,12 +51,32 @@ func sshGDestination(userOverride, hostAlias string) string {
 }
 
 func runSSHG(ctx context.Context, dest string) ([]byte, error) {
+	return runSSHGWithEnv(ctx, dest, nil)
+}
+
+// runSSHGWithEnv runs `ssh -G` with optional Match-related environment variables.
+func runSSHGWithEnv(ctx context.Context, dest string, matchEnv map[string]string) ([]byte, error) {
 	if strings.TrimSpace(dest) == "" {
 		return nil, fmt.Errorf("empty ssh -G destination")
 	}
 	// ssh -G prints canonical config; no network I/O to the remote host.
 	// #nosec G204 -- fixed "ssh" binary and flags; dest is one argv field after "--" (no shell).
 	cmd := exec.CommandContext(ctx, "ssh", "-G", "-T", "-o", "BatchMode=yes", "--", dest)
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	if len(matchEnv) > 0 {
+		env := append([]string(nil), cmd.Env...)
+		keys := make([]string, 0, len(matchEnv))
+		for k := range matchEnv {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			env = append(env, k+"="+matchEnv[k])
+		}
+		cmd.Env = env
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

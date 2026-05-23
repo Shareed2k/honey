@@ -106,6 +106,25 @@ const schemaSource = `
 		action: string
 		config?: {...}
 	})
+	tunnel?: close({
+		mode?: string
+		remote_host?: string
+		remote_port?: int
+		local_port?: int
+		bind?: string
+		remote_bind?: string
+		remote_listen_port?: int
+		local_host?: string
+		local_target_port?: int
+		use_ssh_config?: bool
+		ssh_config_match?: string
+		ssh_config_env?: {[string]: string}
+		share_key?: string
+		protocol?: string
+		tun_local?: int
+		tun_remote?: int
+		remote_socat?: bool
+	})
 	hooks?: close({
 		on_success?: #StepHook
 		on_failure?: #StepHook
@@ -115,7 +134,9 @@ const schemaSource = `
 	env_from?: [...close({
 		step?: string
 		from_output?: string
-		map: {[string]: string}
+		map?: {[string]: string}
+		extract?: {[string]: string}
+		kv?: {[string]: string}
 	})]
 	env?: {[string]: string}
 	secrets?: {[string]: string}
@@ -220,6 +241,9 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 	if err := validateStepTemplate(i, kind, s, mode); err != nil {
 		return err
 	}
+	if err := validateStepTunnel(i, kind, s, mode); err != nil {
+		return err
+	}
 	return validateStepHooksAndKVTunnel(i, kind, s, defaults, secretPrefixes)
 }
 
@@ -295,7 +319,7 @@ func validateStepTemplate(i int, kind StepKind, s RecipeStep, mode ExecutionMode
 	return nil
 }
 
-func validateStepHooksAndKVTunnel(i int, kind StepKind, s RecipeStep, defaults *RecipeDefaults, secretPrefixes []string) error {
+func validateStepHooksAndKVTunnel(i int, kind StepKind, s RecipeStep, _ *RecipeDefaults, secretPrefixes []string) error {
 	if s.Hooks != nil {
 		if kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin {
 			return fmt.Errorf("cuetry: steps[%d]: hooks are only supported on command, script, and plugin steps", i)
@@ -303,9 +327,6 @@ func validateStepHooksAndKVTunnel(i int, kind StepKind, s RecipeStep, defaults *
 		if err := validateStepHooks(i, s.Hooks, secretPrefixes); err != nil {
 			return err
 		}
-	}
-	if KVTunnelEnabled(s, defaults) && kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin {
-		return fmt.Errorf("cuetry: steps[%d]: kv_tunnel is only supported on command, script, and plugin steps", i)
 	}
 	return nil
 }
@@ -354,6 +375,9 @@ func parseRemoteRecipeAfterTransform(cueBytes []byte, records []hosts.Record, se
 		if err := validateDecodedRecipeStep(i, nSteps, s, out.Defaults, records, secretPrefixes, mode); err != nil {
 			return out, err
 		}
+	}
+	if err := validateRecipeTunnelRefs(out.Steps); err != nil {
+		return out, err
 	}
 	if err := ValidateRecipeGraph(out); err != nil {
 		return out, err
@@ -516,6 +540,9 @@ func ValidateParsedRecipe(r Recipe, records []hosts.Record) error {
 		if err := validateDecodedRecipeStep(i, nSteps, s, r.Defaults, records, nil, mode); err != nil {
 			return err
 		}
+	}
+	if err := validateRecipeTunnelRefs(r.Steps); err != nil {
+		return err
 	}
 	return ValidateRecipeGraph(r)
 }
