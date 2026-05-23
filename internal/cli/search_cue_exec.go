@@ -139,6 +139,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 				HostCount:         len(records),
 				RecipeContentHash: hash,
 				StartedAt:         time.Now().UTC(),
+				Hosts:             ui.HostsForRecipeMeta(records, 200),
 			})
 		}
 		defer func() { _ = rec.Close() }()

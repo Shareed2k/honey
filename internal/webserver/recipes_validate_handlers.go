@@ -36,6 +36,8 @@ type ResolvedStepSummary struct {
 	Host    string   `json:"host"`
 	RunAs   string   `json:"run_as,omitempty"`
 	When    string   `json:"when,omitempty"`
+	Retry   string   `json:"retry,omitempty"`
+	Notify  bool     `json:"notify,omitempty"`
 	Preview string   `json:"preview"`
 }
 
@@ -124,6 +126,8 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 			Host:    s.Host,
 			RunAs:   s.RunAs,
 			When:    s.When,
+			Retry:   s.Retry,
+			Notify:  s.Notify,
 			Preview: s.Preview,
 		}
 	}

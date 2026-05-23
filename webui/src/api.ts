@@ -1,3 +1,5 @@
+import type { HostRecord } from './HostPicker';
+
 const TOKEN_KEY = 'honey_web_token';
 
 export function getToken(): string {
@@ -142,27 +144,105 @@ export type ParsedRecipeStepTemplate = {
   output?: string;
 };
 
+export type ParsedRecipeStepRetry = {
+  attempts?: number;
+  delay_ms?: number;
+  max_delay_ms?: number;
+  backoff?: 'fixed' | 'exponential';
+};
+
+export type ParsedRecipeFileTransfer = {
+  local: string;
+  remote: string;
+  path?: string;
+  body?: string;
+};
+
+export type ParsedRecipePlugin = {
+  id: string;
+  action: string;
+  config?: Record<string, unknown>;
+};
+
+export type ParsedRecipeTunnel = {
+  mode?: string;
+  remote_host?: string;
+  remote_port?: number;
+  local_port?: number;
+  bind?: string;
+  use_ssh_config?: boolean;
+  ssh_config_match?: string;
+  share_key?: string;
+  protocol?: string;
+  remote_bind?: string;
+  remote_listen_port?: number;
+  local_host?: string;
+  local_target_port?: number;
+  tun_local?: number;
+  tun_remote?: number;
+  remote_socat?: boolean;
+};
+
+export type ParsedRecipeAgentTransferCloud = {
+  provider: string;
+  bucket: string;
+  prefix?: string;
+  object?: string;
+  region?: string;
+  endpoint?: string;
+};
+
+export type ParsedRecipeCloudBackendRef = {
+  kind: string;
+  name?: string;
+  index?: number;
+};
+
+export type ParsedRecipeAgentTransfer = {
+  dest_host: string;
+  source_path: string;
+  dest_path: string;
+  cloud: ParsedRecipeAgentTransferCloud;
+  cloud_backend_ref?: ParsedRecipeCloudBackendRef;
+  keep_object?: boolean;
+  max_retries?: number;
+  agent_remote_dir?: string;
+};
+
+export type ParsedRecipeNotifyServices = {
+  http?: Record<string, never>;
+  slack?: { channel_id?: string };
+  telegram?: Record<string, never>;
+};
+
+export type ParsedRecipeNotify = {
+  notify_subject?: string;
+  message?: string;
+  services?: ParsedRecipeNotifyServices;
+};
+
 export type ParsedRecipeStep = {
   id?: string;
   depends?: string[];
   host: string;
   command?: string;
-  script?: { body?: string; path?: string; local?: string; remote?: string };
-  ai?: { model?: string; prompt?: string };
+  script?: ParsedRecipeFileTransfer;
+  ai?: { model?: string; prompt?: string; system_prompt?: string; max_output_tokens?: number; max_input_chars?: number };
   template?: ParsedRecipeStepTemplate;
+  put?: ParsedRecipeFileTransfer;
+  get?: ParsedRecipeFileTransfer;
+  plugin?: ParsedRecipePlugin;
+  tunnel?: ParsedRecipeTunnel;
+  agent_transfer?: ParsedRecipeAgentTransfer;
+  notify?: ParsedRecipeNotify;
   run_as?: string;
   env?: Record<string, string>;
   max_parallel?: number;
   kv_tunnel?: boolean;
   env_from?: ParsedRecipeEnvFrom[];
   when?: string;
+  retry?: ParsedRecipeStepRetry;
   hooks?: { on_success?: ParsedRecipeStep; on_failure?: ParsedRecipeStep };
-  // Step kinds that v1 does NOT support editing — preserved verbatim by the form.
-  agent_transfer?: unknown;
-  notify?: unknown;
-  plugin?: unknown;
-  put?: unknown;
-  get?: unknown;
 };
 
 export type ResolvedStep = {
@@ -173,6 +253,9 @@ export type ResolvedStep = {
   kind: string;
   host: string;
   run_as?: string;
+  when?: string;
+  retry?: string;
+  notify?: boolean;
   preview: string;
 };
 
@@ -183,6 +266,8 @@ export type GraphPlanNode = {
   host: string;
   wave?: number;
   when?: string;
+  retry?: string;
+  notify?: boolean;
   kv_tunnel?: boolean;
   preview?: string;
 };
@@ -218,6 +303,19 @@ export type RecentRunEntry = {
   recording_id: string;
   recipe_content_hash?: string;
   edited: boolean;
+  hosts?: HostRecord[];
+};
+
+export type RecordingsRetentionInfo = {
+  enabled: boolean;
+  max_age?: string;
+};
+
+export type RecordingsListResponse = {
+  items: RecordingListEntry[];
+  file_count: number;
+  total_bytes: number;
+  retention?: RecordingsRetentionInfo;
 };
 
 export type RecordingListEntry = {
@@ -465,7 +563,7 @@ export async function fetchRecordingsList(filters?: {
   provider?: string;
   host_name?: string;
   host_ip?: string;
-}): Promise<RecordingListEntry[]> {
+}): Promise<RecordingsListResponse> {
   const q = new URLSearchParams();
   if (filters?.provider?.trim()) {
     q.set('provider', filters.provider.trim());
@@ -479,11 +577,42 @@ export async function fetchRecordingsList(filters?: {
   const qs = q.toString();
   const path = qs ? `/api/v1/recordings?${qs}` : '/api/v1/recordings';
   const r = await apiGet(path);
-  const j = (await r.json().catch(() => ({}))) as { items?: RecordingListEntry[]; error?: string };
+  const j = (await r.json().catch(() => ({}))) as RecordingsListResponse & { error?: string };
   if (!r.ok) {
     throw new Error(j.error || r.statusText);
   }
-  return j.items || [];
+  return {
+    items: j.items || [],
+    file_count: j.file_count ?? (j.items?.length ?? 0),
+    total_bytes: j.total_bytes ?? 0,
+    retention: j.retention,
+  };
+}
+
+export async function deleteRecording(fileName: string): Promise<void> {
+  const r = await apiDelete(`/api/v1/recordings/${encodeURIComponent(fileName)}`);
+  const j = (await r.json().catch(() => ({}))) as { error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+}
+
+export async function fetchTerminalAssistModels(): Promise<string[]> {
+  const r = await apiGet('/api/v1/terminal-assist/models');
+  const j = (await r.json().catch(() => ({}))) as { models?: string[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.models || [];
+}
+
+export async function summarizeRecording(fileName: string, model: string): Promise<string> {
+  const r = await apiPost('/api/v1/recordings/summarize', { file_name: fileName, model: model.trim() });
+  const j = (await r.json().catch(() => ({}))) as { reply?: string; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.reply ?? '';
 }
 
 export async function fetchRecordingsForHost(params: {
@@ -491,11 +620,12 @@ export async function fetchRecordingsForHost(params: {
   host_name: string;
   host_ip: string;
 }): Promise<RecordingListEntry[]> {
-  return fetchRecordingsList({
+  const resp = await fetchRecordingsList({
     provider: params.provider,
     host_name: params.host_name,
     host_ip: params.host_ip,
   });
+  return resp.items;
 }
 
 export async function fetchRecordingEvents(fileName: string): Promise<RecordingEvent[]> {
@@ -595,7 +725,7 @@ export async function cueExec(body: CueExecRequest): Promise<{ plan?: string; re
 export async function cueExecStream(
   body: CueExecRequest,
   onRow: (row: HostExecResultRow) => void,
-): Promise<void> {
+): Promise<{ recording_id?: string }> {
   const r = await fetch('/api/v1/cue-exec?stream=1', {
     method: 'POST',
     headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
@@ -605,7 +735,9 @@ export async function cueExecStream(
     const j = (await r.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error || r.statusText);
   }
+  const recordingId = r.headers.get('X-Honey-Recording-Id')?.trim() || undefined;
   await readNDJSON<HostExecResultRow>(r, onRow);
+  return { recording_id: recordingId };
 }
 
 export async function startAgentTransferStream(

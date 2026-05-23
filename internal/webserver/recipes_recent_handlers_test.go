@@ -112,6 +112,36 @@ func TestRecentRuns_skipsDryRuns(t *testing.T) {
 	}
 }
 
+func TestRecentRuns_includesHostsFromMeta(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	meta := `{"time_ms":1,"type":"recipe-meta","result":{"recipe_path":"examples/recipe/a.cue","host_count":2,"recipe_content_hash":"sha256:x","started_at":"2026-05-12T09:00:00Z","hosts":[{"provider":"gcp","name":"vm1","primary_ip":"10.0.0.1"},{"provider":"aws","name":"vm2","primary_ip":"10.0.0.2"}]}}` + "\n"
+	open := `{"time_ms":0,"type":"open","message":"trigger=web-cue-exec"}` + "\n"
+	name := "20260512_090000_web-cue-exec_batch_mixed_batch-2.hrec.jsonl"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(open+meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := NewServer(Options{ListenAddr: "127.0.0.1:0", Token: "tok", Version: "0", RecordDir: dir})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/recent-runs", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.withAuth(s.handleRecipesRecentRuns)(w, req)
+	var got struct {
+		Runs []struct {
+			Hosts []struct {
+				Name string `json:"name"`
+			} `json:"hosts"`
+		} `json:"runs"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got.Runs) != 1 || len(got.Runs[0].Hosts) != 2 {
+		t.Fatalf("hosts round-trip: %+v", got.Runs)
+	}
+	if got.Runs[0].Hosts[0].Name != "vm1" {
+		t.Fatalf("got %q", got.Runs[0].Hosts[0].Name)
+	}
+}
+
 func TestRecentRuns_emptyDirOK(t *testing.T) {
 	t.Parallel()
 	s, _ := NewServer(Options{ListenAddr: "127.0.0.1:0", Token: "tok", Version: "0", RecordDir: ""})

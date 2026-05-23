@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // SessionRecorderOptions configures filename segments and metadata for a new session recording.
@@ -191,10 +193,48 @@ func (r *SessionRecorder) RecordError(err error) {
 // Recorded into the session file so a later "recent runs" enumeration can
 // attribute the recording to a recipe and detect in-browser edits.
 type RecipeMeta struct {
-	RecipePath        string    `json:"recipe_path"`
-	HostCount         int       `json:"host_count"`
-	RecipeContentHash string    `json:"recipe_content_hash"`
-	StartedAt         time.Time `json:"started_at"`
+	RecipePath        string         `json:"recipe_path"`
+	HostCount         int            `json:"host_count"`
+	RecipeContentHash string         `json:"recipe_content_hash"`
+	StartedAt         time.Time      `json:"started_at"`
+	Hosts             []hosts.Record `json:"hosts,omitempty"`
+}
+
+// HostsForRecipeMeta copies up to limit connectable host records for recipe-meta (web re-run).
+func HostsForRecipeMeta(jobs []hosts.Record, limit int) []hosts.Record {
+	if limit <= 0 || len(jobs) == 0 {
+		return nil
+	}
+	n := len(jobs)
+	if n > limit {
+		n = limit
+	}
+	out := make([]hosts.Record, 0, n)
+	for i := 0; i < n; i++ {
+		r := jobs[i]
+		out = append(out, hosts.Record{
+			Provider:  r.Provider,
+			Name:      r.Name,
+			PrimaryIP: r.PrimaryIP,
+			ExtraIPs:  r.ExtraIPs,
+			Meta:      r.Meta,
+		})
+	}
+	return out
+}
+
+// RecordingFileBase returns the recording filename (e.g. 20260102_120000_web-cue-exec_batch_mixed_batch-3.hrec.jsonl).
+func (r *SessionRecorder) RecordingFileBase() string {
+	if r == nil {
+		return ""
+	}
+	return filepath.Base(r.path)
+}
+
+// RecordingID returns the recording id (filename without .hrec.jsonl).
+func (r *SessionRecorder) RecordingID() string {
+	base := r.RecordingFileBase()
+	return strings.TrimSuffix(base, ".hrec.jsonl")
 }
 
 // RecordRecipeMeta writes one "recipe-meta" structured event into the recording.

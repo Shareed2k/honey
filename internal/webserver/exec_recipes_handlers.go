@@ -302,6 +302,11 @@ func filterConnectableRecords(recs []hosts.Record) []hosts.Record {
 
 func streamHostExecNDJSON(w http.ResponseWriter, ch <-chan ui.HostExecResult, rec *ui.SessionRecorder) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
+	if rec != nil {
+		if id := rec.RecordingID(); id != "" {
+			w.Header().Set("X-Honey-Recording-Id", id)
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	fl, _ := w.(http.Flusher)
@@ -448,6 +453,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 			HostCount:         len(jobs),
 			RecipeContentHash: hash,
 			StartedAt:         time.Now().UTC(),
+			Hosts:             ui.HostsForRecipeMeta(jobs, maxWebExecRecords),
 		})
 	}
 

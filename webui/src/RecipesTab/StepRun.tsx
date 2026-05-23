@@ -11,23 +11,25 @@ type Props = {
   envOverrides: EnvPair[];
   sshUser: string;
   recordSession: boolean;
+  sessionRecordingAvailable: boolean;
+  onViewRecording: (fileName: string) => void;
   onRunAgain: () => void;
   onStartNew: () => void;
 };
 
 export function StepRun(props: Props) {
   const [state, setState] = useState<LiveState>({ rows: [], status: 'idle' });
+  const [recordingFileName, setRecordingFileName] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setState({ rows: [], status: 'running' });
+    setRecordingFileName(null);
 
     const env = props.envOverrides
       .filter((p) => p.key.trim())
       .map((p) => `${p.key}=${p.value}`);
 
-    // For drafts/edited recipes, send recipe_content (server picks it over recipe_path).
-    // For disk recipes, send recipe_path and omit recipe_content so the server reads from disk.
     const payload: CueExecRequest = {
       recipe_path: props.recipeBasePath ?? undefined,
       recipe_content: props.recipeBasePath ? undefined : props.recipe,
@@ -44,17 +46,19 @@ export function StepRun(props: Props) {
       }
       setState((s) => ({ ...s, rows: [...s.rows, row] }));
     })
-      .then(() => {
-        if (!cancelled) {
-          setState((s) => ({ ...s, status: 'ok' }));
+      .then((footer) => {
+        if (cancelled) {
+          return;
         }
+        if (footer.recording_id) {
+          setRecordingFileName(`${footer.recording_id}.hrec.jsonl`);
+        }
+        setState((s) => ({ ...s, status: 'ok' }));
       })
       .catch((e: unknown) => {
         if (cancelled) {
           return;
         }
-        // cueExecStream throws on non-2xx or stream parse errors. Surface as 'err'.
-        // Log the error so it shows up in the browser console for debugging.
         console.error('cueExecStream failed:', e);
         setState((s) => ({ ...s, status: 'err' }));
       });
@@ -62,13 +66,9 @@ export function StepRun(props: Props) {
     return () => {
       cancelled = true;
     };
-    // intentionally only run once on mount — props are the snapshot at launch time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // cueExecStream has no cancellation hook (no AbortSignal, no cancel handle).
-  // Render the button while running, but log a warning instead of cancelling the
-  // server-side run. The stream will continue; only UI updates are suppressed.
   function handleCancel() {
     console.warn('cueExecStream does not support cancellation; ignoring cancel click');
   }
@@ -76,6 +76,8 @@ export function StepRun(props: Props) {
   const ok = state.rows.filter((r) => r.Success).length;
   const err = state.rows.filter((r) => !r.Success).length;
   const pending = props.hosts.length - state.rows.length;
+  const canViewRecording =
+    props.recordSession && props.sessionRecordingAvailable && !!recordingFileName && state.status !== 'running';
 
   return (
     <div className="rcp-step rcp-step--run">
@@ -115,6 +117,15 @@ export function StepRun(props: Props) {
 
       {state.status !== 'running' ? (
         <footer className="rcp-step__footer">
+          {canViewRecording ? (
+            <button
+              type="button"
+              className="rcp-btn"
+              onClick={() => props.onViewRecording(recordingFileName!)}
+            >
+              View recording
+            </button>
+          ) : null}
           <button type="button" className="rcp-btn" onClick={props.onStartNew}>
             start new
           </button>

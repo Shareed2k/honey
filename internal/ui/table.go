@@ -1222,6 +1222,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 							HostCount:         len(targets),
 							RecipeContentHash: hash,
 							StartedAt:         time.Now().UTC(),
+							Hosts:             HostsForRecipeMeta(targets, 200),
 						})
 					}
 					if runErr != nil {
@@ -1272,6 +1273,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			isCue:      true,
 			recipe:     &recipe,
 			recipePath: absRecipe,
+			hosts:      HostsForRecipeMeta(targets, 200),
 		}
 	}
 }
@@ -1286,6 +1288,7 @@ type streamStartMsg struct {
 	// session recorder can attribute the recording to a recipe.
 	recipe     *cuetry.Recipe
 	recipePath string
+	hosts      []hosts.Record
 }
 
 type streamResultMsg struct {

@@ -13,8 +13,11 @@ type Props = {
   onPickDisk: (path: string) => void;
   onPickDraft: (draft: Draft) => void;
   onPickRecent: (run: RecentRunEntry) => void;
+  onReplay: (run: RecentRunEntry) => void;
+  onRerunSameHosts: (run: RecentRunEntry) => void;
   onViewSource: (path: string, name: string) => void;
   onAiAssist: (path: string, name: string) => void;
+  sessionRecordingAvailable: boolean;
   current: RecipeRef | null;
 };
 
@@ -57,6 +60,7 @@ export function StepRecipe(props: Props) {
                   <th>Recipe Name</th>
                   <th>Hosts</th>
                   <th>Time</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -70,6 +74,32 @@ export function StepRecipe(props: Props) {
                     </td>
                     <td className="rcp-list__meta">{r.host_count} host{r.host_count === 1 ? '' : 's'}</td>
                     <td className="rcp-list__meta">{timeAgo(r.started_at)}</td>
+                    <td>
+                      <div className="rcp-table__actions">
+                        {props.sessionRecordingAvailable && r.recording_id ? (
+                          <button
+                            type="button"
+                            className="rcp-btn rcp-btn--ghost rcp-btn--small"
+                            onClick={() => props.onReplay(r)}
+                          >
+                            Replay
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="rcp-btn rcp-btn--ghost rcp-btn--small"
+                          disabled={!r.hosts?.length}
+                          title={
+                            r.hosts?.length
+                              ? 'Load recipe and pre-select hosts from this run'
+                              : 'No host list saved in this recording'
+                          }
+                          onClick={() => void props.onRerunSameHosts(r)}
+                        >
+                          Re-run same hosts
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

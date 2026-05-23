@@ -30,6 +30,7 @@ func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
 					HostCount:         msg.totalJobs,
 					RecipeContentHash: hash,
 					StartedAt:         time.Now().UTC(),
+					Hosts:             msg.hosts,
 				})
 			}
 		}

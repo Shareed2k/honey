@@ -13,6 +13,8 @@ type GraphPlanNode struct {
 	Host     string `json:"host"`
 	Wave     int    `json:"wave,omitempty"`
 	When     string `json:"when,omitempty"`
+	Retry    string `json:"retry,omitempty"`
+	Notify   bool   `json:"notify,omitempty"`
 	KVTunnel bool   `json:"kv_tunnel,omitempty"`
 	Preview  string `json:"preview,omitempty"`
 }
@@ -67,6 +69,8 @@ func BuildRecipeGraphPlan(r Recipe) (*RecipeGraphPlan, error) {
 			Host:     strings.TrimSpace(step.Host),
 			Wave:     waveOf[i],
 			When:     strings.TrimSpace(step.When),
+			Retry:    retrySummary(step, r.Defaults),
+			Notify:   step.NotifyEnabled(),
 			KVTunnel: KVTunnelEnabled(step, r.Defaults),
 			Preview:  previewForStep(kind, step),
 		}

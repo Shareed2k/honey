@@ -1,6 +1,13 @@
 // webui/src/RecipesTab/StepPlan.tsx
-import { useEffect, useState } from 'react';
-import { isGraphRecipe, validateRecipeContent, type ParsedRecipe, type ResolvedStep } from '../api';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  isGraphRecipe,
+  validateRecipeContent,
+  type ParsedRecipe,
+  type RecipeGraphPlan,
+  type ResolvedStep,
+  type ValidationError,
+} from '../api';
 import type { EnvPair, PlanState } from './types';
 import { EditForm } from './EditForm';
 import { RecipeGraphFlow } from './RecipeGraphFlow';
@@ -18,6 +25,7 @@ type Props = {
   onSSHUserChange: (u: string) => void;
   recordSession: boolean;
   onRecordSessionChange: (v: boolean) => void;
+  sessionRecordingAvailable: boolean;
   hostCount: number;
   onBack: () => void;
   onExecute: () => void;
@@ -43,6 +51,17 @@ export function StepPlan(props: Props) {
       cancelled = true;
     };
   }, [props.recipe]);
+
+  const handleEditErrors = useCallback((errors: ValidationError[]) => {
+    setPlan({ ok: false, errors });
+  }, []);
+
+  const handleEditValidated = useCallback(
+    (res: { plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan }) => {
+      setPlan({ ok: true, plan: res.plan, steps: res.steps, graph: res.graph });
+    },
+    [],
+  );
 
   const hasErrors = plan && !plan.ok;
   const root = props.recipe.steps.some((s) => s.run_as === 'root');
@@ -95,7 +114,8 @@ export function StepPlan(props: Props) {
           recipe={props.recipe}
           baseRecipe={props.baseRecipe}
           onChange={props.onRecipeChange}
-          onErrors={(errs) => setPlan(errs ? { ok: false, errors: errs } : null)}
+          onErrors={handleEditErrors}
+          onValidated={handleEditValidated}
           onSaveAsDraft={props.onSaveAsDraft}
         />
       )}
@@ -117,10 +137,17 @@ export function StepPlan(props: Props) {
           <input
             type="checkbox"
             checked={props.recordSession}
+            disabled={!props.sessionRecordingAvailable}
             onChange={(e) => props.onRecordSessionChange(e.target.checked)}
           />
           record session
         </label>
+        {props.recordSession && !props.sessionRecordingAvailable ? (
+          <p className="rcp-warn">
+            Session recording is not available on this server (start <code>honey web</code> with{' '}
+            <code>--record-dir</code> or set <code>defaults.record_dir</code>).
+          </p>
+        ) : null}
       </section>
 
       <footer className="rcp-step__footer">
@@ -168,6 +195,9 @@ function PlanView({ plan, graphMode }: { plan: PlanState; graphMode: boolean }) 
           <span className="rcp-steps__kind">{s.kind}</span>
           {s.wave ? <span className="rcp-steps__wave">w{s.wave}</span> : null}
           {s.run_as ? <span className="rcp-steps__runas">run_as={s.run_as}</span> : null}
+          {s.when ? <span className="rcp-steps__tag">when={s.when}</span> : null}
+          {s.retry ? <span className="rcp-steps__tag">retry={s.retry}</span> : null}
+          {s.notify ? <span className="rcp-steps__tag rcp-steps__tag--notify">notify</span> : null}
           <span className="rcp-steps__host">host={s.host}</span>
           <code className="rcp-steps__preview">{s.preview}</code>
         </li>
