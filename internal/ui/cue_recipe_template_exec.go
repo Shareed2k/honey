@@ -109,7 +109,7 @@ func streamCueTemplateStep(
 	var skipped []HostExecResult
 	for _, t := range targets {
 		if prog != nil {
-			ok, err := evalStepWhen(ctx, prog, recipe, step, t, nil, outputStore, secretResolver, kv, execute)
+			ok, err := evalStepWhen(ctx, prog, recipe, step, t, nil, outputStore, secretResolver, kv, nil, execute)
 			if err != nil {
 				return nil, err
 			}

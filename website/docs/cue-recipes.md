@@ -216,24 +216,17 @@ Dry-run prints placeholder JSON (`<<127.0.0.1>>`, `<<port>>`) and annotates ssh_
 
 ### Modes
 
-**Local forward (default)** — reach remote loopback from the operator:
+**Local forward (default)** — reach one TCP endpoint from the operator; `remote_host` is dialed **from the SSH target’s network** (use a hostname reachable from the bastion, not only `localhost`):
 
 ```cue
-tunnel: { remote_host: "localhost", remote_port: 8080 }
+// Bastion can reach db.internal; operator gets one TCP port
+{
+  host: "bastion-*"
+  tunnel: { remote_host: "db.internal", remote_port: 5432 }
+}
 ```
 
-**SOCKS5 proxy (bastion → internal HTTP)** — reach VPC-only hostnames from your laptop via a jump host. Example: [`tunnel_socks.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_socks.cue).
-
-```cue
-tunnel: { mode: "dynamic", bind: "127.0.0.1", local_port: 1080 }
-```
-
-```bash
-honey cue-exec --execute examples/recipe/tunnel_socks.cue "bastion-*"
-curl --socks5-hostname 127.0.0.1:1080 http://grafana.internal:3000/api/health
-```
-
-In Firefox, set SOCKS v5 to `127.0.0.1:1080` and enable **Proxy DNS when using SOCKS v5** so internal names resolve on the bastion.
+**SOCKS5 (many internal hosts)** — see [Jump host → many internal services (SOCKS)](#jump-host--many-internal-services-socks) below.
 
 **UDP relay (internal DNS)** — OpenSSH `-L` is TCP-only. For DNS, syslog, SNMP, etc., use `mode: "udp"` with **`remote_socat: true`** (starts `socat` on the SSH target). Example: [`tunnel_udp_dns.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_udp_dns.cue).
 
@@ -293,6 +286,47 @@ tunnel: {
 **k8s pod** — `host: "k8s:my-pod"`, `tunnel: { remote_port: 5432 }`. See [`postgres_tunnel_k8s.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_tunnel_k8s.cue).
 
 Example index: [`tunnel_local_forward.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_local_forward.cue) (TCP), [`tunnel_socks.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_socks.cue) (SOCKS5), [`tunnel_udp_dns.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_udp_dns.cue) (UDP), [`tunnel_tun_datacenter.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_tun_datacenter.cue) (tun).
+
+### Jump host → many internal services (SOCKS)
+
+When you have SSH to a **bastion** but need to reach **many** internal hosts (Grafana, Jenkins, several DBs, etc.), use **`mode: "dynamic"`** on one tunnel step. Honey opens **SOCKS5 on the operator**; traffic exits from the bastion’s network, so you can reach any host/port the bastion can reach without a separate tunnel per backend.
+
+Flow: **client on operator** → `127.0.0.1:1080` (SOCKS5) → SSH dynamic forward (`-D`) → **bastion** → internal host B, C, D…
+
+Example: [`tunnel_socks.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_socks.cue)
+
+```cue
+{
+  host: "bastion-*"
+  tunnel: {
+    mode:       "dynamic"
+    bind:       "127.0.0.1"
+    local_port: 1080
+  }
+}
+```
+
+```bash
+honey cue-exec --execute examples/recipe/tunnel_socks.cue "bastion-*"
+
+# HTTP (DNS resolved on the bastion)
+curl --socks5-hostname 127.0.0.1:1080 http://grafana.internal:3000/api/health
+
+# TCP clients via proxychains (Postgres, mysql, etc.)
+proxychains4 psql 'host=db.internal port=5432 user=ro dbname=app sslmode=require'
+```
+
+In Firefox: SOCKS v5 → `127.0.0.1:1080`, enable **Proxy DNS when using SOCKS v5** so internal names resolve on the bastion.
+
+| Pattern | Recipe config | Operator endpoint | Reach |
+|---------|---------------|-------------------|--------|
+| **SOCKS (many backends)** | `mode: dynamic` on bastion | `127.0.0.1:1080` SOCKS5 | Any host/port reachable from bastion |
+| **Local forward (one backend)** | `remote_host` + `remote_port` on bastion | `127.0.0.1:<port>` TCP | One fixed host:port |
+| **Postgres `tunnel_step`** | local forward + `tunnel_step` | pgx DSN rewrite | One TCP service only |
+
+Use **SOCKS** when you need multiple internal destinations through one jump host. Use **local forward** when you want one stable TCP port (e.g. postgres **`tunnel_step`**).
+
+**Postgres caveat:** the postgres WASM plugin rewrites DSN to a **TCP** listen address; it does not speak SOCKS. For Postgres through a bastion SOCKS proxy, use **`proxychains`** (or similar) with `psql`/`host_exec`, or a **local forward** to a specific `db.internal:5432` instead of `mode: dynamic`.
 
 ### Lifecycle
 

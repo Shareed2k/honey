@@ -16,6 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/stepkv"
+	"go.uber.org/zap"
 )
 
 var (
@@ -56,6 +57,12 @@ func (b *pluginPostgresBridge) runSQL(ctx context.Context, in apiv1.PostgresSQLI
 	if err != nil {
 		return apiv1.PostgresOutput{Failed: true, Error: err.Error()}
 	}
+	zap.L().Debug("plugin postgres query",
+		zap.String("plugin_id", b.h.PluginID),
+		zap.String("host_name", b.h.Record.Name),
+		zap.String("tunnel_step", in.TunnelStep),
+		zap.Int("timeout_ms", in.TimeoutMS),
+	)
 	args, err := postgres.ParseParams(in.Params)
 	if err != nil {
 		return apiv1.PostgresOutput{Failed: true, Error: err.Error()}
@@ -177,12 +184,23 @@ func (b *pluginPostgresBridge) rewritePostgresDSN(dsn string, in apiv1.PostgresS
 	if ts := strings.TrimSpace(in.TunnelStep); ts != "" && b.h.TunnelCoord != nil {
 		th, tp, ok := b.h.TunnelCoord.LookupEndpoint(ts, b.h.SSHUser, b.h.Record)
 		if !ok {
+			zap.L().Debug("plugin postgres dsn rewrite tunnel miss",
+				zap.String("tunnel_step", ts),
+				zap.String("host_name", b.h.Record.Name),
+			)
 			return "", fmt.Errorf("postgres tunnel_step %q not found for host %q", ts, b.h.Record.Name)
 		}
 		hostOverride = th
 		if portOverride == "" {
 			portOverride = strconv.Itoa(tp)
 		}
+		zap.L().Debug("plugin postgres dsn rewrite",
+			zap.String("tunnel_step", ts),
+			zap.String("host_name", b.h.Record.Name),
+			zap.Bool("found", true),
+			zap.String("rewritten_host", hostOverride),
+			zap.String("rewritten_port", portOverride),
+		)
 	}
 	return postgres.RewriteDSNHostPort(dsn, hostOverride, portOverride)
 }

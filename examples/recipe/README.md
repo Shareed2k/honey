@@ -18,17 +18,19 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 - `graph_when_kv.cue`: **`when`** with **`kv_get` / `kv_has`** against operator-local recipe KV (`defaults.kv_tunnel`).
 - `graph_when_secrets.cue`: **`when`** reading declared **`secrets`** keys (resolved on `--execute`, redacted on dry-run).
 - `agent_transfer.cue`: Example **A→cloud→B** staging transfer (transfer agent); see the file header for host-arity rules and `cloud_backend_ref` / `--config` requirements.
+- `barman_failover_recovery.cue`: Graph recipe for **Barman** hosts after Postgres failover — kill stale `pg_receivewal`, wait, `barman check`, restart **`BARMAN_EXPORTER_SERVICE`** via **service** plugin; optional **`when`** + `-e BARMAN_DO_RESET=true` for `receive-wal --reset`; see file header.
 - `clean_filesystem.cue`: Maintenance recipe for systemd journal usage/vacuum and snap (remove disabled revisions, clear `/var/lib/snapd/cache`); read the file header for destructive journal behavior and `sudo -n` requirements.
 - `high_load_processes.cue`: On Linux (GNU `ps`), prints load, `free -h`, and top processes by **CPU%** and **RSS**; uses `host: "*"` for every matched host with an IP.
 - `k8s_node_pod_cpu_hint.cue`: For **Kubernetes worker** nodes over SSH: load, top PIDs, `/proc/<pid>/cgroup` snippets (pod UID hints), optional `crictl stats` / `crictl pods`, then optional **`ai`** summary; see file header for `sudo`/PATH and cgroup caveats.
 - `postgres_replica_lag.cue`: Read-only Postgres triage (replication lag snapshot, long-running `pg_stat_activity` sessions over 5 minutes, postgres process snapshot); set `PG*` via `defaults.env` and pass **`PGPASSWORD` via `cue-exec -e`**; see file header.
+- `postgres_replica_lag_plugin.cue`: Same triage via **graph** recipe — **`tunnel`** + **postgres** + **bash** WASM plugins, sealed **`PG_DSN`**, optional AI summary; see [`postgres_replica_lag.cue`](postgres_replica_lag.cue) for legacy remote `psql`.
 - `kv_tunnel_multistep_example.cue`: Three **`command`** steps with **`defaults.kv_tunnel: true`** — one operator `stepkv` for the whole `cue-exec` on **SSH and Kubernetes** (pods use a long-lived exec bridge to that session). Per-host keys sanitize `HONEY_HOST_NAME` for `/` and `:`.
 - `postgres_module_demo.cue`: **`plugin:`** postgres WASM query via operator-side pgx; see file header for `make build-plugin-modules` and sealed `PG_DSN`.
 - `postgres_tunnel_demo.cue`: Graph recipe with a **`tunnel`** step (SSH local forward) and postgres **`tunnel_step`** DSN rewrite for loopback Postgres on remote hosts; optional **`share_key`** for cross-run reuse.
 - `postgres_tunnel_ssh_config.cue`: Tunnel via **`use_ssh_config`** + **`ssh_config_match`** / **`ssh_config_env`** (`ssh -G`, Match exec).
 - `postgres_tunnel_k8s.cue`: k8s pod **`tunnel`** (API port-forward) + postgres consumer.
 - `tunnel_local_forward.cue`: Standalone SSH **local forward** (e.g. Redis on remote loopback) — connect from the operator; optional hold step pattern.
-- `tunnel_socks.cue`: **SOCKS5** via bastion to internal HTTP (Grafana/Jenkins-style); `curl --socks5-hostname` and browser notes.
+- `tunnel_socks.cue`: **SOCKS5** on bastion → reach **many** internal hosts from the operator (`mode: dynamic`); use `curl --socks5-hostname` or `proxychains` — not `tunnel_step` (TCP-only).
 - `tunnel_udp_dns.cue`: **UDP** relay to internal DNS (kube-dns / corporate resolver); requires `socat` on target; SSH to a **node/worker** (not k8s pod).
 - `tunnel_k8s_dns_tcp.cue`: **TCP** DNS via k8s port-forward to a **CoreDNS pod**; `dig +tcp` on operator.
 - `tunnel_tun_datacenter.cue`: **L3 tun** (`ssh -w`) to a private subnet; manual `ip addr` / `ip route` on operator after tunnel stdout.
@@ -81,6 +83,7 @@ By default recipes run **linearly** (steps in array order). Set **`type: "graph"
 - Optional **`depends: [id, ...]`** lists prerequisite steps (must form a **DAG**, no cycles).
 - Honey runs steps in **waves** (all steps in a wave may run concurrently; default up to 8 steps at once).
 - Optional **`max_parallel`** (1–128) on `defaults` or a step caps **host-level** SSH/SFTP/plugin concurrency for that step (default 32); it does **not** limit how many steps run in one graph wave.
+- Optional **`retry`** on remote steps (or **`defaults.retry`**) re-runs failed per-host actions with [cenkalti/backoff](https://github.com/cenkalti/backoff): **`attempts`** (total tries, default 3 when block present), **`delay_ms`**, optional **`max_delay_ms`** (exponential cap), **`backoff`**: `"fixed"` or `"exponential"`. Skipped **`when`** targets are not retried. See [`kafka_controller_rolling_restart.cue`](kafka_controller_rolling_restart.cue).
 - Optional **`env_from`** on a step maps env vars from a dependency step’s captured **stdout** (per host) or from a **`template.output`** capture name via **`from_output`**; each ref must appear in that step’s **`depends`** (exactly one of **`step`** or **`from_output`** per entry).
 - Optional **`template`** step (local): **`host: "_"`** for a single render, or **`host: "*"`** / literal / **`re:`** for per-host renders. Block fields: **`template`** (body), **`data`**, **`output`** (capture name only, requires **`host: "_"`**). Template body uses Go **`text/template`** + slim-sprig; **`${VAR}`** in **`data`** values is expanded from captures / env (not in the template body).
 - Graph mode sets **`HONEY_STEP_ID`** on remote command/script/plugin env when the step has an **`id`** (use with shared KV keys).
@@ -108,6 +111,8 @@ Optional **`tunnel:`** on a step opens a listen address on the **operator** (whe
 | `share_key` | Reuse the same tunnel across unrelated `cue-exec` runs (process-wide pool, idle TTL 30m) |
 
 **Provider dispatch:** k8s pod targets use the Kubernetes port-forward API; TrueNAS API-shell hosts use the TrueNAS tunnel backend; everything else uses SSH.
+
+**SOCKS vs local forward:** use **`mode: dynamic`** on a bastion when you need **many** internal backends (B, C, D…) through one jump host; use **`remote_host` + `remote_port`** (default `local` mode) for **one** fixed TCP endpoint (e.g. postgres **`tunnel_step`**). See [`tunnel_socks.cue`](tunnel_socks.cue) and [Jump host → many internal services (SOCKS)](https://github.com/shareed2k/honey/blob/main/website/docs/cue-recipes.md#jump-host--many-internal-services-socks).
 
 Tunnel step **stdout** (JSON) includes `host`, `port`, `mode`, and optional `tun_name` — usable from **`env_from`** like command steps.
 
@@ -154,12 +159,46 @@ Optional **`when: "<CEL expression>"`** on any step kind (`command`, `script`, `
 | `steps['id'].stdout` | string | Captured stdout (command/script/plugin) |
 | `steps['id'].exit_code` | int | Remote exit code |
 | `secrets['KEY']` | string | Declared `defaults.secrets` / `step.secrets` only |
+| `env['VAR']` | string | Merged recipe env (`defaults.env`, step `env`, `cue-exec -e` overrides, host vars) |
 | `execute` | bool | `false` on dry-run / plan |
 | `recipe_name` | string | Recipe name |
 | `kv_get(key)` | string | Operator recipe KV value (`""` if missing) |
 | `kv_has(key)` | bool | Whether key exists in recipe KV |
 
 **Security:** `secrets` in CEL use the same resolver as recipe env — as sensitive as putting values in `step.secrets`. Dry-run plans never print resolved secret material. KV reads are operator-local (what prior steps wrote in the run).
+
+## Prometheus metrics (web)
+
+When honey web runs with a metrics listener (`honey web --metrics-listen 127.0.0.1:9091`), scrape `/metrics` for operational counters and histograms beyond HTTP middleware latency.
+
+| Metric | Labels | Meaning |
+|--------|--------|---------|
+| `honey_recipe_runs_total` | `mode`, `type`, `status` | CUE dry-run / execute completions (`linear` or `graph`) |
+| `honey_recipe_run_duration_seconds` | `mode`, `type` | Recipe run latency |
+| `honey_recipe_steps_total` | `kind`, `status` | Step completions (`ok` / `error` / `skipped`) |
+| `honey_recipe_step_duration_seconds` | `kind` | Step latency by kind |
+| `honey_recipe_step_retry_attempts_total` | `kind` | Extra retries after the first attempt |
+| `honey_recipe_host_results_total` | `status` | Per-host result rows |
+| `honey_plugin_executions_total` | `plugin_id`, `action`, `status` | WASM plugin attempts (each retry counts) |
+| `honey_plugin_execution_duration_seconds` | `plugin_id`, `action` | Final plugin attempt latency |
+| `honey_ssh_operations_total` | `operation`, `status` | SSH / SFTP / script / TrueNAS ops |
+| `honey_ssh_operation_duration_seconds` | `operation` | Final SSH op latency |
+| `honey_agent_transfers_total` | `status` | Web agent-transfer API |
+| `honey_recipe_validate_total` | `status` | Recipe validate-content API |
+| `honey_exec_commands_total` | `status` | Raw exec API batches |
+
+Example PromQL:
+
+```promql
+# Recipe execute error rate (5m)
+sum(rate(honey_recipe_runs_total{mode="execute",status="error"}[5m]))
+  / sum(rate(honey_recipe_runs_total{mode="execute"}[5m]))
+
+# p95 command step latency
+histogram_quantile(0.95, sum(rate(honey_recipe_step_duration_seconds_bucket{kind="command"}[5m])) by (le))
+```
+
+Labels intentionally omit host names, recipe names, and step ids to keep cardinality bounded.
 
 ## How to use
 

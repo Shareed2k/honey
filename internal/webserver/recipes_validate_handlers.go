@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/safepath"
@@ -72,31 +73,43 @@ type RecipesParseResponse struct {
 // @Failure 400 {object} ValidateContentResponse
 // @Router /api/v1/recipes/validate-content [post]
 // @Security BearerAuth
-func (*Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	start := time.Now()
+	status := "ok"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.ObserveRecipeValidate(status, time.Since(start))
+		}
+	}()
 	var body ValidateContentRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		status = "error"
 		writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
 		return
 	}
 	recipe, err := recipeFromContentMap(body.RecipeContent)
 	if err != nil {
+		status = "error"
 		writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
 		return
 	}
 	if recipe == nil {
+		status = "error"
 		writeValidationErrors(w, []ValidateContentError{{Kind: "schema", Message: "recipe_content required"}})
 		return
 	}
 	if err := cuetry.ValidateParsedRecipe(*recipe, nil); err != nil {
+		status = "error"
 		writeValidationErrors(w, []ValidateContentError{{Kind: "validation", Message: err.Error()}})
 		return
 	}
 	plan, summaries, err := cuetry.RenderDryRunPlan(*recipe)
 	if err != nil {
+		status = "error"
 		writeValidationErrors(w, []ValidateContentError{{Kind: "resolve", Message: err.Error()}})
 		return
 	}

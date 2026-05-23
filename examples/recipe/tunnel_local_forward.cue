@@ -20,15 +20,15 @@ recipe: {
 
 	steps: [
 		{
-			host: "cache-*"
+			host: "*"
 			tunnel: {
 				remote_host: "localhost"
-				remote_port: 6379
+				remote_port: 5432
 				// local_port: 16379  // optional fixed operator port (0 = auto)
 			}
 		},
 		{
-			host:    "cache-*"
+			host:    "*"
 			command: "sleep 300"
 		},
 	]

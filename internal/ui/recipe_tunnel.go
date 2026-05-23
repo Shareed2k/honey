@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/shareed2k/honey/internal/hosts"
+	"go.uber.org/zap"
 )
 
 // RecipeTunnelCoordinator tracks tunnel endpoints for one cue-exec run and releases pool refs on Close.
@@ -58,6 +59,13 @@ func (c *RecipeTunnelCoordinator) Register(stepID, user string, r hosts.Record, 
 	if release != nil {
 		c.releases = append(c.releases, release)
 	}
+	zap.L().Debug("recipe tunnel register",
+		zap.String("step_id", stepID),
+		zap.String("host_name", r.Name),
+		zap.String("endpoint_host", ep.Host),
+		zap.Int("endpoint_port", ep.Port),
+		zap.String("mode", ep.Mode),
+	)
 }
 
 // Lookup returns the endpoint for a tunnel step id and host.
@@ -112,11 +120,22 @@ func tunnelDerivedKey(mode, provider, hostKey, spec string) string {
 func (c *RecipeTunnelCoordinator) LookupEndpoint(stepID, user string, r hosts.Record) (string, int, bool) {
 	ep, ok := c.Lookup(stepID, user, r)
 	if !ok || ep.Mode == "tun" || ep.Port <= 0 {
+		zap.L().Debug("recipe tunnel lookup miss",
+			zap.String("step_id", stepID),
+			zap.String("host_name", r.Name),
+			zap.Bool("found", ok),
+		)
 		return "", 0, false
 	}
 	host := strings.TrimSpace(ep.Host)
 	if host == "" {
 		host = "127.0.0.1"
 	}
+	zap.L().Debug("recipe tunnel lookup hit",
+		zap.String("step_id", stepID),
+		zap.String("host_name", r.Name),
+		zap.String("endpoint_host", host),
+		zap.Int("endpoint_port", ep.Port),
+	)
 	return host, ep.Port, true
 }

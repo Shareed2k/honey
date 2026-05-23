@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const defaultTunnelIdleTTL = 30 * time.Minute
@@ -85,13 +87,19 @@ func (p *GlobalTunnelPool) Acquire(ctx context.Context, key string, factory func
 		ent.refcount++
 		ent.lastUsed = time.Now()
 		ep := ent.endpoint
+		refcount := ent.refcount
 		p.mu.Unlock()
+		zap.L().Debug("tunnel pool cache hit",
+			zap.String("pool_key", key),
+			zap.Int("refcount", refcount),
+		)
 		return ep, p.releaseFn(key), nil
 	}
 	ent := &tunnelPoolEntry{ready: make(chan struct{})}
 	p.entries[key] = ent
 	p.mu.Unlock()
 
+	zap.L().Debug("tunnel pool cache miss", zap.String("pool_key", key))
 	ep, stop, err := factory(ctx)
 	p.mu.Lock()
 	if err != nil {
@@ -132,6 +140,7 @@ func (p *GlobalTunnelPool) releaseFn(key string) func() {
 		ent.refcount--
 		ent.lastUsed = time.Now()
 		if ent.refcount <= 0 {
+			zap.L().Debug("tunnel pool release evict", zap.String("pool_key", key))
 			if ent.stop != nil {
 				ent.stop()
 			}
@@ -183,6 +192,7 @@ func (p *GlobalTunnelPool) sweepIdle() {
 			continue
 		}
 		if now.Sub(ent.lastUsed) > p.ttl {
+			zap.L().Debug("tunnel pool sweep evict", zap.String("pool_key", key))
 			if ent.stop != nil {
 				ent.stop()
 			}

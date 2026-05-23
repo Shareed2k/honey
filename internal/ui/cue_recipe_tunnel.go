@@ -8,11 +8,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/sshclient"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -27,6 +30,9 @@ func streamCueStepTunnel(
 	cache *ClientCache,
 	tunnelCoord *RecipeTunnelCoordinator,
 	execute bool,
+	retryCfg cuetry.RecipeStepRetry,
+	_ metrics.Observer,
+	attemptMax *atomic.Int32,
 ) error {
 	if step.Tunnel == nil {
 		return fmt.Errorf("internal tunnel step")
@@ -44,8 +50,11 @@ func streamCueStepTunnel(
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runCueTunnelOnHost(ctx, step, target, sshUser, stepIdx, cache, tunnelCoord, execute)
-			ch <- res
+			outcome := runHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
+				return runCueTunnelOnHost(ctx, step, target, sshUser, stepIdx, cache, tunnelCoord, execute)
+			})
+			recordMaxAttempts(attemptMax, outcome.Attempts)
+			ch <- outcome.Result
 		}()
 	}
 	wg.Wait()
@@ -76,15 +85,41 @@ func runCueTunnelOnHost(
 		return res
 	}
 
+	mode := cuetry.EffectiveTunnelMode(t)
+	remoteHost := strings.TrimSpace(t.RemoteHost)
+	if remoteHost == "" {
+		remoteHost = "localhost"
+	}
 	poolKey := tunnelPoolKey(target, sshUser, t)
+	zap.L().Debug("recipe tunnel starting",
+		zap.String("step_id", stepID),
+		zap.String("host_name", target.Name),
+		zap.String("provider", target.Provider),
+		zap.String("mode", mode),
+		zap.String("pool_key", poolKey),
+		zap.String("remote_host", remoteHost),
+		zap.Int("remote_port", t.RemotePort),
+	)
 	ep, release, err := tunnelCoord.Acquire(ctx, poolKey, func(cctx context.Context) (TunnelEndpoint, func(), error) {
 		return startTunnelForRecord(cctx, sshUser, target, t, cache)
 	})
 	if err != nil {
+		zap.L().Debug("recipe tunnel failed",
+			zap.String("step_id", stepID),
+			zap.String("host_name", target.Name),
+			zap.Error(err),
+		)
 		res.ErrMsg = err.Error()
 		return res
 	}
 	tunnelCoord.Register(stepID, sshUser, target, ep, release)
+	zap.L().Debug("recipe tunnel ready",
+		zap.String("step_id", stepID),
+		zap.String("host_name", target.Name),
+		zap.String("listen_host", ep.Host),
+		zap.Int("listen_port", ep.Port),
+		zap.String("share_key", ep.ShareKey),
+	)
 	res.Success = true
 	res.Output = tunnelEndpointJSON(ep)
 	return res
@@ -126,12 +161,14 @@ func startTunnelForRecord(ctx context.Context, user string, r hosts.Record, t *c
 
 	switch {
 	case r.Provider == "k8s":
+		zap.L().Debug("recipe tunnel backend", zap.String("backend", "k8s"), zap.String("host_name", r.Name))
 		host, port, stop, err := StartK8sPortForward(ctx, r, localPort, remotePort)
 		if err != nil {
 			return TunnelEndpoint{}, nil, err
 		}
 		return TunnelEndpoint{Host: host, Port: port, Mode: "local", RemoteHost: "pod", RemotePort: remotePort, ShareKey: t.ShareKey}, stop, nil
 	case hostexec.TruenasTunnelUsesAPIShell(r):
+		zap.L().Debug("recipe tunnel backend", zap.String("backend", "truenas"), zap.String("host_name", r.Name))
 		lp := localPort
 		if lp == 0 {
 			lp = remotePort
@@ -143,6 +180,7 @@ func startTunnelForRecord(ctx context.Context, user string, r hosts.Record, t *c
 		}
 		return TunnelEndpoint{Host: host, Port: port, Mode: mode, RemoteHost: remoteHost, RemotePort: remotePort, ShareKey: t.ShareKey}, stop, nil
 	default:
+		zap.L().Debug("recipe tunnel backend", zap.String("backend", "ssh"), zap.String("host_name", r.Name))
 		return startSSHTunnel(ctx, user, r, t, cache, mode, bind, localPort, remoteHost, remotePort)
 	}
 }
@@ -268,8 +306,9 @@ func tunnelDryRunJSON(t *cuetry.RecipeStepTunnel) string {
 	return string(b)
 }
 
-func runCueStepTunnelDry(out io.Writer, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
+func runCueStepTunnelDry(out io.Writer, recipe cuetry.Recipe, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
 	WriteCueStepNotifyDryLine(out, step)
+	WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step, recipe.Defaults))
 	for _, target := range targets {
 		_, _ = fmt.Fprintf(out, "step %d: kind=tunnel name=%q %s mode=%s output=%s\n",
 			i, target.Name, FormatTargetForDryRun(target), cuetry.EffectiveTunnelMode(step.Tunnel), tunnelDryRunJSON(step.Tunnel))

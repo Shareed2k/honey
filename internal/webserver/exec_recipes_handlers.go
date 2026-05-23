@@ -227,6 +227,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
 
 	if r.URL.Query().Get("stream") == "1" {
+		execStart := time.Now()
 		var rec *ui.SessionRecorder
 		if wantRec {
 			var err error
@@ -240,11 +241,15 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		ch := make(chan ui.HostExecResult, len(jobs))
 		go func() {
 			defer close(ch)
-			_ = ui.StreamSSHParallel(context.Background(), user, jobs, false, func(_ hosts.Record, _ map[string]string) string { return cmd }, 0, ch, nil, nil, false, nil)
+			_ = ui.StreamSSHParallel(context.Background(), user, jobs, false, func(_ hosts.Record, _ map[string]string) string { return cmd }, 0, ch, nil, nil, false, nil, cuetry.RecipeStepRetry{}, s.metrics, nil)
 		}()
 		streamHostExecNDJSON(w, ch, rec)
+		if s.metrics != nil {
+			s.metrics.ObserveExecCommand("ok", len(jobs), time.Since(execStart))
+		}
 		return
 	}
+	execStart := time.Now()
 	var rec *ui.SessionRecorder
 	if wantRec {
 		var err error
@@ -260,6 +265,9 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		if rec != nil {
 			rec.RecordError(err)
 		}
+		if s.metrics != nil {
+			s.metrics.ObserveExecCommand("error", len(jobs), time.Since(execStart))
+		}
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
@@ -267,6 +275,16 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		for i := range results {
 			rec.RecordHostExecResult(results[i])
 		}
+	}
+	if s.metrics != nil {
+		status := "ok"
+		for _, res := range results {
+			if !res.Success && !res.Skipped {
+				status = "error"
+				break
+			}
+		}
+		s.metrics.ObserveExecCommand(status, len(jobs), time.Since(execStart))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ExecResponse{Results: results})
@@ -442,7 +460,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if !body.Execute {
 		var buf bytes.Buffer
 		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil)
+		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil, s.metrics)
 		var rec *ui.SessionRecorder
 		if wantRec {
 			var err error
@@ -489,7 +507,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer close(ch)
 			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-			if err := ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, true, ch); err != nil {
+			if err := ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, true, s.metrics, ch); err != nil {
 				ch <- ui.HostExecResult{
 					Name:     "cue-exec",
 					Provider: "web",
@@ -518,7 +536,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(ch)
 		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		errCh <- ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, true, ch)
+		errCh <- ui.StreamCueRecipeSteps(r.Context(), recipe, recipeDir, jobs, user, cliEnv, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, true, s.metrics, ch)
 	}()
 	var results []ui.HostExecResult
 	for res := range ch {

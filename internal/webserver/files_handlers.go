@@ -273,6 +273,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	)
 
 	if r.URL.Query().Get("stream") == "1" {
+		transferStart := time.Now()
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
 		enc := json.NewEncoder(w)
@@ -310,9 +311,17 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 				Timestamp: time.Now().UTC(),
 			})
 		}
+		if s.metrics != nil {
+			status := "ok"
+			if err != nil {
+				status = "error"
+			}
+			s.metrics.ObserveAgentTransfer(status, time.Since(transferStart))
+		}
 		return
 	}
 
+	transferStart := time.Now()
 	events, err := ui.RunAgentTransferWithFallback(
 		r.Context(),
 		s.fileClientCache,
@@ -333,12 +342,18 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		nil,
 	)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.ObserveAgentTransfer("error", time.Since(transferStart))
+		}
 		status := http.StatusBadGateway
 		if ui.IsAgentTransferValidationError(err) {
 			status = http.StatusBadRequest
 		}
 		httpError(w, fmt.Errorf("agent transfer: %w", err), status)
 		return
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveAgentTransfer("ok", time.Since(transferStart))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(FilesAgentTransferResponse{Events: events})

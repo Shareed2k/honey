@@ -70,6 +70,7 @@ func newWhenEnv() (*cel.Env, error) {
 		cel.Variable("dest", cel.DynType),
 		cel.Variable("steps", cel.DynType),
 		cel.Variable("secrets", cel.MapType(cel.StringType, cel.StringType)),
+		cel.Variable("env", cel.MapType(cel.StringType, cel.StringType)),
 		cel.Variable("execute", cel.BoolType),
 		cel.Variable("recipe_name", cel.StringType),
 		cel.Function("kv_get",
@@ -111,6 +112,7 @@ type WhenEvalOpts struct {
 	Dest       *hosts.Record
 	Steps      map[string]StepView
 	Secrets    map[string]string
+	Env        map[string]string
 	KV         KVReader
 }
 
@@ -159,6 +161,7 @@ func EvalWhen(prog *WhenProgram, opts WhenEvalOpts) (bool, error) {
 		"host":        hostToCELMap(opts.Host),
 		"steps":       stepsToCELMap(opts.Steps),
 		"secrets":     opts.Secrets,
+		"env":         opts.Env,
 		"execute":     opts.Execute,
 		"recipe_name": opts.RecipeName,
 	}
@@ -304,6 +307,14 @@ func BuildSecretsMapForWhen(ctx context.Context, resolve bool, resolver SecretRe
 		}
 	}
 	return out, nil
+}
+
+// BuildEnvMapForWhen merges recipe defaults/step env, CLI overrides, and host env for CEL when.
+func BuildEnvMapForWhen(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, host *hosts.Record) (map[string]string, error) {
+	if host == nil {
+		return nil, fmt.Errorf("cuetry: when env requires host")
+	}
+	return EffectiveEnvForRun(ctx, resolveSecrets, resolver, step, defaults, cliEnv, host)
 }
 
 // DeclaredSecretKeys returns union of secret keys from defaults and step.

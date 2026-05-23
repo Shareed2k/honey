@@ -14,6 +14,12 @@ import (
 // schemaSource defines the shape of a "remote recipe" document: a named list of
 // host + shell command steps (similar in spirit to a tiny Ansible play).
 const schemaSource = `
+#Retry: close({
+	attempts?:     int & >=1
+	delay_ms?:     int & >=0
+	max_delay_ms?: int & >=0
+	backoff?: "fixed" | "exponential"
+})
 #StepHook: close({
 	where: "local" | "remote"
 	command?: string
@@ -141,6 +147,7 @@ const schemaSource = `
 	env?: {[string]: string}
 	secrets?: {[string]: string}
 	when?: string
+	retry?: #Retry
 })
 #Recipe: close({
 	name:  string
@@ -154,6 +161,7 @@ const schemaSource = `
 		max_parallel?: int
 		ssh_port?: int
 		ssh_private_key?: string
+		retry?: #Retry
 	})
 	steps: [...#Step]
 })
@@ -244,7 +252,24 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 	if err := validateStepTunnel(i, kind, s, mode); err != nil {
 		return err
 	}
+	if err := validateStepRetry(i, s, defaults); err != nil {
+		return err
+	}
 	return validateStepHooksAndKVTunnel(i, kind, s, defaults, secretPrefixes)
+}
+
+func validateStepRetry(i int, s RecipeStep, defaults *RecipeDefaults) error {
+	if s.Retry != nil || (defaults != nil && defaults.Retry != nil) {
+		cfg := EffectiveRetry(s, defaults)
+		if err := ValidateRetry(cfg); err != nil {
+			where := fmt.Sprintf("steps[%d].retry", i)
+			if s.Retry == nil && defaults != nil && defaults.Retry != nil {
+				where = "defaults.retry"
+			}
+			return fmt.Errorf("cuetry: %s: %w", where, err)
+		}
+	}
+	return nil
 }
 
 func validateStepEnvAndSecrets(i int, kind StepKind, s RecipeStep, secretPrefixes []string) error {
@@ -364,6 +389,12 @@ func parseRemoteRecipeAfterTransform(cueBytes []byte, records []hosts.Record, se
 		}
 		if err := validateMaxParallelField("defaults", out.Defaults.MaxParallel); err != nil {
 			return out, err
+		}
+		if out.Defaults.Retry != nil {
+			cfg := EffectiveRetry(RecipeStep{}, out.Defaults)
+			if err := ValidateRetry(cfg); err != nil {
+				return out, fmt.Errorf("cuetry: defaults.retry: %w", err)
+			}
 		}
 	}
 	mode, err := RecipeExecutionMode(out)

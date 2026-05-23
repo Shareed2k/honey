@@ -21,6 +21,7 @@ type RecipeDefaults struct {
 	MaxParallel   int               `json:"max_parallel,omitempty"`
 	SSHPort       int               `json:"ssh_port,omitempty"`
 	SSHPrivateKey string            `json:"ssh_private_key,omitempty"`
+	Retry         *RecipeStepRetry  `json:"retry,omitempty"`
 }
 
 // RecipeFileTransfer is a local ↔ remote path pair for SFTP put/get steps.
@@ -157,6 +158,7 @@ type RecipeStep struct {
 	Env           map[string]string    `json:"env,omitempty"`
 	Secrets       map[string]string    `json:"secrets,omitempty"`
 	When          string               `json:"when,omitempty"`
+	Retry         *RecipeStepRetry     `json:"retry,omitempty"`
 }
 
 // NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).
