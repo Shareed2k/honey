@@ -120,6 +120,21 @@ function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
   return z.object(shape);
 }
 
+function normalizeBackendsPayload(
+  j: BackendsPayload,
+  schema: ConfigUISchema | null,
+): BackendsPayload {
+  const kinds =
+    schema?.backend_order?.length
+      ? schema.backend_order
+      : Object.keys(j).filter((k) => Array.isArray(j[k]));
+  const normalized: BackendsPayload = {};
+  for (const kind of kinds) {
+    normalized[kind] = (Array.isArray(j[kind]) ? j[kind] : []) as Record<string, unknown>[];
+  }
+  return normalized;
+}
+
 export function ConfigBackendsSection({ onSaved, schema }: Props) {
   const [data, setData] = useState<BackendsPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -140,15 +155,8 @@ export function ConfigBackendsSection({ onSaved, schema }: Props) {
       return;
     }
     const j = (await r.json()) as BackendsPayload;
-    setData({
-      gcp: j.gcp || [],
-      aws: j.aws || [],
-      kubernetes: j.kubernetes || [],
-      consul: j.consul || [],
-      proxmox: j.proxmox || [],
-      local: j.local || [],
-    });
-  }, []);
+    setData(normalizeBackendsPayload(j, schema));
+  }, [schema]);
 
   const persist = async (fn: () => Promise<Response>): Promise<boolean> => {
     setBusy(true);
@@ -231,7 +239,7 @@ export function ConfigBackendsSection({ onSaved, schema }: Props) {
     <section style={{ marginTop: '1.25rem', borderTop: '1px solid #333', paddingTop: '1rem' }}>
       <h2 style={{ fontSize: '1.1rem' }}>Backends (structured)</h2>
       <p style={{ fontSize: '0.8rem', opacity: 0.8 }}>
-        REST paths use YAML keys: <code>gcp</code>, <code>aws</code>, <code>kubernetes</code>, <code>consul</code>, <code>proxmox</code>.
+        REST paths use YAML keys from <code>backend_order</code> (e.g. <code>gcp</code>, <code>aws</code>, <code>kubernetes</code>, <code>consul</code>, <code>proxmox</code>, <code>truenas</code>, <code>local</code>, <code>docker</code>).
         Search provider id for Kubernetes is <code>k8s</code>; backend rows list <code>kubernetes</code> as kind.
       </p>
       {err ? <p style={{ color: '#f66' }}>{err}</p> : null}

@@ -1,0 +1,12 @@
+# Kubernetes: valid kubeconfig + context; nodes mode needs get/list nodes.
+# Docs: website/docs/providers/kubernetes.md
+# Verify: honey search --config examples/config/kubernetes.yaml --provider k8s -o json
+version: 1
+defaults:
+  k8s_mode: nodes
+backends:
+  kubernetes:
+    - name: k8s-staging
+      context: staging
+      kubeconfig: ~/.kube/config
+      mode: nodes

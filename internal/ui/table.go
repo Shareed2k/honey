@@ -25,6 +25,7 @@ import (
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/pvelxc"
 	"github.com/shareed2k/honey/internal/safepath"
+	"github.com/shareed2k/honey/internal/truenasshell"
 	k8sexec "k8s.io/client-go/util/exec"
 )
 
@@ -33,6 +34,7 @@ type action int
 const (
 	actNone action = iota
 	actSSH
+	actTrueNASAPI
 	actTunnel
 	actReplay
 )
@@ -184,26 +186,13 @@ func RunTable(records []hosts.Record, sshUser string, opts RunTableOptions) erro
 		case actSSH:
 			err = runSSHWithRecording(fm.sshUser, r, fm.recordingOptions("tui", "interactive"))
 			if err != nil {
-				// Avoid "ExitError" halting the TUI when users just type 'exit 1' or Ctrl+C
-				_, isSSHExitErr := err.(*ssh.ExitError)
-
-				// Kubernetes exec returns an unwrapped error matching "command terminated with exit code"
-				// but let's check both the formal interface and the string to be safe.
-				_, isK8sExitErr := err.(k8sexec.ExitError)
-				isK8sStringErr := strings.Contains(err.Error(), "command terminated with exit code")
-				isBenignDetach := errors.Is(err, context.Canceled) ||
-					strings.Contains(strings.ToLower(err.Error()), "context canceled")
-
-				if !isSSHExitErr && !isK8sExitErr && !isK8sStringErr && !isBenignDetach {
-					errLabel := "SSH Connection Error"
-					if hosts.IsDockerRecord(r) {
-						errLabel = "Docker exec error"
-					}
-					fmt.Fprintf(os.Stderr, "\r\n[honey] %s: %v\r\n", errLabel, err)
-					fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
-					var b [1]byte
-					_, _ = os.Stdin.Read(b[:])
-				}
+				reportInteractiveSessionError(r, err)
+			}
+			continue
+		case actTrueNASAPI:
+			err = runTrueNASShellWithRecording(r, fm.recordingOptions("tui", "interactive"))
+			if err != nil {
+				reportInteractiveSessionError(r, err)
 			}
 			continue
 		case actTunnel:
@@ -854,7 +843,7 @@ func (m *model) View() tea.View {
 			}
 			recHint = "   R: record " + recState + "   p: play recording"
 		}
-		help := helpStyle.Render("enter: ssh (k8s: exec)   a: A→cloud→B   t: tunnel   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
+		help := helpStyle.Render("enter: connect (truenas: API shell)   s: truenas SSH (needs IP)   a: A→cloud→B   t: tunnel (truenas guest: API forward)   e: parallel cmd   r: cue recipe   /: filter   x: mark row   ^a: mark all   c: clear marks" + recHint + "   q: quit")
 		nMark := len(m.selected)
 		sub := ""
 		if nMark > 0 {
@@ -1191,7 +1180,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 	}
 	return func() tea.Msg {
 		if len(targets) == 0 {
-			const noHostMsg = "(no hosts with IP in this scope — use x to mark rows, ^a to mark all with IP, or c to clear marks and use every row with an IP)"
+			const noHostMsg = "(no executable hosts in this scope — use x to mark rows, ^a to mark all executable, or c to clear marks and use every executable row)"
 			return cueRecipeDoneMsg{
 				title: title,
 				body:  targetNote + "\n\n" + noHostMsg,
@@ -1362,8 +1351,8 @@ func readNextStreamResult(ch chan HostExecResult) tea.Cmd {
 }
 
 // parallelExecTargets returns hosts to run a parallel command on. If at least
-// one table row is marked (*), only marked rows that have PrimaryIP are used.
-// If nothing is marked, every row with PrimaryIP is used.
+// one table row is marked (*), only marked executable rows are used.
+// If nothing is marked, every executable row is used.
 func isExecutableHost(r hosts.Record) bool {
 	return hosts.IsConnectableRecord(r)
 }
@@ -1475,6 +1464,51 @@ func (m *model) recordingOptions(trigger, mode string) *SessionRecorderOptions {
 	}
 }
 
+func (m *model) cursorRecord() (hosts.Record, bool) {
+	row := m.tbl.Cursor()
+	if row < 0 || row >= len(m.visible) {
+		return hosts.Record{}, false
+	}
+	return m.recs[m.visible[row]], true
+}
+
+func reportInteractiveSessionError(r hosts.Record, err error) {
+	_, isSSHExitErr := err.(*ssh.ExitError)
+	_, isK8sExitErr := err.(k8sexec.ExitError)
+	isK8sStringErr := strings.Contains(err.Error(), "command terminated with exit code")
+	isBenignDetach := errors.Is(err, context.Canceled) ||
+		strings.Contains(strings.ToLower(err.Error()), "context canceled")
+
+	if isSSHExitErr || isK8sExitErr || isK8sStringErr || isBenignDetach {
+		return
+	}
+	errLabel := "SSH Connection Error"
+	switch {
+	case hosts.IsDockerRecord(r):
+		errLabel = "Docker exec error"
+	case r.Provider == "truenas":
+		errLabel = "TrueNAS API shell error"
+	}
+	fmt.Fprintf(os.Stderr, "\r\n[honey] %s: %v\r\n", errLabel, err)
+	fmt.Fprintf(os.Stderr, "[honey] Press ENTER to return to the host list...")
+	var b [1]byte
+	_, _ = os.Stdin.Read(b[:])
+}
+
+func runTrueNASShellWithRecording(r hosts.Record, recordOpts *SessionRecorderOptions) error {
+	var recorder *SessionRecorder
+	if recordOpts != nil {
+		rec, err := NewSessionRecorder(*recordOpts)
+		if err == nil {
+			recorder = rec
+		}
+	}
+	if recorder != nil {
+		defer recorder.Close()
+	}
+	return runTrueNASShellInteractive(context.Background(), truenasshell.ConsoleTrueNASAPI, r, recorder)
+}
+
 func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorderOptions) error {
 	if hosts.IsDockerRecord(r) {
 		if strings.TrimSpace(r.Meta["container_id"]) == "" {
@@ -1503,7 +1537,7 @@ func runSSHWithRecording(user string, r hosts.Record, recordOpts *SessionRecorde
 }
 
 func runTunnel(user string, r hosts.Record, localFwd string) error {
-	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") {
+	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !CanTrueNASTunnel(r) {
 		return fmt.Errorf("no IP for selected host")
 	}
 	if localFwd == "" || !strings.Contains(localFwd, ":") {

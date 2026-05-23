@@ -27,6 +27,11 @@ type Query struct {
 	ProxmoxTokenSecret string
 	ProxmoxInsecure    bool
 
+	TrueNASURL      string
+	TrueNASUser     string
+	TrueNASAPIKey   string
+	TrueNASInsecure bool
+
 	DockerHost          string
 	DockerMode          string
 	DockerAllContainers bool

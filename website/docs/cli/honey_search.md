@@ -11,8 +11,6 @@ Search instances across providers in parallel
 honey search [name] [flags]
 ```
 
-Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) is configured with **global** flags on the `honey` root command (see **Global Flags** in `honey search --help` and `honey --help`). You can place them before or after the subcommand (for example `honey --refresh search foo` or `honey search --refresh foo`). Default cache TTL is **10 minutes** unless overridden by `defaults.cache_ttl` in honey YAML.
-
 ### Options
 
 ```
@@ -23,6 +21,13 @@ Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) i
       --consul-addr string            Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)
       --consul-datacenter string      Consul datacenter
       --consul-token string           Consul ACL token (or CONSUL_HTTP_TOKEN)
+      --docker-all                    Include stopped containers in docker search
+      --docker-host string            Docker host (unix://, tcp://, ssh://; default: DOCKER_HOST / local socket)
+      --docker-mode string            Docker search mode: containers, swarm, or both (default "containers")
+      --docker-platform string        Remote Docker host OS: linux or windows (default "linux")
+      --docker-socket string          Remote Docker socket (default /var/run/docker.sock on linux)
+      --docker-via-local string       Docker via Honey SSH: backends.local name
+      --docker-via-ssh-host string    Docker via Honey SSH: explicit host
       --gcp-project string            GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)
       --gcp-zone string               Limit GCP to a single zone (default: all zones)
   -h, --help                          help for search
@@ -35,17 +40,21 @@ Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) i
       --name-regex string             Regex filter on name (overrides --name substring)
       --no-ui                         Skip interactive UI (same as --output=json)
   -o, --output string                 Output format: tui, table, json (default "tui")
-      --provider string               Comma-separated: gcp,aws,k8s,consul,proxmox (default: all)
+      --provider string               Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)
       --proxmox-insecure              Skip TLS verification for Proxmox
       --proxmox-password string       Proxmox password
       --proxmox-token-id string       Proxmox token ID (e.g. root@pam!token)
       --proxmox-token-secret string   Proxmox token secret
       --proxmox-url string            Proxmox API URL (e.g. https://10.0.0.1:8006/api2/json)
       --proxmox-user string           Proxmox user (e.g. root@pam)
-      --ssh-user string               Default SSH user for connect actions (default "shareed2k")
+      --ssh-user string               Default SSH user for connect actions (defaults to config or OS user)
+      --truenas-api-key string        TrueNAS API key (or TRUENAS_API_KEY)
+      --truenas-insecure              Skip TLS verification for TrueNAS
+      --truenas-url string            TrueNAS SCALE URL (https://host or wss://host/api/current)
+      --truenas-user string           TrueNAS API key username (default root)
 ```
 
-### Global flags
+### Options inherited from parent commands
 
 ```
       --cache-dir string     Override cache directory (default: XDG_CACHE_HOME/honey)
@@ -56,12 +65,7 @@ Host discovery cache (`--cache-ttl`, `--cache-dir`, `--no-cache`, `--refresh`) i
       --refresh              Ignore cached entries and refresh (host discovery)
 ```
 
-### Docker auto-discover
-
-Experimental second pass: list containers on GCP/AWS VMs found in the same search. Requires `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1`, `--docker-discover-providers`, and matching `--provider` values. See [Docker auto-discover](../docker-auto-discover.md).
-
 ### SEE ALSO
 
 * [honey](honey.md)	 - DevOps tool to help find an instance in sea of clouds
-* [Docker auto-discover](../docker-auto-discover.md) - Search containers on cloud VMs via SSH
 

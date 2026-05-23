@@ -63,7 +63,7 @@ func (s *Server) handleConfigBackendsGet(w http.ResponseWriter, r *http.Request)
 // @Tags config
 // @Accept json
 // @Produce json
-// @Param kind path string true "backend kind (gcp, aws, kubernetes, consul, proxmox, local)"
+// @Param kind path string true "backend kind (gcp, aws, kubernetes, consul, proxmox, truenas, local, docker)"
 // @Param body body ConfigBackendEntryBody true "Backend entry JSON (shape depends on kind path param)"
 // @Success 200 {object} StatusResponse
 // @Failure 400 {object} map[string]string

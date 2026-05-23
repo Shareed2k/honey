@@ -1,0 +1,9 @@
+# GCP: Application Default Credentials + compute.instances.list (e.g. roles/compute.viewer).
+# Docs: website/docs/providers/gcp.md
+# Verify: honey search --config examples/config/gcp.yaml --provider gcp -o json
+version: 1
+backends:
+  gcp:
+    - name: my-gcp
+      project: my-gcp-project
+      # zone: us-central1-a

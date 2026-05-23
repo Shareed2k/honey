@@ -48,6 +48,10 @@ var (
 	flagProxmoxTokenID     string
 	flagProxmoxTokenSecret string
 	flagProxmoxInsecure    bool
+	flagTrueNASURL         string
+	flagTrueNASUser        string
+	flagTrueNASAPIKey      string
+	flagTrueNASInsecure    bool
 	flagDockerHost         string
 	flagDockerMode         string
 	flagDockerAll          bool
@@ -68,7 +72,7 @@ func init() {
 	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
 	searchCmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
 	searchCmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
-	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,docker,local (default: all)")
+	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	searchCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	searchCmd.Flags().StringVarP(&flagOutput, "output", "o", "tui", "Output format: tui, table, json")
 	searchCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Skip interactive UI (same as --output=json)")
@@ -96,6 +100,11 @@ func init() {
 	searchCmd.Flags().StringVar(&flagProxmoxTokenID, "proxmox-token-id", "", "Proxmox token ID (e.g. root@pam!token)")
 	searchCmd.Flags().StringVar(&flagProxmoxTokenSecret, "proxmox-token-secret", "", "Proxmox token secret")
 	searchCmd.Flags().BoolVar(&flagProxmoxInsecure, "proxmox-insecure", false, "Skip TLS verification for Proxmox")
+
+	searchCmd.Flags().StringVar(&flagTrueNASURL, "truenas-url", "", "TrueNAS SCALE URL (https://host or wss://host/api/current)")
+	searchCmd.Flags().StringVar(&flagTrueNASUser, "truenas-user", "", "TrueNAS API key username (default root)")
+	searchCmd.Flags().StringVar(&flagTrueNASAPIKey, "truenas-api-key", "", "TrueNAS API key (or TRUENAS_API_KEY)")
+	searchCmd.Flags().BoolVar(&flagTrueNASInsecure, "truenas-insecure", false, "Skip TLS verification for TrueNAS")
 
 	searchCmd.Flags().StringVar(&flagDockerHost, "docker-host", "", "Docker host (unix://, tcp://, ssh://; default: DOCKER_HOST / local socket)")
 	searchCmd.Flags().StringVar(&flagDockerMode, "docker-mode", "containers", "Docker search mode: containers, swarm, or both")
@@ -131,6 +140,10 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 		ProxmoxTokenID:      flagProxmoxTokenID,
 		ProxmoxTokenSecret:  flagProxmoxTokenSecret,
 		ProxmoxInsecure:     flagProxmoxInsecure,
+		TrueNASURL:          flagTrueNASURL,
+		TrueNASUser:         flagTrueNASUser,
+		TrueNASAPIKey:       flagTrueNASAPIKey,
+		TrueNASInsecure:     flagTrueNASInsecure,
 		DockerHost:          flagDockerHost,
 		DockerMode:          flagDockerMode,
 		DockerAllContainers: flagDockerAll,

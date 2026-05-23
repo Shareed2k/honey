@@ -35,9 +35,18 @@ import { HostPicker, recordHaystack, recordKey } from './HostPicker';
 import type { HostRecord } from './HostPicker';
 import { RecipesTab } from './RecipesTab';
 import { SessionReplayModal } from './SessionReplayModal';
-import { TerminalTabsModal, type PveConsoleMode, type TerminalSessionConfig } from './TerminalModal';
+import {
+  TerminalTabsModal,
+  type PveConsoleMode,
+  type TerminalSessionConfig,
+  type TrueNASConsoleMode,
+} from './TerminalModal';
 
 type BackendRow = { kind: string; name: string; hint: string };
+
+function backendRef(b: BackendRow): string {
+  return `${b.kind}:${b.name}`.toLowerCase();
+}
 
 type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'api-docs';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
@@ -58,6 +67,40 @@ function canProxmoxQemuVnc(rec: HostRecord): boolean {
   const k = (rec.meta?.kind || '').toLowerCase();
   const m = (rec.meta?.exec_mode || '').toLowerCase();
   return rec.provider === 'proxmox' && k === 'qemu' && (m === 'pve' || m === 'hybrid');
+}
+
+function canTrueNASAPIShell(rec: HostRecord): boolean {
+  if (rec.provider !== 'truenas') {
+    return false;
+  }
+  const k = (rec.meta?.kind || '').toLowerCase();
+  return k === 'appliance' || k === 'vm' || k === 'virt_instance';
+}
+
+/** Whether the Tunnel (port-forward) action can run for this search row. */
+function canPortForwardTunnel(rec: HostRecord): boolean {
+  if ((rec.primary_ip || '').trim()) {
+    return true;
+  }
+  if (rec.provider === 'k8s') {
+    return true;
+  }
+  if (rec.provider === 'truenas') {
+    return canTrueNASAPIShell(rec);
+  }
+  return false;
+}
+
+function truenasAPIShellLabel(rec: HostRecord): string {
+  const k = (rec.meta?.kind || '').toLowerCase();
+  switch (k) {
+    case 'vm':
+      return 'VM console';
+    case 'virt_instance':
+      return 'Container shell';
+    default:
+      return 'API shell';
+  }
 }
 
 function recordIndex(records: HostRecord[], rec: HostRecord): number {
@@ -315,13 +358,14 @@ export function App() {
     if (!val) return [];
     try {
       return val.split(',').map(part => {
-        const [id, key, pve] = part.split('|');
+        const [id, key, pve, truenasConsole] = part.split('|');
         const sessionRec = sessionStorage.getItem(`honey_term_${id}`);
         const record = sessionRec ? JSON.parse(sessionRec) : { _key: key, provider: 'loading', name: 'loading', primary_ip: '' };
-        return { 
-          id: id || Math.random().toString(36).slice(2), 
-          record, 
-          pve: (pve as PveConsoleMode) || 'serial' 
+        return {
+          id: id || Math.random().toString(36).slice(2),
+          record,
+          pve: (pve as PveConsoleMode) || 'serial',
+          truenasConsole: (truenasConsole as TrueNASConsoleMode) || 'ssh',
         };
       });
     } catch {
@@ -475,7 +519,7 @@ export function App() {
       const joined = terminals.map(t => {
         // If it's a dummy record waiting to hydrate, use _key, else use the real key
         const rKey = (t.record as any)._key || recordKey(t.record);
-        return `${t.id}|${rKey}|${t.pve || 'serial'}`;
+        return `${t.id}|${rKey}|${t.pve || 'serial'}|${t.truenasConsole || 'ssh'}`;
       }).join(',');
       params.set('terminals', joined);
     } else {
@@ -1252,7 +1296,7 @@ export function App() {
 
   const providerSelectSize = Math.min(10, Math.max(3, providerIds.length || 1));
   const backendOptions = namedBackends.map((b) => ({
-    value: b.name.trim().toLowerCase(),
+    value: backendRef(b),
     label: `${b.kind}: ${b.name}`,
   }));
   const backendSelectSize = Math.min(10, Math.max(3, backendOptions.length || 1));
@@ -1633,26 +1677,60 @@ export function App() {
               const tunnelBtnStyle = activeTunnels.length > 0 ? { backgroundColor: 'rgba(100, 149, 237, 0.2)' } : undefined;
 
               const activeTerms = terminals.filter((t) => recordKey(t.record) === recKey);
-              const serialTerms = activeTerms.filter(t => t.pve === 'serial');
-              const vncTerms = activeTerms.filter(t => t.pve === 'vnc');
-              
+              const serialTerms = activeTerms.filter((t) => t.pve === 'serial' && (t.truenasConsole ?? 'ssh') === 'ssh');
+              const apiTerms = activeTerms.filter((t) => t.truenasConsole === 'api');
+              const vncTerms = activeTerms.filter((t) => t.pve === 'vnc');
+
+              const hasSSH = !!(rec.primary_ip || '').trim();
+              const showTrueNASAPI = canTrueNASAPIShell(rec);
+              const apiLabel = truenasAPIShellLabel(rec);
+
               const termBtnStyle = serialTerms.length > 0 ? { backgroundColor: 'rgba(59, 130, 246, 0.2)' } : undefined;
               const termBtnText = serialTerms.length > 0 ? `Terminal (Open)` : `Terminal`;
+
+              const apiBtnStyle = apiTerms.length > 0 ? { backgroundColor: 'rgba(59, 130, 246, 0.2)' } : undefined;
+              const apiBtnText = apiTerms.length > 0 ? `${apiLabel} (Open)` : apiLabel;
 
               const vncBtnStyle = vncTerms.length > 0 ? { backgroundColor: 'rgba(59, 130, 246, 0.2)' } : undefined;
               const vncBtnText = vncTerms.length > 0 ? `VNC (Open)` : `VNC`;
 
               return (
               <>
-                <button type="button" style={termBtnStyle} onClick={() => {
-                  const id = Math.random().toString(36).slice(2);
-                  sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
-                  setTerminals((prev) => [...prev, { id, record: rec, pve: 'serial' }]);
-                  setActiveTermId(id);
-                  setIsTerminalModalOpen(true);
-                }}>
-                  {termBtnText}
-                </button>
+                {(hasSSH || rec.provider !== 'truenas') ? (
+                  <button
+                    type="button"
+                    style={termBtnStyle}
+                    disabled={rec.provider === 'truenas' && !hasSSH}
+                    title={rec.provider === 'truenas' && !hasSSH ? 'No SSH target IP on this record' : undefined}
+                    onClick={() => {
+                      const id = Math.random().toString(36).slice(2);
+                      sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
+                      setTerminals((prev) => [...prev, { id, record: rec, pve: 'serial', truenasConsole: 'ssh' }]);
+                      setActiveTermId(id);
+                      setIsTerminalModalOpen(true);
+                    }}
+                  >
+                    {termBtnText}
+                  </button>
+                ) : null}
+                {showTrueNASAPI ? (
+                  <>
+                    {hasSSH || rec.provider !== 'truenas' ? ' ' : null}
+                    <button
+                      type="button"
+                      style={apiBtnStyle}
+                      onClick={() => {
+                        const id = Math.random().toString(36).slice(2);
+                        sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
+                        setTerminals((prev) => [...prev, { id, record: rec, pve: 'serial', truenasConsole: 'api' }]);
+                        setActiveTermId(id);
+                        setIsTerminalModalOpen(true);
+                      }}
+                    >
+                      {apiBtnText}
+                    </button>
+                  </>
+                ) : null}
                 {canProxmoxQemuVnc(rec) ? (
                   <>
                     {' '}
@@ -1671,7 +1749,17 @@ export function App() {
                   Upload
                 </button>
                 {' '}
-                <button type="button" style={tunnelBtnStyle} onClick={() => openTunnelModal(rec)}>
+                <button
+                  type="button"
+                  style={tunnelBtnStyle}
+                  disabled={!canPortForwardTunnel(rec)}
+                  title={
+                    !canPortForwardTunnel(rec)
+                      ? 'Port-forward requires SSH IP or a TrueNAS API shell target'
+                      : undefined
+                  }
+                  onClick={() => openTunnelModal(rec)}
+                >
                   {tunnelBtnText}
                 </button>
                 {meta?.session_recording_available ? (

@@ -1044,7 +1044,8 @@ func DialSSHClient(userOverride, hostAlias string, overridePort int, recipeIdent
 	return h.Client.Client, cleanup, nil
 }
 
-func parseLocalForward(spec string) (localPort, remoteHost, remotePort string, err error) {
+// ParseLocalForward splits a tunnel mapping "localPort:remoteHost:remotePort".
+func ParseLocalForward(spec string) (localPort, remoteHost, remotePort string, err error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
 		return "", "", "", fmt.Errorf("empty tunnel spec")
@@ -1074,7 +1075,7 @@ func RunTunnelGo(ctx context.Context, user, host string, sshPort int, localFwd s
 	if strings.TrimSpace(host) == "" {
 		return fmt.Errorf("no IP for selected host")
 	}
-	localPort, remoteHost, remotePort, err := parseLocalForward(localFwd)
+	localPort, remoteHost, remotePort, err := ParseLocalForward(localFwd)
 	if err != nil {
 		return err
 	}

@@ -37,6 +37,10 @@ type SearchHostsInput struct {
 	ProxmoxTokenID      string `json:"proxmox_token_id,omitempty"`
 	ProxmoxTokenSecret  string `json:"proxmox_token_secret,omitempty"`
 	ProxmoxInsecure     bool   `json:"proxmox_insecure,omitempty"`
+	TrueNASURL          string `json:"truenas_url,omitempty"`
+	TrueNASUser         string `json:"truenas_user,omitempty"`
+	TrueNASAPIKey       string `json:"truenas_api_key,omitempty"`
+	TrueNASInsecure     bool   `json:"truenas_insecure,omitempty"`
 	DockerHost          string `json:"docker_host,omitempty"`
 	DockerMode          string `json:"docker_mode,omitempty"`
 	DockerAllContainers bool   `json:"docker_all_containers,omitempty"`
@@ -123,6 +127,10 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 		ProxmoxTokenID:      strings.TrimSpace(in.ProxmoxTokenID),
 		ProxmoxTokenSecret:  strings.TrimSpace(in.ProxmoxTokenSecret),
 		ProxmoxInsecure:     in.ProxmoxInsecure,
+		TrueNASURL:          strings.TrimSpace(in.TrueNASURL),
+		TrueNASUser:         strings.TrimSpace(in.TrueNASUser),
+		TrueNASAPIKey:       strings.TrimSpace(in.TrueNASAPIKey),
+		TrueNASInsecure:     in.TrueNASInsecure,
 		DockerHost:          strings.TrimSpace(in.DockerHost),
 		DockerMode:          strings.TrimSpace(in.DockerMode),
 		DockerAllContainers: in.DockerAllContainers,
@@ -170,6 +178,10 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 		ProxmoxTokenID:      strings.TrimSpace(in.ProxmoxTokenID),
 		ProxmoxTokenSecret:  strings.TrimSpace(in.ProxmoxTokenSecret),
 		ProxmoxInsecure:     in.ProxmoxInsecure,
+		TrueNASURL:          strings.TrimSpace(in.TrueNASURL),
+		TrueNASUser:         strings.TrimSpace(in.TrueNASUser),
+		TrueNASAPIKey:       strings.TrimSpace(in.TrueNASAPIKey),
+		TrueNASInsecure:     in.TrueNASInsecure,
 		DockerHost:          strings.TrimSpace(in.DockerHost),
 		DockerMode:          strings.TrimSpace(in.DockerMode),
 		DockerAllContainers: in.DockerAllContainers,

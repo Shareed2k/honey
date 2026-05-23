@@ -1,0 +1,9 @@
+# AWS: profile/credential chain with ec2:DescribeInstances.
+# Docs: website/docs/providers/aws.md
+# Verify: honey search --config examples/config/aws.yaml --provider aws -o json
+version: 1
+backends:
+  aws:
+    - name: aws-prod
+      profile: production
+      # region: us-east-1

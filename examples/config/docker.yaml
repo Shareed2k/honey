@@ -1,0 +1,18 @@
+# Docker: Engine API on local socket (or set host / via_local for SSH hop).
+# Docs: website/docs/providers/docker.md
+# Verify: honey search --config examples/config/docker.yaml --provider docker -o json
+version: 1
+backends:
+  local:
+    - name: lab
+      hosts:
+        - name: vm1
+          primary_ip: 10.0.0.10
+  docker:
+    - name: local-socket
+      host: ""
+      mode: containers
+    # - name: vm-docker
+    #   via_local: lab
+    #   socket: /var/run/docker.sock
+    #   run_as: root

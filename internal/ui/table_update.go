@@ -227,8 +227,18 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clampReplayPickScroll()
 		return m, nil
 	case "enter":
-		m.lastAction = actSSH
+		if r, ok := m.cursorRecord(); ok {
+			m.lastAction = tableEnterAction(r)
+		} else {
+			m.lastAction = actSSH
+		}
 		return m, tea.Quit
+	case "s":
+		if r, ok := m.cursorRecord(); ok && truenasSSHKeyAllowed(r) {
+			m.lastAction = actSSH
+			return m, tea.Quit
+		}
+		return m, nil
 	case "a":
 		m.resetAgentTransfer()
 		m.agentPick = "source"
@@ -243,7 +253,7 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	case "e":
 		m.mode = "execinput"
-		m.ti.Placeholder = "remote shell command (* rows only, or all with IP if none marked)"
+		m.ti.Placeholder = "remote shell command (* rows only, or all executable if none marked)"
 		m.ti.Reset()
 		m.ti.Focus()
 		return m, textinput.Blink
@@ -253,7 +263,7 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.recipeCursor = 0
 		}
 		m.ti.Reset()
-		m.ti.Placeholder = "path/to/recipe.cue (! = execute) — * rows only, or all w/ IP if none marked"
+		m.ti.Placeholder = "path/to/recipe.cue (! = execute) — * rows only, or all executable if none marked"
 		m.ti.Focus()
 		return m, textinput.Blink
 	case "/":
