@@ -34,5 +34,10 @@ func tokenFromRequest(r *http.Request, token string) bool {
 	if got == "" {
 		got = strings.TrimSpace(r.URL.Query().Get("token"))
 	}
+	if got == "" {
+		if cookie, err := r.Cookie("honey_proxy_token"); err == nil {
+			got = strings.TrimSpace(cookie.Value)
+		}
+	}
 	return got != "" && got == token
 }

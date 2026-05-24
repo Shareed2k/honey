@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
+	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
@@ -22,6 +23,7 @@ type File struct {
 	Backends Backends       `yaml:"backends" json:"backends"`
 	Transfer TransferConfig `yaml:"transfer" json:"transfer"`
 	Plugins  Plugins        `yaml:"plugins,omitempty" json:"plugins,omitempty"`
+	Apps     apps.Config    `yaml:"apps,omitempty" json:"apps,omitempty"`
 }
 
 // DockerDiscover configures auto-discovery of containers on cloud VMs.
@@ -200,6 +202,14 @@ func Load(path string) (*File, error) {
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
+
+	if f.Apps != nil {
+		for name, app := range f.Apps {
+			app.Name = name
+			f.Apps[name] = app
+		}
+	}
+
 	return &f, nil
 }
 
@@ -208,6 +218,12 @@ func ParseYAML(b []byte) (*File, error) {
 	var f File
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if f.Apps != nil {
+		for name, app := range f.Apps {
+			app.Name = name
+			f.Apps[name] = app
+		}
 	}
 	if err := f.Validate(); err != nil {
 		return nil, err
@@ -420,4 +436,18 @@ func (c TransferConfig) WithDefaults() TransferConfigEffective {
 		out.PresignedRetryWithAgent = *c.PresignedRetryWithAgent
 	}
 	return out
+}
+
+// ResolveStateDir returns a safe path for writing runtime state files.
+// It prefers XDG_STATE_HOME if set, otherwise ~/.local/state/honey,
+// or falls back to the user's home directory.
+func ResolveStateDir() (string, error) {
+	if base := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); base != "" {
+		return safepath.JoinUnder(base, "honey")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return safepath.JoinUnder(home, ".local", "state", "honey")
 }
