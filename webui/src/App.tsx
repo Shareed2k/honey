@@ -28,6 +28,7 @@ import type {
   FormDataUploadProgressEvent,
   HostExecResultRow,
   RecordingListEntry,
+  RecordingsListResponse,
   UploadStreamServerEvent,
 } from './api';
 import { ConfigBackendsSection } from './ConfigBackendsSection';
@@ -393,6 +394,10 @@ export function App() {
 
   const [replayRecord, setReplayRecord] = useState<HostRecord | null>(null);
   const [replayItems, setReplayItems] = useState<RecordingListEntry[]>([]);
+  const [replayListMeta, setReplayListMeta] = useState<Pick<
+    RecordingsListResponse,
+    'file_count' | 'total_bytes' | 'retention'
+  > | null>(null);
   const [replayErr, setReplayErr] = useState<string | null>(null);
   const [recordWebSession, setRecordWebSession] = useState(() => initParams.get('recordWebSession') === 'true');
   const [sshUser, setSshUser] = useState(() => initParams.get('sshUser') || '');
@@ -1281,10 +1286,16 @@ export function App() {
     setReplayErr(null);
     setReplayRecord(placeholder);
     setReplayItems([]);
+    setReplayListMeta(null);
     try {
-      const items = await fetchRecordingsList();
-      setReplayItems(items);
-      if (items.length === 0) {
+      const resp = await fetchRecordingsList();
+      setReplayItems(resp.items);
+      setReplayListMeta({
+        file_count: resp.file_count,
+        total_bytes: resp.total_bytes,
+        retention: resp.retention,
+      });
+      if (resp.items.length === 0) {
         setReplayErr('No files in record-dir yet.');
       }
     } catch (e) {
@@ -2135,6 +2146,8 @@ export function App() {
           }}
           onViewSource={(path, name) => void openRecipePreview(path, name)}
           onAiAssist={(path, name) => openRecipeAssist(path, name)}
+          sessionRecordingAvailable={!!meta?.session_recording_available}
+          terminalAssistAvailable={!!meta?.terminal_assist_available}
         />
       ) : null}
 
@@ -2347,7 +2360,22 @@ export function App() {
       ) : null}
       {replayRecord ? (
         replayItems.length > 0 ? (
-          <SessionReplayModal record={replayRecord} recordings={replayItems} onClose={() => setReplayRecord(null)} />
+          <SessionReplayModal
+            record={replayRecord}
+            recordings={replayItems}
+            listStats={
+              replayListMeta
+                ? { file_count: replayListMeta.file_count, total_bytes: replayListMeta.total_bytes }
+                : undefined
+            }
+            retention={replayListMeta?.retention}
+            assistAvailable={!!meta?.terminal_assist_available}
+            onRecordingsChange={() => void openReplayAllRecordings()}
+            onClose={() => {
+              setReplayRecord(null);
+              setReplayListMeta(null);
+            }}
+          />
         ) : (
           <div className="modal-backdrop" role="presentation">
             <div className="modal" role="dialog" style={{ height: 'auto', width: 'min(520px, 94vw)' }}>

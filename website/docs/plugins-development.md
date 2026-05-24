@@ -90,7 +90,7 @@ Plugins with `cue_transform` run in manifest **`order`** (lower first). Applied 
 | `execute` | `false` on dry-run |
 | `secrets_dry_run` | Secrets redacted in env when true |
 
-**Output:** `success`, `stdout`, `stderr`, `err` (same shape as a remote command from the recipe runner’s perspective).
+**Output:** `success`, `changed`, `skipped`, `exit_code`, `stdout`, `stderr`, `err` (Ansible-like module semantics when using remote host functions).
 
 Recipe shape:
 
@@ -131,6 +131,10 @@ order: 10                    # cue_transform chain only
 secret_ref_prefixes:
   - "myvault:"
 allow_host_exec: false
+allow_remote_exec: false
+allow_sftp: false
+allow_template_render: false
+allow_postgres: false
 allow_kv: false
 allowed_env:
   - MY_API_TOKEN
@@ -145,7 +149,11 @@ max_http_response_bytes: 1048576
 |-------|---------|
 | `order` | Sort order for `cue_transform` (lower runs first) |
 | `secret_ref_prefixes` | Refs like `myvault:path` handled by `resolve_secret` |
-| `allow_host_exec` | Grant `host_exec` host function |
+| `allow_host_exec` | Grant `host_exec` host function (local argv on operator) |
+| `allow_remote_exec` | Grant `remote_exec` (SSH/API shell on recipe target) |
+| `allow_sftp` | Grant `remote_upload`, `remote_download`, `remote_stat` |
+| `allow_template_render` | Grant `template_render` (Go text/template on operator) |
+| `allow_postgres` | Grant `postgres_query`, `postgres_exec`, `postgres_migrate` (pgx on operator) |
 | `allow_kv` | Grant `kv` host function (needs recipe `kv_tunnel: true`) |
 | `allowed_env` | Env names readable via `get_env` |
 | `allowed_hosts` | Hostnames for Extism HTTP from the plugin |
@@ -168,6 +176,14 @@ Available from WASM via Extism **user imports** (Go: `//go:wasmimport extism:hos
 | `log_info`, `log_warn` | Always | Structured logging on the operator host |
 | `get_env` | `allowed_env` in manifest | Read allowlisted environment variables |
 | `host_exec` | `allow_host_exec: true` | Argv-only subprocess on operator; **no shell** |
+| `remote_exec` | `allow_remote_exec: true` | Run a script on the recipe target via honey SSH/SFTP/API shell |
+| `remote_upload` | `allow_sftp: true` | SFTP put (local path or inline `content`) |
+| `remote_download` | `allow_sftp: true` | SFTP get (size-capped) |
+| `remote_stat` | `allow_sftp: true` | Remote path metadata |
+| `template_render` | `allow_template_render: true` | Render Go text/template on operator (slim-sprig) |
+| `postgres_query` | `allow_postgres: true` | Read-only SQL via pgx on operator (`$1` params) |
+| `postgres_exec` | `allow_postgres: true` | INSERT/UPDATE/DDL via pgx (blocked on dry-run) |
+| `postgres_migrate` | `allow_postgres: true` | Apply ordered `.sql` files from recipe dir |
 | `kv` | `allow_kv: true` and recipe `kv_tunnel: true` | Get/put/delete in shared per-run stepkv |
 
 ### `host_exec`
@@ -193,6 +209,169 @@ Use for operator-side CLIs (`psql`, `curl`) when HTTP from WASM is awkward. **Se
 **Output:** `{"found":true,"value":"…","error":""}`
 
 Keys are shared with remote `command` / `script` steps that use `HONEY_KV_*` on the same `cue-exec` run. Parallel hosts may race on the same key — namespace with step id and host name (see [CUE Recipes — KV tunnel](./cue-recipes.md#recipe-kv-tunnel)).
+
+### `remote_exec`
+
+Runs a script on the **recipe target** (SSH, k8s exec, Proxmox, TrueNAS API shell, etc.). Honey core owns transport, retries, and dry-run — WASM never opens SSH.
+
+**Input:**
+
+```json
+{"shell":"/bin/bash","script":"set -e\nhostname","run_as":"","timeout_ms":30000}
+```
+
+**Output:**
+
+```json
+{"exit_code":0,"stdout":"web1\n","stderr":"","changed":true,"failed":false,"error":""}
+```
+
+On dry-run (`execute: false`), the host returns `changed: true` and a plan string without connecting.
+
+Use [`pkg/pluginpdk`](https://github.com/shareed2k/honey/tree/main/pkg/pluginpdk) helpers: `RemoteExec`, `RemoteUpload`, `RemoteStat`, `TemplateRender`, `PostgresQuery`, `PostgresExec`, `PostgresMigrate`.
+
+### `postgres_query` / `postgres_exec`
+
+Runs SQL on the **operator** via pgx. DSN is resolved in core from `config.dsn_secret` (recipe `secrets` key or direct `secure:v1:` ref). WASM never sees the DSN.
+
+**Input:**
+
+```json
+{"dsn_secret":"PG_DSN","sql":"SELECT $1","params":["${THRESHOLD}"],"timeout_ms":10000,"readonly":true,"kv_key":"pg_activity","kv_key_per_host":true,"extract":{"count":".[0].n"}}
+```
+
+Optional **`kv_key`** stores full JSON stdout in recipe stepkv; **`extract`** runs jq (gojq on operator) and stores `{kv_key}_{name}` keys. Downstream steps use **`env_from.kv`**, template **`jqGet`**, or **`${VAR}`** in plugin config (expanded from merged env before pgx).
+
+**Tunnel-aware DSN rewrite** — when Postgres runs on remote loopback, add a **`tunnel:`** step and reference it from the plugin config:
+
+```cue
+// Graph recipe excerpt
+steps: [
+  {
+    id: "pg_tunnel"
+    host: "db-*"
+    tunnel: { remote_host: "localhost", remote_port: 5432 }
+  },
+  {
+    id: "query"
+    host: "db-*"
+    depends: ["pg_tunnel"]
+    plugin: {
+      id: "postgres"
+      action: "query"
+      config: {
+        dsn_secret: "PG_DSN"
+        tunnel_step: "pg_tunnel"
+        sql: "SELECT 1"
+        params: []
+      }
+    }
+  },
+]
+```
+
+| Config field | Meaning |
+|--------------|---------|
+| `tunnel_step` | Step `id` of a **`tunnel`** step in the same run; rewrites DSN host/port to the operator listen address |
+| `host` / `port` | Optional overrides after `tunnel_step` (supports `${VAR}` expansion) |
+
+Precedence: resolve DSN from `dsn_secret` → apply **`tunnel_step`** endpoint → apply explicit **`host`** / **`port`**. TCP tunnels only.
+
+Examples: [`postgres_tunnel_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_tunnel_demo.cue), [`postgres_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_module_demo.cue) (no tunnel). General tunnel usage: [CUE Recipes — Tunnel steps](./cue-recipes.md#tunnel-steps).
+
+**Output:**
+
+```json
+{"changed":true,"rows":[{"n":1}],"stdout":"[{\"n\":1}]"}
+```
+
+Safety: `timeout_ms` required; `readonly` defaults to `true`; dry-run returns a plan without connecting; SQL text is audit-logged (SHA256 + truncated preview, never params/DSN).
+
+### Rclone RC API (`rclone` plugin)
+
+Calls **rclone rcd** over HTTP from the operator via a recipe **`tunnel:`** step (SSH local forward to remote `127.0.0.1:5572`). The plugin does **not** start rcd — use a prior **`command`** step or systemd on the target.
+
+Enable HTTP to loopback:
+
+```yaml
+plugins:
+  enabled: true
+  network_allow_hosts:
+    - "127.0.0.1"
+```
+
+Recipe pattern (see [`rclone_rc_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/rclone_rc_tunnel.cue)):
+
+```cue
+steps: [
+  {
+    id: "rcd_ensure"
+    host: "role:app"
+    command: "systemctl is-active --quiet rclone-rcd || systemctl start rclone-rcd"
+  },
+  {
+    id: "rcd_tunnel"
+    host: "role:app"
+    depends: ["rcd_ensure"]
+    tunnel: { remote_host: "127.0.0.1", remote_port: 5572 }
+  },
+  {
+    id: "rc_copy"
+    host: "role:app"
+    depends: ["rcd_tunnel"]
+    plugin: {
+      id: "rclone"
+      action: "copy"
+      config: {
+        tunnel_step: "rcd_tunnel"
+        rc_user: "honey"
+        rc_pass: "${RCD_PASS}"
+        params: { srcFs: "s3:bucket", dstFs: "local:/data" }
+      }
+    }
+  },
+]
+```
+
+| Config field | Meaning |
+|--------------|---------|
+| `tunnel_step` | **Required on execute.** Step `id` of a **`tunnel`** step; host rewrites `base_url` to `http://127.0.0.1:<local_port>` |
+| `base_url` | Optional override after `tunnel_step` |
+| `rc_user` / `rc_pass` | Basic auth for rcd (`rc_pass` supports `${VAR}` from recipe secrets) |
+| `params` | JSON body for the RC endpoint (action-specific) |
+
+**Actions (v1):** `noop`, `copy`, `sync`, `list`, plus `about`, `move`, `delete`, `mkdir`, `job_status`, `job_finish`, `mount`, `unmount`, `vfs_refresh`, `vfs_stats`.
+
+**Secrets:** `secret_ref_prefixes: ["rclone:"]` resolves `rclone:rcd` from operator env `RCLONE_RCD` (see manifest `allowed_env`).
+
+Dry-run: when the tunnel is active, POST `core/noop` to verify rcd; otherwise reports a plan line without connecting.
+
+### Built-in WASM modules
+
+Shipped under [`plugins/`](https://github.com/shareed2k/honey/tree/main/plugins) (Ansible-like wrappers):
+
+| Plugin | Action | Purpose |
+|--------|--------|---------|
+| `bash` | `run` | Remote `/bin/bash` script |
+| `shell` | `run` | Remote `/bin/sh` script |
+| `copy` | `put` | SFTP upload local → remote |
+| `template` | `put` | Render template + upload |
+| `file` | `manage` | `directory` / `absent` / `touch` |
+| `service` | `manage` | `systemctl` started/stopped/restarted |
+| `postgres` | `query` / `exec` / `migrate` | Host-mediated pgx (DSN from recipe secrets) |
+| `rclone` | `noop` / `copy` / `sync` / `list` / … | rclone RC HTTP via tunneled `rcd` on remote loopback |
+
+Build and install:
+
+```bash
+make build-plugin-modules
+mkdir -p ~/.config/honey/plugins/bash
+cp examples/plugins/bash/plugin.yaml examples/plugins/bash/plugin.wasm ~/.config/honey/plugins/bash/
+```
+
+Example recipes: [`bash_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/bash_module_demo.cue), [`postgres_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_module_demo.cue), [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_kv_demo.cue), [`rclone_rc_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/rclone_rc_tunnel.cue), [`tunnel_local_forward.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_local_forward.cue).
+
+For simple one-off shell, prefer native `command` / `script` steps (no WASM). Use modules when you want structured `changed` / validation / composable actions.
 
 ### HTTP
 
@@ -239,7 +418,13 @@ From the honey repo root (echo example):
 make build-plugin-examples
 ```
 
-This also copies the wasm into `internal/plugins/testdata/echo/` for CI.
+Built-in Ansible-like modules (`bash`, `shell`, `copy`, `template`, `file`, `service`, `rclone`):
+
+```bash
+make build-plugin-modules
+```
+
+This also copies the echo wasm into `internal/plugins/testdata/echo/` for CI.
 
 ### Exports (Go PDK)
 
@@ -343,6 +528,6 @@ The host calls `on_step_result` on the plugin with `phase`, host, and result pay
 
 ## Related
 
-- [CUE Recipes](./cue-recipes.md) — `plugin:` steps, `kv_tunnel`, graph mode
+- [CUE Recipes](./cue-recipes.md) — `plugin:` steps, `tunnel:` steps, `kv_tunnel`, graph mode
 - [CLI: honey cue-exec](./cli/honey_cue-exec.md)
 - Repo: [`examples/plugins/README.md`](https://github.com/shareed2k/honey/blob/main/examples/plugins/README.md)

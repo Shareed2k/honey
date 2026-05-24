@@ -96,6 +96,13 @@ func templateFuncMap(kv KVReader) template.FuncMap {
 		_, found, err := kv.Get(key)
 		return err == nil && found
 	}
+	out["jqGet"] = func(jsonDoc, query string) string {
+		val, err := EvalJQ(jsonDoc, query)
+		if err != nil {
+			return ""
+		}
+		return val
+	}
 	return out
 }
 

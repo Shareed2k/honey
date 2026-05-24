@@ -1,6 +1,7 @@
 package cuetry
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -93,6 +94,22 @@ func expandRecipeVarValue(v any, vars map[string]string, strict bool) (any, erro
 	default:
 		return v, nil
 	}
+}
+
+// ExpandPluginConfigJSON expands ${VAR} in string values of plugin config JSON.
+func ExpandPluginConfigJSON(config []byte, vars map[string]string, dryRun bool) ([]byte, error) {
+	if len(config) == 0 {
+		return config, nil
+	}
+	var root any
+	if err := json.Unmarshal(config, &root); err != nil {
+		return nil, fmt.Errorf("plugin config: %w", err)
+	}
+	expanded, err := expandRecipeVarValue(root, vars, !dryRun)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(expanded)
 }
 
 // ExpandRecipeEnvValues expands ${VAR} in env map values (keys unchanged).

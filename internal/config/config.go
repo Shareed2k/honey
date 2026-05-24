@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,17 +34,18 @@ type DockerDiscover struct {
 
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
-	SSHUser        string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
-	CacheTTL       string         `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL"` // e.g. "5m", "1h"
-	K8sMode        string         `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
-	K8sDebugImage  string         `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
-	CacheDir       string         `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
-	RecordDir      string         `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory"`
-	Output         string         `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
-	Name           string         `yaml:"name" json:"name" honey:"label=Name filter"`
-	NameRegex      string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
-	AISystemPrompt string         `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step"`
-	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover Defaults"`
+	SSHUser         string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
+	CacheTTL        string         `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL"` // e.g. "5m", "1h"
+	K8sMode         string         `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
+	K8sDebugImage   string         `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
+	CacheDir        string         `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
+	RecordDir       string         `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory"`
+	RecordRetention string         `yaml:"record_retention" json:"record_retention" honey:"label=Auto-delete recordings older than this (e.g. 720h, 30d); empty disables"`
+	Output          string         `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
+	Name            string         `yaml:"name" json:"name" honey:"label=Name filter"`
+	NameRegex       string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
+	AISystemPrompt  string         `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step"`
+	DockerDiscover  DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover Defaults"`
 
 	// secretsprovider unwraps the stack AES data key (see internal/cuetry/secrets/doc.go).
 	// Examples: gcpkms://projects/…/cryptoKeys/…, awskms://, vault-transit://mount/key,
@@ -221,6 +223,41 @@ func (d Defaults) DefaultsCacheTTL() (time.Duration, bool, error) {
 	t, err := time.ParseDuration(strings.TrimSpace(d.CacheTTL))
 	if err != nil {
 		return 0, false, err
+	}
+	return t, true, nil
+}
+
+// ParseRetentionDuration parses a retention duration (supports Go durations and day suffix, e.g. 30d).
+func ParseRetentionDuration(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	if strings.HasSuffix(s, "d") {
+		n := strings.TrimSpace(strings.TrimSuffix(s, "d"))
+		if n == "" {
+			return 0, fmt.Errorf("invalid retention duration %q", s)
+		}
+		days, err := strconv.Atoi(n)
+		if err != nil || days < 0 {
+			return 0, fmt.Errorf("invalid retention duration %q", s)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
+}
+
+// DefaultsRecordRetention parses Defaults.RecordRetention or returns empty and ok=false.
+func (d Defaults) DefaultsRecordRetention() (time.Duration, bool, error) {
+	if strings.TrimSpace(d.RecordRetention) == "" {
+		return 0, false, nil
+	}
+	t, err := ParseRetentionDuration(d.RecordRetention)
+	if err != nil {
+		return 0, false, err
+	}
+	if t <= 0 {
+		return 0, false, nil
 	}
 	return t, true, nil
 }

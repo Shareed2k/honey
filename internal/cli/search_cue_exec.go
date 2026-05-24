@@ -139,6 +139,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 				HostCount:         len(records),
 				RecipeContentHash: hash,
 				StartedAt:         time.Now().UTC(),
+				Hosts:             ui.HostsForRecipeMeta(records, 200),
 			})
 		}
 		defer func() { _ = rec.Close() }()
@@ -151,5 +152,5 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, secRes, pluginMgr, rec)
+	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, secRes, pluginMgr, rec, nil)
 }

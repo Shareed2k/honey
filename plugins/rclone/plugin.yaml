@@ -1,0 +1,12 @@
+id: rclone
+version: "0.1.0"
+capabilities:
+  - custom_step
+  - secret
+allowed_hosts:
+  - "127.0.0.1"
+max_http_response_bytes: 4194304
+secret_ref_prefixes:
+  - "rclone:"
+allowed_env:
+  - RCLONE_RCD

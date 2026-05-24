@@ -1,6 +1,8 @@
 // Package v1 defines the honey.plugins/v1 JSON contract between the host and WASM plugins.
 package v1
 
+import "encoding/json"
+
 // APIVersion is the JSON api_version field for honey.plugins/v1.
 const APIVersion = "honey.plugins/v1"
 
@@ -31,10 +33,13 @@ type ExecuteStepInput struct {
 
 // ExecuteStepOutput is returned from execute_step.
 type ExecuteStepOutput struct {
-	Success bool   `json:"success"`
-	Stdout  string `json:"stdout,omitempty"`
-	Stderr  string `json:"stderr,omitempty"`
-	Err     string `json:"err,omitempty"`
+	Success  bool   `json:"success"`
+	Changed  bool   `json:"changed,omitempty"`
+	Skipped  bool   `json:"skipped,omitempty"`
+	ExitCode int    `json:"exit_code,omitempty"`
+	Stdout   string `json:"stdout,omitempty"`
+	Stderr   string `json:"stderr,omitempty"`
+	Err      string `json:"err,omitempty"`
 }
 
 // ResolveSecretInput is passed to resolve_secret.
@@ -115,4 +120,120 @@ type KVOutput struct {
 	Found bool   `json:"found,omitempty"`
 	Value string `json:"value,omitempty"`
 	Error string `json:"error,omitempty"`
+}
+
+// RemoteExecInput is passed to the remote_exec host function.
+type RemoteExecInput struct {
+	Shell     string `json:"shell,omitempty"`
+	Script    string `json:"script,omitempty"`
+	RunAs     string `json:"run_as,omitempty"`
+	TimeoutMS int    `json:"timeout_ms,omitempty"`
+}
+
+// RemoteExecOutput is returned from remote_exec.
+type RemoteExecOutput struct {
+	ExitCode int    `json:"exit_code,omitempty"`
+	Stdout   string `json:"stdout,omitempty"`
+	Stderr   string `json:"stderr,omitempty"`
+	Changed  bool   `json:"changed,omitempty"`
+	Failed   bool   `json:"failed,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// RemoteUploadInput is passed to the remote_upload host function.
+type RemoteUploadInput struct {
+	LocalPath  string `json:"local_path,omitempty"`
+	RemotePath string `json:"remote_path"`
+	Mode       string `json:"mode,omitempty"`
+	Content    string `json:"content,omitempty"`
+}
+
+// RemoteUploadOutput is returned from remote_upload.
+type RemoteUploadOutput struct {
+	Changed bool   `json:"changed,omitempty"`
+	Failed  bool   `json:"failed,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// RemoteDownloadInput is passed to the remote_download host function.
+type RemoteDownloadInput struct {
+	RemotePath string `json:"remote_path"`
+	LocalPath  string `json:"local_path,omitempty"`
+	MaxBytes   int64  `json:"max_bytes,omitempty"`
+}
+
+// RemoteDownloadOutput is returned from remote_download.
+type RemoteDownloadOutput struct {
+	Content string `json:"content,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	Changed bool   `json:"changed,omitempty"`
+	Failed  bool   `json:"failed,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// RemoteStatInput is passed to the remote_stat host function.
+type RemoteStatInput struct {
+	Path string `json:"path"`
+}
+
+// RemoteStatOutput is returned from remote_stat.
+type RemoteStatOutput struct {
+	Exists  bool   `json:"exists,omitempty"`
+	IsDir   bool   `json:"is_dir,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	MTime   string `json:"mtime,omitempty"`
+	Changed bool   `json:"changed,omitempty"`
+	Failed  bool   `json:"failed,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// TemplateRenderInput is passed to the template_render host function.
+type TemplateRenderInput struct {
+	Template string         `json:"template"`
+	Data     map[string]any `json:"data,omitempty"`
+}
+
+// TemplateRenderOutput is returned from template_render.
+type TemplateRenderOutput struct {
+	Content string `json:"content,omitempty"`
+	Failed  bool   `json:"failed,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// PostgresSQLInput is shared by postgres_query and postgres_exec host functions.
+type PostgresSQLInput struct {
+	DSNSecret    string            `json:"dsn_secret"`
+	SQL          string            `json:"sql"`
+	Params       json.RawMessage   `json:"params,omitempty"`
+	TimeoutMS    int               `json:"timeout_ms"`
+	Readonly     *bool             `json:"readonly,omitempty"`
+	KVKey        string            `json:"kv_key,omitempty"`
+	KVKeyPerHost bool              `json:"kv_key_per_host,omitempty"`
+	Extract      map[string]string `json:"extract,omitempty"`
+	Host         string            `json:"host,omitempty"`
+	Port         string            `json:"port,omitempty"`
+	TunnelStep   string            `json:"tunnel_step,omitempty"`
+}
+
+// PostgresMigrateInput is passed to the postgres_migrate host function.
+type PostgresMigrateInput struct {
+	DSNSecret     string            `json:"dsn_secret"`
+	MigrationsDir string            `json:"migrations_dir,omitempty"`
+	Files         []string          `json:"files,omitempty"`
+	TimeoutMS     int               `json:"timeout_ms"`
+	Readonly      *bool             `json:"readonly,omitempty"`
+	KVKey         string            `json:"kv_key,omitempty"`
+	KVKeyPerHost  bool              `json:"kv_key_per_host,omitempty"`
+	Extract       map[string]string `json:"extract,omitempty"`
+}
+
+// PostgresOutput is returned from postgres_query, postgres_exec, and postgres_migrate.
+type PostgresOutput struct {
+	Changed      bool             `json:"changed,omitempty"`
+	Failed       bool             `json:"failed,omitempty"`
+	Rows         []map[string]any `json:"rows,omitempty"`
+	RowsAffected int64            `json:"rows_affected,omitempty"`
+	Stdout       string           `json:"stdout,omitempty"`
+	Error        string           `json:"error,omitempty"`
 }

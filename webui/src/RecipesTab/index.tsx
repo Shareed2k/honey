@@ -2,6 +2,8 @@
 import { useCallback, useState } from 'react';
 import type { HostRecord } from '../HostPicker';
 import { parseDiskRecipe, type ParsedRecipe, type RecentRunEntry } from '../api';
+import { reconcileHosts } from '../hostReconcile';
+import { SessionReplayModal } from '../SessionReplayModal';
 import { StepHosts } from './StepHosts';
 import { StepRecipe } from './StepRecipe';
 import { StepPlan } from './StepPlan';
@@ -17,6 +19,8 @@ type Props = {
   onSelectedRecordsChange: (h: HostRecord[]) => void;
   onViewSource: (path: string, name: string) => void;
   onAiAssist: (path: string, name: string) => void;
+  sessionRecordingAvailable: boolean;
+  terminalAssistAvailable: boolean;
 };
 
 export function RecipesTab(props: Props) {
@@ -25,6 +29,9 @@ export function RecipesTab(props: Props) {
     hosts: props.selectedRecords,
   });
   const [baseRecipe, setBaseRecipe] = useState<ParsedRecipe | null>(null);
+  const [hostReconcileNote, setHostReconcileNote] = useState<string | null>(null);
+  const [replayRecord, setReplayRecord] = useState<HostRecord | null>(null);
+  const [replayFileName, setReplayFileName] = useState<string | null>(null);
 
   const setHosts = useCallback(
     (h: HostRecord[]) => {
@@ -42,6 +49,7 @@ export function RecipesTab(props: Props) {
     try {
       const parsed = await fetchRecipeContentParsed(path);
       setBaseRecipe(parsed);
+      setHostReconcileNote(null);
       setState((s) => ({ ...s, recipe: { kind: 'disk', path }, edits: parsed, step: 3 }));
     } catch (e) {
       alert(`Could not load recipe: ${e instanceof Error ? e.message : String(e)}`);
@@ -50,6 +58,7 @@ export function RecipesTab(props: Props) {
 
   function pickDraft(d: Draft) {
     setBaseRecipe(d.recipe);
+    setHostReconcileNote(null);
     setState((s) => ({ ...s, recipe: { kind: 'draft', id: d.id }, edits: d.recipe, step: 3 }));
   }
 
@@ -57,6 +66,7 @@ export function RecipesTab(props: Props) {
     try {
       const parsed = await fetchRecipeContentParsed(r.recipe_path);
       setBaseRecipe(parsed);
+      setHostReconcileNote(null);
       setState((s) => ({
         ...s,
         recipe: { kind: 'disk', path: r.recipe_path },
@@ -66,6 +76,33 @@ export function RecipesTab(props: Props) {
     } catch (e) {
       alert(`Could not load recipe: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  async function rerunSameHosts(r: RecentRunEntry) {
+    if (!r.hosts?.length) {
+      return;
+    }
+    const { matched, missing, total } = reconcileHosts(r.hosts, props.records);
+    setHosts(matched);
+    if (missing > 0) {
+      setHostReconcileNote(`${matched.length} of ${total} hosts still in inventory; ${missing} missing.`);
+    } else {
+      setHostReconcileNote(null);
+    }
+    await pickRecent(r);
+    go(1);
+  }
+
+  function openReplay(run: RecentRunEntry) {
+    if (!run.recording_id) {
+      return;
+    }
+    setReplayRecord({
+      provider: 'mixed',
+      name: run.recipe_name || 'recipe run',
+      primary_ip: '',
+    });
+    setReplayFileName(`${run.recording_id}.hrec.jsonl`);
   }
 
   function onSaveAsDraft(name: string) {
@@ -88,16 +125,20 @@ export function RecipesTab(props: Props) {
           hosts={state.hosts}
           onHostsChange={setHosts}
           onNext={() => go(2)}
+          reconcileNote={hostReconcileNote}
         />
       ) : null}
 
       {state.step === 2 ? (
         <StepRecipe
           current={state.recipe}
+          sessionRecordingAvailable={props.sessionRecordingAvailable}
           onBack={() => go(1)}
           onPickDisk={pickDisk}
           onPickDraft={pickDraft}
           onPickRecent={pickRecent}
+          onReplay={openReplay}
+          onRerunSameHosts={rerunSameHosts}
           onViewSource={props.onViewSource}
           onAiAssist={props.onAiAssist}
         />
@@ -115,6 +156,7 @@ export function RecipesTab(props: Props) {
           onSSHUserChange={(u) => setState((s) => ({ ...s, sshUser: u }))}
           recordSession={state.recordSession}
           onRecordSessionChange={(v) => setState((s) => ({ ...s, recordSession: v }))}
+          sessionRecordingAvailable={props.sessionRecordingAvailable}
           hostCount={state.hosts.length}
           onBack={() => go(2)}
           onExecute={() => go(4)}
@@ -129,10 +171,32 @@ export function RecipesTab(props: Props) {
           envOverrides={state.envOverrides}
           sshUser={state.sshUser}
           recordSession={state.recordSession}
+          sessionRecordingAvailable={props.sessionRecordingAvailable}
+          onViewRecording={(fileName) => {
+            setReplayRecord({
+              provider: 'mixed',
+              name: 'recipe run',
+              primary_ip: '',
+            });
+            setReplayFileName(fileName);
+          }}
           onRunAgain={() => go(3)}
           onStartNew={() => {
             setState({ ...INITIAL_WIZARD_STATE, hosts: state.hosts });
             setBaseRecipe(null);
+            setHostReconcileNote(null);
+          }}
+        />
+      ) : null}
+
+      {replayRecord && replayFileName ? (
+        <SessionReplayModal
+          record={replayRecord}
+          recordings={[{ file_name: replayFileName, modified_unix_ms: 0, size_bytes: 0 }]}
+          assistAvailable={props.terminalAssistAvailable}
+          onClose={() => {
+            setReplayRecord(null);
+            setReplayFileName(null);
           }}
         />
       ) : null}

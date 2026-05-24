@@ -1,33 +1,47 @@
 // webui/src/RecipesTab/EditForm.tsx
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   validateRecipeContent,
   type ParsedRecipe,
   type ParsedRecipeEnvFrom,
   type ParsedRecipeStep,
   type ParsedRecipeStepTemplate,
+  type RecipeGraphPlan,
+  type ResolvedStep,
   type ValidationError,
 } from '../api';
+import {
+  ADD_STEP_KINDS,
+  appendRecipeStep,
+  canAddStepKind,
+  EDITABLE_KINDS,
+  stepKind,
+  stepSupportsNotify,
+  stepSupportsRetry,
+  type RecipeStepKind,
+} from './recipeStepUtils';
+import {
+  GraphStepFields,
+  HostField,
+  RunAsField,
+  StepAgentTransferEditor,
+  StepCommandEditor,
+  StepFileTransferEditor,
+  StepNotifyEditor,
+  StepPluginEditor,
+  StepRetryEditor,
+  StepScriptEditor,
+  StepTunnelEditor,
+} from './StepEditors';
 
 type Props = {
   recipe: ParsedRecipe;
   baseRecipe: ParsedRecipe;
   onChange: (next: ParsedRecipe) => void;
-  onErrors: (errors: ValidationError[] | null) => void;
+  onErrors: (errors: ValidationError[]) => void;
+  onValidated: (res: { plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan }) => void;
   onSaveAsDraft: (name: string) => void;
 };
-
-const EDITABLE_KINDS = new Set(['command', 'script', 'ai', 'template']);
-
-function stepKind(s: ParsedRecipeStep): string {
-  if (s.command !== undefined) return 'command';
-  if (s.script) return 'script';
-  if (s.ai) return 'ai';
-  if (s.template) return 'template';
-  if (s.agent_transfer) return 'agent_transfer';
-  if (s.notify) return 'notify';
-  return 'unknown';
-}
 
 function templateDataJson(t: ParsedRecipeStepTemplate | undefined): string {
   if (!t?.data || Object.keys(t.data).length === 0) return '';
@@ -38,30 +52,33 @@ function templateDataJson(t: ParsedRecipeStepTemplate | undefined): string {
   }
 }
 
-function parseDependsText(text: string): string[] {
-  return text
-    .split(/[\s,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function dependsText(depends: string[] | undefined): string {
-  return depends?.join(', ') ?? '';
-}
-
-export function EditForm({ recipe, baseRecipe, onChange, onErrors, onSaveAsDraft }: Props) {
+export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, onSaveAsDraft }: Props) {
   const dirty = useMemo(() => JSON.stringify(recipe) !== JSON.stringify(baseRecipe), [recipe, baseRecipe]);
   const [draftName, setDraftName] = useState('');
   const isGraph = recipe.type === 'graph';
   const [dataJsonByStep, setDataJsonByStep] = useState<Record<number, string>>({});
+  const [addKind, setAddKind] = useState<RecipeStepKind>('command');
+  const [showAddPicker, setShowAddPicker] = useState(false);
+  const lastAddedRef = useRef<number | null>(null);
 
   useEffect(() => {
     const t = setTimeout(async () => {
       const res = await validateRecipeContent(recipe);
-      onErrors('errors' in res ? res.errors : null);
+      if ('errors' in res) {
+        onErrors(res.errors);
+      } else {
+        onValidated(res);
+      }
     }, 300);
     return () => clearTimeout(t);
-  }, [recipe, onErrors]);
+  }, [recipe, onErrors, onValidated]);
+
+  useEffect(() => {
+    if (lastAddedRef.current == null) return;
+    const el = document.querySelector(`[data-step-index="${lastAddedRef.current}"]`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    lastAddedRef.current = null;
+  }, [recipe.steps.length]);
 
   function updateStep(i: number, patch: Partial<ParsedRecipeStep>) {
     const steps = recipe.steps.map((s, j) => (j === i ? { ...s, ...patch } : s));
@@ -112,6 +129,13 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onSaveAsDraft
     updateStep(i, { env_from: refs.length > 0 ? refs : undefined });
   }
 
+  function addStep() {
+    if (!canAddStepKind(addKind, recipe)) return;
+    lastAddedRef.current = recipe.steps.length;
+    onChange(appendRecipeStep(recipe, addKind));
+    setShowAddPicker(false);
+  }
+
   return (
     <div className="rcp-edit">
       {dirty ? (
@@ -128,99 +152,100 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onSaveAsDraft
         </div>
       ) : null}
 
+      <div className="rcp-edit__add-step">
+        <button type="button" className="rcp-btn rcp-btn--ghost" onClick={() => setShowAddPicker((v) => !v)}>
+          + Add step
+        </button>
+        {showAddPicker ? (
+          <span className="rcp-edit__add-step-picker">
+            <select value={addKind} onChange={(e) => setAddKind(e.target.value as RecipeStepKind)}>
+              {ADD_STEP_KINDS.map((k) => (
+                <option key={k} value={k} disabled={!canAddStepKind(k, recipe)}>
+                  {k}
+                  {k === 'ai' && !canAddStepKind('ai', recipe) ? ' (one per recipe)' : ''}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="rcp-btn" onClick={addStep} disabled={!canAddStepKind(addKind, recipe)}>
+              append
+            </button>
+          </span>
+        ) : null}
+      </div>
+
       {recipe.steps.map((s, i) => {
         const kind = stepKind(s);
         const editable = EDITABLE_KINDS.has(kind);
         const dataJson = dataJsonByStep[i] ?? templateDataJson(s.template);
+        const showRunAs = kind !== 'template' && kind !== 'put' && kind !== 'get' && kind !== 'agent_transfer';
         return (
-          <div key={i} className="rcp-edit__step">
+          <div key={i} className="rcp-edit__step" data-step-index={i}>
             <header>
               <span className="rcp-edit__idx">{i + 1}</span>
               <span className="rcp-edit__kind">{kind}</span>
               <span className="rcp-edit__actions">
-                <button type="button" onClick={() => moveStep(i, -1)} aria-label="move up">↑</button>
-                <button type="button" onClick={() => moveStep(i, +1)} aria-label="move down">↓</button>
-                <button type="button" onClick={() => duplicateStep(i)} aria-label="duplicate">⎘</button>
-                <button type="button" onClick={() => removeStep(i)} aria-label="delete">✕</button>
+                <button type="button" onClick={() => moveStep(i, -1)} aria-label="move up">
+                  ↑
+                </button>
+                <button type="button" onClick={() => moveStep(i, +1)} aria-label="move down">
+                  ↓
+                </button>
+                <button type="button" onClick={() => duplicateStep(i)} aria-label="duplicate">
+                  ⎘
+                </button>
+                <button type="button" onClick={() => removeStep(i)} aria-label="delete">
+                  ✕
+                </button>
               </span>
             </header>
 
             {!editable ? (
               <p className="rcp-edit__readonly">
-                Step kind <code>{kind}</code> is not yet editable in the web form. It will run as-is.
+                Step kind <code>{kind}</code> is not editable in the web form.
               </p>
             ) : (
               <>
-                {isGraph ? (
-                  <>
-                    <label className="rcp-edit__field">
-                      id
-                      <input
-                        value={s.id ?? ''}
-                        onChange={(e) => updateStep(i, { id: e.target.value || undefined })}
-                      />
-                    </label>
-                    <label className="rcp-edit__field">
-                      depends (comma-separated)
-                      <input
-                        value={dependsText(s.depends)}
-                        onChange={(e) =>
-                          updateStep(i, {
-                            depends: parseDependsText(e.target.value).length
-                              ? parseDependsText(e.target.value)
-                              : undefined,
-                          })
-                        }
-                      />
-                    </label>
-                  </>
-                ) : null}
-                <label className="rcp-edit__field">
-                  host
-                  {kind === 'template' ? (
-                    <input
-                      value={s.host ?? '_'}
-                      onChange={(e) => updateStep(i, { host: e.target.value || '_' })}
-                      title='Use "_" for a single local render; "*" or a host name for per-host templates (capture output only with "_")'
-                    />
-                  ) : (
-                    <input value={s.host ?? ''} onChange={(e) => updateStep(i, { host: e.target.value })} />
-                  )}
-                </label>
+                {isGraph ? <GraphStepFields step={s} onChange={(p) => updateStep(i, p)} /> : null}
+                <HostField step={s} kind={kind} onChange={(p) => updateStep(i, p)} />
                 {kind === 'template' ? (
                   <p className="rcp-edit__hint">
-                    Local Go <code>text/template</code> step. Template body is not Honey-expanded; use{' '}
-                    <code>data</code> with <code>${'${VAR}'}</code> for capture variables.
+                    Local Go <code>text/template</code> step. Use <code>data</code> with{' '}
+                    <code>${'${VAR}'}</code> for capture variables.
                   </p>
                 ) : null}
-                {kind !== 'template' ? (
-                  <label className="rcp-edit__field">
-                    run_as
-                    <input
-                      value={s.run_as ?? ''}
-                      onChange={(e) => updateStep(i, { run_as: e.target.value || undefined })}
-                    />
-                  </label>
-                ) : null}
-                {kind === 'command' ? (
-                  <label className="rcp-edit__field rcp-edit__field--multiline">
-                    command
-                    <textarea
-                      value={s.command ?? ''}
-                      rows={Math.min(12, Math.max(2, (s.command ?? '').split('\n').length))}
-                      onChange={(e) => updateStep(i, { command: e.target.value })}
-                    />
-                  </label>
-                ) : null}
+                {showRunAs ? <RunAsField step={s} onChange={(p) => updateStep(i, p)} /> : null}
+                {kind === 'command' ? <StepCommandEditor step={s} onChange={(p) => updateStep(i, p)} /> : null}
                 {kind === 'script' ? (
-                  <label className="rcp-edit__field rcp-edit__field--multiline">
-                    script body
-                    <textarea
-                      value={s.script?.body ?? ''}
-                      rows={Math.min(20, Math.max(3, (s.script?.body ?? '').split('\n').length))}
-                      onChange={(e) => updateStep(i, { script: { ...(s.script ?? {}), body: e.target.value } })}
-                    />
-                  </label>
+                  <StepScriptEditor
+                    script={s.script}
+                    onChange={(script) => updateStep(i, { script })}
+                  />
+                ) : null}
+                {kind === 'put' ? (
+                  <StepFileTransferEditor
+                    label="put"
+                    transfer={s.put}
+                    onChange={(put) => updateStep(i, { put })}
+                  />
+                ) : null}
+                {kind === 'get' ? (
+                  <StepFileTransferEditor
+                    label="get"
+                    transfer={s.get}
+                    onChange={(get) => updateStep(i, { get })}
+                  />
+                ) : null}
+                {kind === 'plugin' ? (
+                  <StepPluginEditor plugin={s.plugin} onChange={(plugin) => updateStep(i, { plugin })} />
+                ) : null}
+                {kind === 'tunnel' ? (
+                  <StepTunnelEditor tunnel={s.tunnel} onChange={(tunnel) => updateStep(i, { tunnel })} />
+                ) : null}
+                {kind === 'agent_transfer' ? (
+                  <StepAgentTransferEditor
+                    at={s.agent_transfer}
+                    onChange={(agent_transfer) => updateStep(i, { agent_transfer })}
+                  />
                 ) : null}
                 {kind === 'ai' ? (
                   <>
@@ -279,6 +304,12 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onSaveAsDraft
                 ) : null}
               </>
             )}
+            {stepSupportsNotify(kind) ? (
+              <StepNotifyEditor notify={s.notify} onChange={(notify) => updateStep(i, { notify })} />
+            ) : null}
+            {stepSupportsRetry(kind) ? (
+              <StepRetryEditor retry={s.retry} onChange={(retry) => updateStep(i, { retry })} />
+            ) : null}
           </div>
         );
       })}

@@ -25,6 +25,10 @@ type Info struct {
 	Path                 string            `json:"path"`
 	SecretRefPrefixes    []string          `json:"secret_ref_prefixes,omitempty"`
 	AllowHostExec        bool              `json:"allow_host_exec,omitempty"`
+	AllowRemoteExec      bool              `json:"allow_remote_exec,omitempty"`
+	AllowSFTP            bool              `json:"allow_sftp,omitempty"`
+	AllowTemplateRender  bool              `json:"allow_template_render,omitempty"`
+	AllowPostgres        bool              `json:"allow_postgres,omitempty"`
 	AllowKV              bool              `json:"allow_kv,omitempty"`
 	AllowedHosts         []string          `json:"allowed_hosts,omitempty"`
 	AllowedPaths         map[string]string `json:"allowed_paths,omitempty"`
@@ -34,10 +38,11 @@ type Info struct {
 
 // Manager loads Extism WASM plugins and routes capability calls.
 type Manager struct {
-	mu      sync.Mutex
-	enabled bool
-	plugins []*loadedPlugin
-	byID    map[string]*loadedPlugin
+	mu        sync.Mutex
+	enabled   bool
+	timeoutMS int
+	plugins   []*loadedPlugin
+	byID      map[string]*loadedPlugin
 }
 
 type loadedPlugin struct {
@@ -64,8 +69,9 @@ func clonePathMap(m map[string]string) map[string]string {
 // NewManager loads plugins from cfg. When plugins are disabled, returns a manager with no plugins.
 func NewManager(ctx context.Context, cfg config.PluginsEffective) (*Manager, error) {
 	m := &Manager{
-		enabled: cfg.Enabled,
-		byID:    make(map[string]*loadedPlugin),
+		enabled:   cfg.Enabled,
+		timeoutMS: cfg.TimeoutMS,
+		byID:      make(map[string]*loadedPlugin),
 	}
 	if !cfg.Enabled {
 		return m, nil
@@ -173,6 +179,14 @@ func (m *Manager) Enabled() bool {
 	return m.enabled
 }
 
+// TimeoutMS returns configured plugin timeout milliseconds (default 30000).
+func (m *Manager) TimeoutMS() int {
+	if m == nil || m.timeoutMS <= 0 {
+		return 30000
+	}
+	return m.timeoutMS
+}
+
 // List returns metadata for loaded plugins.
 func (m *Manager) List() []Info {
 	if m == nil {
@@ -187,6 +201,10 @@ func (m *Manager) List() []Info {
 			Path:                 p.dir,
 			SecretRefPrefixes:    append([]string(nil), p.manifest.SecretRefPrefixes...),
 			AllowHostExec:        p.manifest.AllowHostExec,
+			AllowRemoteExec:      p.manifest.AllowRemoteExec,
+			AllowSFTP:            p.manifest.AllowSFTP,
+			AllowTemplateRender:  p.manifest.AllowTemplateRender,
+			AllowPostgres:        p.manifest.AllowPostgres,
 			AllowKV:              p.manifest.AllowKV,
 			AllowedHosts:         append([]string(nil), p.effectiveHosts...),
 			AllowedPaths:         clonePathMap(p.effectivePaths),
@@ -195,6 +213,20 @@ func (m *Manager) List() []Info {
 		})
 	}
 	return out
+}
+
+// EffectivePaths returns validated allowed_paths for a loaded plugin id.
+func (m *Manager) EffectivePaths(pluginID string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.byID[strings.TrimSpace(pluginID)]
+	if !ok || p == nil {
+		return nil
+	}
+	return clonePathMap(p.effectivePaths)
 }
 
 // SecretRefPrefixes returns all registered secret ref prefixes from secret-capable plugins.

@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import stripAnsi from 'strip-ansi';
-import { fetchRecordingEvents } from './api';
-import type { HostExecResultRow, RecordingEvent, RecordingListEntry } from './api';
+import { deleteRecording, fetchRecordingEvents, fetchTerminalAssistModels, summarizeRecording } from './api';
+import type {
+  HostExecResultRow,
+  RecordingEvent,
+  RecordingListEntry,
+  RecordingsRetentionInfo,
+} from './api';
+
+const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
 type HostRecord = {
   provider: string;
@@ -11,10 +18,27 @@ type HostRecord = {
   primary_ip: string;
 };
 
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) {
+    return '0 B';
+  }
+  if (n < 1024) {
+    return `${n} B`;
+  }
+  if (n < 1024 * 1024) {
+    return `${(n / 1024).toFixed(1)} KiB`;
+  }
+  return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
 type Props = {
   record: HostRecord;
   recordings: RecordingListEntry[];
   onClose: () => void;
+  onRecordingsChange?: () => void;
+  listStats?: { file_count: number; total_bytes: number };
+  retention?: RecordingsRetentionInfo;
+  assistAvailable?: boolean;
 };
 
 const textDecoder = new TextDecoder();
@@ -116,7 +140,15 @@ function formatHostExecRowTTY(r: HostExecResultRow): string {
   return lines.join('\n');
 }
 
-export function SessionReplayModal({ record, recordings, onClose }: Props) {
+export function SessionReplayModal({
+  record,
+  recordings,
+  onClose,
+  onRecordingsChange,
+  listStats,
+  retention,
+  assistAvailable,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const structuredRef = useRef<HTMLPreElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -132,8 +164,98 @@ export function SessionReplayModal({ record, recordings, onClose }: Props) {
   const [elapsedBase, setElapsedBase] = useState(0);
   const startTsRef = useRef(0);
   const elapsedRef = useRef(0);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryErr, setSummaryErr] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [assistModels, setAssistModels] = useState<string[]>([]);
+  const [assistModelsLoading, setAssistModelsLoading] = useState(false);
+  const [assistModelsErr, setAssistModelsErr] = useState<string | null>(null);
+  const [assistSelectedModel, setAssistSelectedModel] = useState('');
 
   const hasStructuredLog = useMemo(() => recordingHasStructuredBatch(events), [events]);
+  const assistCanSummarize =
+    assistModels.length > 0 && assistSelectedModel.trim() !== '' && !assistModelsLoading;
+
+  const refreshList = useCallback(() => {
+    onRecordingsChange?.();
+  }, [onRecordingsChange]);
+
+  useEffect(() => {
+    if (!assistAvailable) {
+      return undefined;
+    }
+    let cancelled = false;
+    setAssistModelsLoading(true);
+    setAssistModelsErr(null);
+    void (async () => {
+      try {
+        const list = await fetchTerminalAssistModels();
+        if (cancelled) {
+          return;
+        }
+        setAssistModels(list);
+        if (list.length > 0) {
+          setAssistSelectedModel(list[0]);
+          setAssistModelsErr(null);
+        } else {
+          setAssistSelectedModel('');
+          setAssistModelsErr('No models returned by the provider. Check OPENAI_BASE_URL and that /v1/models works.');
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setAssistModels([]);
+          setAssistSelectedModel('');
+          setAssistModelsErr(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled) {
+          setAssistModelsLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assistAvailable]);
+
+  async function handleDelete() {
+    if (!selectedFile || deleteBusy) {
+      return;
+    }
+    if (!window.confirm(`Delete recording ${selectedFile}?`)) {
+      return;
+    }
+    setDeleteBusy(true);
+    try {
+      await deleteRecording(selectedFile);
+      refreshList();
+      onClose();
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  async function handleSummarize() {
+    if (!selectedFile || summaryBusy || !assistAvailable) {
+      return;
+    }
+    if (!assistCanSummarize) {
+      setSummaryErr('Pick a model from the list (models must load from the server).');
+      return;
+    }
+    setSummaryBusy(true);
+    setSummaryErr(null);
+    try {
+      setSummary(await summarizeRecording(selectedFile, assistSelectedModel));
+    } catch (e) {
+      setSummaryErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSummaryBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (hasStructuredLog) {
@@ -276,6 +398,14 @@ export function SessionReplayModal({ record, recordings, onClose }: Props) {
             Close
           </button>
         </header>
+        {listStats ? (
+          <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', opacity: 0.85 }}>
+            {listStats.file_count} file{listStats.file_count === 1 ? '' : 's'} · {formatBytes(listStats.total_bytes)}
+            {retention?.enabled && retention.max_age ? (
+              <> · auto-delete older than {retention.max_age}</>
+            ) : null}
+          </p>
+        ) : null}
         <div className="modal-replay-toolbar">
           <select
             value={selectedFile}
@@ -326,8 +456,51 @@ export function SessionReplayModal({ record, recordings, onClose }: Props) {
           <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>
             {Math.round(elapsedBase)}ms / {duration}ms
           </span>
+          {assistAvailable ? (
+            <>
+              {assistModelsLoading ? (
+                <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Loading models…</span>
+              ) : assistModels.length > 0 ? (
+                <label style={{ fontSize: '0.85rem' }}>
+                  Model{' '}
+                  <select
+                    value={assistSelectedModel}
+                    onChange={(e) => setAssistSelectedModel(e.target.value)}
+                    style={{ minWidth: 140 }}
+                  >
+                    {assistModels.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <span style={{ fontSize: '0.8rem', color: '#d29922' }}>No models available</span>
+              )}
+              <button
+                type="button"
+                disabled={loading || !selectedFile || summaryBusy || !assistCanSummarize}
+                onClick={() => void handleSummarize()}
+              >
+                {summaryBusy ? 'Summarizing…' : 'Summarize run'}
+              </button>
+            </>
+          ) : null}
+          <button type="button" disabled={!selectedFile || deleteBusy} onClick={() => void handleDelete()}>
+            {deleteBusy ? 'Deleting…' : 'Delete'}
+          </button>
         </div>
         {loadErr ? <p style={{ color: '#f66', marginTop: 0 }}>{loadErr}</p> : null}
+        {assistModelsErr ? <p style={{ color: '#d29922', marginTop: 0, fontSize: '0.85rem' }}>{assistModelsErr}</p> : null}
+        {summaryErr ? <p style={{ color: '#f66', marginTop: 0 }}>{summaryErr}</p> : null}
+        {summary ? (
+          <div className="rcp-summary" style={{ maxHeight: '28vh', overflow: 'auto', marginBottom: '0.5rem' }}>
+            <Suspense fallback={<pre>{summary}</pre>}>
+              <AiMarkdown content={summary} />
+            </Suspense>
+          </div>
+        ) : null}
         <div className="term-wrap">
           {!hasStructuredLog ? (
             <div className="term-xterm-host" ref={ref} />

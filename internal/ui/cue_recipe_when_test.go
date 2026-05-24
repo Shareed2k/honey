@@ -21,7 +21,7 @@ func TestFilterTargetsByWhen_skipsHost(t *testing.T) {
 		{Name: "keep", PrimaryIP: "1.2.3.4"},
 		{Name: "skip", PrimaryIP: "5.6.7.8"},
 	}
-	kept, skipped, err := filterTargetsByWhen(context.Background(), recipe, step, targets, cuetry.NewStepResultStore(), nil, noopKVReader{}, true)
+	kept, skipped, err := filterTargetsByWhen(context.Background(), recipe, step, targets, cuetry.NewStepResultStore(), nil, noopKVReader{}, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

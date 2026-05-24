@@ -25,6 +25,24 @@ type Registry struct {
 	searchDuration prometheus.Histogram
 	searchRecords  prometheus.Histogram
 	wsActive       *prometheus.GaugeVec
+
+	recipeRuns              *prometheus.CounterVec
+	recipeRunDuration       *prometheus.HistogramVec
+	recipeSteps             *prometheus.CounterVec
+	recipeStepDuration      *prometheus.HistogramVec
+	recipeStepRetryAttempts *prometheus.CounterVec
+	recipeHostResults       *prometheus.CounterVec
+	pluginExecutions        *prometheus.CounterVec
+	pluginExecutionDuration *prometheus.HistogramVec
+	sshOperations           *prometheus.CounterVec
+	sshOperationDuration    *prometheus.HistogramVec
+	agentTransfers          *prometheus.CounterVec
+	agentTransferDuration   prometheus.Histogram
+	recipeValidate          *prometheus.CounterVec
+	recipeValidateDuration  prometheus.Histogram
+	execCommands            *prometheus.CounterVec
+	execCommandDuration     prometheus.Histogram
+	execCommandHosts        prometheus.Histogram
 }
 
 // NewRegistry registers honey and standard process/Go collectors.
@@ -63,6 +81,82 @@ func NewRegistry(version, commit string) *Registry {
 			Name: "honey_ws_connections_active",
 			Help: "Active WebSocket terminal sessions.",
 		}, []string{"kind"}),
+		recipeRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_recipe_runs_total",
+			Help: "Total CUE recipe dry-runs and executions.",
+		}, []string{"mode", "type", "status"}),
+		recipeRunDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "honey_recipe_run_duration_seconds",
+			Help:    "CUE recipe dry-run and execute latency.",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"mode", "type"}),
+		recipeSteps: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_recipe_steps_total",
+			Help: "Total CUE recipe steps completed.",
+		}, []string{"kind", "status"}),
+		recipeStepDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "honey_recipe_step_duration_seconds",
+			Help:    "CUE recipe step latency.",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"kind"}),
+		recipeStepRetryAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_recipe_step_retry_attempts_total",
+			Help: "Extra step retry attempts after the first try.",
+		}, []string{"kind"}),
+		recipeHostResults: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_recipe_host_results_total",
+			Help: "Per-host rows emitted during recipe execution.",
+		}, []string{"status"}),
+		pluginExecutions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_plugin_executions_total",
+			Help: "WASM plugin step executions.",
+		}, []string{"plugin_id", "action", "status"}),
+		pluginExecutionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "honey_plugin_execution_duration_seconds",
+			Help:    "WASM plugin step latency (final attempt).",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"plugin_id", "action"}),
+		sshOperations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_ssh_operations_total",
+			Help: "SSH, SFTP, script, and TrueNAS remote operations.",
+		}, []string{"operation", "status"}),
+		sshOperationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "honey_ssh_operation_duration_seconds",
+			Help:    "SSH, SFTP, script, and TrueNAS operation latency (final attempt).",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"operation"}),
+		agentTransfers: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_agent_transfers_total",
+			Help: "Agent-based cloud file transfers.",
+		}, []string{"status"}),
+		agentTransferDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "honey_agent_transfer_duration_seconds",
+			Help:    "Agent-based cloud file transfer latency.",
+			Buckets: prometheus.DefBuckets,
+		}),
+		recipeValidate: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_recipe_validate_total",
+			Help: "Recipe validate-content API calls.",
+		}, []string{"status"}),
+		recipeValidateDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "honey_recipe_validate_duration_seconds",
+			Help:    "Recipe validate-content API latency.",
+			Buckets: prometheus.DefBuckets,
+		}),
+		execCommands: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "honey_exec_commands_total",
+			Help: "Raw exec API command batches.",
+		}, []string{"status"}),
+		execCommandDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "honey_exec_command_duration_seconds",
+			Help:    "Raw exec API batch latency.",
+			Buckets: prometheus.DefBuckets,
+		}),
+		execCommandHosts: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "honey_exec_command_hosts",
+			Help:    "Host count per raw exec API batch.",
+			Buckets: []float64{0, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000},
+		}),
 	}
 	reg.MustRegister(
 		r.buildInfo,
@@ -72,6 +166,23 @@ func NewRegistry(version, commit string) *Registry {
 		r.searchDuration,
 		r.searchRecords,
 		r.wsActive,
+		r.recipeRuns,
+		r.recipeRunDuration,
+		r.recipeSteps,
+		r.recipeStepDuration,
+		r.recipeStepRetryAttempts,
+		r.recipeHostResults,
+		r.pluginExecutions,
+		r.pluginExecutionDuration,
+		r.sshOperations,
+		r.sshOperationDuration,
+		r.agentTransfers,
+		r.agentTransferDuration,
+		r.recipeValidate,
+		r.recipeValidateDuration,
+		r.execCommands,
+		r.execCommandDuration,
+		r.execCommandHosts,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)

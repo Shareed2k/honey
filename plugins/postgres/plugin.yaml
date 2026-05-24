@@ -1,0 +1,5 @@
+id: postgres
+version: "0.1.0"
+capabilities:
+  - custom_step
+allow_postgres: true

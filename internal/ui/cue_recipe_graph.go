@@ -7,7 +7,9 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/plugins"
+	"go.uber.org/zap"
 )
 
 const defaultGraphStepParallelism = 8
@@ -24,15 +26,17 @@ func streamCueRecipeStepsGraph(
 	secretResolver cuetry.SecretResolver,
 	pluginMgr *plugins.Manager,
 	execute bool,
+	obs metrics.Observer,
 	out chan<- HostExecResult,
 	cache *ClientCache,
 	recipeKV *RecipeKVCoordinator,
+	tunnelCoord *RecipeTunnelCoordinator,
 ) error {
 	sg, err := cuetry.BuildStepGraphFromRecipe(recipe)
 	if err != nil {
 		return err
 	}
-	if err := ensureKVSessionForRecipe(recipe, recipeKV); err != nil {
+	if err := ensureKVSessionForRecipe(recipe, recipeKV, execute); err != nil {
 		return err
 	}
 	outputStore := cuetry.NewStepOutputStore()
@@ -50,7 +54,7 @@ func streamCueRecipeStepsGraph(
 		if len(batch) == 0 {
 			continue
 		}
-		if err := runGraphWave(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, out, cache, recipeKV, outputStore, outputCapture, sg, state, historyByIndex, batch); err != nil {
+		if err := runGraphWave(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, obs, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, batch); err != nil {
 			return err
 		}
 	}
@@ -116,9 +120,11 @@ func runGraphWave(
 	secretResolver cuetry.SecretResolver,
 	pluginMgr *plugins.Manager,
 	execute bool,
+	obs metrics.Observer,
 	out chan<- HostExecResult,
 	cache *ClientCache,
 	recipeKV *RecipeKVCoordinator,
+	tunnelCoord *RecipeTunnelCoordinator,
 	outputStore *cuetry.StepOutputStore,
 	outputCapture *cuetry.RecipeOutputCapture,
 	sg *cuetry.StepGraph,
@@ -126,6 +132,12 @@ func runGraphWave(
 	historyByIndex [][]HostExecResult,
 	batch []int,
 ) error {
+	stepIDs := make([]string, len(batch))
+	for i, idx := range batch {
+		stepIDs[i] = sg.IndexToID[idx]
+	}
+	zap.L().Debug("recipe graph wave", zap.Strings("step_ids", stepIDs))
+
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, defaultGraphStepParallelism)
 	var stateMu sync.Mutex
@@ -141,7 +153,7 @@ func runGraphWave(
 			case <-ctx.Done():
 				return
 			}
-			graphRunOneStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, out, cache, recipeKV, outputStore, outputCapture, sg, state, historyByIndex, &stateMu, &historyMu, idx)
+			graphRunOneStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, obs, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, &stateMu, &historyMu, idx)
 		}(idx)
 	}
 	wg.Wait()
@@ -160,9 +172,11 @@ func graphRunOneStep(
 	secretResolver cuetry.SecretResolver,
 	pluginMgr *plugins.Manager,
 	execute bool,
+	obs metrics.Observer,
 	out chan<- HostExecResult,
 	cache *ClientCache,
 	recipeKV *RecipeKVCoordinator,
+	tunnelCoord *RecipeTunnelCoordinator,
 	outputStore *cuetry.StepOutputStore,
 	outputCapture *cuetry.RecipeOutputCapture,
 	sg *cuetry.StepGraph,
@@ -173,8 +187,14 @@ func graphRunOneStep(
 	idx int,
 ) {
 	step := recipe.Steps[idx]
+	stepID := sg.IndexToID[idx]
 	kind, classifyErr := cuetry.ClassifyStep(step)
 	if classifyErr != nil {
+		zap.L().Debug("recipe graph step finished",
+			zap.String("step_id", stepID),
+			zap.String("kind", "unknown"),
+			zap.String("state", "failed"),
+		)
 		stateMu.Lock()
 		state[idx] = cuetry.StepRunFailed
 		sg.MarkSkippedDescendants(idx, state)
@@ -186,11 +206,11 @@ func graphRunOneStep(
 	var stepErr error
 	switch kind {
 	case cuetry.StepKindAI:
-		rows, stepErr = graphRunAIStep(ctx, recipe, idx, step, sg, state, historyByIndex, stateMu, historyMu, aiSystemPromptFromCfg, outputStore, secretResolver, recipeKV, execute, out)
+		rows, stepErr = graphRunAIStep(ctx, recipe, idx, step, sg, state, historyByIndex, stateMu, historyMu, aiSystemPromptFromCfg, outputStore, secretResolver, recipeKV, cliEnv, execute, out)
 	case cuetry.StepKindTemplate:
 		rows, stepErr = graphRunTemplateStep(ctx, recipe, recipeDir, idx, step, records, outputStore, outputCapture, secretResolver, recipeKV, execute, out)
 	default:
-		rows, stepErr = streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, idx, step, out, cache, recipeKV, outputStore, outputCapture, secretResolver, pluginMgr, execute)
+		rows, stepErr = streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, idx, step, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, secretResolver, pluginMgr, execute, obs)
 	}
 
 	failed := stepErr != nil || (len(rows) > 0 && cueStepAllTargetsTransientTransportFailed(rows))
@@ -204,14 +224,17 @@ func graphRunOneStep(
 	if len(rows) > 0 && allHostsWhenSkipped(rows) {
 		state[idx] = cuetry.StepRunSkipped
 		sg.MarkSkippedDescendants(idx, state)
+		logGraphStepFinished(stepID, kind, cuetry.StepRunSkipped)
 		return
 	}
 	if failed {
 		state[idx] = cuetry.StepRunFailed
 		sg.MarkSkippedDescendants(idx, state)
+		logGraphStepFinished(stepID, kind, cuetry.StepRunFailed)
 		return
 	}
 	state[idx] = cuetry.StepRunSucceeded
+	logGraphStepFinished(stepID, kind, cuetry.StepRunSucceeded)
 	if step.NotifyEnabled() && len(rows) > 0 {
 		body := FormatCueStepHostResultsForNotify(idx+1, rows)
 		CueStepNotifyRemote(ctx, recipe, idx+1, kind, step.Notify, body)
@@ -232,11 +255,12 @@ func graphRunAIStep(
 	outputStore *cuetry.StepResultStore,
 	secretResolver cuetry.SecretResolver,
 	recipeKV *RecipeKVCoordinator,
+	cliEnv map[string]string,
 	execute bool,
 	out chan<- HostExecResult,
 ) ([]HostExecResult, error) {
 	kv := kvReaderFromCoordinator(recipeKV)
-	ok, whenErr := evalAIStepWhen(ctx, recipe, step, outputStore, secretResolver, kv, execute)
+	ok, whenErr := evalAIStepWhen(ctx, recipe, step, outputStore, secretResolver, kv, cliEnv, execute)
 	if whenErr != nil {
 		return nil, whenErr
 	}
@@ -293,4 +317,25 @@ func graphRunTemplateStep(
 		return rows, err
 	}
 	return rows, nil
+}
+
+func logGraphStepFinished(stepID string, kind cuetry.StepKind, st cuetry.StepRunState) {
+	zap.L().Debug("recipe graph step finished",
+		zap.String("step_id", stepID),
+		zap.String("kind", cuetry.StepKindLabel(kind)),
+		zap.String("state", graphStepRunStateLabel(st)),
+	)
+}
+
+func graphStepRunStateLabel(st cuetry.StepRunState) string {
+	switch st {
+	case cuetry.StepRunSucceeded:
+		return "succeeded"
+	case cuetry.StepRunFailed:
+		return "failed"
+	case cuetry.StepRunSkipped:
+		return "skipped"
+	default:
+		return "unknown"
+	}
 }

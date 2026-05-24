@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 func TestNewBatchSessionRecorderResultEvents(t *testing.T) {
@@ -96,5 +98,27 @@ func TestRecordRecipeMeta_writesStructuredEvent(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"recipe_content_hash":"sha256:deadbeef"`) {
 		t.Fatalf("missing hash field:\n%s", raw)
+	}
+}
+
+func TestRecordRecipeMeta_includesHosts(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := NewBatchSessionRecorder(dir, "web-cue-exec", "alice", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.RecordRecipeMeta(RecipeMeta{
+		RecipePath: "x.cue",
+		HostCount:  1,
+		Hosts: HostsForRecipeMeta([]hosts.Record{
+			{Provider: "gcp", Name: "vm1", PrimaryIP: "10.0.0.1"},
+		}, 200),
+		StartedAt: time.Now().UTC(),
+	})
+	_ = rec.Close()
+	files, _ := os.ReadDir(dir)
+	raw, _ := os.ReadFile(filepath.Join(dir, files[0].Name()))
+	if !strings.Contains(string(raw), `"hosts"`) || !strings.Contains(string(raw), `"vm1"`) {
+		t.Fatalf("expected hosts in meta:\n%s", raw)
 	}
 }

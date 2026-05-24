@@ -53,8 +53,8 @@ func capRecipeAssistRecords(recs []hosts.Record) []hosts.Record {
 }
 
 const recipeAssistSystemPrompt = `You help operators understand Honey "remote recipe" CUE files used from the web UI.
-A recipe is CUE with a top-level "recipe" object: name, optional defaults (run_as, env, k8s_debug_image), and steps[].
-Each step has host (selector), optional run_as, and one of: command, put{local,remote}, get{local,remote}, script{local,remote},
+A recipe is CUE with a top-level "recipe" object: name, optional defaults (run_as, env, k8s_debug_image, retry), and steps[].
+Each step has host (selector), optional run_as, optional when (CEL: host, steps, secrets, env, execute, kv_get/kv_has), optional retry{attempts, delay_ms, max_delay_ms, backoff: fixed|exponential}, and one of: command, put{local,remote}, get{local,remote}, script{local,remote},
 agent_transfer{dest_host, source_path, dest_path, cloud{provider,bucket,...}, optional cloud_backend_ref, keep_object, max_retries, agent_remote_dir},
 plus optional env for command/script only.
 
@@ -177,7 +177,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			if resErr != nil {
 				planNote = "secret resolver: " + resErr.Error()
 			} else {
-				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil)
+				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil, s.metrics)
 				plan := buf.String()
 				if runErr != nil {
 					planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
