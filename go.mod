@@ -14,9 +14,9 @@ require (
 	github.com/Telmate/proxmox-api-go v0.0.0-20260515213007-6e450d70bd0f
 	github.com/atotto/clipboard v0.1.4
 	github.com/aws/aws-sdk-go-v2 v1.41.7
-	github.com/aws/aws-sdk-go-v2/config v1.32.17
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.303.0
+	github.com/aws/aws-sdk-go-v2/config v1.32.18
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.17
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.304.0
 	github.com/aws/aws-sdk-go-v2/service/kms v1.52.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.7
@@ -24,7 +24,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/extism/go-pdk v1.1.3
 	github.com/extism/go-sdk v1.7.1
-	github.com/getkin/kin-openapi v0.138.0
+	github.com/getkin/kin-openapi v0.139.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-playground/validator/v10 v10.30.2
 	github.com/go-task/slim-sprig/v3 v3.0.0
@@ -89,7 +89,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.11 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.17 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.21 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
@@ -190,8 +190,8 @@ require (
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/oasdiff/yaml v0.0.9 // indirect
-	github.com/oasdiff/yaml3 v0.0.12 // indirect
+	github.com/oasdiff/yaml v0.1.0 // indirect
+	github.com/oasdiff/yaml3 v0.0.13 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
 	github.com/olekukonko/errors v1.3.0 // indirect
 	github.com/olekukonko/ll v0.1.8 // indirect
