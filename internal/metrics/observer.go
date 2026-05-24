@@ -17,6 +17,18 @@ type Observer interface {
 	ObserveExecCommand(status string, hostCount int, d time.Duration)
 }
 
+// ObserverEnabled reports whether o can receive observations.
+// A nil *Registry stored in an Observer interface is treated as disabled.
+func ObserverEnabled(o Observer) bool {
+	if o == nil {
+		return false
+	}
+	if r, ok := o.(*Registry); ok && r == nil {
+		return false
+	}
+	return true
+}
+
 // ObserveRecipeRun records a recipe dry-run or execute completion.
 func (r *Registry) ObserveRecipeRun(mode, recipeType, status string, d time.Duration) {
 	r.recipeRuns.WithLabelValues(mode, recipeType, status).Inc()

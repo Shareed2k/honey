@@ -118,7 +118,7 @@ func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir str
 			out, execErr := pluginMgr.ExecuteStep(callCtx, step.Plugin.ID, step.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, execute, secretsDry, kvSess)
 			if execErr != nil {
 				inner.ErrMsg = execErr.Error()
-				if obs != nil {
+				if metrics.ObserverEnabled(obs) {
 					obs.ObservePluginExec(pl.ID, pl.Action, "error", -1)
 				}
 				return inner
@@ -139,7 +139,7 @@ func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir str
 			if !out.Success && inner.ErrMsg == "" {
 				inner.ErrMsg = "plugin step failed"
 			}
-			if obs != nil {
+			if metrics.ObserverEnabled(obs) {
 				obs.ObservePluginExec(pl.ID, pl.Action, pluginExecStatus(inner.Success, inner.Skipped), -1)
 			}
 			return inner
@@ -147,7 +147,7 @@ func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir str
 		res = outcome.Result
 		totalAttempts = outcome.Attempts
 		recordMaxAttempts(attemptMax, totalAttempts)
-		if obs != nil {
+		if metrics.ObserverEnabled(obs) {
 			obs.ObservePluginExecDuration(pl.ID, pl.Action, outcome.LastAttemptDuration)
 		}
 		zap.L().Debug("plugin step finished",

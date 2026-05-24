@@ -21,7 +21,7 @@ func recipeTypeLabel(recipe cuetry.Recipe) string {
 }
 
 func observeRecipeRun(obs metrics.Observer, recipe cuetry.Recipe, execute bool, start time.Time, err error) {
-	if obs == nil {
+	if !metrics.ObserverEnabled(obs) {
 		return
 	}
 	mode := "dry_run"
@@ -46,14 +46,14 @@ func hostResultStatus(res HostExecResult) string {
 }
 
 func observeRecipeHostResult(obs metrics.Observer, res HostExecResult) {
-	if obs == nil {
+	if !metrics.ObserverEnabled(obs) {
 		return
 	}
 	obs.ObserveRecipeHostResult(hostResultStatus(res))
 }
 
 func observeRecipeStep(obs metrics.Observer, kind cuetry.StepKind, start time.Time, rows []HostExecResult, retryAttempts int) {
-	if obs == nil {
+	if !metrics.ObserverEnabled(obs) {
 		return
 	}
 	kindLabel := cuetry.StepKindLabel(kind)
@@ -117,7 +117,7 @@ func recordMaxAttempts(attemptMax *atomic.Int32, attempts int) {
 }
 
 func observeSSHOperation(obs metrics.Observer, op, status string, d time.Duration) {
-	if obs == nil {
+	if !metrics.ObserverEnabled(obs) {
 		return
 	}
 	obs.ObserveSSHOperation(op, status, d)

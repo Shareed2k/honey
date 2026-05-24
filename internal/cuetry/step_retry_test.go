@@ -88,6 +88,13 @@ func TestBuildBackOffFixed(t *testing.T) {
 func TestBuildBackOffExponential(t *testing.T) {
 	t.Parallel()
 	bo := BuildBackOff(RecipeStepRetry{DelayMS: 100, MaxDelayMS: 1000, Backoff: "exponential"})
+
+	ebo, ok := bo.(*backoff.ExponentialBackOff)
+	if !ok {
+		t.Fatalf("expected ExponentialBackOff, got %T", bo)
+	}
+	ebo.RandomizationFactor = 0
+
 	first := bo.NextBackOff()
 	second := bo.NextBackOff()
 	if first != 100*time.Millisecond {
@@ -95,9 +102,6 @@ func TestBuildBackOffExponential(t *testing.T) {
 	}
 	if second <= first {
 		t.Fatalf("expected increasing backoff, got %v then %v", first, second)
-	}
-	if _, ok := bo.(*backoff.ExponentialBackOff); !ok {
-		t.Fatalf("expected ExponentialBackOff, got %T", bo)
 	}
 }
 
