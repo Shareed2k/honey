@@ -10,24 +10,13 @@ func RecipeHasTemplateStep(r Recipe) bool {
 	return false
 }
 
-// RecipeHasKVTunnel reports whether any step in the recipe uses kv_tunnel.
-func RecipeHasKVTunnel(r Recipe) bool {
-	for _, s := range r.Steps {
-		if KVTunnelEnabled(s, r.Defaults) {
-			return true
-		}
-	}
-	return false
+// RecipeHasKVTunnel reports whether the recipe run uses stepkv (always true; kv_tunnel is always on).
+func RecipeHasKVTunnel(_ Recipe) bool {
+	return true
 }
 
 // KVTunnelEnabled reports whether the step should enable the KV HTTP API on the remote
-// (HONEY_KV_URL, HONEY_KV_TOKEN) for command and script steps.
-func KVTunnelEnabled(s RecipeStep, d *RecipeDefaults) bool {
-	if s.KVTunnel != nil {
-		return *s.KVTunnel
-	}
-	if d != nil && d.KVTunnel != nil {
-		return *d.KVTunnel
-	}
-	return false
+// (HONEY_KV_URL, HONEY_KV_TOKEN). Always true; recipe kv_tunnel fields are deprecated no-ops.
+func KVTunnelEnabled(_ RecipeStep, _ *RecipeDefaults) bool {
+	return true
 }

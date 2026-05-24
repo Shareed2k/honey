@@ -8,10 +8,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"github.com/shareed2k/honey/internal/truenasshell"
 
@@ -72,7 +75,7 @@ type SSHPostHostResultFunc func(ctx context.Context, r hosts.Record, res *HostEx
 
 // StreamSSHParallel runs the command on records and streams results to out channel.
 // It does not close the channel itself.
-func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, maxConc int, out chan<- HostExecResult, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, post SSHPostHostResultFunc) error {
+func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, maxConc int, out chan<- HostExecResult, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, post SSHPostHostResultFunc, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) error {
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
 	}
@@ -86,12 +89,20 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kv
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			var res HostExecResult
-			if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
-				res = runOneRemoteTrueNAS(ctx, user, r, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
-			} else {
-				res = runOneRemoteSSH(user, r, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+			run := func() HostExecResult {
+				if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
+					return runOneRemoteTrueNAS(ctx, user, r, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+				}
+				return runOneRemoteSSH(user, r, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
 			}
+			outcome := runHostExecWithRetry(ctx, retryCfg, run)
+			recordMaxAttempts(attemptMax, outcome.Attempts)
+			op := "exec"
+			if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
+				op = "truenas"
+			}
+			observeSSHOperation(obs, op, hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+			res := outcome.Result
 			if post != nil {
 				post(ctx, r, &res)
 			}
@@ -122,7 +133,7 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hos
 		wrap := func(r hosts.Record, _ map[string]string) string {
 			return remoteCmdFunc(r)
 		}
-		_ = StreamSSHParallel(context.Background(), user, jobs, false, wrap, maxConc, ch, nil, nil, false, nil)
+		_ = StreamSSHParallel(context.Background(), user, jobs, false, wrap, maxConc, ch, nil, nil, false, nil, cuetry.RecipeStepRetry{}, nil, nil)
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))
@@ -289,7 +300,7 @@ type SFTPDownloadJob struct {
 
 // StreamSFTPUploadParallel uploads the same local file to remotePath on each
 // record (SFTP over DialHoneyClient). Failures on one host do not cancel others.
-func StreamSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remotePath string, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
+func StreamSFTPUploadParallel(ctx context.Context, user string, recs []hosts.Record, localAbs, remotePath string, maxConc int, out chan<- HostExecResult, cache *ClientCache, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) error {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
 	if localAbs == "" || remotePath == "" {
@@ -315,7 +326,12 @@ func StreamSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remote
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out <- runOneSFTPUpload(user, r, localAbs, remotePath, cache)
+			outcome := runHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
+				return runOneSFTPUpload(user, r, localAbs, remotePath, cache)
+			})
+			recordMaxAttempts(attemptMax, outcome.Attempts)
+			observeSSHOperation(obs, "sftp_put", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+			out <- outcome.Result
 		}(jobs[i])
 	}
 	wg.Wait()
@@ -323,7 +339,7 @@ func StreamSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remote
 }
 
 // StreamSFTPDownloadParallel downloads files from multiple hosts in parallel.
-func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int, out chan<- HostExecResult, cache *ClientCache) error {
+func StreamSFTPDownloadParallel(ctx context.Context, user string, jobs []SFTPDownloadJob, maxConc int, out chan<- HostExecResult, cache *ClientCache, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) error {
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
 	}
@@ -342,7 +358,12 @@ func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int
 				out <- HostExecResult{Name: j.Record.Name, Provider: j.Record.Provider, Success: false, ErrMsg: "missing PrimaryIP"}
 				return
 			}
-			out <- runOneSFTPDownload(user, j, cache)
+			outcome := runHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
+				return runOneSFTPDownload(user, j, cache)
+			})
+			recordMaxAttempts(attemptMax, outcome.Attempts)
+			observeSSHOperation(obs, "sftp_get", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+			out <- outcome.Result
 		}(jobs[i])
 	}
 	wg.Wait()
@@ -350,7 +371,7 @@ func StreamSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc int
 }
 
 // StreamScriptUploadRunParallel uploads a script and executes it on multiple hosts in parallel.
-func StreamScriptUploadRunParallel(ctx context.Context, user string, recs []hosts.Record, localAbs, remotePath string, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, maxConc int, out chan<- HostExecResult, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, post SSHPostHostResultFunc) error {
+func StreamScriptUploadRunParallel(ctx context.Context, user string, recs []hosts.Record, localAbs, remotePath string, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, maxConc int, out chan<- HostExecResult, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, post SSHPostHostResultFunc, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) error {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
 	if localAbs == "" || remotePath == "" {
@@ -376,7 +397,12 @@ func StreamScriptUploadRunParallel(ctx context.Context, user string, recs []host
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runOneScriptUploadRun(user, r, localAbs, remotePath, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+			outcome := runHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
+				return runOneScriptUploadRun(user, r, localAbs, remotePath, cache, kvTunnel, remoteCmd, recipeKV, recipeScopedKV)
+			})
+			recordMaxAttempts(attemptMax, outcome.Attempts)
+			observeSSHOperation(obs, "script", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+			res := outcome.Result
 			if post != nil {
 				post(ctx, r, &res)
 			}
@@ -402,7 +428,7 @@ func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remot
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		_ = StreamSFTPUploadParallel(user, recs, localAbs, remotePath, maxConc, ch, nil)
+		_ = StreamSFTPUploadParallel(context.Background(), user, recs, localAbs, remotePath, maxConc, ch, nil, cuetry.RecipeStepRetry{}, nil, nil)
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))
@@ -422,7 +448,7 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		_ = StreamSFTPDownloadParallel(user, jobs, maxConc, ch, nil)
+		_ = StreamSFTPDownloadParallel(context.Background(), user, jobs, maxConc, ch, nil, cuetry.RecipeStepRetry{}, nil, nil)
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))
@@ -512,7 +538,7 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 	go func() {
 		defer close(ch)
 		wrap := func(_ hosts.Record, _ map[string]string) string { return remoteCmd }
-		_ = StreamScriptUploadRunParallel(context.Background(), user, recs, localAbs, remotePath, false, wrap, maxConc, ch, nil, nil, false, nil)
+		_ = StreamScriptUploadRunParallel(context.Background(), user, recs, localAbs, remotePath, false, wrap, maxConc, ch, nil, nil, false, nil, cuetry.RecipeStepRetry{}, nil, nil)
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))

@@ -18,6 +18,7 @@
 .rcp-list li { display: flex; gap: 8px; align-items: center; padding: 4px 6px; flex-wrap: wrap; }
 .rcp-empty { color: #6e7681; font-style: italic; }
 .rcp-err { color: #f85149; }
+.rcp-warn { color: #d29922; margin: 0.35rem 0 0; font-size: 0.9rem; }
 .rcp-link { background: transparent; border: 0; color: #58a6ff; cursor: pointer; padding: 0; text-align: left; font: inherit; }
 .rcp-btn { padding: 6px 10px; background: #21262d; border: 0; color: #c9d1d9; border-radius: 4px; cursor: pointer; min-height: 44px; }
 .rcp-btn--pri { background: #238636; color: #fff; }
@@ -35,6 +36,8 @@
 .rcp-steps__id { color: #79c0ff; font-size: 12px; }
 .rcp-steps__wave { color: #a371f7; font-size: 11px; }
 .rcp-steps__preview { color: #7ee787; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+.rcp-steps__tag { color: #d29922; font-size: 11px; }
+.rcp-steps__tag--notify { color: #a371f7; }
 
 .rcp-graph { display: grid; grid-template-columns: 1fr 220px; gap: 12px; min-height: 420px; }
 .rcp-graph__canvas { min-height: 420px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; }
@@ -47,6 +50,9 @@
 .rcp-graph-node__id { font-weight: 600; margin-bottom: 4px; }
 .rcp-graph-node__kind { color: #c9d1d9; font-size: 11px; }
 .rcp-graph-node__wave { display: inline-block; margin-top: 4px; font-size: 10px; color: #a371f7; }
+.rcp-graph-node__badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.rcp-graph-node__badge { font-size: 9px; padding: 1px 4px; border-radius: 3px; background: #21262d; color: #d29922; }
+.rcp-graph-node__badge--notify { color: #a371f7; }
 .rcp-graph-handle { width: 6px; height: 6px; background: #8b949e; border: none; }
 
 @media (max-width: 900px) {
@@ -65,7 +71,18 @@
 .rcp-edit__field { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
 .rcp-edit__field--multiline textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
 .rcp-edit__readonly { color: #d29922; font-style: italic; }
+.rcp-edit__retry { margin-top: 8px; padding: 8px; border: 1px dashed #30363d; border-radius: 4px; }
+.rcp-edit__retry-toggle { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+.rcp-edit__env-from { margin-top: 8px; padding: 8px; border: 1px dashed #30363d; border-radius: 4px; }
+.rcp-edit__env-from-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
 .rcp-edit__dirty { display: flex; gap: 8px; align-items: center; padding: 8px; background: #1f2937; border-radius: 4px; }
+.rcp-edit__add-step { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.rcp-edit__add-step-picker { display: flex; gap: 6px; align-items: center; }
+.rcp-edit__notify { margin-top: 8px; padding: 8px; border: 1px dashed #30363d; border-radius: 4px; }
+.rcp-edit__notify-toggle { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+.rcp-edit__details { margin-top: 6px; font-size: 13px; color: #8b949e; }
+.rcp-edit__cloud { margin: 8px 0; padding: 8px; border: 1px dashed #30363d; border-radius: 4px; }
+.rcp-edit__hint { color: #8b949e; font-size: 12px; margin: 4px 0; }
 
 .rcp-run-summary { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .rcp-ok { color: #3fb950; } .rcp-err { color: #f85149; } .rcp-pend { color: #d29922; }

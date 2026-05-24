@@ -78,7 +78,7 @@ func TestMergeEnvFromInto_fromOutput(t *testing.T) {
 		}},
 	}
 	dst := map[string]string{}
-	if err := MergeEnvFromInto(dst, step, nil, outputCap, "", false); err != nil {
+	if err := MergeEnvFromInto(dst, step, nil, outputCap, nil, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if dst["CFG"] != "hello" {

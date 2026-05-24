@@ -106,6 +106,55 @@ func (s stepkvSessionKVTest) Get(key string) (string, bool, error) {
 	return s.sess.Get(key)
 }
 
+func TestEvalWhen_env(t *testing.T) {
+	t.Parallel()
+	prog, err := CompileWhen(`env['BARMAN_DO_RESET'] == 'true'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := EvalWhen(prog, WhenEvalOpts{
+		Host:    hosts.Record{Name: "barman-1"},
+		Execute: true,
+		Steps:   map[string]StepView{},
+		Secrets: map[string]string{},
+		Env:     map[string]string{"BARMAN_DO_RESET": "true"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected true")
+	}
+	ok, err = EvalWhen(prog, WhenEvalOpts{
+		Host:    hosts.Record{Name: "barman-1"},
+		Execute: true,
+		Steps:   map[string]StepView{},
+		Secrets: map[string]string{},
+		Env:     map[string]string{"BARMAN_DO_RESET": "false"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected false")
+	}
+}
+
+func TestBuildEnvMapForWhen_cliOverride(t *testing.T) {
+	t.Parallel()
+	defaults := &RecipeDefaults{
+		Env: map[string]string{"BARMAN_DO_RESET": "false"},
+	}
+	host := hosts.Record{Name: "barman-1", PrimaryIP: "10.0.0.1"}
+	m, err := BuildEnvMapForWhen(context.Background(), false, nil, RecipeStep{}, defaults, map[string]string{"BARMAN_DO_RESET": "true"}, &host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m["BARMAN_DO_RESET"] != "true" {
+		t.Fatalf("got %q want true", m["BARMAN_DO_RESET"])
+	}
+}
+
 func TestBuildSecretsMapForWhen_dryRun(t *testing.T) {
 	t.Parallel()
 	m, err := BuildSecretsMapForWhen(context.Background(), false, nil, RecipeStep{

@@ -524,10 +524,10 @@ recipe: {
 	}
 }
 
-func TestParseRemoteRecipe_kvTunnelOnPutRejected(t *testing.T) {
+func TestParseRemoteRecipe_kvTunnelOnPutIgnored(t *testing.T) {
 	const src = `
 recipe: {
-	name: "bad"
+	name: "ok"
 	steps: [
 		{
 			host: "10.0.0.1"
@@ -537,8 +537,8 @@ recipe: {
 	]
 }
 `
-	if _, err := ParseRemoteRecipe([]byte(src), nil); err == nil {
-		t.Fatal("expected error")
+	if _, err := ParseRemoteRecipe([]byte(src), nil); err != nil {
+		t.Fatalf("kv_tunnel on put is deprecated no-op: %v", err)
 	}
 }
 

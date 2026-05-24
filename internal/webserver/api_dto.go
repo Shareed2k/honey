@@ -14,6 +14,8 @@ type MetaResponse struct {
 	Date                      string `json:"date"`
 	ConfigPath                string `json:"config_path"`
 	SessionRecordingAvailable bool   `json:"session_recording_available"`
+	SessionRecordingRetention string `json:"session_recording_retention,omitempty"`
+	SessionRecordingLastPurge string `json:"session_recording_last_purge_at,omitempty"`
 	TerminalAssistAvailable   bool   `json:"terminal_assist_available"`
 	MetricsURL                string `json:"metrics_url,omitempty"`
 }

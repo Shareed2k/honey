@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 type recipeMetaEvent struct {
@@ -19,21 +20,23 @@ type recipeMetaEvent struct {
 }
 
 type recipeMetaPayload struct {
-	RecipePath        string `json:"recipe_path"`
-	HostCount         int    `json:"host_count"`
-	RecipeContentHash string `json:"recipe_content_hash"`
-	StartedAt         string `json:"started_at"`
+	RecipePath        string         `json:"recipe_path"`
+	HostCount         int            `json:"host_count"`
+	RecipeContentHash string         `json:"recipe_content_hash"`
+	StartedAt         string         `json:"started_at"`
+	Hosts             []hosts.Record `json:"hosts,omitempty"`
 }
 
 // RecentRunEntry is one recent recipe run.
 type RecentRunEntry struct {
-	RecipeName        string `json:"recipe_name"`
-	RecipePath        string `json:"recipe_path"`
-	HostCount         int    `json:"host_count"`
-	StartedAt         string `json:"started_at"`
-	RecordingID       string `json:"recording_id"`
-	RecipeContentHash string `json:"recipe_content_hash,omitempty"`
-	Edited            bool   `json:"edited"`
+	RecipeName        string         `json:"recipe_name"`
+	RecipePath        string         `json:"recipe_path"`
+	HostCount         int            `json:"host_count"`
+	StartedAt         string         `json:"started_at"`
+	RecordingID       string         `json:"recording_id"`
+	RecipeContentHash string         `json:"recipe_content_hash,omitempty"`
+	Edited            bool           `json:"edited"`
+	Hosts             []hosts.Record `json:"hosts,omitempty"`
 }
 
 // RecentRunsResponse is returned by GET /api/v1/recipes/recent-runs.
@@ -92,6 +95,7 @@ func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request)
 			RecordingID:       strings.TrimSuffix(name, ".hrec.jsonl"),
 			RecipeContentHash: meta.RecipeContentHash,
 			Edited:            isEdited(meta),
+			Hosts:             meta.Hosts,
 		})
 	}
 	sort.Slice(runs, func(i, j int) bool { return runs[i].StartedAt > runs[j].StartedAt })

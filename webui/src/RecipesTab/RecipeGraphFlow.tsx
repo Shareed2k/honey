@@ -27,6 +27,12 @@ function RecipeStepNode({ data }: NodeProps<Node<StepNodeData>>) {
       <div className="rcp-graph-node__id">{n.id}</div>
       <div className="rcp-graph-node__kind">{n.kind}</div>
       {n.wave ? <span className="rcp-graph-node__wave">wave {n.wave}</span> : null}
+      {n.retry || n.notify ? (
+        <div className="rcp-graph-node__badges">
+          {n.retry ? <span className="rcp-graph-node__badge">retry</span> : null}
+          {n.notify ? <span className="rcp-graph-node__badge rcp-graph-node__badge--notify">notify</span> : null}
+        </div>
+      ) : null}
       <Handle type="source" position={Position.Right} className="rcp-graph-handle" />
     </div>
   );
@@ -97,6 +103,24 @@ export function RecipeGraphFlow({ plan }: Props) {
               <>
                 <br />
                 wave: {selected.wave}
+              </>
+            ) : null}
+            {selected.when ? (
+              <>
+                <br />
+                when: {selected.when}
+              </>
+            ) : null}
+            {selected.retry ? (
+              <>
+                <br />
+                retry: {selected.retry}
+              </>
+            ) : null}
+            {selected.notify ? (
+              <>
+                <br />
+                notify: yes
               </>
             ) : null}
             {selected.kv_tunnel ? (

@@ -55,6 +55,8 @@ type Server struct {
 
 	fileClientCache *ui.ClientCache
 
+	retentionState recordingRetentionState
+
 	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
 	pveQemuVncMu   sync.Mutex
 	pveQemuVncByID map[string]pveQemuVncOfferSession
@@ -115,6 +117,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/recipes/recent-runs", s.withAuth(s.handleRecipesRecentRuns))
 	s.mux.HandleFunc("GET /api/v1/recordings", s.withAuth(s.handleRecordingsList))
 	s.mux.HandleFunc("POST /api/v1/recordings/play", s.withAuth(s.handleRecordingsPlay))
+	s.mux.HandleFunc("DELETE /api/v1/recordings/{file_name}", s.withAuth(s.handleRecordingsDelete))
+	s.mux.HandleFunc("POST /api/v1/recordings/summarize", s.withAuth(s.handleRecordingsSummarize))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
 	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
 	s.mux.HandleFunc("POST /api/v1/terminal-assist", s.withAuth(s.handleTerminalAssist))
@@ -172,6 +176,8 @@ func (s *Server) Start(ctx context.Context) error {
 		errCh <- srv.ListenAndServe()
 	}()
 
+	s.startRecordingRetention(ctx)
+
 	nListeners := 1
 	if metricsSrv != nil {
 		nListeners = 2
@@ -222,6 +228,14 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 		SessionRecordingAvailable: strings.TrimSpace(s.opts.RecordDir) != "",
 		TerminalAssistAvailable:   terminalAssistConfigured(),
 	}
+	if maxAge, text := s.recordingRetentionMaxAge(); maxAge > 0 && text != "" {
+		meta.SessionRecordingRetention = text
+	}
+	s.retentionState.mu.Lock()
+	if !s.retentionState.lastPurgeAt.IsZero() {
+		meta.SessionRecordingLastPurge = s.retentionState.lastPurgeAt.Format(time.RFC3339)
+	}
+	s.retentionState.mu.Unlock()
 	if addr := strings.TrimSpace(s.opts.MetricsListenAddr); addr != "" {
 		meta.MetricsURL = "http://" + addr + "/metrics"
 	}

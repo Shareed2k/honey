@@ -1079,60 +1079,33 @@ func RunTunnelGo(ctx context.Context, user, host string, sshPort int, localFwd s
 	if err != nil {
 		return err
 	}
+	lp, err := strconv.Atoi(localPort)
+	if err != nil {
+		return fmt.Errorf("local port: %w", err)
+	}
+	rp, err := strconv.Atoi(remotePort)
+	if err != nil {
+		return fmt.Errorf("remote port: %w", err)
+	}
 	client, cleanup, err := DialSSHClient(user, host, sshPort, "")
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	bind := net.JoinHostPort("127.0.0.1", localPort)
-	ln, err := net.Listen("tcp", bind)
+	listenHost, listenPort, stop, err := StartLocalForward(ctx, client, "127.0.0.1", lp, remoteHost, rp)
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", bind, err)
+		return err
 	}
-	defer func() { _ = ln.Close() }()
+	defer stop()
 
+	bind := net.JoinHostPort(listenHost, strconv.Itoa(listenPort))
 	remoteAddr := net.JoinHostPort(remoteHost, remotePort)
 	_, _ = fmt.Fprintf(os.Stderr, "Forwarding %s -> %s via SSH (Ctrl+C to stop)\n", bind, remoteAddr)
-
-	go func() {
-		<-ctx.Done()
-		_ = ln.Close()
-	}()
-
-	for {
-		conn, accErr := ln.Accept()
-		if accErr != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return accErr
-		}
-		go forwardOneTunnel(client, conn, remoteAddr, out)
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Forwarding %s -> %s via SSH\n", bind, remoteAddr)
 	}
-}
 
-func forwardOneTunnel(client *ssh.Client, local net.Conn, remoteAddr string, out io.Writer) {
-	fmt.Fprintf(out, "[%s] Connection opened from %s\n", time.Now().Format(time.RFC3339), local.RemoteAddr())
-	defer func() {
-		fmt.Fprintf(out, "[%s] Connection closed from %s\n", time.Now().Format(time.RFC3339), local.RemoteAddr())
-	}()
-	defer func() { _ = local.Close() }()
-	remote, err := client.Dial("tcp", remoteAddr)
-	if err != nil {
-		_, _ = fmt.Fprintf(out, "tunnel dial %s: %v\n", remoteAddr, err)
-		return
-	}
-	defer func() { _ = remote.Close() }()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(remote, local)
-	}()
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(local, remote)
-	}()
-	wg.Wait()
+	<-ctx.Done()
+	return nil
 }

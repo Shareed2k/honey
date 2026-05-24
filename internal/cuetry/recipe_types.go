@@ -21,6 +21,7 @@ type RecipeDefaults struct {
 	MaxParallel   int               `json:"max_parallel,omitempty"`
 	SSHPort       int               `json:"ssh_port,omitempty"`
 	SSHPrivateKey string            `json:"ssh_private_key,omitempty"`
+	Retry         *RecipeStepRetry  `json:"retry,omitempty"`
 }
 
 // RecipeFileTransfer is a local ↔ remote path pair for SFTP put/get steps.
@@ -130,7 +131,7 @@ type RecipeStepPlugin struct {
 	Config json.RawMessage `json:"config,omitempty"`
 }
 
-// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, template, or plugin.
+// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, template, plugin, or tunnel.
 // Host selects targets: literal IP, exact name, "*", "re:…", or "_" for ai only (see resolve.go). For agent_transfer,
 // host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
 type RecipeStep struct {
@@ -147,6 +148,7 @@ type RecipeStep struct {
 	AI            *RecipeAI            `json:"ai,omitempty"`
 	Template      *RecipeStepTemplate  `json:"template,omitempty"`
 	Plugin        *RecipeStepPlugin    `json:"plugin,omitempty"`
+	Tunnel        *RecipeStepTunnel    `json:"tunnel,omitempty"`
 	Notify        *RecipeNotify        `json:"notify,omitempty"`
 	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`
 	KVTunnel      *bool                `json:"kv_tunnel,omitempty"`
@@ -156,6 +158,7 @@ type RecipeStep struct {
 	Env           map[string]string    `json:"env,omitempty"`
 	Secrets       map[string]string    `json:"secrets,omitempty"`
 	When          string               `json:"when,omitempty"`
+	Retry         *RecipeStepRetry     `json:"retry,omitempty"`
 }
 
 // NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).

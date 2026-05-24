@@ -17,6 +17,8 @@ type StepSummary struct {
 	Host    string   `json:"host"`
 	RunAs   string   `json:"run_as,omitempty"`
 	When    string   `json:"when,omitempty"`
+	Retry   string   `json:"retry,omitempty"`
+	Notify  bool     `json:"notify,omitempty"`
 	Preview string   `json:"preview"`
 }
 
@@ -66,6 +68,8 @@ func RenderDryRunPlan(r Recipe) (string, []StepSummary, error) {
 			Host:    strings.TrimSpace(step.Host),
 			RunAs:   runAs,
 			When:    strings.TrimSpace(step.When),
+			Retry:   retrySummary(step, r.Defaults),
+			Notify:  step.NotifyEnabled(),
 			Preview: preview,
 		}
 		if waveOf != nil {
@@ -76,12 +80,21 @@ func RenderDryRunPlan(r Recipe) (string, []StepSummary, error) {
 		if summary.When != "" {
 			whenPart = fmt.Sprintf(" when=%q", summary.When)
 		}
+		retryPart := ""
+		if summary.Retry != "" {
+			retryPart = " retry=" + summary.Retry
+		}
+		notifyPart := ""
+		if summary.Notify {
+			notifyPart = " notify=yes"
+		}
+		extras := whenPart + retryPart + notifyPart
 		if summary.ID != "" {
 			fmt.Fprintf(&b, "step %d (id=%q wave=%d depends=%v): kind=%s host=%q run_as=%q%s preview=%q\n",
-				i, summary.ID, summary.Wave, summary.Depends, kindLabel, summary.Host, runAs, whenPart, preview)
+				i, summary.ID, summary.Wave, summary.Depends, kindLabel, summary.Host, runAs, extras, preview)
 		} else {
 			fmt.Fprintf(&b, "step %d: kind=%s host=%q run_as=%q%s preview=%q\n",
-				i, kindLabel, summary.Host, runAs, whenPart, preview)
+				i, kindLabel, summary.Host, runAs, extras, preview)
 		}
 	}
 	return b.String(), steps, nil
@@ -128,10 +141,32 @@ func previewForStep(kind StepKind, s RecipeStep) string {
 		if s.Plugin != nil {
 			p = fmt.Sprintf("plugin %s action=%s", strings.TrimSpace(s.Plugin.ID), strings.TrimSpace(s.Plugin.Action))
 		}
+	case StepKindTunnel:
+		if s.Tunnel != nil {
+			t := s.Tunnel
+			host := strings.TrimSpace(t.RemoteHost)
+			if host == "" {
+				host = "localhost"
+			}
+			mode := EffectiveTunnelMode(t)
+			p = fmt.Sprintf("tunnel %s -> %s:%d", mode, host, t.RemotePort)
+		}
 	}
 	p = strings.ReplaceAll(p, "\n", " ")
 	if len(p) > maxPreviewBytes {
 		p = p[:maxPreviewBytes-1] + "…"
 	}
 	return p
+}
+
+// retrySummary returns a compact per-step retry descriptor for plan UIs (no secrets).
+func retrySummary(step RecipeStep, defaults *RecipeDefaults) string {
+	if step.Retry == nil {
+		return ""
+	}
+	r := EffectiveRetry(step, defaults)
+	if !r.Enabled() {
+		return ""
+	}
+	return fmt.Sprintf("attempts=%d backoff=%s", r.Attempts, r.Backoff)
 }

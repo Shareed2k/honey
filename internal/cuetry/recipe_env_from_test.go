@@ -24,7 +24,7 @@ func TestMergeEnvFromInto_dryRun(t *testing.T) {
 		}},
 	}
 	dst := map[string]string{}
-	if err := MergeEnvFromInto(dst, step, nil, nil, "h1", true); err != nil {
+	if err := MergeEnvFromInto(dst, step, nil, nil, nil, "h1", true); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(dst["TAG"], "fetch") {
@@ -40,7 +40,7 @@ func TestMergeEnvFromInto_missingStdout(t *testing.T) {
 			Map:  map[string]string{"TAG": "stdout"},
 		}},
 	}
-	err := MergeEnvFromInto(map[string]string{}, step, NewStepOutputStore(), nil, "h1", false)
+	err := MergeEnvFromInto(map[string]string{}, step, NewStepOutputStore(), nil, nil, "h1", false)
 	if err == nil || !strings.Contains(err.Error(), "no stdout") {
 		t.Fatalf("got %v", err)
 	}
