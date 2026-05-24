@@ -160,7 +160,7 @@ Skipped hosts appear in results with **`Skipped: true`** and output `(skipped: w
 
 A **`tunnel:`** step opens a TCP/UDP listen address (or tun device) on the **operator** — the machine where `honey cue-exec` runs. Honey dials the recipe target (SSH, k8s port-forward API, or TrueNAS API shell) and forwards traffic to a service on **remote loopback** or inside a pod.
 
-Use tunnels for Redis, HTTP APIs, Postgres (via the postgres plugin), SOCKS browsing through a bastion, or any protocol that fits the forward mode. The listen socket is always on the operator (`127.0.0.1:<port>` by default), not on the remote host.
+Use tunnels for Redis, HTTP APIs, Postgres (via the postgres plugin), **rclone rcd** (via the rclone plugin), SOCKS browsing through a bastion, or any protocol that fits the forward mode. The listen socket is always on the operator (`127.0.0.1:<port>` by default), not on the remote host.
 
 ### Quick start (SSH local forward)
 

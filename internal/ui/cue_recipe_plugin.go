@@ -72,7 +72,11 @@ func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir str
 		res.ErrMsg = err.Error()
 		return res
 	}
-	pluginConfig := expanded
+	pluginConfig, err := RewritePluginConfigTunnelStep(expanded, step.Plugin.ID, tunnelCoord, sshUser, target, execute)
+	if err != nil {
+		res.ErrMsg = err.Error()
+		return res
+	}
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
 	bridge := NewPluginRemoteBridge(sshUser, target, cache, recipeDir, runAs, env, pluginMgr.EffectivePaths(step.Plugin.ID))
 	hostCtx := &plugins.HostRunContext{

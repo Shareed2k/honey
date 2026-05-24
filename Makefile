@@ -5,7 +5,7 @@ build-plugin-examples:
 	cp examples/plugins/echo/plugin.wasm internal/plugins/testdata/echo/plugin.wasm
 
 build-plugin-modules:
-	@for dir in bash shell copy template file service postgres; do \
+	@for dir in bash shell copy template file service postgres rclone; do \
 	  echo "building plugins/$$dir"; \
 	  (cd plugins/$$dir && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .); \
 	  mkdir -p examples/plugins/$$dir; \

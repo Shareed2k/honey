@@ -287,6 +287,65 @@ Examples: [`postgres_tunnel_demo.cue`](https://github.com/shareed2k/honey/blob/m
 
 Safety: `timeout_ms` required; `readonly` defaults to `true`; dry-run returns a plan without connecting; SQL text is audit-logged (SHA256 + truncated preview, never params/DSN).
 
+### Rclone RC API (`rclone` plugin)
+
+Calls **rclone rcd** over HTTP from the operator via a recipe **`tunnel:`** step (SSH local forward to remote `127.0.0.1:5572`). The plugin does **not** start rcd — use a prior **`command`** step or systemd on the target.
+
+Enable HTTP to loopback:
+
+```yaml
+plugins:
+  enabled: true
+  network_allow_hosts:
+    - "127.0.0.1"
+```
+
+Recipe pattern (see [`rclone_rc_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/rclone_rc_tunnel.cue)):
+
+```cue
+steps: [
+  {
+    id: "rcd_ensure"
+    host: "role:app"
+    command: "systemctl is-active --quiet rclone-rcd || systemctl start rclone-rcd"
+  },
+  {
+    id: "rcd_tunnel"
+    host: "role:app"
+    depends: ["rcd_ensure"]
+    tunnel: { remote_host: "127.0.0.1", remote_port: 5572 }
+  },
+  {
+    id: "rc_copy"
+    host: "role:app"
+    depends: ["rcd_tunnel"]
+    plugin: {
+      id: "rclone"
+      action: "copy"
+      config: {
+        tunnel_step: "rcd_tunnel"
+        rc_user: "honey"
+        rc_pass: "${RCD_PASS}"
+        params: { srcFs: "s3:bucket", dstFs: "local:/data" }
+      }
+    }
+  },
+]
+```
+
+| Config field | Meaning |
+|--------------|---------|
+| `tunnel_step` | **Required on execute.** Step `id` of a **`tunnel`** step; host rewrites `base_url` to `http://127.0.0.1:<local_port>` |
+| `base_url` | Optional override after `tunnel_step` |
+| `rc_user` / `rc_pass` | Basic auth for rcd (`rc_pass` supports `${VAR}` from recipe secrets) |
+| `params` | JSON body for the RC endpoint (action-specific) |
+
+**Actions (v1):** `noop`, `copy`, `sync`, `list`, plus `about`, `move`, `delete`, `mkdir`, `job_status`, `job_finish`, `mount`, `unmount`, `vfs_refresh`, `vfs_stats`.
+
+**Secrets:** `secret_ref_prefixes: ["rclone:"]` resolves `rclone:rcd` from operator env `RCLONE_RCD` (see manifest `allowed_env`).
+
+Dry-run: when the tunnel is active, POST `core/noop` to verify rcd; otherwise reports a plan line without connecting.
+
 ### Built-in WASM modules
 
 Shipped under [`plugins/`](https://github.com/shareed2k/honey/tree/main/plugins) (Ansible-like wrappers):
@@ -300,6 +359,7 @@ Shipped under [`plugins/`](https://github.com/shareed2k/honey/tree/main/plugins)
 | `file` | `manage` | `directory` / `absent` / `touch` |
 | `service` | `manage` | `systemctl` started/stopped/restarted |
 | `postgres` | `query` / `exec` / `migrate` | Host-mediated pgx (DSN from recipe secrets) |
+| `rclone` | `noop` / `copy` / `sync` / `list` / … | rclone RC HTTP via tunneled `rcd` on remote loopback |
 
 Build and install:
 
@@ -309,7 +369,7 @@ mkdir -p ~/.config/honey/plugins/bash
 cp examples/plugins/bash/plugin.yaml examples/plugins/bash/plugin.wasm ~/.config/honey/plugins/bash/
 ```
 
-Example recipes: [`bash_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/bash_module_demo.cue), [`postgres_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_module_demo.cue), [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_kv_demo.cue), [`tunnel_local_forward.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_local_forward.cue).
+Example recipes: [`bash_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/bash_module_demo.cue), [`postgres_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_module_demo.cue), [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_kv_demo.cue), [`rclone_rc_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/rclone_rc_tunnel.cue), [`tunnel_local_forward.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_local_forward.cue).
 
 For simple one-off shell, prefer native `command` / `script` steps (no WASM). Use modules when you want structured `changed` / validation / composable actions.
 
@@ -358,7 +418,7 @@ From the honey repo root (echo example):
 make build-plugin-examples
 ```
 
-Built-in Ansible-like modules (`bash`, `shell`, `copy`, `template`, `file`, `service`):
+Built-in Ansible-like modules (`bash`, `shell`, `copy`, `template`, `file`, `service`, `rclone`):
 
 ```bash
 make build-plugin-modules
