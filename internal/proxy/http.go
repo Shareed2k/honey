@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -14,7 +15,7 @@ import (
 
 // StartHTTPProxy constructs an HTTP reverse proxy and optionally binds it to 127.0.0.1.
 // If app.LocalPort is 0, it skips binding the listener (used by the webserver dynamic proxy).
-func StartHTTPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sessionID string) (*Session, error) {
+func StartHTTPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sessionID string, closer io.Closer) (*Session, error) {
 	targetURL := &url.URL{
 		Scheme: "http",
 		Host:   app.Upstream,
@@ -41,7 +42,12 @@ func StartHTTPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sess
 		ExpiresAt: expiresAt,
 		PID:       os.Getpid(),
 		Handler:   proxy,
-		Stop:      cancel,
+		Stop: func() {
+			cancel()
+			if closer != nil {
+				_ = closer.Close()
+			}
+		},
 	}
 
 	// If LocalPort is specified, bind a local listener (used by CLI `honey app open`)

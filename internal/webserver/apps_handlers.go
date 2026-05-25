@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -22,7 +23,7 @@ type proxyStartRequest struct {
 	Backends  string `json:"backends,omitempty"`
 }
 
-func resolveSSHClient(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest) (*sshclient.HoneyClient, error) {
+func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest) (proxy.Dialer, io.Closer, error) {
 	// First run a search to find the record for this target
 	in := hostapi.SearchHostsInput{
 		Name:       app.Target,
@@ -36,25 +37,32 @@ func resolveSSHClient(ctx context.Context, _ *config.File, configPath string, ap
 	out, err := hostapi.SearchHosts(ctx, &in)
 	if err != nil {
 		if app.TargetRegex != "" {
-			return nil, fmt.Errorf("resolve target (regex %q): %w", app.TargetRegex, err)
+			return nil, nil, fmt.Errorf("resolve target (regex %q): %w", app.TargetRegex, err)
 		}
-		return nil, fmt.Errorf("resolve target %q: %w", app.Target, err)
+		return nil, nil, fmt.Errorf("resolve target %q: %w", app.Target, err)
 	}
 
 	if len(out.Records) == 0 {
 		if app.TargetRegex != "" {
-			return nil, fmt.Errorf("target regex %q not found", app.TargetRegex)
+			return nil, nil, fmt.Errorf("target regex %q not found", app.TargetRegex)
 		}
-		return nil, fmt.Errorf("target %q not found", app.Target)
+		return nil, nil, fmt.Errorf("target %q not found", app.Target)
 	}
 
 	rec := out.Records[0]
 	ip := strings.TrimSpace(rec.PrimaryIP)
+
+	useSSH := ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod")
+	if !useSSH {
+		td, err := proxy.NewTunnelDialer(ctx, sshUser, rec, app.Upstream)
+		return td, nil, err
+	}
+
 	if ip == "" {
 		if app.TargetRegex != "" {
-			return nil, fmt.Errorf("target regex %q has no primary IP", app.TargetRegex)
+			return nil, nil, fmt.Errorf("target regex %q has no primary IP", app.TargetRegex)
 		}
-		return nil, fmt.Errorf("target %q has no primary IP", app.Target)
+		return nil, nil, fmt.Errorf("target %q has no primary IP", app.Target)
 	}
 
 	sshPort := 0
@@ -66,7 +74,11 @@ func resolveSSHClient(ctx context.Context, _ *config.File, configPath string, ap
 		identity = id
 	}
 
-	return sshclient.DialHoneyClient(sshUser, ip, sshPort, identity)
+	client, err := sshclient.DialHoneyClient(sshUser, ip, sshPort, identity)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &proxy.SSHDialer{Client: client}, client, nil
 }
 
 func (s *Server) handleAppsList(w http.ResponseWriter, _ *http.Request) {
@@ -133,7 +145,7 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 
 	if app.Target == "" && app.TargetRegex == "" {
 		// Use direct dialer
-		sess, err := s.proxy.Start(context.Background(), app, proxy.DirectDialer{})
+		sess, err := s.proxy.Start(context.Background(), app, proxy.DirectDialer{}, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 			return
@@ -144,16 +156,17 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Resolve the target for SSH Dialing
-	client, err := resolveSSHClient(r.Context(), s.opts.Config, s.opts.ConfigPath, app, req.SSHUser, req)
+	dialer, closer, err := resolveAppDialer(r.Context(), s.opts.Config, s.opts.ConfigPath, app, req.SSHUser, req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
-	dialer := proxy.SSHDialer{Client: client}
-	sess, err := s.proxy.Start(context.Background(), app, dialer)
+	sess, err := s.proxy.Start(context.Background(), app, dialer, closer)
 	if err != nil {
-		_ = client.Close() // Cleanup if start failed
+		if closer != nil {
+			_ = closer.Close() // Cleanup if start failed
+		}
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 		return
 	}

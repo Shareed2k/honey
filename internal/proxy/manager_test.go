@@ -28,7 +28,7 @@ func TestManager_StartListStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sess, err := mgr.Start(ctx, app, dialer)
+	sess, err := mgr.Start(ctx, app, dialer, nil)
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestManager_Expired(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := mgr.Start(ctx, app, DirectDialer{})
+	_, err := mgr.Start(ctx, app, DirectDialer{}, nil)
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}

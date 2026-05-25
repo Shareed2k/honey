@@ -12,7 +12,7 @@ import (
 )
 
 // StartTCPProxy starts a raw TCP proxy bound to 127.0.0.1.
-func StartTCPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sessionID string) (*Session, error) {
+func StartTCPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sessionID string, closer io.Closer) (*Session, error) {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", app.LocalPort))
 	if err != nil {
 		return nil, fmt.Errorf("failed to start tcp proxy: %w", err)
@@ -56,7 +56,12 @@ func StartTCPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sessi
 		StartedAt: time.Now(),
 		ExpiresAt: expiresAt,
 		PID:       os.Getpid(),
-		Stop:      cancel,
+		Stop: func() {
+			cancel()
+			if closer != nil {
+				_ = closer.Close()
+			}
+		},
 	}, nil
 }
 

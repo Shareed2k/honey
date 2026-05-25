@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -91,7 +93,7 @@ func init() {
 	appOpenCmd.Flags().StringVar(&flagK8sMode, "k8s-mode", "nodes", "Kubernetes search mode: nodes or pods")
 }
 
-func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string) (*sshclient.HoneyClient, error) {
+func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string) (proxy.Dialer, io.Closer, error) {
 	searchBackends := flagBackends
 	if app.Backend != "" {
 		searchBackends = app.Backend
@@ -127,18 +129,26 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string) (
 	out, err := hostapi.SearchHosts(ctx, &in)
 	if err != nil {
 		if app.TargetRegex != "" {
-			return nil, fmt.Errorf("resolve target (regex %q): %w", app.TargetRegex, err)
+			return nil, nil, fmt.Errorf("resolve target (regex %q): %w", app.TargetRegex, err)
 		}
-		return nil, fmt.Errorf("resolve target %q: %w", app.Target, err)
+		return nil, nil, fmt.Errorf("resolve target %q: %w", app.Target, err)
 	}
 	if len(out.Records) == 0 {
 		if app.TargetRegex != "" {
-			return nil, fmt.Errorf("target regex %q not found", app.TargetRegex)
+			return nil, nil, fmt.Errorf("target regex %q not found", app.TargetRegex)
 		}
-		return nil, fmt.Errorf("target %q not found", app.Target)
+		return nil, nil, fmt.Errorf("target %q not found", app.Target)
 	}
 
 	rec := out.Records[0]
+	ip := strings.TrimSpace(rec.PrimaryIP)
+	useSSH := ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod")
+
+	if !useSSH {
+		td, err := proxy.NewTunnelDialer(ctx, flagSSHUser, rec, app.Upstream)
+		return td, nil, err
+	}
+
 	sshPort := 0
 	if p, ok := hosts.MetaSSHPort(&rec); ok {
 		sshPort = p
@@ -151,7 +161,11 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string) (
 	if !flagAppPrintURL {
 		fmt.Printf("Opening SSH tunnel via %s\n", rec.Name)
 	}
-	return sshclient.DialHoneyClient(flagSSHUser, rec.PrimaryIP, sshPort, identity)
+	client, err := sshclient.DialHoneyClient(flagSSHUser, ip, sshPort, identity)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &proxy.SSHDialer{Client: client}, client, nil
 }
 
 func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error {
@@ -183,21 +197,21 @@ func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error 
 	mgr := proxy.NewManager(proxy.NewLogger(zap.L()))
 
 	var dialer proxy.Dialer
+	var closer io.Closer
 	if app.Target == "" && app.TargetRegex == "" {
 		dialer = proxy.DirectDialer{}
 	} else {
-		client, err := resolveAppTarget(ctx, app, cfgPath)
+		var err error
+		dialer, closer, err = resolveAppTarget(ctx, app, cfgPath)
 		if err != nil {
 			return err
 		}
-		defer client.Close()
-		dialer = proxy.SSHDialer{Client: client}
 	}
 
 	if !flagAppPrintURL {
 		fmt.Println("Starting local proxy...")
 	}
-	_, err = mgr.Start(ctx, app, dialer)
+	_, err = mgr.Start(ctx, app, dialer, closer)
 	if err != nil {
 		return err
 	}

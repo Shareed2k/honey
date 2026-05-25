@@ -2,7 +2,9 @@ package proxmoxprovider
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"strings"
 
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -57,4 +59,8 @@ func (p *proxmoxExecutor) RunTunnel(ctx context.Context, user string, r hosts.Re
 		return errProxmoxNoIP
 	}
 	return hostexec.RunSSHTunnel(ctx, user, ip, 0, localFwd, out)
+}
+
+func (p *proxmoxExecutor) DialUpstream(_ context.Context, _ string, _ hosts.Record, _ string) (net.Conn, error) {
+	return nil, fmt.Errorf("proxmox API DialUpstream not supported yet")
 }

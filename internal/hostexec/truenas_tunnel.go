@@ -3,6 +3,7 @@ package hostexec
 import (
 	"context"
 	"io"
+	"net"
 
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -42,6 +43,25 @@ func (truenasExecutor) RunTunnel(ctx context.Context, user string, r hosts.Recor
 		return errTrueNASTunnelNotConfigured
 	}
 	return fn(ctx, user, r, localFwd, out)
+}
+
+var truenasDialUpstream func(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)
+
+// SetTrueNASDialUpstream registers the in-memory upstream dialer for proxy use.
+func SetTrueNASDialUpstream(fn func(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)) {
+	regMu.Lock()
+	defer regMu.Unlock()
+	truenasDialUpstream = fn
+}
+
+func (truenasExecutor) DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+	regMu.RLock()
+	fn := truenasDialUpstream
+	regMu.RUnlock()
+	if fn == nil {
+		return nil, errTrueNASTunnelNotConfigured
+	}
+	return fn(ctx, user, r, address)
 }
 
 var truenasAPIShellExecutor truenasExecutor

@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,228 @@ const (
 	truenasShellDrainMax      = 8 * time.Second
 	truenasShellDrainIdle     = 500 * time.Millisecond
 )
+
+// DialTrueNASUpstream provides an in-memory net.Conn proxied over the API shell.
+func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address string) (net.Conn, error) {
+	if !hostexec.TruenasTunnelUsesAPIShell(r) {
+		return nil, fmt.Errorf("truenas dial: record does not use API shell transport")
+	}
+	b, ok := hostexec.TrueNASBackendByName(r.Meta["backend_name"])
+	if !ok {
+		return nil, fmt.Errorf("truenas backend not configured")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	shellSess, err := truenasshell.OpenSession(ctx, b, r, 24, 120)
+	if err != nil {
+		return nil, err
+	}
+
+	prOut, pwOut := io.Pipe()
+	prIn, pwIn := io.Pipe()
+	bridgeCtx, cancel := context.WithCancel(ctx)
+
+	pumpOutDone := make(chan struct{})
+	pumpInDone := make(chan struct{})
+
+	go func() {
+		defer close(pumpOutDone)
+		for {
+			mt, p, err := shellSess.ReadMessage()
+			if err != nil {
+				return
+			}
+			if mt == 2 || mt == 1 { // BinaryMessage or TextMessage
+				_, _ = pwOut.Write(p)
+			}
+		}
+	}()
+	brOut := bufio.NewReader(prOut)
+
+	go func() {
+		defer close(pumpInDone)
+		buf := make([]byte, 4096)
+		for {
+			n, err := prIn.Read(buf)
+			if n > 0 {
+				_ = shellSess.WriteBinary(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	err = drainAPIShellReader(bridgeCtx, brOut, truenasShellDrainMax, truenasShellDrainIdle)
+	if err != nil {
+		cancel()
+		_ = pwOut.Close()
+		_ = pwIn.Close()
+		<-pumpOutDone
+		<-pumpInDone
+		_ = shellSess.Close()
+		return nil, fmt.Errorf("truenas dial startup: %w", err)
+	}
+
+	remoteHost, remotePort, err := net.SplitHostPort(address)
+	if err != nil {
+		remoteHost = address
+		remotePort = "80"
+	}
+
+	pyB64 := base64.StdEncoding.EncodeToString([]byte(honeyTCPDialBridgePy))
+	bootstrap := fmt.Sprintf(
+		"\nstty -echo 2>/dev/null; HONEY_REMOTE_HOST=%s HONEY_REMOTE_PORT=%s printf %%s %s | base64 -d > /tmp/honey-tcp-dial-bridge.py && exec python3 -u /tmp/honey-tcp-dial-bridge.py\n",
+		shellSingleQuoted(remoteHost), shellSingleQuoted(remotePort), shellSingleQuoted(pyB64),
+	)
+	if err := shellSess.WriteBinary([]byte(bootstrap)); err != nil {
+		cancel()
+		_ = pwOut.Close()
+		_ = pwIn.Close()
+		<-pumpOutDone
+		<-pumpInDone
+		_ = shellSess.Close()
+		return nil, fmt.Errorf("truenas dial bootstrap: %w", err)
+	}
+
+	readyCh := make(chan error, 1)
+	go func() {
+		_, err := readReadyLine(brOut)
+		readyCh <- err
+	}()
+
+	stop := func() {
+		cancel()
+		_ = pwOut.Close()
+		_ = pwIn.Close()
+		<-pumpOutDone
+		<-pumpInDone
+		_ = shellSess.Close()
+	}
+
+	select {
+	case err := <-readyCh:
+		if err != nil {
+			stop()
+			return nil, fmt.Errorf("truenas dial: %w", err)
+		}
+	case <-time.After(truenasTunnelReadyTimeout):
+		stop()
+		return nil, errors.New("truenas dial: READY timeout")
+	case <-bridgeCtx.Done():
+		stop()
+		return nil, bridgeCtx.Err()
+	}
+
+	// Now we have the bridge ready. Instead of listening locally and multiplexing,
+	// we just use the raw shell streams directly for this single connection.
+	// We need to inject the CID framing!
+	// Wait, honey_tcp_dial_bridge.py expects `[4-byte CID][data]` framing.
+	// Since we only want a single net.Conn, we can create a simple read/write wrapper
+	// that wraps/unwraps CID=1.
+
+	// Write the initial connect command (CID=1, TYPE_OPEN=2)
+	var hdr [9]byte
+	hdr[0] = 2                              // TYPE_OPEN
+	binary.BigEndian.PutUint32(hdr[1:5], 1) // CID=1
+	binary.BigEndian.PutUint32(hdr[5:9], 0) // Length=0
+	if _, err := pwIn.Write(hdr[:]); err != nil {
+		stop()
+		return nil, fmt.Errorf("truenas dial connect: %w", err)
+	}
+
+	c := &truenasInMemConn{
+		pwIn:  pwIn,
+		brOut: brOut,
+		stop:  stop,
+		cid:   1,
+	}
+
+	return c, nil
+}
+
+type truenasInMemConn struct {
+	pwIn  io.Writer
+	brOut *bufio.Reader
+	stop  func()
+	cid   uint32
+}
+
+func (c *truenasInMemConn) Read(b []byte) (int, error) {
+	for {
+		var hdr [9]byte
+		if _, err := io.ReadFull(c.brOut, hdr[:]); err != nil {
+			return 0, err
+		}
+		msgType := hdr[0]
+		rcid := binary.BigEndian.Uint32(hdr[1:5])
+		sz := int(binary.BigEndian.Uint32(hdr[5:9]))
+
+		if msgType == 1 { // TYPE_CLOSE
+			return 0, io.EOF
+		}
+
+		if msgType == 0 { // TYPE_DATA
+			if sz > len(b) {
+				// We can't handle partial message reading easily here if b is too small.
+				// However, io.Copy buffer is usually 32KB, and TrueNAS chunk is 8KB.
+				// For safety, let's read the full chunk into memory.
+				buf := make([]byte, sz)
+				if _, err := io.ReadFull(c.brOut, buf); err != nil {
+					return 0, err
+				}
+				// This is slightly broken if len(b) < sz, but fine for io.Copy
+				n := copy(b, buf)
+				return n, nil
+			}
+			n, err := io.ReadFull(c.brOut, b[:sz])
+			if rcid != c.cid {
+				continue // ignore other CIDs
+			}
+			return n, err
+		}
+	}
+}
+
+func (c *truenasInMemConn) Write(b []byte) (int, error) {
+	// Frame it
+	chunk := b
+	for len(chunk) > 0 {
+		take := len(chunk)
+		if take > 8192 {
+			take = 8192
+		}
+		var hdr [9]byte
+		hdr[0] = 0 // TYPE_DATA
+		binary.BigEndian.PutUint32(hdr[1:5], c.cid)
+		binary.BigEndian.PutUint32(hdr[5:9], uint32(take))
+
+		payload := append(hdr[:], chunk[:take]...)
+		if _, err := c.pwIn.Write(payload); err != nil {
+			return 0, err
+		}
+		chunk = chunk[take:]
+	}
+	return len(b), nil
+}
+
+func (c *truenasInMemConn) Close() error {
+	var hdr [9]byte
+	hdr[0] = 1 // TYPE_CLOSE
+	binary.BigEndian.PutUint32(hdr[1:5], c.cid)
+	binary.BigEndian.PutUint32(hdr[5:9], 0)
+	_, _ = c.pwIn.Write(hdr[:])
+	c.stop()
+	return nil
+}
+
+func (c *truenasInMemConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
+func (c *truenasInMemConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
+func (c *truenasInMemConn) SetDeadline(_ time.Time) error      { return nil }
+func (c *truenasInMemConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (c *truenasInMemConn) SetWriteDeadline(_ time.Time) error { return nil }
 
 // RunTrueNASTunnel listens locally and forwards each connection through the TrueNAS API shell
 // dial bridge into the guest at remoteHost:remotePort (as seen from inside the guest).

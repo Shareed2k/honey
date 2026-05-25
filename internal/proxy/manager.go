@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"syscall"
@@ -36,7 +37,7 @@ func newSessionID() string {
 }
 
 // Start starts a proxy session and records it.
-func (m *Manager) Start(ctx context.Context, app apps.AppConfig, dialer Dialer) (*Session, error) {
+func (m *Manager) Start(ctx context.Context, app apps.AppConfig, dialer Dialer, closer io.Closer) (*Session, error) {
 	// Enforce singleton: only one active proxy per app name.
 	if sessions, err := m.List(); err == nil {
 		for _, existing := range sessions {
@@ -52,9 +53,9 @@ func (m *Manager) Start(ctx context.Context, app apps.AppConfig, dialer Dialer) 
 	var err error
 
 	if app.Type == apps.AppTypeHTTP {
-		s, err = StartHTTPProxy(ctx, app, dialer, sessionID)
+		s, err = StartHTTPProxy(ctx, app, dialer, sessionID, closer)
 	} else {
-		s, err = StartTCPProxy(ctx, app, dialer, sessionID)
+		s, err = StartTCPProxy(ctx, app, dialer, sessionID, closer)
 	}
 
 	if err != nil {
