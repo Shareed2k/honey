@@ -69,50 +69,54 @@ var searchCmd = &cobra.Command{
 }
 
 func init() {
-	searchCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
-	searchCmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
-	searchCmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
-	searchCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
-	searchCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
+	addSearchCoreFlags(searchCmd, "nodes")
 	searchCmd.Flags().StringVarP(&flagOutput, "output", "o", "tui", "Output format: tui, table, json")
 	searchCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Skip interactive UI (same as --output=json)")
 	searchCmd.Flags().BoolVar(&flagJSON, "json", false, "Print results as JSON (same as --output=json)")
-	searchCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
+}
 
-	searchCmd.Flags().StringVar(&flagGCPProject, "gcp-project", "", "GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)")
-	searchCmd.Flags().StringVar(&flagGCPZone, "gcp-zone", "", "Limit GCP to a single zone (default: all zones)")
+func addSearchCoreFlags(cmd *cobra.Command, k8sModeDefault string) {
+	cmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
+	cmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
+	cmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
+	cmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
+	cmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
+	cmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
 
-	searchCmd.Flags().StringVar(&flagAWSProfile, "aws-profile", "", "AWS shared config profile")
-	searchCmd.Flags().StringVar(&flagAWSRegion, "aws-region", "", "AWS region (default: from profile/env)")
+	cmd.Flags().StringVar(&flagGCPProject, "gcp-project", "", "GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)")
+	cmd.Flags().StringVar(&flagGCPZone, "gcp-zone", "", "Limit GCP to a single zone (default: all zones)")
 
-	searchCmd.Flags().StringVar(&flagKubeContext, "kube-context", "", "Kubernetes context override")
-	searchCmd.Flags().StringVar(&flagKubeconfig, "kubeconfig", "", "Path to kubeconfig file")
-	searchCmd.Flags().StringVar(&flagK8sMode, "k8s-mode", "nodes", "Kubernetes search mode: nodes or pods")
-	searchCmd.Flags().StringVar(&flagK8sDebugImg, "k8s-debug-image", "", "Container image used for ephemeral debug containers (default: alpine:3.23)")
+	cmd.Flags().StringVar(&flagAWSProfile, "aws-profile", "", "AWS shared config profile")
+	cmd.Flags().StringVar(&flagAWSRegion, "aws-region", "", "AWS region (default: from profile/env)")
 
-	searchCmd.Flags().StringVar(&flagConsulAddr, "consul-addr", "", "Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)")
-	searchCmd.Flags().StringVar(&flagConsulDC, "consul-datacenter", "", "Consul datacenter")
-	searchCmd.Flags().StringVar(&flagConsulToken, "consul-token", "", "Consul ACL token (or CONSUL_HTTP_TOKEN)")
+	cmd.Flags().StringVar(&flagKubeContext, "kube-context", "", "Kubernetes context override")
+	cmd.Flags().StringVar(&flagKubeconfig, "kubeconfig", "", "Path to kubeconfig file")
+	cmd.Flags().StringVar(&flagK8sMode, "k8s-mode", k8sModeDefault, "Kubernetes search mode: nodes or pods")
+	cmd.Flags().StringVar(&flagK8sDebugImg, "k8s-debug-image", "", "Container image used for ephemeral debug containers (default: alpine:3.23)")
 
-	searchCmd.Flags().StringVar(&flagProxmoxURL, "proxmox-url", "", "Proxmox API URL (e.g. https://10.0.0.1:8006/api2/json)")
-	searchCmd.Flags().StringVar(&flagProxmoxUser, "proxmox-user", "", "Proxmox user (e.g. root@pam)")
-	searchCmd.Flags().StringVar(&flagProxmoxPassword, "proxmox-password", "", "Proxmox password")
-	searchCmd.Flags().StringVar(&flagProxmoxTokenID, "proxmox-token-id", "", "Proxmox token ID (e.g. root@pam!token)")
-	searchCmd.Flags().StringVar(&flagProxmoxTokenSecret, "proxmox-token-secret", "", "Proxmox token secret")
-	searchCmd.Flags().BoolVar(&flagProxmoxInsecure, "proxmox-insecure", false, "Skip TLS verification for Proxmox")
+	cmd.Flags().StringVar(&flagConsulAddr, "consul-addr", "", "Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)")
+	cmd.Flags().StringVar(&flagConsulDC, "consul-datacenter", "", "Consul datacenter")
+	cmd.Flags().StringVar(&flagConsulToken, "consul-token", "", "Consul ACL token (or CONSUL_HTTP_TOKEN)")
 
-	searchCmd.Flags().StringVar(&flagTrueNASURL, "truenas-url", "", "TrueNAS SCALE URL (https://host or wss://host/api/current)")
-	searchCmd.Flags().StringVar(&flagTrueNASUser, "truenas-user", "", "TrueNAS API key username (default root)")
-	searchCmd.Flags().StringVar(&flagTrueNASAPIKey, "truenas-api-key", "", "TrueNAS API key (or TRUENAS_API_KEY)")
-	searchCmd.Flags().BoolVar(&flagTrueNASInsecure, "truenas-insecure", false, "Skip TLS verification for TrueNAS")
+	cmd.Flags().StringVar(&flagProxmoxURL, "proxmox-url", "", "Proxmox API URL (e.g. https://10.0.0.1:8006/api2/json)")
+	cmd.Flags().StringVar(&flagProxmoxUser, "proxmox-user", "", "Proxmox user (e.g. root@pam)")
+	cmd.Flags().StringVar(&flagProxmoxPassword, "proxmox-password", "", "Proxmox password")
+	cmd.Flags().StringVar(&flagProxmoxTokenID, "proxmox-token-id", "", "Proxmox token ID (e.g. root@pam!token)")
+	cmd.Flags().StringVar(&flagProxmoxTokenSecret, "proxmox-token-secret", "", "Proxmox token secret")
+	cmd.Flags().BoolVar(&flagProxmoxInsecure, "proxmox-insecure", false, "Skip TLS verification for Proxmox")
 
-	searchCmd.Flags().StringVar(&flagDockerHost, "docker-host", "", "Docker host (unix://, tcp://, ssh://; default: DOCKER_HOST / local socket)")
-	searchCmd.Flags().StringVar(&flagDockerMode, "docker-mode", "containers", "Docker search mode: containers, swarm, or both")
-	searchCmd.Flags().BoolVar(&flagDockerAll, "docker-all", false, "Include stopped containers in docker search")
-	searchCmd.Flags().StringVar(&flagDockerViaLocal, "docker-via-local", "", "Docker via Honey SSH: backends.local name")
-	searchCmd.Flags().StringVar(&flagDockerViaSSHHost, "docker-via-ssh-host", "", "Docker via Honey SSH: explicit host")
-	searchCmd.Flags().StringVar(&flagDockerSocket, "docker-socket", "", "Remote Docker socket (default /var/run/docker.sock on linux)")
-	searchCmd.Flags().StringVar(&flagDockerPlatform, "docker-platform", "linux", "Remote Docker host OS: linux or windows")
+	cmd.Flags().StringVar(&flagTrueNASURL, "truenas-url", "", "TrueNAS SCALE URL (https://host or wss://host/api/current)")
+	cmd.Flags().StringVar(&flagTrueNASUser, "truenas-user", "", "TrueNAS API key username (default root)")
+	cmd.Flags().StringVar(&flagTrueNASAPIKey, "truenas-api-key", "", "TrueNAS API key (or TRUENAS_API_KEY)")
+	cmd.Flags().BoolVar(&flagTrueNASInsecure, "truenas-insecure", false, "Skip TLS verification for TrueNAS")
+
+	cmd.Flags().StringVar(&flagDockerHost, "docker-host", "", "Docker host (unix://, tcp://, ssh://; default: DOCKER_HOST / local socket)")
+	cmd.Flags().StringVar(&flagDockerMode, "docker-mode", "containers", "Docker search mode: containers, swarm, or both")
+	cmd.Flags().BoolVar(&flagDockerAll, "docker-all", false, "Include stopped containers in docker search")
+	cmd.Flags().StringVar(&flagDockerViaLocal, "docker-via-local", "", "Docker via Honey SSH: backends.local name")
+	cmd.Flags().StringVar(&flagDockerViaSSHHost, "docker-via-ssh-host", "", "Docker via Honey SSH: explicit host")
+	cmd.Flags().StringVar(&flagDockerSocket, "docker-socket", "", "Remote Docker socket (default /var/run/docker.sock on linux)")
+	cmd.Flags().StringVar(&flagDockerPlatform, "docker-platform", "linux", "Remote Docker host OS: linux or windows")
 }
 
 // runSearchCore runs the same search pipeline as search (flags, config, cache,
