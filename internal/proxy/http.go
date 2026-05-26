@@ -2,15 +2,16 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"time"
 
 	"github.com/shareed2k/honey/internal/apps"
+	"github.com/shareed2k/honey/internal/proxy/reverseproxy"
 )
 
 // StartHTTPProxy constructs an HTTP reverse proxy and optionally binds it to 127.0.0.1.
@@ -21,14 +22,35 @@ func StartHTTPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sess
 		Host:   app.Upstream,
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
-
-	transport := &http.Transport{
-		DialContext: dialer.DialContext,
+	opts := []reverseproxy.Option{
+		reverseproxy.WithRoundTripper(&http.Transport{
+			DialContext: dialer.DialContext,
+			TLSClientConfig: &tls.Config{
+				// #nosec G402 -- intentional: allow skipping TLS verification for apps with self-signed certs in private networks.
+				InsecureSkipVerify: app.InsecureSkipVerify,
+			},
+		}),
+		reverseproxy.WithPassHostHeader(app.PassHostHeader),
+		reverseproxy.WithHeaders(app.Headers),
 	}
-	proxy.Transport = transport
+
+	proxy := reverseproxy.New(targetURL, opts...)
+	proxy.ErrorHandler = reverseproxy.NewErrorHandler()
+
+	var handler http.Handler = proxy
+	if app.CORS != nil {
+		handler = reverseproxy.CORSHandler(app.CORS)(handler)
+	}
 
 	sessionCtx, cancel := context.WithCancel(ctx)
+
+	// Create a safe stop function that ensures cancel is called
+	stopFn := func() {
+		cancel()
+		if closer != nil {
+			_ = closer.Close()
+		}
+	}
 
 	expiresAt := time.Time{}
 	if app.TTL > 0 {
@@ -41,13 +63,8 @@ func StartHTTPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sess
 		StartedAt: time.Now(),
 		ExpiresAt: expiresAt,
 		PID:       os.Getpid(),
-		Handler:   proxy,
-		Stop: func() {
-			cancel()
-			if closer != nil {
-				_ = closer.Close()
-			}
-		},
+		Handler:   handler,
+		Stop:      stopFn,
 	}
 
 	// If LocalPort is specified, bind a local listener (used by CLI `honey app open`)

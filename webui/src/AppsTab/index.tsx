@@ -88,7 +88,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
                     <>
                       {app.type === 'http' && (
                         <a 
-                          href={`${window.location.protocol}//${app.name}.${window.location.hostname === '127.0.0.1' ? 'localhost' : window.location.hostname}${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} 
+                          href={`${window.location.protocol}//${app.name}.localhost${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} 
                           target="_blank" 
                           rel="noreferrer" 
                           className="button primary"
@@ -145,7 +145,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
                   <td>{sess.app.type}</td>
                   <td>
                     {sess.app.type === 'http' ? (
-                      <a href={`${window.location.protocol}//${sess.app.name}.${window.location.hostname === '127.0.0.1' ? 'localhost' : window.location.hostname}${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} target="_blank" rel="noreferrer" title={`Internal Proxy -> ${sess.app.upstream}`}>
+                      <a href={`${window.location.protocol}//${sess.app.name}.localhost${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} target="_blank" rel="noreferrer" title={`Internal Proxy -> ${sess.app.upstream}`}>
                         Open Web App ↗
                       </a>
                     ) : (
