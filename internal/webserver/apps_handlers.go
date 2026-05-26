@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/proxy"
-	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/ui"
 )
 
 type proxyStartRequest struct {
@@ -49,36 +47,7 @@ func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, ap
 		return nil, nil, fmt.Errorf("target %q not found", app.Target)
 	}
 
-	rec := out.Records[0]
-	ip := strings.TrimSpace(rec.PrimaryIP)
-
-	useSSH := ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod")
-	if !useSSH {
-		td, err := proxy.NewTunnelDialer(ctx, sshUser, rec, app.Upstream)
-		return td, nil, err
-	}
-
-	if ip == "" {
-		if app.TargetRegex != "" {
-			return nil, nil, fmt.Errorf("target regex %q has no primary IP", app.TargetRegex)
-		}
-		return nil, nil, fmt.Errorf("target %q has no primary IP", app.Target)
-	}
-
-	sshPort := 0
-	if p, ok := hosts.MetaSSHPort(&rec); ok {
-		sshPort = p
-	}
-	identity := ""
-	if id, ok := hosts.MetaSSHIdentityFile(&rec); ok {
-		identity = id
-	}
-
-	client, err := sshclient.DialHoneyClient(sshUser, ip, sshPort, identity)
-	if err != nil {
-		return nil, nil, err
-	}
-	return &proxy.SSHDialer{Client: client}, client, nil
+	return ui.ResolveAppDialer(ctx, sshUser, out.Records[0], app.Upstream)
 }
 
 func (s *Server) handleAppsList(w http.ResponseWriter, _ *http.Request) {

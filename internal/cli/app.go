@@ -17,9 +17,8 @@ import (
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/proxy"
-	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/ui"
 )
 
 var (
@@ -141,31 +140,17 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string) (
 	}
 
 	rec := out.Records[0]
-	ip := strings.TrimSpace(rec.PrimaryIP)
-	useSSH := ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod")
-
-	if !useSSH {
-		td, err := proxy.NewTunnelDialer(ctx, flagSSHUser, rec, app.Upstream)
-		return td, nil, err
-	}
-
-	sshPort := 0
-	if p, ok := hosts.MetaSSHPort(&rec); ok {
-		sshPort = p
-	}
-	identity := ""
-	if id, ok := hosts.MetaSSHIdentityFile(&rec); ok {
-		identity = id
-	}
-
 	if !flagAppPrintURL {
-		fmt.Printf("Opening SSH tunnel via %s\n", rec.Name)
+		ip := strings.TrimSpace(rec.PrimaryIP)
+		useSSH := ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod") && rec.Provider != "truenas"
+		if useSSH {
+			fmt.Printf("Opening SSH tunnel via %s\n", rec.Name)
+		} else {
+			fmt.Printf("Opening in-memory tunnel via %s\n", rec.Name)
+		}
 	}
-	client, err := sshclient.DialHoneyClient(flagSSHUser, ip, sshPort, identity)
-	if err != nil {
-		return nil, nil, err
-	}
-	return &proxy.SSHDialer{Client: client}, client, nil
+
+	return ui.ResolveAppDialer(ctx, flagSSHUser, rec, app.Upstream)
 }
 
 func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error {

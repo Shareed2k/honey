@@ -31,8 +31,8 @@ const (
 
 // DialTrueNASUpstream provides an in-memory net.Conn proxied over the API shell.
 func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address string) (net.Conn, error) {
-	if !hostexec.TruenasTunnelUsesAPIShell(r) {
-		return nil, fmt.Errorf("truenas dial: record does not use API shell transport")
+	if r.Provider != "truenas" || !hosts.IsTrueNASAPIShellRecord(r) {
+		return nil, fmt.Errorf("truenas dial: record does not support API shell")
 	}
 	b, ok := hostexec.TrueNASBackendByName(r.Meta["backend_name"])
 	if !ok {

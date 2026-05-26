@@ -65,3 +65,8 @@ func (truenasExecutor) DialUpstream(ctx context.Context, user string, r hosts.Re
 }
 
 var truenasAPIShellExecutor truenasExecutor
+
+// TrueNASAPIShellExecutor returns the API-shell executor.
+func TrueNASAPIShellExecutor() Executor {
+	return truenasAPIShellExecutor
+}
