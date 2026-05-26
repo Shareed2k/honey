@@ -13,21 +13,29 @@ type fakeHostClient struct {
 }
 
 func (f *fakeHostClient) Run(string) ([]byte, error) { return nil, nil }
+
 func (f *fakeHostClient) RunWithStreams(string, io.Reader, io.Writer, io.Writer) error {
 	return nil
 }
-func (f *fakeHostClient) Upload(string, string) error   { return nil }
+
+func (f *fakeHostClient) Upload(string, string) error { return nil }
+
 func (f *fakeHostClient) Download(string, string) error { return nil }
+
 func (f *fakeHostClient) ListRemoteDir(string) ([]hostexec.RemoteFileEntry, error) {
 	return nil, nil
 }
+
 func (f *fakeHostClient) StatRemote(string) (hostexec.RemoteFileEntry, error) {
 	return hostexec.RemoteFileEntry{}, nil
 }
+
 func (f *fakeHostClient) MkdirAllRemote(string) error { return nil }
+
 func (f *fakeHostClient) RemoveRemote(string, bool) error {
 	return nil
 }
+
 func (f *fakeHostClient) Close() error {
 	f.closed++
 	return nil

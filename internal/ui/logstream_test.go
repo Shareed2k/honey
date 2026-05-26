@@ -1,6 +1,65 @@
 package ui
 
-import "testing"
+import (
+	"bytes"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/shareed2k/honey/internal/hosts"
+)
+
+func TestLogPrefixWithLabels(t *testing.T) {
+	rec := hosts.Record{
+		Provider: "k8s",
+		Name:     "pod-123",
+		Meta: map[string]string{
+			"backend_name":    "prod",
+			"label_env":       "stg",
+			"annotation_team": "data",
+		},
+	}
+	got := logPrefix(rec, []string{"env", "team", "missing"})
+	want := "[k8s/prod/pod-123 | env=stg team=data] "
+	if got != want {
+		t.Fatalf("logPrefix = %q, want %q", got, want)
+	}
+}
+
+func TestWritePrefixedLineFiltering(t *testing.T) {
+	var out bytes.Buffer
+	var mu sync.Mutex
+	re := regexp.MustCompile("(?i)error")
+
+	// Match
+	writePrefixedLine(&out, &mu, "P: ", "An error occurred", re, false)
+	// No match
+	writePrefixedLine(&out, &mu, "P: ", "Just some info", re, false)
+
+	got := out.String()
+	want := "P: An error occurred\n"
+	if got != want {
+		t.Fatalf("filtering got %q, want %q", got, want)
+	}
+}
+
+func TestHighlightLogLine(t *testing.T) {
+	line := "ERROR: something failed"
+	got := highlightLogLine(line)
+	if !strings.Contains(got, "something failed") {
+		t.Fatalf("highlight lost content: %q", got)
+	}
+	if got == line {
+		t.Fatal("expected line to be highlighted")
+	}
+
+	line2 := "Just a normal line"
+	got2 := highlightLogLine(line2)
+	if got2 != line2 {
+		t.Fatalf("should not highlight normal line: %q", got2)
+	}
+}
 
 func TestLooksLikeLogFileSource(t *testing.T) {
 	tests := []struct {

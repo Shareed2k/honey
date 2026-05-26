@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -25,6 +26,11 @@ var (
 	flagLogsCommand        string
 	flagLogsRunAs          string
 	flagLogsMaxConcurrency int
+	flagLogsGrep           string
+	flagLogsLabels         []string
+	flagLogsTUI            bool
+	flagLogsOutputFile     string
+	flagLogsHighlight      bool
 )
 
 var logsCmd = &cobra.Command{
@@ -47,6 +53,11 @@ func init() {
 	logsCmd.Flags().StringVar(&flagLogsCommand, "cmd", "", "Custom remote log command for executor-backed records")
 	logsCmd.Flags().StringVar(&flagLogsRunAs, "run-as", "", "Run executor-backed log command as this remote user via sudo -n")
 	logsCmd.Flags().IntVar(&flagLogsMaxConcurrency, "max-concurrency", 8, "Maximum concurrent log streams")
+	logsCmd.Flags().StringVarP(&flagLogsGrep, "grep", "g", "", "Filter logs by case-insensitive regex or substring")
+	logsCmd.Flags().StringSliceVarP(&flagLogsLabels, "label", "l", nil, "Additional host labels to show in prefix (comma-separated)")
+	logsCmd.Flags().BoolVar(&flagLogsTUI, "tui", false, "Use interactive log viewer")
+	logsCmd.Flags().StringVarP(&flagLogsOutputFile, "output-file", "o", "", "Write combined log stream to this local file")
+	logsCmd.Flags().BoolVar(&flagLogsHighlight, "highlight", true, "Highlight error-like keywords in logs")
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
@@ -74,7 +85,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return ui.StreamLogs(ctx, sshUser, records, ui.LogOptions{
+	opts := ui.LogOptions{
 		Target:         target,
 		Source:         source,
 		Follow:         flagLogsFollow,
@@ -86,5 +97,24 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		Command:        flagLogsCommand,
 		RunAs:          flagLogsRunAs,
 		MaxConcurrency: flagLogsMaxConcurrency,
-	}, clientCache, os.Stdout)
+		Grep:           flagLogsGrep,
+		Labels:         flagLogsLabels,
+		Highlight:      flagLogsHighlight,
+	}
+
+	if flagLogsTUI {
+		return ui.RunLogTUI(ctx, sshUser, records, opts, clientCache)
+	}
+
+	var out io.Writer = os.Stdout
+	if flagLogsOutputFile != "" {
+		f, err := os.Create(flagLogsOutputFile) // #nosec G304 -- destination controlled by user flag
+		if err != nil {
+			return fmt.Errorf("output file: %w", err)
+		}
+		defer f.Close()
+		out = io.MultiWriter(os.Stdout, f)
+	}
+
+	return ui.StreamLogs(ctx, sshUser, records, opts, clientCache, out)
 }
