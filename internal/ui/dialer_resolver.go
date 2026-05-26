@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net"
-	"strings"
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -12,15 +11,28 @@ import (
 	"github.com/shareed2k/honey/internal/sshclient"
 )
 
+// AppDialerTransport describes the transport used to reach an app upstream.
+type AppDialerTransport string
+
+const (
+	// AppDialerTransportSSH means the upstream is reached through a regular SSH client.
+	AppDialerTransportSSH AppDialerTransport = "ssh"
+	// AppDialerTransportInMemory means the upstream is reached through a provider-native tunnel.
+	AppDialerTransportInMemory AppDialerTransport = "in-memory"
+)
+
+// TransportForAppDialer returns the transport family used for a record's app upstream connection.
+func TransportForAppDialer(rec hosts.Record) AppDialerTransport {
+	if appDialerUsesSSH(rec) {
+		return AppDialerTransportSSH
+	}
+	return AppDialerTransportInMemory
+}
+
 // ResolveAppDialer returns the correct proxy.Dialer and an optional io.Closer for any hosts.Record.
 // It hides all provider-specific connection logic (SSH, K8s exec, TrueNAS shell API, etc.).
-func ResolveAppDialer(ctx context.Context, user string, rec hosts.Record, upstream string) (proxy.Dialer, io.Closer, error) {
-	ip := strings.TrimSpace(rec.PrimaryIP)
-
-	// TrueNAS and k8s pods use in-memory API Tunnel dialing. Traditional hosts with IP use SSH.
-	useSSH := ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod") && rec.Provider != "truenas"
-
-	if !useSSH {
+func ResolveAppDialer(_ context.Context, user string, rec hosts.Record, _ string) (proxy.Dialer, io.Closer, error) {
+	if !appDialerUsesSSH(rec) {
 		var executor hostexec.Executor
 		if rec.Provider == "truenas" {
 			executor = hostexec.TrueNASAPIShellExecutor()
@@ -35,6 +47,7 @@ func ResolveAppDialer(ctx context.Context, user string, rec hosts.Record, upstre
 		return proxy.NewTunnelDialer(dialFn), nil, nil
 	}
 
+	ip := hosts.PrimaryIPTrimmed(rec)
 	sshPort := 0
 	if p, ok := hosts.MetaSSHPort(&rec); ok {
 		sshPort = p
@@ -49,4 +62,9 @@ func ResolveAppDialer(ctx context.Context, user string, rec hosts.Record, upstre
 		return nil, nil, err
 	}
 	return &proxy.SSHDialer{Client: client}, client, nil
+}
+
+func appDialerUsesSSH(rec hosts.Record) bool {
+	ip := hosts.PrimaryIPTrimmed(rec)
+	return ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod") && rec.Provider != "truenas"
 }

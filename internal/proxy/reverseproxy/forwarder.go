@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+
+	"go.uber.org/zap"
 )
 
 type contextKey string
@@ -28,6 +30,12 @@ func New(target *url.URL, opts ...Option) *Forwarder {
 	f.Director = nil
 
 	f.Rewrite = func(req *httputil.ProxyRequest) {
+		zap.L().Debug("Proxying incoming request",
+			zap.String("method", req.In.Method),
+			zap.String("url", req.In.URL.String()),
+			zap.String("host", req.In.Host),
+		)
+
 		req.SetURL(target)
 
 		// Context-based original host propagation
@@ -53,6 +61,11 @@ func New(target *url.URL, opts ...Option) *Forwarder {
 		if !f.PassHostHeader {
 			req.Out.Host = target.Host
 		}
+
+		zap.L().Debug("Outbound proxy request prepared",
+			zap.String("url", req.Out.URL.String()),
+			zap.String("host", req.Out.Host),
+		)
 	}
 
 	// Automatically rewrite Redirects / Location headers
@@ -64,6 +77,7 @@ func New(target *url.URL, opts ...Option) *Forwarder {
 
 		loc := res.Header.Get("Location")
 		if loc != "" {
+			zap.L().Debug("Inspecting redirect Location header", zap.String("location", loc))
 			u, err := url.Parse(loc)
 			if err == nil {
 				// If the redirect is relative or explicitly references the upstream host, rewrite it to keep the client on the proxy subdomain.
@@ -74,6 +88,10 @@ func New(target *url.URL, opts ...Option) *Forwarder {
 					}
 					u.Host = origHost
 					res.Header.Set("Location", u.String())
+					zap.L().Debug("Rewrote absolute redirect Location header",
+						zap.String("original", loc),
+						zap.String("rewritten", u.String()),
+					)
 				}
 			}
 		}

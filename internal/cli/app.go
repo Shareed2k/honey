@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
-	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -141,9 +140,7 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string) (
 
 	rec := out.Records[0]
 	if !flagAppPrintURL {
-		ip := strings.TrimSpace(rec.PrimaryIP)
-		useSSH := ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod") && rec.Provider != "truenas"
-		if useSSH {
+		if ui.TransportForAppDialer(rec) == ui.AppDialerTransportSSH {
 			fmt.Printf("Opening SSH tunnel via %s\n", rec.Name)
 		} else {
 			fmt.Printf("Opening in-memory tunnel via %s\n", rec.Name)

@@ -5,7 +5,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -29,8 +30,163 @@ const (
 	truenasShellDrainIdle     = 500 * time.Millisecond
 )
 
+type trueNASBridgeTarget struct {
+	Host string
+	Port string
+}
+
+type trueNASBridge struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	sess        *truenasshell.Session
+	brOut       *bufio.Reader
+	pwOut       *io.PipeWriter
+	pwIn        *io.PipeWriter
+	pumpOutDone chan struct{}
+	pumpInDone  chan struct{}
+	stopOnce    sync.Once
+}
+
+func resolveTrueNASBridgeTarget(r hosts.Record, address string) trueNASBridgeTarget {
+	remoteHost, remotePort, err := net.SplitHostPort(address)
+	if err != nil {
+		remoteHost = address
+		remotePort = "80"
+	}
+
+	// When the bridge runs on the TrueNAS appliance, target loopback means the guest's IP.
+	if r.Meta["kind"] != "appliance" {
+		ip := hosts.PrimaryIPTrimmed(r)
+		if ip != "" && (remoteHost == "localhost" || remoteHost == "127.0.0.1") {
+			zap.L().Debug("Translating upstream loopback address to guest PrimaryIP",
+				zap.String("original", remoteHost),
+				zap.String("guest_ip", ip),
+			)
+			remoteHost = ip
+		}
+	}
+
+	return trueNASBridgeTarget{Host: remoteHost, Port: remotePort}
+}
+
+func trueNASApplianceRecord(r hosts.Record) hosts.Record {
+	applianceRec := r
+	meta := make(map[string]string, len(r.Meta)+1)
+	for k, v := range r.Meta {
+		meta[k] = v
+	}
+	meta["kind"] = "appliance"
+	applianceRec.Meta = meta
+	return applianceRec
+}
+
+func trueNASDialBridgeBootstrap(remoteHost, remotePort string) string {
+	pyB64 := base64.StdEncoding.EncodeToString([]byte(honeyTCPDialBridgePy))
+	return fmt.Sprintf(
+		"\nstty raw -echo min 1 time 0 2>/dev/null; export HONEY_REMOTE_HOST=%s HONEY_REMOTE_PORT=%s; printf %%s %s | base64 -d > /tmp/honey-tcp-dial-bridge.py && exec python3 -u /tmp/honey-tcp-dial-bridge.py\n",
+		shellSingleQuoted(remoteHost), shellSingleQuoted(remotePort), shellSingleQuoted(pyB64),
+	)
+}
+
+func startTrueNASBridge(ctx context.Context, b hostexec.TrueNASBackendRuntime, shellRec hosts.Record, targetName string, target trueNASBridgeTarget) (*trueNASBridge, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	shellSess, err := truenasshell.OpenSession(ctx, b, shellRec, 24, 120)
+	if err != nil {
+		return nil, err
+	}
+	zap.L().Debug("TrueNAS API shell session opened",
+		zap.String("target_name", targetName),
+		zap.String("shell_kind", shellRec.Meta["kind"]),
+		zap.String("backend_name", shellRec.Meta["backend_name"]),
+	)
+
+	prOut, pwOut := io.Pipe()
+	prIn, pwIn := io.Pipe()
+	bridgeCtx, cancel := context.WithCancel(ctx)
+	pumpOutDone := make(chan struct{})
+	pumpInDone := make(chan struct{})
+
+	go pumpTrueNASShellToPipe(shellSess, pwOut, pumpOutDone)
+	go pumpPipeToTrueNASShell(prIn, shellSess, pumpInDone)
+
+	bridge := &trueNASBridge{
+		ctx:         bridgeCtx,
+		cancel:      cancel,
+		sess:        shellSess,
+		brOut:       bufio.NewReader(prOut),
+		pwOut:       pwOut,
+		pwIn:        pwIn,
+		pumpOutDone: pumpOutDone,
+		pumpInDone:  pumpInDone,
+	}
+
+	if err := drainAPIShellReader(bridgeCtx, bridge.brOut, truenasShellDrainMax, truenasShellDrainIdle); err != nil {
+		bridge.Stop()
+		return nil, fmt.Errorf("truenas bridge startup: %w", err)
+	}
+
+	zap.L().Debug("Writing TrueNAS python dial bridge bootstrap",
+		zap.String("target_name", targetName),
+		zap.String("remote_host", target.Host),
+		zap.String("remote_port", target.Port),
+	)
+	if err := shellSess.WriteBinary([]byte(trueNASDialBridgeBootstrap(target.Host, target.Port))); err != nil {
+		bridge.Stop()
+		return nil, fmt.Errorf("truenas bridge bootstrap: %w", err)
+	}
+
+	readyCh := make(chan error, 1)
+	go func() {
+		_, err := readReadyLine(bridge.brOut)
+		readyCh <- err
+	}()
+
+	select {
+	case err := <-readyCh:
+		if err != nil {
+			zap.L().Debug("TrueNAS python dial bridge READY failed",
+				zap.String("target_name", targetName),
+				zap.Error(err),
+			)
+			bridge.Stop()
+			return nil, fmt.Errorf("truenas bridge: %w", err)
+		}
+		zap.L().Debug("TrueNAS python dial bridge ready", zap.String("target_name", targetName))
+	case <-time.After(truenasTunnelReadyTimeout):
+		zap.L().Debug("TrueNAS python dial bridge READY timeout", zap.String("target_name", targetName))
+		bridge.Stop()
+		return nil, errors.New("truenas bridge: READY timeout")
+	case <-bridgeCtx.Done():
+		bridge.Stop()
+		return nil, bridgeCtx.Err()
+	}
+
+	return bridge, nil
+}
+
+func (b *trueNASBridge) Stop() {
+	b.stopOnce.Do(func() {
+		b.cancel()
+		_ = b.pwOut.Close()
+		_ = b.pwIn.Close()
+		_ = b.sess.Close()
+		<-b.pumpOutDone
+		<-b.pumpInDone
+	})
+}
+
 // DialTrueNASUpstream provides an in-memory net.Conn proxied over the API shell.
 func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address string) (net.Conn, error) {
+	zap.L().Debug("Dialing TrueNAS upstream",
+		zap.String("target_name", r.Name),
+		zap.String("target_kind", r.Meta["kind"]),
+		zap.String("backend_name", r.Meta["backend_name"]),
+		zap.String("address", address),
+	)
+
 	if r.Provider != "truenas" || !hosts.IsTrueNASAPIShellRecord(r) {
 		return nil, fmt.Errorf("truenas dial: record does not support API shell")
 	}
@@ -38,196 +194,96 @@ func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address 
 	if !ok {
 		return nil, fmt.Errorf("truenas backend not configured")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
-	shellSess, err := truenasshell.OpenSession(ctx, b, r, 24, 120)
-	if err != nil {
-		return nil, err
-	}
-
-	prOut, pwOut := io.Pipe()
-	prIn, pwIn := io.Pipe()
-	bridgeCtx, cancel := context.WithCancel(ctx)
-
-	pumpOutDone := make(chan struct{})
-	pumpInDone := make(chan struct{})
-
-	go func() {
-		defer close(pumpOutDone)
-		for {
-			mt, p, err := shellSess.ReadMessage()
-			if err != nil {
-				return
-			}
-			if mt == 2 || mt == 1 { // BinaryMessage or TextMessage
-				_, _ = pwOut.Write(p)
-			}
-		}
-	}()
-	brOut := bufio.NewReader(prOut)
-
-	go func() {
-		defer close(pumpInDone)
-		buf := make([]byte, 4096)
-		for {
-			n, err := prIn.Read(buf)
-			if n > 0 {
-				_ = shellSess.WriteBinary(buf[:n])
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	err = drainAPIShellReader(bridgeCtx, brOut, truenasShellDrainMax, truenasShellDrainIdle)
-	if err != nil {
-		cancel()
-		_ = pwOut.Close()
-		_ = pwIn.Close()
-		<-pumpOutDone
-		<-pumpInDone
-		_ = shellSess.Close()
-		return nil, fmt.Errorf("truenas dial startup: %w", err)
-	}
-
-	remoteHost, remotePort, err := net.SplitHostPort(address)
-	if err != nil {
-		remoteHost = address
-		remotePort = "80"
-	}
-
-	pyB64 := base64.StdEncoding.EncodeToString([]byte(honeyTCPDialBridgePy))
-	bootstrap := fmt.Sprintf(
-		"\nstty -echo 2>/dev/null; HONEY_REMOTE_HOST=%s HONEY_REMOTE_PORT=%s printf %%s %s | base64 -d > /tmp/honey-tcp-dial-bridge.py && exec python3 -u /tmp/honey-tcp-dial-bridge.py\n",
-		shellSingleQuoted(remoteHost), shellSingleQuoted(remotePort), shellSingleQuoted(pyB64),
+	target := resolveTrueNASBridgeTarget(r, address)
+	zap.L().Debug("TrueNAS upstream bridge target resolved",
+		zap.String("target_name", r.Name),
+		zap.String("remote_host", target.Host),
+		zap.String("remote_port", target.Port),
 	)
-	if err := shellSess.WriteBinary([]byte(bootstrap)); err != nil {
-		cancel()
-		_ = pwOut.Close()
-		_ = pwIn.Close()
-		<-pumpOutDone
-		<-pumpInDone
-		_ = shellSess.Close()
-		return nil, fmt.Errorf("truenas dial bootstrap: %w", err)
+
+	// Always establish app proxy bridges on the TrueNAS host appliance. That keeps the
+	// Python bridge out of VM serial consoles and minimal app containers.
+	bridge, err := startTrueNASBridge(ctx, b, trueNASApplianceRecord(r), r.Name, target)
+	if err != nil {
+		return nil, fmt.Errorf("truenas dial: %w", err)
 	}
 
-	readyCh := make(chan error, 1)
-	go func() {
-		_, err := readReadyLine(brOut)
-		readyCh <- err
-	}()
-
-	stop := func() {
-		cancel()
-		_ = pwOut.Close()
-		_ = pwIn.Close()
-		<-pumpOutDone
-		<-pumpInDone
-		_ = shellSess.Close()
-	}
-
-	select {
-	case err := <-readyCh:
-		if err != nil {
-			stop()
-			return nil, fmt.Errorf("truenas dial: %w", err)
-		}
-	case <-time.After(truenasTunnelReadyTimeout):
-		stop()
-		return nil, errors.New("truenas dial: READY timeout")
-	case <-bridgeCtx.Done():
-		stop()
-		return nil, bridgeCtx.Err()
-	}
-
-	// Now we have the bridge ready. Instead of listening locally and multiplexing,
-	// we just use the raw shell streams directly for this single connection.
-	// We need to inject the CID framing!
-	// Wait, honey_tcp_dial_bridge.py expects `[4-byte CID][data]` framing.
-	// Since we only want a single net.Conn, we can create a simple read/write wrapper
-	// that wraps/unwraps CID=1.
-
-	// Write the initial connect command (CID=1, TYPE_OPEN=2)
-	var hdr [9]byte
-	hdr[0] = 2                              // TYPE_OPEN
-	binary.BigEndian.PutUint32(hdr[1:5], 1) // CID=1
-	binary.BigEndian.PutUint32(hdr[5:9], 0) // Length=0
-	if _, err := pwIn.Write(hdr[:]); err != nil {
-		stop()
+	const cid = 1
+	if err := writeHkvFrame(bridge.pwIn, nil, hkvFrameOpen, cid, nil); err != nil {
+		bridge.Stop()
 		return nil, fmt.Errorf("truenas dial connect: %w", err)
 	}
+	zap.L().Debug("TrueNAS python dial bridge connection opened",
+		zap.String("target_name", r.Name),
+		zap.Uint32("cid", cid),
+	)
 
 	c := &truenasInMemConn{
-		pwIn:  pwIn,
-		brOut: brOut,
-		stop:  stop,
-		cid:   1,
+		pwIn:  bridge.pwIn,
+		brOut: bridge.brOut,
+		stop:  bridge.Stop,
+		cid:   cid,
 	}
 
 	return c, nil
 }
 
 type truenasInMemConn struct {
-	pwIn  io.Writer
-	brOut *bufio.Reader
-	stop  func()
-	cid   uint32
+	pwIn      io.Writer
+	brOut     *bufio.Reader
+	stop      func()
+	cid       uint32
+	pending   []byte
+	writeMu   sync.Mutex
+	closeOnce sync.Once
 }
 
 func (c *truenasInMemConn) Read(b []byte) (int, error) {
+	if len(b) == 0 {
+		return 0, nil
+	}
+	if len(c.pending) > 0 {
+		n := copy(b, c.pending)
+		c.pending = c.pending[n:]
+		return n, nil
+	}
+
 	for {
-		var hdr [9]byte
-		if _, err := io.ReadFull(c.brOut, hdr[:]); err != nil {
+		msgType, rcid, payload, err := readHkvFrame(c.brOut)
+		if err != nil {
 			return 0, err
 		}
-		msgType := hdr[0]
-		rcid := binary.BigEndian.Uint32(hdr[1:5])
-		sz := int(binary.BigEndian.Uint32(hdr[5:9]))
-
-		if msgType == 1 { // TYPE_CLOSE
-			return 0, io.EOF
+		if rcid != c.cid {
+			continue
 		}
-
-		if msgType == 0 { // TYPE_DATA
-			if sz > len(b) {
-				// We can't handle partial message reading easily here if b is too small.
-				// However, io.Copy buffer is usually 32KB, and TrueNAS chunk is 8KB.
-				// For safety, let's read the full chunk into memory.
-				buf := make([]byte, sz)
-				if _, err := io.ReadFull(c.brOut, buf); err != nil {
-					return 0, err
-				}
-				// This is slightly broken if len(b) < sz, but fine for io.Copy
-				n := copy(b, buf)
-				return n, nil
+		switch msgType {
+		case hkvFrameClose:
+			return 0, io.EOF
+		case hkvFrameData:
+			if len(payload) == 0 {
+				continue
 			}
-			n, err := io.ReadFull(c.brOut, b[:sz])
-			if rcid != c.cid {
-				continue // ignore other CIDs
+			n := copy(b, payload)
+			if n < len(payload) {
+				c.pending = payload[n:]
 			}
-			return n, err
+			return n, nil
 		}
 	}
 }
 
 func (c *truenasInMemConn) Write(b []byte) (int, error) {
-	// Frame it
+	if len(b) == 0 {
+		return 0, nil
+	}
 	chunk := b
 	for len(chunk) > 0 {
 		take := len(chunk)
 		if take > 8192 {
 			take = 8192
 		}
-		var hdr [9]byte
-		hdr[0] = 0 // TYPE_DATA
-		binary.BigEndian.PutUint32(hdr[1:5], c.cid)
-		binary.BigEndian.PutUint32(hdr[5:9], uint32(take))
-
-		payload := append(hdr[:], chunk[:take]...)
-		if _, err := c.pwIn.Write(payload); err != nil {
+		if err := writeHkvFrame(c.pwIn, &c.writeMu, hkvFrameData, c.cid, chunk[:take]); err != nil {
 			return 0, err
 		}
 		chunk = chunk[take:]
@@ -236,12 +292,10 @@ func (c *truenasInMemConn) Write(b []byte) (int, error) {
 }
 
 func (c *truenasInMemConn) Close() error {
-	var hdr [9]byte
-	hdr[0] = 1 // TYPE_CLOSE
-	binary.BigEndian.PutUint32(hdr[1:5], c.cid)
-	binary.BigEndian.PutUint32(hdr[5:9], 0)
-	_, _ = c.pwIn.Write(hdr[:])
-	c.stop()
+	c.closeOnce.Do(func() {
+		_ = writeHkvFrame(c.pwIn, &c.writeMu, hkvFrameClose, c.cid, nil)
+		c.stop()
+	})
 	return nil
 }
 
@@ -265,77 +319,9 @@ func RunTrueNASTunnel(ctx context.Context, _ string, r hosts.Record, localFwd st
 	if !ok {
 		return fmt.Errorf("truenas backend not configured")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	shellSess, err := truenasshell.OpenSession(ctx, b, r, 24, 120)
+	bridge, err := startTrueNASBridge(ctx, b, r, r.Name, trueNASBridgeTarget{Host: remoteHost, Port: remotePort})
 	if err != nil {
-		return err
-	}
-
-	prOut, pwOut := io.Pipe()
-	prIn, pwIn := io.Pipe()
-	bridgeCtx, cancel := context.WithCancel(ctx)
-
-	pumpOutDone := make(chan struct{})
-	pumpInDone := make(chan struct{})
-	go pumpTrueNASShellToPipe(shellSess, pwOut, pumpOutDone)
-	go pumpPipeToTrueNASShell(prIn, shellSess, pumpInDone)
-
-	brOut := bufio.NewReader(prOut)
-	if err := drainAPIShellReader(bridgeCtx, brOut, truenasShellDrainMax, truenasShellDrainIdle); err != nil {
-		cancel()
-		_ = pwOut.Close()
-		_ = pwIn.Close()
-		<-pumpOutDone
-		<-pumpInDone
-		_ = shellSess.Close()
-		return fmt.Errorf("truenas tunnel startup: %w", err)
-	}
-
-	pyB64 := base64.StdEncoding.EncodeToString([]byte(honeyTCPDialBridgePy))
-	bootstrap := fmt.Sprintf(
-		"\nstty -echo 2>/dev/null; HONEY_REMOTE_HOST=%s HONEY_REMOTE_PORT=%s printf %%s %s | base64 -d > /tmp/honey-tcp-dial-bridge.py && exec python3 -u /tmp/honey-tcp-dial-bridge.py\n",
-		shellSingleQuoted(remoteHost), shellSingleQuoted(remotePort), shellSingleQuoted(pyB64),
-	)
-	if err := shellSess.WriteBinary([]byte(bootstrap)); err != nil {
-		cancel()
-		_ = pwOut.Close()
-		_ = pwIn.Close()
-		<-pumpOutDone
-		<-pumpInDone
-		_ = shellSess.Close()
-		return fmt.Errorf("truenas tunnel bootstrap: %w", err)
-	}
-
-	readyCh := make(chan error, 1)
-	go func() {
-		_, err := readReadyLine(brOut)
-		readyCh <- err
-	}()
-
-	stop := func() {
-		cancel()
-		_ = pwOut.Close()
-		_ = pwIn.Close()
-		<-pumpOutDone
-		<-pumpInDone
-		_ = shellSess.Close()
-	}
-
-	select {
-	case err := <-readyCh:
-		if err != nil {
-			stop()
-			return fmt.Errorf("truenas tunnel: %w", err)
-		}
-	case <-time.After(truenasTunnelReadyTimeout):
-		stop()
-		return errors.New("truenas tunnel: READY timeout")
-	case <-ctx.Done():
-		stop()
-		return ctx.Err()
+		return fmt.Errorf("truenas tunnel: %w", err)
 	}
 
 	if out != nil {
@@ -343,12 +329,12 @@ func RunTrueNASTunnel(ctx context.Context, _ string, r hosts.Record, localFwd st
 			time.Now().Format(time.RFC3339), localPort, remoteHost, remotePort)
 	}
 
-	bridgeErr := runTrueNASDialBridgeLoop(bridgeCtx, brOut, pwIn, localPort, remoteHost, remotePort, out)
-	stop()
-	if bridgeErr != nil && bridgeCtx.Err() == nil && !isPipeClosedErr(bridgeErr) {
+	bridgeErr := runTrueNASDialBridgeLoop(bridge.ctx, bridge.brOut, bridge.pwIn, localPort, remoteHost, remotePort, out)
+	bridge.Stop()
+	if bridgeErr != nil && bridge.ctx.Err() == nil && !isPipeClosedErr(bridgeErr) {
 		return bridgeErr
 	}
-	return bridgeCtx.Err()
+	return bridge.ctx.Err()
 }
 
 // drainAPIShellReader discards PTY output until idleTimeout passes with no new data.

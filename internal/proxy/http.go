@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/shareed2k/honey/internal/apps"
@@ -17,9 +18,9 @@ import (
 // StartHTTPProxy constructs an HTTP reverse proxy and optionally binds it to 127.0.0.1.
 // If app.LocalPort is 0, it skips binding the listener (used by the webserver dynamic proxy).
 func StartHTTPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sessionID string, closer io.Closer) (*Session, error) {
-	targetURL := &url.URL{
-		Scheme: "http",
-		Host:   app.Upstream,
+	targetURL, err := parseUpstreamURL(app.Upstream)
+	if err != nil {
+		return nil, fmt.Errorf("invalid upstream configuration: %w", err)
 	}
 
 	opts := []reverseproxy.Option{
@@ -109,4 +110,13 @@ func StartHTTPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sess
 	}
 
 	return sess, nil
+}
+
+func parseUpstreamURL(upstream string) (*url.URL, error) {
+	rawURL := upstream
+	// Default to http:// if the user didn't specify a scheme
+	if !strings.Contains(upstream, "://") {
+		rawURL = "http://" + upstream
+	}
+	return url.Parse(rawURL)
 }
