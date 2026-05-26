@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 
@@ -32,6 +33,11 @@ func TransportForAppDialer(rec hosts.Record) AppDialerTransport {
 // ResolveAppDialer returns the correct proxy.Dialer and an optional io.Closer for any hosts.Record.
 // It hides all provider-specific connection logic (SSH, K8s exec, TrueNAS shell API, etc.).
 func ResolveAppDialer(_ context.Context, user string, rec hosts.Record, _ string) (proxy.Dialer, io.Closer, error) {
+	return ResolveAppDialerWithCache(user, rec, nil)
+}
+
+// ResolveAppDialerWithCache returns an app proxy dialer, borrowing SSH clients from cache when available.
+func ResolveAppDialerWithCache(user string, rec hosts.Record, cache *ClientCache) (proxy.Dialer, io.Closer, error) {
 	if !appDialerUsesSSH(rec) {
 		var executor hostexec.Executor
 		if rec.Provider == "truenas" {
@@ -45,6 +51,19 @@ func ResolveAppDialer(_ context.Context, user string, rec hosts.Record, _ string
 		}
 
 		return proxy.NewTunnelDialer(dialFn), nil, nil
+	}
+
+	if cache != nil {
+		lease, err := cache.AcquireLease(user, rec)
+		if err != nil {
+			return nil, nil, err
+		}
+		client, ok := lease.HostClient().(*sshclient.HoneyClient)
+		if !ok {
+			_ = lease.Close()
+			return nil, nil, fmt.Errorf("app proxy SSH transport requires HoneyClient, got %T", lease.HostClient())
+		}
+		return &proxy.SSHDialer{Client: client}, lease, nil
 	}
 
 	ip := hosts.PrimaryIPTrimmed(rec)

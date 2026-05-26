@@ -91,7 +91,7 @@ func init() {
 	appOpenCmd.Flags().StringVar(&flagK8sMode, "k8s-mode", "nodes", "Kubernetes search mode: nodes or pods")
 }
 
-func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string) (proxy.Dialer, io.Closer, error) {
+func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, cache *ui.ClientCache) (proxy.Dialer, io.Closer, error) {
 	searchBackends := flagBackends
 	if app.Backend != "" {
 		searchBackends = app.Backend
@@ -147,7 +147,7 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string) (
 		}
 	}
 
-	return ui.ResolveAppDialer(ctx, flagSSHUser, rec, app.Upstream)
+	return ui.ResolveAppDialerWithCache(flagSSHUser, rec, cache)
 }
 
 func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error {
@@ -175,6 +175,8 @@ func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error 
 
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
+	appProxyCache := ui.NewClientCache()
+	defer appProxyCache.CloseAll()
 
 	mgr := proxy.NewManager(proxy.NewLogger(zap.L()))
 
@@ -184,7 +186,7 @@ func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error 
 		dialer = proxy.DirectDialer{}
 	} else {
 		var err error
-		dialer, closer, err = resolveAppTarget(ctx, app, cfgPath)
+		dialer, closer, err = resolveAppTarget(ctx, app, cfgPath, appProxyCache)
 		if err != nil {
 			return err
 		}

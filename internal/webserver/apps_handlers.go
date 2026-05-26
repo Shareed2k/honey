@@ -21,7 +21,7 @@ type proxyStartRequest struct {
 	Backends  string `json:"backends,omitempty"`
 }
 
-func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest) (proxy.Dialer, io.Closer, error) {
+func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest, cache *ui.ClientCache) (proxy.Dialer, io.Closer, error) {
 	// First run a search to find the record for this target
 	in := hostapi.SearchHostsInput{
 		Name:       app.Target,
@@ -47,7 +47,7 @@ func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, ap
 		return nil, nil, fmt.Errorf("target %q not found", app.Target)
 	}
 
-	return ui.ResolveAppDialer(ctx, sshUser, out.Records[0], app.Upstream)
+	return ui.ResolveAppDialerWithCache(sshUser, out.Records[0], cache)
 }
 
 func (s *Server) handleAppsList(w http.ResponseWriter, _ *http.Request) {
@@ -125,7 +125,7 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Resolve the target for SSH Dialing
-	dialer, closer, err := resolveAppDialer(r.Context(), s.opts.Config, s.opts.ConfigPath, app, req.SSHUser, req)
+	dialer, closer, err := resolveAppDialer(r.Context(), s.opts.Config, s.opts.ConfigPath, app, req.SSHUser, req, s.fileClientCache)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 		return
