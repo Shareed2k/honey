@@ -17,6 +17,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
@@ -50,6 +51,7 @@ type Server struct {
 	assistRL *slidingRL
 	tunnels  *tunnelManager
 	proxy    *proxy.Manager
+	pgPools  *postgres.PoolManager
 
 	assistModelsMu  sync.Mutex
 	assistModelIDs  []string
@@ -81,6 +83,7 @@ func NewServer(opts Options) (*Server, error) {
 		assistRL:        newSlidingRL(),
 		tunnels:         newTunnelManager(),
 		proxy:           proxy.NewManager(proxy.NewLogger(zap.L())),
+		pgPools:         postgres.NewPoolManager(),
 		fileClientCache: ui.NewClientCache(),
 	}
 	ui.SetDockerSSHBorrowCache(s.fileClientCache)
@@ -134,6 +137,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/proxy/sessions", s.withAuth(s.handleProxySessionsGet))
 	s.mux.HandleFunc("POST /api/v1/proxy/start", s.withAuth(s.handleProxySessionStart))
 	s.mux.HandleFunc("DELETE /api/v1/proxy/sessions/{id}", s.withAuth(s.handleProxySessionDelete))
+	s.mux.HandleFunc("GET /api/v1/postgres/catalog", s.withAuth(s.handlePostgresCatalog))
+	s.mux.HandleFunc("POST /api/v1/postgres/query", s.withAuth(s.handlePostgresQuery))
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -198,6 +203,9 @@ func (s *Server) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			if s.fileClientCache != nil {
 				s.fileClientCache.CloseAll()
+			}
+			if s.pgPools != nil {
+				s.pgPools.Close()
 			}
 			shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = srv.Shutdown(shCtx)

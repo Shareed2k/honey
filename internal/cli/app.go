@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/apps"
+	"github.com/shareed2k/honey/internal/appsecret"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/proxy"
@@ -168,6 +169,11 @@ func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error 
 	if forceType != "" && app.Type != forceType {
 		return fmt.Errorf("app %q is type %s, expected %s", name, app.Type, forceType)
 	}
+	resolvedUpstream, err := appsecret.ResolveUpstream(cmd.Context(), cfg, app.Upstream)
+	if err != nil {
+		return err
+	}
+	app.Upstream = resolvedUpstream
 
 	if flagAppPort > 0 {
 		app.LocalPort = flagAppPort

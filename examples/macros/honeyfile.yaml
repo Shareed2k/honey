@@ -1,0 +1,58 @@
+apiVersion: honey.shareed2k.io/v1alpha1
+kind: MacroSet
+metadata:
+  name: ops-macros
+spec:
+  macros:
+    restart-nginx:
+      kind: exec
+      target: "web-*"
+      provider: "gcp,k8s"
+      backends: "gcp-stg2,k8s-stg"
+      command: "systemctl restart nginx"
+      parallel: 50
+      retry: 3
+      timeout: 10s
+      shell: auto
+      runAs: root
+      output: text
+
+    restart-and-check-nginx:
+      kind: exec
+      target: "web-*"
+      commands:
+        - "systemctl restart nginx"
+        - "systemctl is-active nginx"
+        - "ss -ltnp | grep :80"
+      parallel: 20
+      retry: 2
+      timeout: 20s
+
+    tail-nginx:
+      kind: logs
+      target: "web-*"
+      unit: "nginx"
+      follow: true
+      tail: 200
+      since: 10m
+      grep: "error|warn"
+
+    deploy-recipe:
+      kind: recipe
+      target: "web-*"
+      provider: "gcp"
+      backends: "gcp-stg2"
+      recipePath: "examples/recipe/with_run_as.cue"
+      execute: false
+      env:
+        - "APP_ENV=staging"
+        - "IMAGE_TAG=latest"
+
+    open-admin-app:
+      kind: app
+      app: "admin-ui"
+      openBrowser: true
+
+    tunnel-postgres:
+      kind: tunnel
+      app: "postgres-tcp"

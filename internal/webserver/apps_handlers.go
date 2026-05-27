@@ -8,11 +8,32 @@ import (
 	"net/http"
 
 	"github.com/shareed2k/honey/internal/apps"
+	"github.com/shareed2k/honey/internal/appsecret"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/ui"
 )
+
+const encryptedUpstreamRedaction = "[encrypted]"
+
+func sanitizeAppForAPI(app apps.AppConfig) apps.AppConfig {
+	if appsecret.IsEncryptedUpstream(app.Upstream) {
+		app.Upstream = encryptedUpstreamRedaction
+	}
+	return app
+}
+
+func sanitizeSessionForAPI(cfg *config.File, sess proxy.Session) proxy.Session {
+	if cfg != nil && cfg.Apps != nil {
+		if src, ok := cfg.Apps[sess.App.Name]; ok && appsecret.IsEncryptedUpstream(src.Upstream) {
+			sess.App.Upstream = encryptedUpstreamRedaction
+			return sess
+		}
+	}
+	sess.App = sanitizeAppForAPI(sess.App)
+	return sess
+}
 
 type proxyStartRequest struct {
 	App       string `json:"app"`
@@ -55,10 +76,14 @@ func (s *Server) handleAppsList(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"apps": map[string]apps.AppConfig{}})
 		return
 	}
+	appsOut := make(map[string]apps.AppConfig, len(s.opts.Config.Apps))
+	for name, app := range s.opts.Config.Apps {
+		appsOut[name] = sanitizeAppForAPI(app)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"apps": s.opts.Config.Apps,
+		"apps": appsOut,
 	})
 }
 
@@ -71,6 +96,9 @@ func (s *Server) handleProxySessionsGet(w http.ResponseWriter, _ *http.Request) 
 
 	if sessions == nil {
 		sessions = []proxy.Session{}
+	}
+	for i := range sessions {
+		sessions[i] = sanitizeSessionForAPI(s.opts.Config, sessions[i])
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -104,6 +132,13 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 	if app.Provider != "" {
 		req.Providers = app.Provider
 	}
+	upstreamWasEncrypted := appsecret.IsEncryptedUpstream(app.Upstream)
+	resolvedUpstream, err := appsecret.ResolveUpstream(r.Context(), s.opts.Config, app.Upstream)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	app.Upstream = resolvedUpstream
 
 	// Always override LocalPort to 0 when starting via Web UI.
 	// We want HTTP requests to flow over the webserver's subdomain routing
@@ -120,7 +155,11 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(sess)
+		out := sanitizeSessionForAPI(s.opts.Config, *sess)
+		if upstreamWasEncrypted {
+			out.App.Upstream = encryptedUpstreamRedaction
+		}
+		_ = json.NewEncoder(w).Encode(out)
 		return
 	}
 
@@ -141,7 +180,11 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(sess)
+	out := sanitizeSessionForAPI(s.opts.Config, *sess)
+	if upstreamWasEncrypted {
+		out.App.Upstream = encryptedUpstreamRedaction
+	}
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 func (s *Server) handleProxySessionDelete(w http.ResponseWriter, r *http.Request) {

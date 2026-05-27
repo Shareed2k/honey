@@ -18,6 +18,7 @@ const (
 type AppConfig struct {
 	Name                string            `yaml:"-" json:"name"`
 	Type                AppType           `yaml:"type" json:"type"`
+	Mode                string            `yaml:"mode,omitempty" json:"mode,omitempty"`
 	Target              string            `yaml:"target,omitempty" json:"target,omitempty"`
 	TargetRegex         string            `yaml:"target_regex,omitempty" json:"target_regex,omitempty"`
 	Backend             string            `yaml:"backend,omitempty" json:"backend,omitempty"`

@@ -28,6 +28,26 @@ You can quickly test the workflow with:
 python -m venv .venv
 source .venv/bin/activate
 pip install torch transformers datasets accelerate onnx
+pip install -r contrib/anomaly/requirements.txt
+```
+
+### Optional: reusable Docker trainer image (recommended)
+
+Build once:
+
+```bash
+make anomaly-docker-build
+```
+
+Then train repeatedly without reinstalling dependencies:
+
+```bash
+make anomaly-docker-train-sample
+# or with custom files:
+make anomaly-docker-train \
+  ANOMALY_TRAIN_CSV=/path/to/train.csv \
+  ANOMALY_EVAL_CSV=/path/to/eval.csv \
+  ANOMALY_OUT_DIR=models
 ```
 
 ## 3) Train and export

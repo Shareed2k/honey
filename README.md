@@ -28,6 +28,47 @@ brew install --cask shareed2k/tap/honey
 go build -o honey ./cmd/honey
 ```
 
+## Macros manifest (v1alpha1)
+
+Honey supports Kubernetes-style macro manifests:
+
+- `apiVersion: honey.shareed2k.io/v1alpha1`
+- `kind: MacroSet`
+- `metadata.name`
+- `spec.macros` map
+
+Example file: `examples/macros/honeyfile.yaml`
+
+Run macros:
+
+```bash
+# List available macros
+./honey macros --file examples/macros/honeyfile.yaml --list
+
+# List as JSON
+./honey macros --file examples/macros/honeyfile.yaml --list --output json
+
+# Dry-run one macro
+./honey macros --file examples/macros/honeyfile.yaml --dry-run restart-nginx
+
+# Execute one macro
+./honey macros --file examples/macros/honeyfile.yaml restart-nginx
+```
+
+### Encrypted app upstream (secure:v1)
+
+For app proxy DSNs (including `mode: postgres` TCP apps), `upstream` can be encrypted inline as:
+
+- `secure:v1:<nonce-b64>:<ciphertext-b64>`
+
+At runtime, Honey decrypts this on app/proxy start using `defaults.secretsprovider` and
+`defaults.encryptedkey` from config. If decryption fails, app start fails. Listing apps still works.
+
+For `kind: exec` macros, you can use either:
+
+- `command: "single command"`
+- `commands:` list (joined as `&&` and run in order)
+
 ## Logs anomaly detection (embedded)
 
 `honey logs` includes embedded anomaly scoring and can tag or filter suspicious lines without an external scorer.

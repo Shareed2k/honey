@@ -10,8 +10,8 @@ where label is 0 (normal) or 1 (anomaly).
 from __future__ import annotations
 
 import argparse
+import inspect
 import os
-from dataclasses import dataclass
 
 import torch
 from datasets import DatasetDict, load_dataset
@@ -97,18 +97,27 @@ def main() -> None:
 
     model = AutoModelForSequenceClassification.from_pretrained(args.model, num_labels=2)
 
-    train_args = TrainingArguments(
+    train_kw = dict(
         output_dir=os.path.join(args.out_dir, "checkpoints"),
         learning_rate=args.lr,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         num_train_epochs=args.epochs,
         seed=args.seed,
-        evaluation_strategy="epoch" if "validation" in encoded else "no",
         save_strategy="epoch" if "validation" in encoded else "no",
         logging_steps=50,
         report_to="none",
     )
+    # transformers renamed this arg across versions:
+    # - older: eval_strategy
+    # - newer: evaluation_strategy
+    sig = inspect.signature(TrainingArguments.__init__)
+    if "evaluation_strategy" in sig.parameters:
+        train_kw["evaluation_strategy"] = "epoch" if "validation" in encoded else "no"
+    else:
+        train_kw["eval_strategy"] = "epoch" if "validation" in encoded else "no"
+
+    train_args = TrainingArguments(**train_kw)
 
     trainer = Trainer(
         model=model,
