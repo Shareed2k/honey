@@ -473,3 +473,55 @@ go test ./...
 ## License
 
 This project is released under the [MIT License](https://github.com/shareed2k/honey/blob/main/LICENSE).
+
+## Honey Apps and Proxy
+
+Honey provides a built-in application catalog and local proxy that makes it trivial to securely access internal services (like Postgres, Redis, Grafana, etc) by name. You don't need to manually string together SSH port forwards or memorize IPs anymore.
+
+### Configuration
+
+Add `apps` to your `honey.yaml` configuration:
+
+```yaml
+apps:
+  grafana-prod:
+    type: http
+    target: bastion-prod
+    upstream: grafana.internal:3000
+    local_port: 18443
+    ttl: 30m
+    open_browser: true
+
+  postgres-prod:
+    type: tcp
+    target: bastion-prod
+    upstream: postgres.internal:5432
+    local_port: 15432
+    ttl: 30m
+```
+
+### CLI Commands
+
+```bash
+# List all configured applications
+honey app list
+
+# Open an HTTP application proxy and your default browser
+honey app open grafana-prod
+
+# Start a TCP proxy to a database
+honey proxy tcp postgres-prod
+# Then you can run: psql -h 127.0.0.1 -p 15432
+
+# View active proxy sessions across your system
+honey proxy list
+
+# Stop an active proxy session
+honey proxy stop <session-id>
+```
+
+### Web UI
+
+Honey Apps and Proxies can also be managed directly from the Honey Web UI (`honey web`).
+
+> **Security Note:** All Honey proxies bind strictly to `127.0.0.1` by default. We do not support binding to `0.0.0.0` for V1.

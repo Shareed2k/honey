@@ -9,7 +9,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
+	//nolint:staticcheck // SA1019: required by client-go v0.36.1 spdy.NewDialer interface
+	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
@@ -154,3 +157,96 @@ func StartK8sPortForward(ctx context.Context, r hosts.Record, localPort, remoteP
 	stopFn := func() { cancel() }
 	return "127.0.0.1", localPort, stopFn, nil
 }
+
+func (k *k8sPodExecutor) DialUpstream(_ context.Context, _ string, r hosts.Record, address string) (net.Conn, error) {
+	namespace := r.Meta["namespace"]
+	podName := r.Meta["pod_name"]
+	kubeContext := r.Meta["kube_context"]
+	kubeconfig := r.Meta["kubeconfig"]
+
+	if namespace == "" || podName == "" {
+		return nil, fmt.Errorf("missing k8s namespace or pod_name in metadata")
+	}
+
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		loadingRules.ExplicitPath = kubeconfig
+	}
+	overrides := &clientcmd.ConfigOverrides{}
+	if kubeContext != "" {
+		overrides.CurrentContext = kubeContext
+	}
+	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
+
+	cfg, err := cc.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("k8s config: %w", err)
+	}
+
+	_, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		portStr = address
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port %s", portStr)
+	}
+
+	reqURL, err := url.Parse(fmt.Sprintf("%s/api/v1/namespaces/%s/pods/%s/portforward", cfg.Host, namespace, podName))
+	if err != nil {
+		return nil, err
+	}
+
+	transport, upgrader, err := spdy.RoundTripperFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("spdy round tripper: %w", err)
+	}
+
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", reqURL)
+
+	streamConn, _, err := dialer.Dial(portforward.PortForwardProtocolV1Name)
+	if err != nil {
+		return nil, err
+	}
+
+	headers := http.Header{}
+	// Note: We need to use "corev1" alias if it doesn't conflict, wait, k8s.io/api/core/v1 is not imported, let's use the constant directly
+	headers.Set("streamType", "error")
+	headers.Set("port", fmt.Sprintf("%d", port))
+	headers.Set("requestID", "1")
+
+	errorStream, err := streamConn.CreateStream(headers)
+	if err != nil {
+		_ = streamConn.Close()
+		return nil, err
+	}
+	_ = errorStream.Close()
+
+	headers.Set("streamType", "data")
+	dataStream, err := streamConn.CreateStream(headers)
+	if err != nil {
+		_ = streamConn.Close()
+		return nil, err
+	}
+
+	return &k8sStreamConn{
+		Stream: dataStream,
+		conn:   streamConn,
+	}, nil
+}
+
+type k8sStreamConn struct {
+	httpstream.Stream
+	conn httpstream.Connection
+}
+
+func (c *k8sStreamConn) Close() error {
+	_ = c.Stream.Close()
+	return c.conn.Close()
+}
+
+func (c *k8sStreamConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
+func (c *k8sStreamConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
+func (c *k8sStreamConn) SetDeadline(_ time.Time) error      { return nil }
+func (c *k8sStreamConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (c *k8sStreamConn) SetWriteDeadline(_ time.Time) error { return nil }
