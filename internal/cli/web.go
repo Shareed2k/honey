@@ -33,7 +33,7 @@ var webCmd = &cobra.Command{
 }
 
 func init() {
-	webCmd.Flags().StringVar(&webListen, "listen", "127.0.0.1:8765", "Listen address (host:port); must be loopback for safe default")
+	webCmd.Flags().StringVar(&webListen, "listen", "localhost:8765", "Listen address (host:port); must be loopback for safe default")
 	webCmd.Flags().StringVar(&webConfig, "config", "", "Path to honey YAML (optional; same as honey search)")
 	webCmd.Flags().StringVar(&webFilesRoot, "files-root", "", "Local filesystem root for the web file browser (default: $HONEY_FILES_ROOT or $HOME)")
 	webCmd.Flags().StringVar(&webAgentBin, "agent-bin", "", "Explicit path to honey-transfer-agent binary (optional)")

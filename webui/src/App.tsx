@@ -35,6 +35,7 @@ import { ConfigBackendsSection } from './ConfigBackendsSection';
 import { HostPicker, recordHaystack, recordKey } from './HostPicker';
 import type { HostRecord } from './HostPicker';
 import { RecipesTab } from './RecipesTab';
+import { AppsTab } from './AppsTab';
 import { SessionReplayModal } from './SessionReplayModal';
 import {
   TerminalTabsModal,
@@ -49,7 +50,7 @@ function backendRef(b: BackendRow): string {
   return `${b.kind}:${b.name}`.toLowerCase();
 }
 
-type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'api-docs';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'api-docs';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const RawYamlEditor = lazy(async () => import('./RawYamlEditor').then((m) => ({ default: m.RawYamlEditor })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
@@ -316,6 +317,7 @@ export function App() {
       val === 'config' ||
       val === 'recipes' ||
       val === 'tunnels' ||
+      val === 'apps' ||
       val === 'api-docs'
     ) {
       return val as Tab;
@@ -1429,6 +1431,9 @@ export function App() {
         <button type="button" className={tab === 'tunnels' ? 'active' : ''} onClick={() => setTab('tunnels')}>
           Tunnels
         </button>
+        <button type="button" className={tab === 'apps' ? 'active' : ''} onClick={() => setTab('apps')}>
+          Apps & Proxies
+        </button>
         <button type="button" className={tab === 'api-docs' ? 'active' : ''} onClick={() => setTab('api-docs')}>
           API
         </button>
@@ -2208,6 +2213,12 @@ export function App() {
               </tbody>
             </table>
           )}
+        </section>
+      ) : null}
+
+      {tab === 'apps' ? (
+        <section>
+          <AppsTab sshUser={sshUser} providers={selectedProviders} backends={selectedBackends} />
         </section>
       ) : null}
 

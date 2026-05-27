@@ -22,6 +22,7 @@ func init() {
 	hostexec.SetK8sExecutor(&k8sPodExecutor{})
 	hostexec.SetDockerExecutor(dockerExecutor{})
 	hostexec.SetTrueNASRunTunnel(RunTrueNASTunnel)
+	hostexec.SetTrueNASDialUpstream(DialTrueNASUpstream)
 	hostexec.SetSSHRunInteractive(func(user string, r hosts.Record, rec any) error {
 		var sr *SessionRecorder
 		if rec != nil {

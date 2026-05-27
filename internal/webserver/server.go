@@ -17,6 +17,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -48,6 +49,7 @@ type Server struct {
 	mux      *http.ServeMux
 	assistRL *slidingRL
 	tunnels  *tunnelManager
+	proxy    *proxy.Manager
 
 	assistModelsMu  sync.Mutex
 	assistModelIDs  []string
@@ -78,6 +80,7 @@ func NewServer(opts Options) (*Server, error) {
 		mux:             http.NewServeMux(),
 		assistRL:        newSlidingRL(),
 		tunnels:         newTunnelManager(),
+		proxy:           proxy.NewManager(proxy.NewLogger(zap.L())),
 		fileClientCache: ui.NewClientCache(),
 	}
 	ui.SetDockerSSHBorrowCache(s.fileClientCache)
@@ -127,6 +130,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /ws/ssh", s.handleWebSSH)
 	s.mux.HandleFunc("GET /ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
 
+	s.mux.HandleFunc("GET /api/v1/apps", s.withAuth(s.handleAppsList))
+	s.mux.HandleFunc("GET /api/v1/proxy/sessions", s.withAuth(s.handleProxySessionsGet))
+	s.mux.HandleFunc("POST /api/v1/proxy/start", s.withAuth(s.handleProxySessionStart))
+	s.mux.HandleFunc("DELETE /api/v1/proxy/sessions/{id}", s.withAuth(s.handleProxySessionDelete))
+
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		panic(err)
@@ -150,6 +158,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.metrics != nil {
 		handler = s.metrics.Middleware(handler)
 	}
+
+	// Add the subdomain proxy wrapper at the very top level
+	handler = s.subdomainProxyWrapper(handler)
 
 	srv := &http.Server{
 		Addr:              s.opts.ListenAddr,

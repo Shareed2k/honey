@@ -13,6 +13,7 @@ import (
 type ClientCache struct {
 	mu      sync.Mutex
 	clients map[string]HostClient
+	leases  map[string]int
 
 	hits         int64
 	misses       int64
@@ -25,7 +26,44 @@ type ClientCache struct {
 func NewClientCache() *ClientCache {
 	return &ClientCache{
 		clients: make(map[string]HostClient),
+		leases:  make(map[string]int),
 	}
+}
+
+// ClientLease is a borrowed cached host connection. Close releases the borrow without
+// directly closing the shared underlying connection.
+type ClientLease struct {
+	cache       *ClientCache
+	key         string
+	client      HostClient
+	closeClient bool
+	once        sync.Once
+}
+
+// HostClient returns the borrowed client.
+func (l *ClientLease) HostClient() HostClient {
+	if l == nil {
+		return nil
+	}
+	return l.client
+}
+
+// Close releases the lease. The cached connection remains available until eviction or CloseAll.
+func (l *ClientLease) Close() error {
+	if l == nil {
+		return nil
+	}
+	var err error
+	l.once.Do(func() {
+		if l.cache != nil {
+			l.cache.releaseLease(l.key)
+			return
+		}
+		if l.closeClient && l.client != nil {
+			err = l.client.Close()
+		}
+	})
+	return err
 }
 
 // SSHClientCacheKey is the stable cache key for a pooled SSH client for (user, record).
@@ -105,6 +143,55 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	return client, nil
 }
 
+// AcquireLease returns a cached client and tracks a lightweight borrow for app proxy sessions.
+func (c *ClientCache) AcquireLease(user string, r hosts.Record) (*ClientLease, error) {
+	if c == nil {
+		client, err := GetExecutor(r).Dial(user, r)
+		if err != nil {
+			return nil, err
+		}
+		return &ClientLease{client: client, closeClient: true}, nil
+	}
+
+	client, err := c.GetOrDial(user, r)
+	if err != nil {
+		return nil, err
+	}
+
+	key := SSHClientCacheKey(user, r)
+	c.mu.Lock()
+	if c.leases == nil {
+		c.leases = make(map[string]int)
+	}
+	c.leases[key]++
+	leaseCount := c.leases[key]
+	c.mu.Unlock()
+
+	zap.L().Debug("ssh client cache lease acquired",
+		zap.String("provider", r.Provider),
+		zap.String("host_name", r.Name),
+		zap.String("host_ip", r.PrimaryIP),
+		zap.String("user", user),
+		zap.Int("leases", leaseCount),
+	)
+
+	return &ClientLease{cache: c, key: key, client: client}, nil
+}
+
+func (c *ClientCache) releaseLease(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.leases == nil {
+		return
+	}
+	leaseCount := c.leases[key]
+	if leaseCount <= 1 {
+		delete(c.leases, key)
+	} else {
+		c.leases[key] = leaseCount - 1
+	}
+}
+
 // getByKey returns the cached client for an SSHClientCacheKey, or nil if absent.
 // Used by the fallback-path runner to reuse already-pooled SSH connections.
 func (c *ClientCache) getByKey(key string) HostClient {
@@ -140,6 +227,7 @@ func (c *ClientCache) Evict(user string, r hosts.Record) {
 	client, ok := c.clients[key]
 	if ok {
 		delete(c.clients, key)
+		delete(c.leases, key)
 	}
 	c.mu.Unlock()
 	if !ok || client == nil {
@@ -166,6 +254,7 @@ func (c *ClientCache) CloseAll() {
 		_ = client.Close()
 	}
 	c.clients = make(map[string]HostClient)
+	c.leases = make(map[string]int)
 	zap.L().Debug("ssh client cache summary",
 		zap.Int64("cache_hits", atomic.LoadInt64(&c.hits)),
 		zap.Int64("cache_misses", atomic.LoadInt64(&c.misses)),

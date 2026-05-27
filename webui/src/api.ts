@@ -932,3 +932,64 @@ export function uploadFormDataWithProgress(
     xhr.send(formData);
   });
 }
+export interface AppConfig {
+  name: string;
+  type: string;
+  target?: string;
+  target_regex?: string;
+  backend?: string;
+  provider?: string;
+  upstream: string;
+  local_port: number;
+  ttl: number;
+  open_browser: boolean;
+}
+
+export interface ProxySession {
+  id: string;
+  app: AppConfig;
+  local_addr: string;
+  started_at: string;
+  expires_at: string;
+  pid: number;
+}
+
+export async function fetchApps(): Promise<{ [key: string]: AppConfig }> {
+  const res = await apiGet('/api/v1/apps');
+  if (!res.ok) {
+    throw new Error(res.statusText);
+  }
+  const data = await res.json();
+  return data.apps || {};
+}
+
+export async function fetchProxySessions(): Promise<ProxySession[]> {
+  const res = await apiGet('/api/v1/proxy/sessions');
+  if (!res.ok) {
+    throw new Error(res.statusText);
+  }
+  const data = await res.json();
+  return data.sessions || [];
+}
+
+export async function startProxySession(appName: string, sshUser: string, providers: string[], backends: string[]): Promise<ProxySession> {
+  const res = await apiPost('/api/v1/proxy/start', { 
+    app: appName, 
+    ssh_user: sshUser,
+    providers: providers.join(','),
+    backends: backends.join(',')
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || res.statusText);
+  }
+  return await res.json();
+}
+
+export async function stopProxySession(id: string): Promise<void> {
+  const res = await apiDelete(`/api/v1/proxy/sessions/${id}`);
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || res.statusText);
+  }
+}

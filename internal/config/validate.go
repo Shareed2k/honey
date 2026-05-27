@@ -42,8 +42,8 @@ func (f *File) Validate() error {
 		return errors.New("config is nil")
 	}
 	err := validate.Struct(f)
+	var out ValidationErrors
 	if errs, ok := err.(validator.ValidationErrors); ok {
-		var out ValidationErrors
 		for _, e := range errs {
 			ns := e.Namespace()
 			// Strip the root struct name (e.g., "File.")
@@ -71,7 +71,21 @@ func (f *File) Validate() error {
 				Message: msg,
 			})
 		}
+	} else if err != nil {
+		return err
+	}
+
+	for name, app := range f.Apps {
+		if err := app.Validate(); err != nil {
+			out = append(out, ValidationError{
+				Path:    "apps." + name,
+				Message: err.Error(),
+			})
+		}
+	}
+
+	if len(out) > 0 {
 		return out
 	}
-	return err
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -66,6 +67,31 @@ func DialDockerCheck(user string, r hosts.Record) error {
 
 func (dockerExecutor) RunTunnel(context.Context, string, hosts.Record, string, io.Writer) error {
 	return fmt.Errorf("docker provider does not support SSH-style tunnels; publish ports on the container instead")
+}
+
+func (e dockerExecutor) DialUpstream(_ context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+	client, err := e.Dial(user, r)
+	if err != nil {
+		return nil, err
+	}
+
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+		port = "80"
+	}
+
+	p1, p2 := net.Pipe()
+
+	cmd := fmt.Sprintf("nc %s %s || socat STDIO TCP:%s:%s", host, port, host, port)
+
+	go func() {
+		defer func() { _ = client.Close() }()
+		defer func() { _ = p1.Close() }()
+		_ = client.RunWithStreams(cmd, p1, p1, nil)
+	}()
+
+	return p2, nil
 }
 
 func effectiveDockerSSHUser(user string, r hosts.Record) string {

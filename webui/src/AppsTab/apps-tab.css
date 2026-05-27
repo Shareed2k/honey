@@ -1,0 +1,57 @@
+.apps-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.apps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.app-card {
+  background: #14171c;
+  border: 1px solid #2a3140;
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.app-card h4 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #fff;
+}
+
+.app-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.sessions-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.sessions-table th,
+.sessions-table td {
+  padding: 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid #2a3140;
+}
+
+.sessions-table a {
+  color: #6eb0ff;
+  text-decoration: none;
+}
+
+.sessions-table a:hover {
+  text-decoration: underline;
+}

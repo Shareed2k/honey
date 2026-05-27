@@ -2,7 +2,9 @@ package hostexec
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"strings"
 	"sync"
 
@@ -369,4 +371,8 @@ func ForRecord(r hosts.Record) Executor {
 		return truenasAPIShellExecutor
 	}
 	return defaultSSHExecutor
+}
+
+func (sshExecutor) DialUpstream(_ context.Context, _ string, _ hosts.Record, _ string) (net.Conn, error) {
+	return nil, fmt.Errorf("sshExecutor.DialUpstream not implemented (use sshclient directly)")
 }

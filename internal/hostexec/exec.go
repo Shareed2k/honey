@@ -5,6 +5,7 @@ package hostexec
 import (
 	"context"
 	"io"
+	"net"
 	"time"
 
 	"github.com/shareed2k/honey/internal/hosts"
@@ -40,4 +41,5 @@ type Executor interface {
 	Dial(user string, r hosts.Record) (HostClient, error)
 	RunInteractive(user string, r hosts.Record) error
 	RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error
+	DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)
 }

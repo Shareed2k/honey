@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,5 +42,18 @@ func TestDrainAPIShellReaderIdle(t *testing.T) {
 	br := bufio.NewReader(&buf)
 	if err := drainAPIShellReader(context.Background(), br, 500*time.Millisecond, 50*time.Millisecond); err != nil {
 		t.Fatalf("drain: %v", err)
+	}
+}
+
+func TestTrueNASDialBridgeBootstrapUsesRawPTYAndExportsEnv(t *testing.T) {
+	cmd := trueNASDialBridgeBootstrap("10.0.0.5", "8007")
+	for _, want := range []string{
+		"stty raw -echo min 1 time 0",
+		"export HONEY_REMOTE_HOST='10.0.0.5' HONEY_REMOTE_PORT='8007'",
+		"exec python3 -u /tmp/honey-tcp-dial-bridge.py",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Fatalf("bootstrap missing %q in %q", want, cmd)
+		}
 	}
 }
