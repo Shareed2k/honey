@@ -133,7 +133,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+          CGO_ENABLED: "1"
         run: |
           set -euo pipefail
           VERSION="0.0.0-ci+${GITHUB_SHA:0:12}"

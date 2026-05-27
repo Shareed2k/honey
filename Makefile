@@ -1,4 +1,12 @@
-.PHONY: webui openapi build-plugin-examples build-plugin-modules
+.PHONY: webui openapi build-plugin-examples build-plugin-modules anomaly-install anomaly-download-model anomaly-train anomaly-train-sample anomaly-docker-train-sample
+
+PYTHON ?= python3
+ANOMALY_MODEL_ID ?= distilbert/distilbert-base-uncased
+ANOMALY_BASE_DIR ?= models/distilbert-base-uncased
+ANOMALY_OUT_DIR ?= models
+ANOMALY_TRAIN_CSV ?= contrib/anomaly/sample_train.csv
+ANOMALY_EVAL_CSV ?= contrib/anomaly/sample_eval.csv
+ANOMALY_DOCKER_IMAGE ?= python:3.11-bullseye
 build-plugin-examples:
 	cd examples/plugins/echo && \
 	  GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .
@@ -18,3 +26,29 @@ webui:
 # Regenerate OpenAPI 3 spec for the honey web API (swag + kin-openapi conversion).
 openapi:
 	cd internal/webserver && go generate .
+
+anomaly-install:
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install torch transformers datasets accelerate onnx "huggingface_hub[cli]"
+
+anomaly-download-model:
+	hf download $(ANOMALY_MODEL_ID) --local-dir ./$(ANOMALY_BASE_DIR)
+
+anomaly-train:
+	$(PYTHON) contrib/anomaly/train_and_export_distilbert.py \
+	  --train-csv $(ANOMALY_TRAIN_CSV) \
+	  --eval-csv $(ANOMALY_EVAL_CSV) \
+	  --out-dir ./$(ANOMALY_OUT_DIR)
+
+anomaly-train-sample:
+	$(MAKE) anomaly-train \
+	  ANOMALY_TRAIN_CSV=contrib/anomaly/sample_train.csv \
+	  ANOMALY_EVAL_CSV=contrib/anomaly/sample_eval.csv \
+	  ANOMALY_OUT_DIR=models
+
+anomaly-docker-train-sample:
+	docker run --rm -it \
+	  -v "$(PWD):/work" \
+	  -w /work \
+	  $(ANOMALY_DOCKER_IMAGE) \
+	  bash -lc 'pip install --upgrade pip && pip install torch transformers datasets accelerate onnx "huggingface_hub[cli]" && make anomaly-download-model && make anomaly-train-sample'

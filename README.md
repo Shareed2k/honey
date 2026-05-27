@@ -28,6 +28,53 @@ brew install --cask shareed2k/tap/honey
 go build -o honey ./cmd/honey
 ```
 
+## Logs anomaly detection (embedded)
+
+`honey logs` includes embedded anomaly scoring and can tag or filter suspicious lines without an external scorer.
+
+```bash
+# Stream journal logs for a unit with anomaly tags
+./honey logs "web-*" --unit nginx --follow --anomaly
+
+# Only print anomalous lines above threshold
+./honey logs "web-*" --unit nginx --anomaly --anomaly-only --anomaly-threshold 0.93
+
+# Fail startup if detector/model initialization fails
+./honey logs "web-*" --unit nginx --anomaly --anomaly-strict
+
+# Validate model/tokenizer/runtime quickly (no host streaming)
+./honey logs "web-*" --anomaly --anomaly-selftest \
+  --anomaly-model ./models/distilbert-log-anomaly.onnx \
+  --anomaly-tokenizer ./models/vocab.txt
+
+# Optional model path (validated at startup)
+./honey logs "web-*" --unit nginx --anomaly \
+  --anomaly-model ./models/distilbert-log-anomaly.onnx \
+  --anomaly-tokenizer ./models/vocab.txt
+```
+
+Flags:
+
+- `--anomaly`: enable embedded anomaly detection
+- `--anomaly-model`: local ONNX model path to validate/use during detector init
+- `--anomaly-tokenizer`: path to DistilBERT `vocab.txt` (defaults to `<model-dir>/vocab.txt`)
+- `--anomaly-threshold`: score cutoff from `0..1` (default `0.90`)
+- `--anomaly-window`: sliding window size (default `32`)
+- `--anomaly-only`: suppress non-anomalous lines
+- `--anomaly-strict`: return an error if detector initialization fails
+- `--anomaly-selftest`: run local detector init + sample scoring smoke test
+
+Runtime library lookup for embedded ONNX mode:
+
+- `HONEY_ONNXRUNTIME_LIB_DIR`: absolute directory containing ONNX runtime shared libraries
+- default bundled lookup: `runtime/onnx/<os>/<arch>/` relative to the honey binary
+
+DistilBERT ONNX expectations:
+
+- inputs must include `input_ids` and `attention_mask` (optional `token_type_ids`)
+- output should be binary score/probability (`[1,1]` or logits like `[1,2]`)
+- tokenizer vocab must include `[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`
+
 ## MCP server (stdio)
 
 `honey mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/) server over **stdin/stdout** using the official [`go-sdk`](https://github.com/modelcontextprotocol/go-sdk). **Do not log to stdout** (only stderr); stdout is reserved for the JSON-RPC stream.

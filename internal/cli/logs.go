@@ -12,25 +12,34 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/shareed2k/honey/internal/anomaly"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
 var (
-	flagLogsFollow         bool
-	flagLogsTail           int64
-	flagLogsSince          time.Duration
-	flagLogsTimestamps     bool
-	flagLogsContainer      string
-	flagLogsUnit           string
-	flagLogsFile           string
-	flagLogsCommand        string
-	flagLogsRunAs          string
-	flagLogsMaxConcurrency int
-	flagLogsGrep           string
-	flagLogsLabels         []string
-	flagLogsTUI            bool
-	flagLogsOutputFile     string
-	flagLogsHighlight      bool
+	flagLogsFollow          bool
+	flagLogsTail            int64
+	flagLogsSince           time.Duration
+	flagLogsTimestamps      bool
+	flagLogsContainer       string
+	flagLogsUnit            string
+	flagLogsFile            string
+	flagLogsCommand         string
+	flagLogsRunAs           string
+	flagLogsMaxConcurrency  int
+	flagLogsGrep            string
+	flagLogsLabels          []string
+	flagLogsTUI             bool
+	flagLogsOutputFile      string
+	flagLogsHighlight       bool
+	flagLogsAnomaly         bool
+	flagLogsAnomalyModel    string
+	flagLogsAnomalyThresh   float64
+	flagLogsAnomalyWindow   int
+	flagLogsAnomalyOnly     bool
+	flagLogsAnomalyStrict   bool
+	flagLogsAnomalyTokPath  string
+	flagLogsAnomalySelftest bool
 )
 
 var logsCmd = &cobra.Command{
@@ -58,6 +67,14 @@ func init() {
 	logsCmd.Flags().BoolVar(&flagLogsTUI, "tui", false, "Use interactive log viewer")
 	logsCmd.Flags().StringVarP(&flagLogsOutputFile, "output-file", "o", "", "Write combined log stream to this local file")
 	logsCmd.Flags().BoolVar(&flagLogsHighlight, "highlight", true, "Highlight error-like keywords in logs")
+	logsCmd.Flags().BoolVar(&flagLogsAnomaly, "anomaly", false, "Enable embedded anomaly detection for log lines")
+	logsCmd.Flags().StringVar(&flagLogsAnomalyModel, "anomaly-model", "", "Path to local ONNX model file (used by embedded detector)")
+	logsCmd.Flags().Float64Var(&flagLogsAnomalyThresh, "anomaly-threshold", 0.90, "Anomaly score threshold between 0 and 1")
+	logsCmd.Flags().IntVar(&flagLogsAnomalyWindow, "anomaly-window", 32, "Sliding window size for anomaly scoring")
+	logsCmd.Flags().BoolVar(&flagLogsAnomalyOnly, "anomaly-only", false, "Only show lines that exceed anomaly threshold")
+	logsCmd.Flags().BoolVar(&flagLogsAnomalyStrict, "anomaly-strict", false, "Fail startup if anomaly detector cannot initialize")
+	logsCmd.Flags().StringVar(&flagLogsAnomalyTokPath, "anomaly-tokenizer", "", "Path to DistilBERT vocab.txt tokenizer file")
+	logsCmd.Flags().BoolVar(&flagLogsAnomalySelftest, "anomaly-selftest", false, "Validate anomaly model/tokenizer/runtime and run a local score smoke test")
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
@@ -68,6 +85,34 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 	if flagLogsFile != "" {
 		source = flagLogsFile
+	}
+
+	opts := ui.LogOptions{
+		Target:         target,
+		Source:         source,
+		Follow:         flagLogsFollow,
+		Tail:           flagLogsTail,
+		Since:          flagLogsSince,
+		Timestamps:     flagLogsTimestamps,
+		Container:      flagLogsContainer,
+		Unit:           flagLogsUnit,
+		Command:        flagLogsCommand,
+		RunAs:          flagLogsRunAs,
+		MaxConcurrency: flagLogsMaxConcurrency,
+		Grep:           flagLogsGrep,
+		Labels:         flagLogsLabels,
+		Highlight:      flagLogsHighlight,
+		Anomaly:        flagLogsAnomaly,
+		AnomalyModel:   flagLogsAnomalyModel,
+		AnomalyThresh:  flagLogsAnomalyThresh,
+		AnomalyWindow:  flagLogsAnomalyWindow,
+		AnomalyOnly:    flagLogsAnomalyOnly,
+		AnomalyStrict:  flagLogsAnomalyStrict,
+		AnomalyTokPath: flagLogsAnomalyTokPath,
+	}
+
+	if flagLogsAnomalySelftest {
+		return runAnomalySelftest(opts)
 	}
 
 	clientCache := ui.NewClientCache()
@@ -85,23 +130,6 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	opts := ui.LogOptions{
-		Target:         target,
-		Source:         source,
-		Follow:         flagLogsFollow,
-		Tail:           flagLogsTail,
-		Since:          flagLogsSince,
-		Timestamps:     flagLogsTimestamps,
-		Container:      flagLogsContainer,
-		Unit:           flagLogsUnit,
-		Command:        flagLogsCommand,
-		RunAs:          flagLogsRunAs,
-		MaxConcurrency: flagLogsMaxConcurrency,
-		Grep:           flagLogsGrep,
-		Labels:         flagLogsLabels,
-		Highlight:      flagLogsHighlight,
-	}
-
 	if flagLogsTUI {
 		return ui.RunLogTUI(ctx, sshUser, records, opts, clientCache)
 	}
@@ -117,4 +145,32 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	return ui.StreamLogs(ctx, sshUser, records, opts, clientCache, out)
+}
+
+func runAnomalySelftest(opts ui.LogOptions) error {
+	if !opts.Anomaly {
+		return fmt.Errorf("--anomaly-selftest requires --anomaly")
+	}
+	det, err := anomaly.NewEmbeddedDetector(anomaly.Options{
+		ModelPath:     strings.TrimSpace(opts.AnomalyModel),
+		TokenizerPath: strings.TrimSpace(opts.AnomalyTokPath),
+		Threshold:     opts.AnomalyThresh,
+		Window:        opts.AnomalyWindow,
+	})
+	if err != nil {
+		return fmt.Errorf("anomaly selftest init: %w", err)
+	}
+	samples := []string{
+		"INFO startup complete",
+		"ERROR authentication failed for user root",
+	}
+	fmt.Fprintln(os.Stdout, "anomaly selftest ok: detector initialized")
+	for _, sample := range samples {
+		res, scoreErr := det.Score(context.Background(), sample)
+		if scoreErr != nil {
+			return fmt.Errorf("anomaly selftest score: %w", scoreErr)
+		}
+		fmt.Fprintf(os.Stdout, "sample=%q score=%.4f anomaly=%t reason=%s\n", sample, res.Score, res.Anomaly, res.Reason)
+	}
+	return nil
 }

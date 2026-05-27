@@ -17,7 +17,7 @@ builds:
     main: ./cmd/honey
     binary: honey
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
@@ -50,6 +50,7 @@ archives:
       - README.md
       - LICENSE
       - completions/*
+      - runtime/onnx/**
 
 checksum:
   name_template: 'checksums.txt'
