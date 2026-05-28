@@ -1,0 +1,107 @@
+version: '3'
+
+vars:
+  PYTHON: python3
+  ANOMALY_MODEL_ID: distilbert/distilbert-base-uncased
+  ANOMALY_BASE_DIR: models/distilbert-base-uncased
+  ANOMALY_OUT_DIR: models
+  ANOMALY_TRAIN_CSV: contrib/anomaly/sample_train.csv
+  ANOMALY_EVAL_CSV: contrib/anomaly/sample_eval.csv
+  ANOMALY_DOCKER_IMAGE: python:3.11-bullseye
+  ANOMALY_DOCKER_TRAINER_IMAGE: honey-anomaly-trainer:latest
+
+env:
+  DOCKER_CONTEXT: remote-builder
+
+tasks:
+  webui:
+    desc: Build the React web UI and embed assets
+    dir: webui
+    cmds:
+      - npm ci
+      - npm run build
+
+  openapi:
+    desc: Regenerate OpenAPI 3 spec for the honey web API
+    dir: internal/webserver
+    cmds:
+      - go generate .
+
+  build-plugin-examples:
+    desc: Build the echo WASM plugin example
+    cmds:
+      - cmd: GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .
+        dir: examples/plugins/echo
+      - cp examples/plugins/echo/plugin.wasm internal/plugins/testdata/echo/plugin.wasm
+
+  build-plugin-modules:
+    desc: Build all plugin modules as WASM binaries
+    cmds:
+      - |
+        for dir in bash shell copy template file service postgres rclone; do
+          echo "building plugins/$dir"
+          (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .)
+          mkdir -p examples/plugins/$dir
+          cp plugins/$dir/plugin.yaml plugins/$dir/plugin.wasm examples/plugins/$dir/
+        done
+
+  anomaly-install:
+    desc: Install Python dependencies for anomaly detection training
+    cmds:
+      - '{{.PYTHON}} -m pip install --upgrade pip'
+      - '{{.PYTHON}} -m pip install -r contrib/anomaly/requirements.txt'
+
+  anomaly-download-model:
+    desc: Download the DistilBERT model from HuggingFace
+    cmds:
+      - 'hf download {{.ANOMALY_MODEL_ID}} --local-dir ./{{.ANOMALY_BASE_DIR}}'
+
+  anomaly-train:
+    desc: Train and export the DistilBERT anomaly detection model
+    cmds:
+      - |
+        {{.PYTHON}} contrib/anomaly/train_and_export_distilbert.py \
+          --train-csv {{.ANOMALY_TRAIN_CSV}} \
+          --eval-csv {{.ANOMALY_EVAL_CSV}} \
+          --out-dir ./{{.ANOMALY_OUT_DIR}}
+
+  anomaly-train-sample:
+    desc: Train using the bundled sample CSV files
+    cmds:
+      - task: anomaly-train
+        vars:
+          ANOMALY_TRAIN_CSV: contrib/anomaly/sample_train.csv
+          ANOMALY_EVAL_CSV: contrib/anomaly/sample_eval.csv
+          ANOMALY_OUT_DIR: models
+
+  anomaly-docker-build:
+    desc: Build the Docker trainer image
+    cmds:
+      - 'docker build -t {{.ANOMALY_DOCKER_TRAINER_IMAGE}} -f contrib/anomaly/Dockerfile .'
+
+  anomaly-docker-train:
+    desc: Run anomaly model training inside Docker (remote-context safe, uses docker cp)
+    cmds:
+      - |
+        set -e
+        CID=$(docker create -w /work \
+          {{.ANOMALY_DOCKER_TRAINER_IMAGE}} \
+          bash -lc 'hf download {{.ANOMALY_MODEL_ID}} --local-dir ./{{.ANOMALY_BASE_DIR}} && \
+            python3 contrib/anomaly/train_and_export_distilbert.py \
+              --train-csv {{.ANOMALY_TRAIN_CSV}} \
+              --eval-csv {{.ANOMALY_EVAL_CSV}} \
+              --out-dir ./{{.ANOMALY_OUT_DIR}}')
+        trap "docker rm -f $CID >/dev/null 2>&1 || true" EXIT
+        COPYFILE_DISABLE=1 tar -C . --no-xattrs -cf - contrib/anomaly | docker cp - $CID:/work/
+        docker start -a $CID
+        mkdir -p {{.ANOMALY_OUT_DIR}}
+        docker cp $CID:/work/{{.ANOMALY_OUT_DIR}}/. ./{{.ANOMALY_OUT_DIR}}/
+
+  anomaly-docker-train-sample:
+    desc: Run Docker training with the bundled sample CSV files
+    cmds:
+      - task: anomaly-docker-train
+        vars:
+          ANOMALY_TRAIN_CSV: contrib/anomaly/sample_train.csv
+          ANOMALY_EVAL_CSV: contrib/anomaly/sample_eval.csv
+          ANOMALY_OUT_DIR: models

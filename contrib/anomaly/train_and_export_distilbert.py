@@ -135,6 +135,13 @@ def main() -> None:
     tokenizer.save_pretrained(args.out_dir)
     trainer.model.save_pretrained(os.path.join(args.out_dir, "hf_model"))
 
+    vocab_path = os.path.join(args.out_dir, "vocab.txt")
+    if not os.path.exists(vocab_path):
+        vocab = tokenizer.get_vocab()
+        with open(vocab_path, "w", encoding="utf-8") as f:
+            for token, _ in sorted(vocab.items(), key=lambda x: x[1]):
+                f.write(token + "\n")
+
     print("Done.")
     print(f"ONNX model: {onnx_path}")
     print(f"Tokenizer vocab: {os.path.join(args.out_dir, 'vocab.txt')}")

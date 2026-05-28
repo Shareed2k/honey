@@ -537,7 +537,7 @@ Embedded **loopback-only** web server with a random bearer token (override with 
 
 ```bash
 # One-time: build UI assets into internal/webserver/static (CI runs this automatically)
-make webui
+task webui
 
 go build -o honey ./cmd/honey
 ./honey web --listen 127.0.0.1:8765 --config ~/.config/honey/config.yaml
@@ -548,7 +548,7 @@ go build -o honey ./cmd/honey
 
 Optional flags include `--record-dir` (session recordings; optional `defaults.record_retention` such as `30d` for automatic purge of stale `.hrec.jsonl` files, and `DELETE /api/v1/recordings/{file_name}` from the web UI), `--files-root` (file browser root; defaults to `$HONEY_FILES_ROOT` or `$HOME`), `--agent-bin` / `--agent-build-cache-dir` for the transfer agent, and **`--metrics-listen`** (loopback-only Prometheus scrape endpoint at `/metrics`, separate from the token-protected UI). When the server cannot `go build` the agent (no checkout), Honey **downloads** prebuilt `honey-transfer-agent` from the **same GitHub release tag as this `honey` binary** (`…/releases/download/<vTAG>/honey-transfer-agent-<goos>-<goarch>`; dev builds use `…/latest/download/…`). Override with **`HONEY_TRANSFER_AGENT_DOWNLOAD_BASE`** or **`HONEY_TRANSFER_AGENT_DOWNLOAD_URL`**, or disable the default with **`HONEY_TRANSFER_AGENT_DOWNLOAD_DISABLE_DEFAULT=1`** (see `website/docs/web-ui.md`).
 
-Open the **URL printed on stderr** (includes `?token=…`). The web UI **API** tab embeds **Swagger UI** against the same OpenAPI document as **`GET /api/v1/openapi.json`** (same auth as other routes); regenerate the spec with **`make openapi`** or `go generate` in `internal/webserver` after changing handler comments. Deep-link the tab with **`?tab=api-docs`**. Notable API routes: `GET /api/v1/meta` (includes `terminal_assist_available`, `session_recording_available`, and `metrics_url` when `--metrics-listen` is set), `POST /api/v1/search`, `GET`/`PUT /api/v1/config`, structured backends under `/api/v1/config/backends/…` (path segment **`kubernetes`** matches YAML; search uses provider id **`k8s`**), `POST /api/v1/upload`, **`GET /api/v1/terminal-assist/models`** and **`POST /api/v1/terminal-assist`** (terminal AI), **`POST /api/v1/recipes/assist`** (recipe AI), recordings under `/api/v1/recordings`, WebSocket **`GET /ws/ssh?token=…`**. Authenticate with `Authorization: Bearer <token>` or `X-Honey-Token`.
+Open the **URL printed on stderr** (includes `?token=…`). The web UI **API** tab embeds **Swagger UI** against the same OpenAPI document as **`GET /api/v1/openapi.json`** (same auth as other routes); regenerate the spec with **`task openapi`** or `go generate` in `internal/webserver` after changing handler comments. Deep-link the tab with **`?tab=api-docs`**. Notable API routes: `GET /api/v1/meta` (includes `terminal_assist_available`, `session_recording_available`, and `metrics_url` when `--metrics-listen` is set), `POST /api/v1/search`, `GET`/`PUT /api/v1/config`, structured backends under `/api/v1/config/backends/…` (path segment **`kubernetes`** matches YAML; search uses provider id **`k8s`**), `POST /api/v1/upload`, **`GET /api/v1/terminal-assist/models`** and **`POST /api/v1/terminal-assist`** (terminal AI), **`POST /api/v1/recipes/assist`** (recipe AI), recordings under `/api/v1/recordings`, WebSocket **`GET /ws/ssh?token=…`**. Authenticate with `Authorization: Bearer <token>` or `X-Honey-Token`.
 
 **Local UI dev** (Vite proxies to the Go server): run `honey web` on `8765`, then `cd webui && npm install && npm run dev` and open Vite’s URL.
 
