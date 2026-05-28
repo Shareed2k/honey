@@ -17,6 +17,15 @@ type Options struct {
 	TokenizerPath string
 	Threshold     float64
 	Window        int
+
+	// LLMEndpoint is the base URL of an OpenAI-compatible API (Ollama: http://localhost:11434/v1,
+	// LM Studio: http://localhost:1234/v1). When set, log lines are scored via chat completions.
+	LLMEndpoint string
+	// LLMModel is the model name sent to the LLM endpoint. Defaults to "llama3" when empty.
+	LLMModel string
+	// LLMContextLines is the number of recent log lines sent as context with each LLM request.
+	// 0 disables context (single-line mode). Default 5 when unset.
+	LLMContextLines int
 }
 
 // Result holds the outcome of scoring a single log line.
@@ -58,7 +67,18 @@ func NewEmbeddedDetector(opts Options) (*EmbeddedDetector, error) {
 		window = 32
 	}
 	d := &EmbeddedDetector{threshold: threshold, window: window, seen: make(map[string]int)}
-	if strings.TrimSpace(opts.ModelPath) != "" {
+	hasONNX := strings.TrimSpace(opts.ModelPath) != ""
+	hasLLM := strings.TrimSpace(opts.LLMEndpoint) != ""
+	switch {
+	case hasONNX && hasLLM:
+		onnxDet, err := newONNXDetector(opts.ModelPath, opts.TokenizerPath, threshold, window)
+		if err != nil {
+			return nil, err
+		}
+		d.impl = &ensembleDetector{a: onnxDet, b: newLLMDetector(opts.LLMEndpoint, opts.LLMModel, threshold, opts.LLMContextLines), threshold: threshold}
+	case hasLLM:
+		d.impl = newLLMDetector(opts.LLMEndpoint, opts.LLMModel, threshold, opts.LLMContextLines)
+	case hasONNX:
 		onnxDet, err := newONNXDetector(opts.ModelPath, opts.TokenizerPath, threshold, window)
 		if err != nil {
 			return nil, err
@@ -69,15 +89,23 @@ func NewEmbeddedDetector(opts Options) (*EmbeddedDetector, error) {
 }
 
 var (
-	reUUID = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}`)
-	reIP   = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
-	reNum  = regexp.MustCompile(`\b\d{3,}\b`)
+	reUUID  = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}`)
+	reMAC   = regexp.MustCompile(`\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b`)
+	reIP    = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
+	reHex   = regexp.MustCompile(`\b0x[0-9a-fA-F]{2,}\b`)
+	reEmail = regexp.MustCompile(`\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b`)
+	reBool  = regexp.MustCompile(`\b(?:true|false)\b`)
+	reNum   = regexp.MustCompile(`\b\d{3,}\b`)
 )
 
 func normalize(line string) string {
 	line = strings.ToLower(strings.TrimSpace(line))
 	line = reUUID.ReplaceAllString(line, "<uuid>")
+	line = reMAC.ReplaceAllString(line, "<mac>")
 	line = reIP.ReplaceAllString(line, "<ip>")
+	line = reHex.ReplaceAllString(line, "<hex>")
+	line = reEmail.ReplaceAllString(line, "<email>")
+	line = reBool.ReplaceAllString(line, "<bool>")
 	line = reNum.ReplaceAllString(line, "<num>")
 	return line
 }

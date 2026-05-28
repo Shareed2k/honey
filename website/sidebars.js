@@ -14,6 +14,7 @@ const sidebars = {
     'cue-recipes',
     'plugins-development',
     'add-new-backend',
+    'anomaly-detection',
     {
       type: 'category',
       label: 'CLI Reference',

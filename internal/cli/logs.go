@@ -17,29 +17,32 @@ import (
 )
 
 var (
-	flagLogsFollow          bool
-	flagLogsTail            int64
-	flagLogsSince           time.Duration
-	flagLogsTimestamps      bool
-	flagLogsContainer       string
-	flagLogsUnit            string
-	flagLogsFile            string
-	flagLogsCommand         string
-	flagLogsRunAs           string
-	flagLogsMaxConcurrency  int
-	flagLogsGrep            string
-	flagLogsLabels          []string
-	flagLogsTUI             bool
-	flagLogsOutputFile      string
-	flagLogsHighlight       bool
-	flagLogsAnomaly         bool
-	flagLogsAnomalyModel    string
-	flagLogsAnomalyThresh   float64
-	flagLogsAnomalyWindow   int
-	flagLogsAnomalyOnly     bool
-	flagLogsAnomalyStrict   bool
-	flagLogsAnomalyTokPath  string
-	flagLogsAnomalySelftest bool
+	flagLogsFollow              bool
+	flagLogsTail                int64
+	flagLogsSince               time.Duration
+	flagLogsTimestamps          bool
+	flagLogsContainer           string
+	flagLogsUnit                string
+	flagLogsFile                string
+	flagLogsCommand             string
+	flagLogsRunAs               string
+	flagLogsMaxConcurrency      int
+	flagLogsGrep                string
+	flagLogsLabels              []string
+	flagLogsTUI                 bool
+	flagLogsOutputFile          string
+	flagLogsHighlight           bool
+	flagLogsAnomaly             bool
+	flagLogsAnomalyModel        string
+	flagLogsAnomalyThresh       float64
+	flagLogsAnomalyWindow       int
+	flagLogsAnomalyOnly         bool
+	flagLogsAnomalyStrict       bool
+	flagLogsAnomalyTokPath      string
+	flagLogsAnomalySelftest     bool
+	flagLogsAnomalyEndpoint     string
+	flagLogsAnomalyLLMModel     string
+	flagLogsAnomalyContextLines int
 )
 
 var logsCmd = &cobra.Command{
@@ -75,6 +78,9 @@ func init() {
 	logsCmd.Flags().BoolVar(&flagLogsAnomalyStrict, "anomaly-strict", false, "Fail startup if anomaly detector cannot initialize")
 	logsCmd.Flags().StringVar(&flagLogsAnomalyTokPath, "anomaly-tokenizer", "", "Path to DistilBERT vocab.txt tokenizer file")
 	logsCmd.Flags().BoolVar(&flagLogsAnomalySelftest, "anomaly-selftest", false, "Validate anomaly model/tokenizer/runtime and run a local score smoke test")
+	logsCmd.Flags().StringVar(&flagLogsAnomalyEndpoint, "anomaly-endpoint", "", "OpenAI-compatible API base URL for LLM anomaly scoring (Ollama: http://localhost:11434/v1, LM Studio: http://localhost:1234/v1)")
+	logsCmd.Flags().StringVar(&flagLogsAnomalyLLMModel, "anomaly-llm-model", "llama3", "Model name to use with --anomaly-endpoint")
+	logsCmd.Flags().IntVar(&flagLogsAnomalyContextLines, "anomaly-context", 5, "Number of recent lines sent as context to the LLM (0 = single-line mode)")
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
@@ -87,28 +93,38 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		source = flagLogsFile
 	}
 
+	if flagLogsAnomalyEndpoint != "" {
+		flagLogsAnomaly = true
+	}
+	if flagLogsAnomalyEndpoint != "" && flagLogsAnomalyModel != "" {
+		fmt.Fprintln(os.Stderr, "warning: ensemble mode active (ONNX + LLM) — both detectors score every log line in parallel; throughput is limited by LLM response time (~1–5 s/line)")
+	}
+
 	opts := ui.LogOptions{
-		Target:         target,
-		Source:         source,
-		Follow:         flagLogsFollow,
-		Tail:           flagLogsTail,
-		Since:          flagLogsSince,
-		Timestamps:     flagLogsTimestamps,
-		Container:      flagLogsContainer,
-		Unit:           flagLogsUnit,
-		Command:        flagLogsCommand,
-		RunAs:          flagLogsRunAs,
-		MaxConcurrency: flagLogsMaxConcurrency,
-		Grep:           flagLogsGrep,
-		Labels:         flagLogsLabels,
-		Highlight:      flagLogsHighlight,
-		Anomaly:        flagLogsAnomaly,
-		AnomalyModel:   flagLogsAnomalyModel,
-		AnomalyThresh:  flagLogsAnomalyThresh,
-		AnomalyWindow:  flagLogsAnomalyWindow,
-		AnomalyOnly:    flagLogsAnomalyOnly,
-		AnomalyStrict:  flagLogsAnomalyStrict,
-		AnomalyTokPath: flagLogsAnomalyTokPath,
+		Target:              target,
+		Source:              source,
+		Follow:              flagLogsFollow,
+		Tail:                flagLogsTail,
+		Since:               flagLogsSince,
+		Timestamps:          flagLogsTimestamps,
+		Container:           flagLogsContainer,
+		Unit:                flagLogsUnit,
+		Command:             flagLogsCommand,
+		RunAs:               flagLogsRunAs,
+		MaxConcurrency:      flagLogsMaxConcurrency,
+		Grep:                flagLogsGrep,
+		Labels:              flagLogsLabels,
+		Highlight:           flagLogsHighlight,
+		Anomaly:             flagLogsAnomaly,
+		AnomalyModel:        flagLogsAnomalyModel,
+		AnomalyThresh:       flagLogsAnomalyThresh,
+		AnomalyWindow:       flagLogsAnomalyWindow,
+		AnomalyOnly:         flagLogsAnomalyOnly,
+		AnomalyStrict:       flagLogsAnomalyStrict,
+		AnomalyTokPath:      flagLogsAnomalyTokPath,
+		AnomalyEndpoint:     flagLogsAnomalyEndpoint,
+		AnomalyLLMModel:     flagLogsAnomalyLLMModel,
+		AnomalyContextLines: flagLogsAnomalyContextLines,
 	}
 
 	if flagLogsAnomalySelftest {

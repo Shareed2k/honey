@@ -28,27 +28,30 @@ import (
 
 // LogOptions controls distributed log streaming.
 type LogOptions struct {
-	Target         string
-	Source         string
-	Follow         bool
-	Tail           int64
-	Since          time.Duration
-	Timestamps     bool
-	Container      string
-	Unit           string
-	Command        string
-	RunAs          string
-	MaxConcurrency int
-	Grep           string
-	Labels         []string
-	Highlight      bool
-	Anomaly        bool
-	AnomalyModel   string
-	AnomalyThresh  float64
-	AnomalyWindow  int
-	AnomalyOnly    bool
-	AnomalyStrict  bool
-	AnomalyTokPath string
+	Target              string
+	Source              string
+	Follow              bool
+	Tail                int64
+	Since               time.Duration
+	Timestamps          bool
+	Container           string
+	Unit                string
+	Command             string
+	RunAs               string
+	MaxConcurrency      int
+	Grep                string
+	Labels              []string
+	Highlight           bool
+	Anomaly             bool
+	AnomalyModel        string
+	AnomalyThresh       float64
+	AnomalyWindow       int
+	AnomalyOnly         bool
+	AnomalyStrict       bool
+	AnomalyTokPath      string
+	AnomalyEndpoint     string
+	AnomalyLLMModel     string
+	AnomalyContextLines int
 }
 
 // StreamLogs streams logs for records to out with stable per-record prefixes.
@@ -75,10 +78,13 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 	var detector anomaly.Detector
 	if opts.Anomaly {
 		d, err := anomaly.NewEmbeddedDetector(anomaly.Options{
-			ModelPath:     strings.TrimSpace(opts.AnomalyModel),
-			Threshold:     opts.AnomalyThresh,
-			Window:        opts.AnomalyWindow,
-			TokenizerPath: strings.TrimSpace(opts.AnomalyTokPath),
+			ModelPath:       strings.TrimSpace(opts.AnomalyModel),
+			Threshold:       opts.AnomalyThresh,
+			Window:          opts.AnomalyWindow,
+			TokenizerPath:   strings.TrimSpace(opts.AnomalyTokPath),
+			LLMEndpoint:     strings.TrimSpace(opts.AnomalyEndpoint),
+			LLMModel:        strings.TrimSpace(opts.AnomalyLLMModel),
+			LLMContextLines: opts.AnomalyContextLines,
 		})
 		if err != nil {
 			if opts.AnomalyStrict {
