@@ -2,10 +2,10 @@ package anomaly
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,6 +13,8 @@ import (
 	"unicode"
 
 	ort "github.com/yalue/onnxruntime_go"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 const maxSeqLen = 128
@@ -233,13 +235,12 @@ func clamp01(v float64) float64 {
 }
 
 func loadVocab(path string) (map[string]int64, error) {
-	f, err := os.Open(path)
+	data, err := safepath.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	vocab := make(map[string]int64)
-	s := bufio.NewScanner(f)
+	s := bufio.NewScanner(bytes.NewReader(data))
 	idx := int64(0)
 	for s.Scan() {
 		tok := strings.TrimSpace(s.Text())

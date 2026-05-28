@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // resolveONNXRuntimeLibraryDir returns the best-effort directory containing
@@ -17,7 +19,7 @@ import (
 // 3) alongside binary: runtime/onnx/<os>/<arch>
 func resolveONNXRuntimeLibraryDir() (string, error) {
 	if v := strings.TrimSpace(os.Getenv("HONEY_ONNXRUNTIME_LIB_DIR")); v != "" {
-		if st, err := os.Stat(v); err == nil && st.IsDir() {
+		if st, err := safepath.Stat(v); err == nil && st.IsDir() {
 			return v, nil
 		}
 		return "", fmt.Errorf("HONEY_ONNXRUNTIME_LIB_DIR not found or not a directory: %s", v)
@@ -30,7 +32,7 @@ func resolveONNXRuntimeLibraryDir() (string, error) {
 	base := filepath.Dir(exe)
 	rel := filepath.Join("runtime", "onnx", runtime.GOOS, runtime.GOARCH)
 	for _, cand := range []string{filepath.Join(base, "..", rel), filepath.Join(base, rel)} {
-		if st, err := os.Stat(cand); err == nil && st.IsDir() {
+		if st, err := safepath.Stat(cand); err == nil && st.IsDir() {
 			return cand, nil
 		}
 	}

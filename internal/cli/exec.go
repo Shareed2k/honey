@@ -54,7 +54,7 @@ func init() {
 	execCmd.Flags().StringVarP(&flagExecOutput, "output", "o", "text", "Output format: text or json")
 }
 
-func runExec(cmd *cobra.Command, args []string) error {
+func validateExecFlags() error {
 	if flagExecParallel <= 0 {
 		return fmt.Errorf("--parallel must be > 0")
 	}
@@ -69,6 +69,40 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 	if strings.EqualFold(flagExecShell, "powershell") && strings.TrimSpace(flagExecRunAs) != "" {
 		return fmt.Errorf("--run-as is not supported with --shell powershell")
+	}
+	return nil
+}
+
+func printExecResult(res ui.HostExecResult) {
+	prefix := fmt.Sprintf("[%s/%s/%s]", res.Provider, res.Name, strings.TrimSpace(res.IP))
+	output := strings.TrimSpace(res.Output)
+	if res.Success {
+		fmt.Fprintf(os.Stdout, "%s ok\n", prefix)
+		if !flagExecQuiet && output != "" {
+			fmt.Fprintf(os.Stdout, "%s stdout:\n%s\n", prefix, output)
+		}
+		return
+	}
+	errMsg := strings.TrimSpace(res.ErrMsg)
+	if errMsg == "" {
+		errMsg = "command failed"
+	}
+	if res.ExitCode == 124 && strings.Contains(res.Output, timeoutMissingMarker) {
+		errMsg = "remote host missing `timeout` command (install coreutils or set --timeout=0)"
+	}
+	if res.ExitCode != 0 {
+		fmt.Fprintf(os.Stdout, "%s fail exit=%d err=%s\n", prefix, res.ExitCode, errMsg)
+	} else {
+		fmt.Fprintf(os.Stdout, "%s fail err=%s\n", prefix, errMsg)
+	}
+	if !flagExecQuiet && output != "" {
+		fmt.Fprintf(os.Stdout, "%s stdout:\n%s\n", prefix, output)
+	}
+}
+
+func runExec(cmd *cobra.Command, args []string) error {
+	if err := validateExecFlags(); err != nil {
+		return err
 	}
 
 	target := strings.TrimSpace(args[0])
@@ -124,32 +158,8 @@ func runExec(cmd *cobra.Command, args []string) error {
 		if !res.Success {
 			failures++
 		}
-		prefix := fmt.Sprintf("[%s/%s/%s]", res.Provider, res.Name, strings.TrimSpace(res.IP))
-		output := strings.TrimSpace(res.Output)
-		if flagExecOutput == "json" {
-			continue
-		}
-		if res.Success {
-			fmt.Fprintf(os.Stdout, "%s ok\n", prefix)
-			if !flagExecQuiet && output != "" {
-				fmt.Fprintf(os.Stdout, "%s stdout:\n%s\n", prefix, output)
-			}
-			continue
-		}
-		errMsg := strings.TrimSpace(res.ErrMsg)
-		if errMsg == "" {
-			errMsg = "command failed"
-		}
-		if res.ExitCode == 124 && strings.Contains(res.Output, timeoutMissingMarker) {
-			errMsg = "remote host missing `timeout` command (install coreutils or set --timeout=0)"
-		}
-		if res.ExitCode != 0 {
-			fmt.Fprintf(os.Stdout, "%s fail exit=%d err=%s\n", prefix, res.ExitCode, errMsg)
-		} else {
-			fmt.Fprintf(os.Stdout, "%s fail err=%s\n", prefix, errMsg)
-		}
-		if !flagExecQuiet && output != "" {
-			fmt.Fprintf(os.Stdout, "%s stdout:\n%s\n", prefix, output)
+		if flagExecOutput != "json" {
+			printExecResult(res)
 		}
 	}
 
@@ -175,7 +185,7 @@ func buildExecCommand(command string, timeout time.Duration, runAs, shellMode st
 	if shellMode == "" || shellMode == "auto" {
 		shellMode = "sh"
 	}
-	inner := command
+	var inner string
 	if timeout > 0 {
 		switch shellMode {
 		case "sh", "bash":

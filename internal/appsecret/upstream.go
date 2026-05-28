@@ -1,3 +1,4 @@
+// Package appsecret handles decryption of secure:v1 app upstream DSNs.
 package appsecret
 
 import (
@@ -12,6 +13,7 @@ import (
 
 const prefix = "secure:v1:"
 
+// IsEncryptedUpstream reports whether v is a secure:v1 encrypted reference.
 func IsEncryptedUpstream(v string) bool {
 	return strings.HasPrefix(strings.TrimSpace(v), prefix)
 }

@@ -76,7 +76,6 @@ func init() {
 
 	proxyTCPCmd.Flags().IntVar(&flagAppPort, "port", 0, "Override local port")
 	proxyTCPCmd.Flags().BoolVar(&flagAppPrintURL, "print-url", false, "Print only the address")
-	proxyTCPCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
 	proxyTCPCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	proxyTCPCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	proxyTCPCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")

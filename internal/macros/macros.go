@@ -1,3 +1,4 @@
+// Package macros loads and validates honeyfile.yaml macro sets.
 package macros
 
 import (
@@ -9,10 +10,14 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
+// APIVersionV1Alpha1 is the only supported apiVersion value for MacroSet documents.
 const APIVersionV1Alpha1 = "honey.shareed2k.io/v1alpha1"
 
+// MacroSet is the top-level structure of a honeyfile.yaml.
 type MacroSet struct {
 	APIVersion string     `yaml:"apiVersion" validate:"required,eq=honey.shareed2k.io/v1alpha1"`
 	Kind       string     `yaml:"kind" validate:"required,eq=MacroSet"`
@@ -20,14 +25,17 @@ type MacroSet struct {
 	Spec       MacroSpecs `yaml:"spec" validate:"required"`
 }
 
+// Metadata holds identifying information for a MacroSet.
 type Metadata struct {
 	Name string `yaml:"name" validate:"required"`
 }
 
+// MacroSpecs contains the named macro definitions within a MacroSet.
 type MacroSpecs struct {
 	Macros map[string]Macro `yaml:"macros" validate:"required,min=1,dive,keys,required,endkeys,required"`
 }
 
+// Macro describes a single named automation entry in a MacroSet.
 type Macro struct {
 	Kind string `yaml:"kind" validate:"required,oneof=exec recipe logs tunnel app"`
 
@@ -69,6 +77,7 @@ type Macro struct {
 	OpenBrowser *bool  `yaml:"openBrowser"`
 }
 
+// ResolvePath returns the absolute path of the honeyfile, checking --file, HONEY_MACROS_FILE, and default filenames.
 func ResolvePath(explicit string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return filepath.Abs(strings.TrimSpace(explicit))
@@ -84,8 +93,9 @@ func ResolvePath(explicit string) (string, error) {
 	return "", fmt.Errorf("honey macros file not found (use --file or HONEY_MACROS_FILE)")
 }
 
+// Load parses and validates the MacroSet at path.
 func Load(path string) (*MacroSet, error) {
-	b, err := os.ReadFile(path)
+	b, err := safepath.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

@@ -1,3 +1,4 @@
+// Package anomaly provides log anomaly detection using ONNX models or a built-in heuristic fallback.
 package anomaly
 
 import (
@@ -10,6 +11,7 @@ import (
 	"sync"
 )
 
+// Options configures the anomaly detector.
 type Options struct {
 	ModelPath     string
 	TokenizerPath string
@@ -17,6 +19,7 @@ type Options struct {
 	Window        int
 }
 
+// Result holds the outcome of scoring a single log line.
 type Result struct {
 	Score    float64
 	Anomaly  bool
@@ -24,10 +27,12 @@ type Result struct {
 	Original string
 }
 
+// Detector scores log lines for anomaly probability.
 type Detector interface {
 	Score(ctx context.Context, line string) (Result, error)
 }
 
+// EmbeddedDetector wraps an ONNX model or falls back to a heuristic scorer.
 type EmbeddedDetector struct {
 	impl      Detector
 	threshold float64
@@ -37,6 +42,7 @@ type EmbeddedDetector struct {
 	recent    []string
 }
 
+// NewEmbeddedDetector creates a detector backed by the ONNX model at opts.ModelPath, or a heuristic if empty.
 func NewEmbeddedDetector(opts Options) (*EmbeddedDetector, error) {
 	if opts.ModelPath != "" {
 		if _, err := os.Stat(opts.ModelPath); err != nil {
@@ -76,6 +82,7 @@ func normalize(line string) string {
 	return line
 }
 
+// Score returns the anomaly score for a single log line.
 func (d *EmbeddedDetector) Score(ctx context.Context, line string) (Result, error) {
 	if d.impl != nil {
 		return d.impl.Score(ctx, line)
