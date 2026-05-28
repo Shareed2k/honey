@@ -12,6 +12,7 @@ vars:
 
 env:
   DOCKER_CONTEXT: remote-builder
+  CGO_ENABLED: 1
 
 tasks:
   webui:
@@ -20,6 +21,13 @@ tasks:
     cmds:
       - npm ci
       - npm run build
+
+  build:
+    desc: Build the honey binary
+    dir: cmd/honey
+    cmds:
+      - task: webui
+      - go build -ldflags "-X main.version=$(date -u +%Y.%m.%d) -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%d) -s -w" -o /tmp/honey .
 
   openapi:
     desc: Regenerate OpenAPI 3 spec for the honey web API

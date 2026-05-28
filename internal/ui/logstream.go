@@ -16,15 +16,18 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/shareed2k/honey/internal/alerts"
 	"github.com/shareed2k/honey/internal/anomaly"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
+	"github.com/shareed2k/honey/internal/recipenotify"
 )
 
 type feedbackWriter struct {
@@ -89,6 +92,8 @@ type LogOptions struct {
 	AnomalyFreqWindow      int
 	AnomalyFreqRatio       float64
 	AnomalyFeedbackFile    string
+	AlertEnabled           bool
+	AlertSuppressDuration  time.Duration
 }
 
 // StreamLogs streams logs for records to out with stable per-record prefixes.
@@ -130,21 +135,47 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 			if opts.AnomalyStrict {
 				return fmt.Errorf("initialize anomaly detector: %w", err)
 			}
+			zap.L().Debug("anomaly detector disabled", zap.Error(err))
 			_, _ = fmt.Fprintf(os.Stderr, "warning: anomaly detector disabled: %v\n", err)
 		} else {
+			zap.L().Debug("anomaly detector initialized",
+				zap.String("model", opts.AnomalyModel),
+				zap.Float64("threshold", opts.AnomalyThresh),
+				zap.Int("freqWindow", opts.AnomalyFreqWindow),
+				zap.Float64("freqRatio", opts.AnomalyFreqRatio),
+			)
 			detector = d
 		}
 	}
 
 	var fbw *feedbackWriter
 	if opts.AnomalyFeedbackFile != "" {
-		f, err := os.OpenFile(opts.AnomalyFeedbackFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304
+		f, err := os.OpenFile(opts.AnomalyFeedbackFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304
 		if err != nil {
 			return fmt.Errorf("feedback file: %w", err)
 		}
 		defer f.Close()
 		fbw = &feedbackWriter{mu: &sync.Mutex{}, w: f}
 	}
+
+	var disp *alerts.Dispatcher
+	if opts.AlertEnabled && recipenotify.EnvHasAnyReceiver() {
+		dur := opts.AlertSuppressDuration
+		if dur == 0 {
+			dur = 5 * time.Minute
+		}
+		n, _ := recipenotify.BuildFromEnv()
+		disp = alerts.New(n, dur)
+		defer disp.Close()
+	}
+
+	zap.L().Debug("StreamLogs start",
+		zap.Int("records", len(records)),
+		zap.Bool("follow", opts.Follow),
+		zap.Int64("tail", opts.Tail),
+		zap.String("grep", opts.Grep),
+		zap.Bool("anomaly", opts.Anomaly),
+	)
 
 	g, ctx := errgroup.WithContext(ctx)
 	sem := make(chan struct{}, opts.MaxConcurrency)
@@ -158,34 +189,44 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-			return streamOneLog(ctx, user, rec, opts, cache, out, &writeMu, grepRe, detector, fbw)
+			return streamOneLog(ctx, user, rec, opts, cache, out, &writeMu, grepRe, detector, fbw, disp)
 		})
 	}
 	return g.Wait()
 }
 
-func streamOneLog(ctx context.Context, user string, rec hosts.Record, opts LogOptions, cache *ClientCache, out io.Writer, mu *sync.Mutex, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter) error {
+func streamOneLog(ctx context.Context, user string, rec hosts.Record, opts LogOptions, cache *ClientCache, out io.Writer, mu *sync.Mutex, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter, disp *alerts.Dispatcher) error {
+	zap.L().Debug("streamOneLog",
+		zap.String("record", rec.Name),
+		zap.String("provider", rec.Provider),
+		zap.String("kind", rec.Meta["kind"]),
+	)
 	prefix := logPrefix(rec, opts.Labels)
 	if opts.Command != "" || opts.Unit != "" || strings.TrimSpace(opts.Source) != "" {
-		return streamExecutorLogs(ctx, user, rec, opts, cache, out, mu, prefix, grepRe, detector, fbw)
+		return streamExecutorLogs(ctx, user, rec, opts, cache, out, mu, prefix, grepRe, detector, fbw, disp)
 	}
 
 	switch {
 	case rec.Provider == "k8s" && rec.Meta["kind"] == "pod":
-		return streamK8sPodLogs(ctx, rec, opts, out, mu, prefix, grepRe, detector, fbw)
+		return streamK8sPodLogs(ctx, rec, opts, out, mu, prefix, grepRe, detector, fbw, disp)
 	case rec.Provider == "docker" && (rec.Meta["kind"] == "container" || rec.Meta["kind"] == "swarm_task"):
-		return streamDockerLogs(ctx, user, rec, opts, out, mu, prefix, grepRe, detector, fbw)
+		return streamDockerLogs(ctx, user, rec, opts, out, mu, prefix, grepRe, detector, fbw, disp)
 	default:
-		return streamExecutorLogs(ctx, user, rec, opts, cache, out, mu, prefix, grepRe, detector, fbw)
+		return streamExecutorLogs(ctx, user, rec, opts, cache, out, mu, prefix, grepRe, detector, fbw, disp)
 	}
 }
 
-func streamK8sPodLogs(ctx context.Context, rec hosts.Record, opts LogOptions, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter) error {
+func streamK8sPodLogs(ctx context.Context, rec hosts.Record, opts LogOptions, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter, disp *alerts.Dispatcher) error {
 	namespace := strings.TrimSpace(rec.Meta["namespace"])
 	podName := strings.TrimSpace(rec.Meta["pod_name"])
 	if namespace == "" || podName == "" {
 		return fmt.Errorf("%s missing k8s namespace or pod_name", rec.Name)
 	}
+	zap.L().Debug("k8s pod logs",
+		zap.String("namespace", namespace),
+		zap.String("pod", podName),
+		zap.String("container", opts.Container),
+	)
 
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig := strings.TrimSpace(rec.Meta["kubeconfig"]); kubeconfig != "" {
@@ -225,14 +266,18 @@ func streamK8sPodLogs(ctx context.Context, rec hosts.Record, opts LogOptions, ou
 		return err
 	}
 	defer r.Close()
-	return copyPrefixedLines(ctx, r, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw)
+	return copyPrefixedLines(ctx, r, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw, disp)
 }
 
-func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts LogOptions, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter) error {
+func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts LogOptions, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter, disp *alerts.Dispatcher) error {
 	containerID, err := dockerprovider.ContainerIDFromRecord(rec.Meta["container_id"])
 	if err != nil {
 		return err
 	}
+	zap.L().Debug("docker container logs",
+		zap.String("record", rec.Name),
+		zap.String("containerID", containerID),
+	)
 	dc, err := dockerExecutor{}.Dial(user, rec)
 	if err != nil {
 		return err
@@ -256,8 +301,8 @@ func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts L
 	}
 	defer logs.Close()
 
-	stdout := newPrefixedWriter(ctx, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw)
-	stderr := newPrefixedWriter(ctx, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw)
+	stdout := newPrefixedWriter(ctx, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw, disp)
+	stderr := newPrefixedWriter(ctx, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw, disp)
 	inspect, inspectErr := native.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if inspectErr == nil && inspect.Container.Config != nil && inspect.Container.Config.Tty {
 		_, err = io.Copy(stdout, logs)
@@ -269,16 +314,21 @@ func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts L
 	return err
 }
 
-func streamExecutorLogs(ctx context.Context, user string, rec hosts.Record, opts LogOptions, cache *ClientCache, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter) error {
+func streamExecutorLogs(ctx context.Context, user string, rec hosts.Record, opts LogOptions, cache *ClientCache, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter, disp *alerts.Dispatcher) error {
 	cmd, err := logCommandWithRunAs(opts)
 	if err != nil {
 		return err
 	}
+	zap.L().Debug("executor logs",
+		zap.String("record", rec.Name),
+		zap.String("command", cmd),
+		zap.String("runAs", opts.RunAs),
+	)
 	client, err := cache.GetOrDial(user, rec)
 	if err != nil {
 		return err
 	}
-	writer := newPrefixedWriter(ctx, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw)
+	writer := newPrefixedWriter(ctx, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw, disp)
 	defer writer.Flush()
 	done := make(chan error, 1)
 	go func() {
@@ -374,11 +424,11 @@ func logPrefix(rec hosts.Record, labelKeys []string) string {
 	return prefix
 }
 
-func copyPrefixedLines(ctx context.Context, r io.Reader, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, highlight bool, detector anomaly.Detector, anomalyOnly bool, fbw *feedbackWriter) error {
+func copyPrefixedLines(ctx context.Context, r io.Reader, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, highlight bool, detector anomaly.Detector, anomalyOnly bool, fbw *feedbackWriter, disp *alerts.Dispatcher) error {
 	s := bufio.NewScanner(r)
 	s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for s.Scan() {
-		writePrefixedLine(ctx, out, mu, prefix, s.Text(), grepRe, highlight, detector, anomalyOnly, fbw)
+		writePrefixedLine(ctx, out, mu, prefix, s.Text(), grepRe, highlight, detector, anomalyOnly, fbw, disp)
 	}
 	return s.Err()
 }
@@ -393,17 +443,18 @@ type prefixedWriter struct {
 	detector  anomaly.Detector
 	anomOnly  bool
 	fbw       *feedbackWriter
+	disp      *alerts.Dispatcher
 	buf       strings.Builder
 }
 
-func newPrefixedWriter(ctx context.Context, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, highlight bool, detector anomaly.Detector, anomalyOnly bool, fbw *feedbackWriter) *prefixedWriter {
-	return &prefixedWriter{ctx: ctx, out: out, mu: mu, prefix: prefix, grepRe: grepRe, highlight: highlight, detector: detector, anomOnly: anomalyOnly, fbw: fbw}
+func newPrefixedWriter(ctx context.Context, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, highlight bool, detector anomaly.Detector, anomalyOnly bool, fbw *feedbackWriter, disp *alerts.Dispatcher) *prefixedWriter {
+	return &prefixedWriter{ctx: ctx, out: out, mu: mu, prefix: prefix, grepRe: grepRe, highlight: highlight, detector: detector, anomOnly: anomalyOnly, fbw: fbw, disp: disp}
 }
 
 func (w *prefixedWriter) Write(p []byte) (int, error) {
 	for _, b := range p {
 		if b == '\n' {
-			writePrefixedLine(w.ctx, w.out, w.mu, w.prefix, w.buf.String(), w.grepRe, w.highlight, w.detector, w.anomOnly, w.fbw)
+			writePrefixedLine(w.ctx, w.out, w.mu, w.prefix, w.buf.String(), w.grepRe, w.highlight, w.detector, w.anomOnly, w.fbw, w.disp)
 			w.buf.Reset()
 			continue
 		}
@@ -416,11 +467,11 @@ func (w *prefixedWriter) Flush() {
 	if w.buf.Len() == 0 {
 		return
 	}
-	writePrefixedLine(w.ctx, w.out, w.mu, w.prefix, w.buf.String(), w.grepRe, w.highlight, w.detector, w.anomOnly, w.fbw)
+	writePrefixedLine(w.ctx, w.out, w.mu, w.prefix, w.buf.String(), w.grepRe, w.highlight, w.detector, w.anomOnly, w.fbw, w.disp)
 	w.buf.Reset()
 }
 
-func writePrefixedLine(ctx context.Context, out io.Writer, mu *sync.Mutex, prefix string, line string, grepRe *regexp.Regexp, highlight bool, detector anomaly.Detector, anomalyOnly bool, fbw *feedbackWriter) {
+func writePrefixedLine(ctx context.Context, out io.Writer, mu *sync.Mutex, prefix string, line string, grepRe *regexp.Regexp, highlight bool, detector anomaly.Detector, anomalyOnly bool, fbw *feedbackWriter, disp *alerts.Dispatcher) {
 	if grepRe != nil && !grepRe.MatchString(line) {
 		return
 	}
@@ -438,6 +489,14 @@ func writePrefixedLine(ctx context.Context, out io.Writer, mu *sync.Mutex, prefi
 				return
 			}
 			if res.Anomaly {
+				zap.L().Debug("anomaly detected",
+					zap.String("prefix", strings.TrimSpace(prefix)),
+					zap.Float64("score", res.Score),
+					zap.String("reason", res.Reason),
+				)
+				if disp != nil {
+					disp.Dispatch(ctx, strings.TrimSpace(prefix), res.Score, res.Reason, line)
+				}
 				line = fmt.Sprintf("[ANOM score=%.2f reason=%s] %s", res.Score, res.Reason, line)
 			}
 		}

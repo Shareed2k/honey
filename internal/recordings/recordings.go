@@ -29,6 +29,32 @@ type Event struct {
 	Result    json.RawMessage `json:"result,omitempty"`
 }
 
+// ParseOpenMessage extracts trigger, mode, provider, hostName, hostIP, user
+// from the space-separated "key=value" pairs in an open event Message string.
+func ParseOpenMessage(msg string) (trigger, mode, provider, hostName, hostIP, user string) {
+	for _, part := range strings.Fields(strings.TrimSpace(msg)) {
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "trigger":
+			trigger = v
+		case "mode":
+			mode = v
+		case "provider":
+			provider = v
+		case "host":
+			hostName = v
+		case "ip":
+			hostIP = v
+		case "user":
+			user = v
+		}
+	}
+	return
+}
+
 // HasStructuredBatch matches web replay: batch/CUE logs use result or plan chunks.
 func HasStructuredBatch(events []Event) bool {
 	for _, e := range events {

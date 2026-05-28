@@ -1030,3 +1030,47 @@ export async function runPostgresQuery(sessionId: string, sql: string, database?
   }
   return await res.json();
 }
+
+export interface LogsStreamRequest {
+  records: HostRecord[];
+  ssh_user?: string;
+  source?: string;
+  follow?: boolean;
+  tail?: number;
+  since?: string;
+  container?: string;
+  unit?: string;
+  command?: string;
+  run_as?: string;
+  grep?: string;
+  labels?: string[];
+  anomaly?: boolean;
+  anomaly_threshold?: number;
+  anomaly_only?: boolean;
+  anomaly_model?: string;
+  anomaly_tokenizer?: string;
+  anomaly_endpoint?: string;
+  anomaly_llm_model?: string;
+  anomaly_context?: number;
+  anomaly_filter_threshold?: number;
+  anomaly_freq_window?: number;
+  anomaly_freq_ratio?: number;
+}
+
+export async function streamLogs(
+  req: LogsStreamRequest,
+  onLine: (line: string) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const r = await fetch('/api/v1/logs/stream', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  await readNDJSON<{ line: string }>(r, (obj) => onLine(obj.line));
+}

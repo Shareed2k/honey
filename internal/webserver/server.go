@@ -41,6 +41,7 @@ type Options struct {
 	Metrics            *metrics.Registry
 	NoCache            bool
 	Refresh            bool
+	AllowLogsCommand   bool
 }
 
 // Server is the honey web UI HTTP server.
@@ -139,6 +140,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/v1/proxy/sessions/{id}", s.withAuth(s.handleProxySessionDelete))
 	s.mux.HandleFunc("GET /api/v1/postgres/catalog", s.withAuth(s.handlePostgresCatalog))
 	s.mux.HandleFunc("POST /api/v1/postgres/query", s.withAuth(s.handlePostgresQuery))
+
+	s.mux.HandleFunc("POST /api/v1/logs/stream", s.withAuth(s.handleLogsStream))
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -246,6 +249,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 		ConfigPath:                cfgPath,
 		SessionRecordingAvailable: strings.TrimSpace(s.opts.RecordDir) != "",
 		TerminalAssistAvailable:   terminalAssistConfigured(),
+		LogsCommandAllowed:        s.opts.AllowLogsCommand,
 	}
 	if maxAge, text := s.recordingRetentionMaxAge(); maxAge > 0 && text != "" {
 		meta.SessionRecordingRetention = text

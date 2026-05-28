@@ -5,7 +5,7 @@ import {
 import type { MenuProps } from 'antd';
 import {
   SearchOutlined, FileOutlined, CloudOutlined, SettingOutlined,
-  PlayCircleOutlined, ApiOutlined, AppstoreOutlined, DatabaseOutlined,
+  PlayCircleOutlined, ApiOutlined, AppstoreOutlined, DatabaseOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 import {
   apiGet,
@@ -25,6 +25,7 @@ import { AppsTab } from './AppsTab';
 import { BackendsTab } from './tabs/BackendsTab';
 import { FilesTab } from './tabs/FilesTab';
 import { TunnelsTab } from './tabs/TunnelsTab';
+import { LogsTab } from './tabs/LogsTab';
 import { ConfigTab } from './tabs/ConfigTab';
 import { ApiDocsTab } from './tabs/ApiDocsTab';
 import { SearchTab } from './tabs/SearchTab';
@@ -39,7 +40,7 @@ import {
 type BackendRow = { kind: string; name: string; hint: string };
 
 
-type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'api-docs';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
@@ -84,6 +85,7 @@ export function App() {
       val === 'recipes' ||
       val === 'tunnels' ||
       val === 'apps' ||
+      val === 'logs' ||
       val === 'api-docs'
     ) {
       return val as Tab;
@@ -96,6 +98,7 @@ export function App() {
     config_path: string;
     session_recording_available?: boolean;
     terminal_assist_available?: boolean;
+    logs_command_allowed?: boolean;
   } | null>(null);
   const [backends, setBackends] = useState<BackendRow[]>([]);
   const [backErr, setBackErr] = useState<string | null>(null);
@@ -298,8 +301,9 @@ export function App() {
     { key: 'config',   icon: <SettingOutlined />,    label: 'Config' },
     { key: 'recipes',  icon: <PlayCircleOutlined />, label: 'Recipes' },
     { key: 'tunnels',  icon: <ApiOutlined />,        label: 'Tunnels' },
-    { key: 'apps',     icon: <DatabaseOutlined />,   label: 'Apps & Proxies' },
-    { key: 'api-docs', icon: <AppstoreOutlined />,   label: 'API Docs' },
+    { key: 'apps',     icon: <DatabaseOutlined />,      label: 'Apps & Proxies' },
+    { key: 'logs',     icon: <UnorderedListOutlined />, label: 'Logs' },
+    { key: 'api-docs', icon: <AppstoreOutlined />,      label: 'API Docs' },
   ];
 
   useEffect(() => {
@@ -429,7 +433,7 @@ export function App() {
     }
   };
 
-  const openReplayModal = async (rec: HostRecord) => {
+  const openReplayModal = useCallback(async (rec: HostRecord) => {
     setReplayErr(null);
     setReplayRecord(rec);
     setReplayItems([]);
@@ -446,9 +450,9 @@ export function App() {
     } catch (e) {
       setReplayErr(e instanceof Error ? e.message : String(e));
     }
-  };
+  }, []);
 
-  const openReplayAllRecordings = async () => {
+  const openReplayAllRecordings = useCallback(async () => {
     const placeholder: HostRecord = { provider: '', name: 'All recordings', primary_ip: '' };
     setReplayErr(null);
     setReplayRecord(placeholder);
@@ -468,7 +472,40 @@ export function App() {
     } catch (e) {
       setReplayErr(e instanceof Error ? e.message : String(e));
     }
-  };
+  }, []);
+
+  const handleOpenTunnel = useCallback((rec: HostRecord) => {
+    setTunnelOpen({ record: rec });
+    setTunnelLocalPort('');
+    setTunnelRemotePort('');
+    setTunnelRemoteHost('');
+    setTunnelErr(null);
+    setTunnelPorts([]);
+    setTunnelPortsErr(null);
+    if (rec.provider === 'k8s') {
+      setTunnelPortsLoading(false);
+      if (rec.meta?.ports) {
+        try {
+          const parsed = rec.meta.ports.split(',').map((p) => p.trim()).filter(Boolean);
+          setTunnelPorts(Array.isArray(parsed) ? parsed : []);
+        } catch {
+          // ignore
+        }
+      }
+    } else {
+      setTunnelPortsLoading(true);
+      fetchHostPorts({ ssh_user: sshUser.trim(), record: rec })
+        .then((ports) => { setTunnelPorts(ports); })
+        .catch((e) => { setTunnelPortsErr(e instanceof Error ? e.message : String(e)); })
+        .finally(() => { setTunnelPortsLoading(false); });
+    }
+  }, [sshUser]);
+
+  const handleOpenTerminal = useCallback((cfg: TerminalSessionConfig) => {
+    setTerminals((prev) => [...prev, cfg]);
+    setActiveTermId(cfg.id);
+    setIsTerminalModalOpen(true);
+  }, []);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -514,39 +551,10 @@ export function App() {
               onSshUserChange={setSshUser}
               meta={meta}
               terminals={terminals}
-              onOpenTunnel={(rec) => {
-                setTunnelOpen({ record: rec });
-                setTunnelLocalPort('');
-                setTunnelRemotePort('');
-                setTunnelRemoteHost('');
-                setTunnelErr(null);
-                setTunnelPorts([]);
-                setTunnelPortsErr(null);
-                if (rec.provider === 'k8s') {
-                  setTunnelPortsLoading(false);
-                  if (rec.meta?.ports) {
-                    try {
-                      const parsed = rec.meta.ports.split(',').map((p) => p.trim()).filter(Boolean);
-                      setTunnelPorts(Array.isArray(parsed) ? parsed : []);
-                    } catch {
-                      // ignore
-                    }
-                  }
-                } else {
-                  setTunnelPortsLoading(true);
-                  fetchHostPorts({ ssh_user: sshUser.trim(), record: rec })
-                    .then((ports) => { setTunnelPorts(ports); })
-                    .catch((e) => { setTunnelPortsErr(e instanceof Error ? e.message : String(e)); })
-                    .finally(() => { setTunnelPortsLoading(false); });
-                }
-              }}
+              onOpenTunnel={handleOpenTunnel}
               onOpenReplay={openReplayModal}
               onOpenReplayAll={openReplayAllRecordings}
-              onOpenTerminal={(cfg) => {
-                setTerminals((prev) => [...prev, cfg]);
-                setActiveTermId(cfg.id);
-                setIsTerminalModalOpen(true);
-              }}
+              onOpenTerminal={handleOpenTerminal}
             />
           ) : null}
 
@@ -575,6 +583,10 @@ export function App() {
           {tab === 'apps' ? (
             <AppsTab sshUser={sshUser} providers={selectedProviders} backends={selectedBackends} />
           ) : null}
+
+          <div style={{ display: tab === 'logs' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+            <LogsTab sshUser={sshUser} providers={selectedProviders} backends={selectedBackends} logsCommandAllowed={!!meta?.logs_command_allowed} />
+          </div>
 
           {tab === 'api-docs' ? <ApiDocsTab /> : null}
         </Layout.Content>

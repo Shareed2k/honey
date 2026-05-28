@@ -68,6 +68,7 @@ changelog:
 
 homebrew_casks:
   - name: honey
+    no_quarantine: true
     repository:
       owner: shareed2k
       name: homebrew-tap

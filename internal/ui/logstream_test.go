@@ -35,9 +35,9 @@ func TestWritePrefixedLineFiltering(t *testing.T) {
 	re := regexp.MustCompile("(?i)error")
 
 	// Match
-	writePrefixedLine(context.Background(), &out, &mu, "P: ", "An error occurred", re, false, nil, false, nil)
+	writePrefixedLine(context.Background(), &out, &mu, "P: ", "An error occurred", re, false, nil, false, nil, nil)
 	// No match
-	writePrefixedLine(context.Background(), &out, &mu, "P: ", "Just some info", re, false, nil, false, nil)
+	writePrefixedLine(context.Background(), &out, &mu, "P: ", "Just some info", re, false, nil, false, nil, nil)
 
 	got := out.String()
 	want := "P: An error occurred\n"
@@ -54,8 +54,8 @@ func TestWritePrefixedLineAnomalyOnly(t *testing.T) {
 		t.Fatalf("new detector: %v", err)
 	}
 
-	writePrefixedLine(context.Background(), &out, &mu, "P: ", "all good", nil, false, d, true, nil)
-	writePrefixedLine(context.Background(), &out, &mu, "P: ", "panic in worker", nil, false, d, true, nil)
+	writePrefixedLine(context.Background(), &out, &mu, "P: ", "all good", nil, false, d, true, nil, nil)
+	writePrefixedLine(context.Background(), &out, &mu, "P: ", "panic in worker", nil, false, d, true, nil, nil)
 
 	got := out.String()
 	if !strings.Contains(got, "[ANOM score=") {

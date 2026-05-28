@@ -18,6 +18,10 @@ var (
 	flagDebugLog  string
 	flagRecordDir string
 	flagConfig    string
+
+	// set once by PersistentPreRunE; safe to read from any subcommand RunE.
+	resolvedCfgPath string
+	resolvedCfg     *config.File
 )
 
 var rootCmd = &cobra.Command{
@@ -29,8 +33,11 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 		zap.L().Debug("Logger initialized", zap.String("args", strings.Join(os.Args, " ")))
-		cfgPath, _ := config.ResolvePath(flagConfig)
-		applyCommandFlagDefaults(cmd, cfgPath)
+		resolvedCfgPath, _ = config.ResolvePath(flagConfig)
+		if resolvedCfgPath != "" {
+			resolvedCfg, _ = config.Load(resolvedCfgPath)
+		}
+		applyCommandFlagDefaults(cmd, resolvedCfgPath)
 		return nil
 	},
 	PersistentPostRun: func(_ *cobra.Command, _ []string) {

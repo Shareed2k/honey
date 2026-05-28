@@ -248,11 +248,25 @@ export function SearchTab({
     [records, selectedKeys],
   );
 
-  const namedBackends = backends.filter((b) => b.name.trim() !== '');
-  const backendOptions = namedBackends.map((b) => ({
-    value: backendRef(b),
-    label: `${b.kind}: ${b.name}`,
-  }));
+  const providerOptions = useMemo(
+    () => providerIds.map((id) => ({ value: id, label: id })),
+    [providerIds],
+  );
+
+  const backendOptions = useMemo(
+    () => backends
+      .filter((b) => b.name.trim() !== '')
+      .map((b) => ({ value: backendRef(b), label: `${b.kind}: ${b.name}` })),
+    [backends],
+  );
+
+  // Local buffer for provider/backend selects — value only syncs to parent on
+  // dropdown close so the open dropdown never re-renders due to App state updates.
+  const [localProviders, setLocalProviders] = useState<string[]>(selectedProviders);
+  const [localBackends, setLocalBackends] = useState<string[]>(selectedBackends);
+
+  useEffect(() => { setLocalProviders(selectedProviders); }, [selectedProviders]);
+  useEffect(() => { setLocalBackends(selectedBackends); }, [selectedBackends]);
 
   // ── effects ───────────────────────────────────────────────────────────────
 
@@ -552,22 +566,32 @@ export function SearchTab({
         <Select
           mode="multiple"
           placeholder="All providers"
-          value={selectedProviders}
-          onChange={onSelectedProvidersChange}
-          options={providerIds.map((id) => ({ value: id, label: id }))}
-          style={{ minWidth: 160 }}
-          maxTagCount="responsive"
+          value={localProviders}
+          onChange={setLocalProviders}
+          onDropdownVisibleChange={(open) => {
+            if (!open) onSelectedProvidersChange(localProviders);
+          }}
+          options={providerOptions}
+          style={{ width: 180 }}
+          maxTagCount={0}
+          popupMatchSelectWidth={false}
           allowClear
+          virtual={false}
         />
         <Select
           mode="multiple"
           placeholder="All backends"
-          value={selectedBackends}
-          onChange={onSelectedBackendsChange}
-          options={backendOptions.map((o) => ({ value: o.value, label: o.label }))}
-          style={{ minWidth: 160 }}
-          maxTagCount="responsive"
+          value={localBackends}
+          onChange={setLocalBackends}
+          onDropdownVisibleChange={(open) => {
+            if (!open) onSelectedBackendsChange(localBackends);
+          }}
+          options={backendOptions}
+          style={{ width: 200 }}
+          maxTagCount={0}
+          popupMatchSelectWidth={false}
           allowClear
+          virtual={false}
         />
         {meta?.session_recording_available && (
           <Button onClick={() => void onOpenReplayAll()}>Browse recordings</Button>
