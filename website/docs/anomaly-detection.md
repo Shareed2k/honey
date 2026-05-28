@@ -81,6 +81,7 @@ The two detectors run in parallel (latency = max, not sum). Scores are averaged 
 | `--anomaly-endpoint` | — | OpenAI-compatible API base URL |
 | `--anomaly-llm-model` | llama3 | Model name sent to LLM endpoint |
 | `--anomaly-context` | 5 | Recent log lines sent as context per LLM request |
+| `--anomaly-filter-threshold` | 0 | CoLA two-tier mode: skip LLM when fast detector score is below this value (0=disabled, 0.40=recommended) |
 | `--anomaly-strict` | false | Fail startup if detector cannot initialize |
 | `--anomaly-selftest` | false | Validate detector and run a local smoke test |
 
@@ -113,6 +114,50 @@ The `--anomaly-context` flag controls how many preceding normalized log lines ar
 | `10+` | Richer context, higher token cost per request |
 
 For slow log sources (< 10 lines/s), larger windows add negligible latency. For high-throughput sources, stick with 3–5.
+
+---
+
+## Two-Tier Detection (`--anomaly-filter-threshold`)
+
+Inspired by the CoLA paper (VLDB 2025), this mode avoids calling the LLM for every log line. A fast detector (heuristic in LLM-only mode, ONNX in ensemble mode) runs first. The LLM is only invoked when the fast detector's score is **at or above** the filter threshold — roughly the lines it considers suspicious or uncertain.
+
+```bash
+# LLM-only with two-tier filtering: heuristic pre-screens, LLM scores suspects
+honey logs prod-cluster \
+  --anomaly-endpoint http://localhost:11434/v1 \
+  --anomaly-filter-threshold 0.40 \
+  --anomaly-only
+
+# ONNX + LLM with filtering: ONNX pre-screens (CoLA pattern exactly)
+honey logs prod-cluster \
+  --anomaly-model /path/to/model.onnx \
+  --anomaly-endpoint http://localhost:11434/v1 \
+  --anomaly-filter-threshold 0.40 \
+  --anomaly-only
+```
+
+**Choosing the threshold:**
+
+| Value | Effect |
+|-------|--------|
+| `0` | Disabled — LLM scores every line (default) |
+| `0.40` | LLM called for lines with ≥40% fast-model suspicion — recommended starting point |
+| `0.60` | LLM only for lines the fast model already leans toward anomalous |
+| `0.90` | LLM only as a second-opinion when fast model is near its own threshold |
+
+In production, 0.40 typically routes 10–30% of lines to the LLM (depending on log content), giving a 3–10× throughput improvement over unfiltered LLM mode.
+
+**When `--anomaly-filter-threshold` and `--anomaly-context` are combined**, set `--anomaly-context 0` for maximum cache hit rate (see below), or accept that context-aware scoring disables caching.
+
+---
+
+## LLM Result Cache
+
+When `--anomaly-context 0` (single-line mode), identical normalized log lines are cached and never sent to the LLM twice. This is a significant win for production logs, which contain large volumes of repeated patterns — health checks, heartbeats, templated error messages.
+
+The cache holds up to 10,000 entries. When full, it is cleared and rebuilt. Cache hits are orders of magnitude faster than LLM calls.
+
+To maximize cache effectiveness: use `--anomaly-context 0` and `--anomaly-filter-threshold 0.40` together. The filter eliminates cheap-to-classify normal lines; the cache eliminates redundant LLM calls for repeated suspicious patterns.
 
 ---
 
@@ -185,6 +230,7 @@ defaults:
     anomaly_endpoint: "http://localhost:11434/v1"
     anomaly_llm_model: "llama3"
     anomaly_context_lines: 5
+    anomaly_filter_threshold: 0.40   # two-tier CoLA mode; 0 disables
     anomaly_only: false
 ```
 

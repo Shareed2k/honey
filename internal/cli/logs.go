@@ -17,32 +17,36 @@ import (
 )
 
 var (
-	flagLogsFollow              bool
-	flagLogsTail                int64
-	flagLogsSince               time.Duration
-	flagLogsTimestamps          bool
-	flagLogsContainer           string
-	flagLogsUnit                string
-	flagLogsFile                string
-	flagLogsCommand             string
-	flagLogsRunAs               string
-	flagLogsMaxConcurrency      int
-	flagLogsGrep                string
-	flagLogsLabels              []string
-	flagLogsTUI                 bool
-	flagLogsOutputFile          string
-	flagLogsHighlight           bool
-	flagLogsAnomaly             bool
-	flagLogsAnomalyModel        string
-	flagLogsAnomalyThresh       float64
-	flagLogsAnomalyWindow       int
-	flagLogsAnomalyOnly         bool
-	flagLogsAnomalyStrict       bool
-	flagLogsAnomalyTokPath      string
-	flagLogsAnomalySelftest     bool
-	flagLogsAnomalyEndpoint     string
-	flagLogsAnomalyLLMModel     string
-	flagLogsAnomalyContextLines int
+	flagLogsFollow                 bool
+	flagLogsTail                   int64
+	flagLogsSince                  time.Duration
+	flagLogsTimestamps             bool
+	flagLogsContainer              string
+	flagLogsUnit                   string
+	flagLogsFile                   string
+	flagLogsCommand                string
+	flagLogsRunAs                  string
+	flagLogsMaxConcurrency         int
+	flagLogsGrep                   string
+	flagLogsLabels                 []string
+	flagLogsTUI                    bool
+	flagLogsOutputFile             string
+	flagLogsHighlight              bool
+	flagLogsAnomaly                bool
+	flagLogsAnomalyModel           string
+	flagLogsAnomalyThresh          float64
+	flagLogsAnomalyWindow          int
+	flagLogsAnomalyOnly            bool
+	flagLogsAnomalyStrict          bool
+	flagLogsAnomalyTokPath         string
+	flagLogsAnomalySelftest        bool
+	flagLogsAnomalyEndpoint        string
+	flagLogsAnomalyLLMModel        string
+	flagLogsAnomalyContextLines    int
+	flagLogsAnomalyFilterThreshold float64
+	flagLogsAnomalyFreqWindow      int
+	flagLogsAnomalyFreqRatio       float64
+	flagLogsAnomalyFeedbackFile    string
 )
 
 var logsCmd = &cobra.Command{
@@ -79,8 +83,12 @@ func init() {
 	logsCmd.Flags().StringVar(&flagLogsAnomalyTokPath, "anomaly-tokenizer", "", "Path to DistilBERT vocab.txt tokenizer file")
 	logsCmd.Flags().BoolVar(&flagLogsAnomalySelftest, "anomaly-selftest", false, "Validate anomaly model/tokenizer/runtime and run a local score smoke test")
 	logsCmd.Flags().StringVar(&flagLogsAnomalyEndpoint, "anomaly-endpoint", "", "OpenAI-compatible API base URL for LLM anomaly scoring (Ollama: http://localhost:11434/v1, LM Studio: http://localhost:1234/v1)")
-	logsCmd.Flags().StringVar(&flagLogsAnomalyLLMModel, "anomaly-llm-model", "llama3", "Model name to use with --anomaly-endpoint")
+	logsCmd.Flags().StringVar(&flagLogsAnomalyLLMModel, "anomaly-llm-model", "llama3", "Model name for --anomaly-endpoint. Smaller models (3-7B) typically match or beat larger ones for binary log anomaly classification")
 	logsCmd.Flags().IntVar(&flagLogsAnomalyContextLines, "anomaly-context", 5, "Number of recent lines sent as context to the LLM (0 = single-line mode)")
+	logsCmd.Flags().Float64Var(&flagLogsAnomalyFilterThreshold, "anomaly-filter-threshold", 0, "Skip LLM when fast detector score is below this value (0=disabled, 0.40=recommended for CoLA-style two-tier detection)")
+	logsCmd.Flags().IntVar(&flagLogsAnomalyFreqWindow, "anomaly-freq-window", 100, "Short window size for rate-ratio burst detection (0=disabled)")
+	logsCmd.Flags().Float64Var(&flagLogsAnomalyFreqRatio, "anomaly-freq-ratio", 5.0, "Short/long rate ratio above which a log template is flagged as a frequency spike")
+	logsCmd.Flags().StringVar(&flagLogsAnomalyFeedbackFile, "anomaly-feedback-file", "", "Append scored log lines as JSONL to this file for review and threshold calibration")
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
@@ -101,30 +109,34 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := ui.LogOptions{
-		Target:              target,
-		Source:              source,
-		Follow:              flagLogsFollow,
-		Tail:                flagLogsTail,
-		Since:               flagLogsSince,
-		Timestamps:          flagLogsTimestamps,
-		Container:           flagLogsContainer,
-		Unit:                flagLogsUnit,
-		Command:             flagLogsCommand,
-		RunAs:               flagLogsRunAs,
-		MaxConcurrency:      flagLogsMaxConcurrency,
-		Grep:                flagLogsGrep,
-		Labels:              flagLogsLabels,
-		Highlight:           flagLogsHighlight,
-		Anomaly:             flagLogsAnomaly,
-		AnomalyModel:        flagLogsAnomalyModel,
-		AnomalyThresh:       flagLogsAnomalyThresh,
-		AnomalyWindow:       flagLogsAnomalyWindow,
-		AnomalyOnly:         flagLogsAnomalyOnly,
-		AnomalyStrict:       flagLogsAnomalyStrict,
-		AnomalyTokPath:      flagLogsAnomalyTokPath,
-		AnomalyEndpoint:     flagLogsAnomalyEndpoint,
-		AnomalyLLMModel:     flagLogsAnomalyLLMModel,
-		AnomalyContextLines: flagLogsAnomalyContextLines,
+		Target:                 target,
+		Source:                 source,
+		Follow:                 flagLogsFollow,
+		Tail:                   flagLogsTail,
+		Since:                  flagLogsSince,
+		Timestamps:             flagLogsTimestamps,
+		Container:              flagLogsContainer,
+		Unit:                   flagLogsUnit,
+		Command:                flagLogsCommand,
+		RunAs:                  flagLogsRunAs,
+		MaxConcurrency:         flagLogsMaxConcurrency,
+		Grep:                   flagLogsGrep,
+		Labels:                 flagLogsLabels,
+		Highlight:              flagLogsHighlight,
+		Anomaly:                flagLogsAnomaly,
+		AnomalyModel:           flagLogsAnomalyModel,
+		AnomalyThresh:          flagLogsAnomalyThresh,
+		AnomalyWindow:          flagLogsAnomalyWindow,
+		AnomalyOnly:            flagLogsAnomalyOnly,
+		AnomalyStrict:          flagLogsAnomalyStrict,
+		AnomalyTokPath:         flagLogsAnomalyTokPath,
+		AnomalyEndpoint:        flagLogsAnomalyEndpoint,
+		AnomalyLLMModel:        flagLogsAnomalyLLMModel,
+		AnomalyContextLines:    flagLogsAnomalyContextLines,
+		AnomalyFilterThreshold: flagLogsAnomalyFilterThreshold,
+		AnomalyFreqWindow:      flagLogsAnomalyFreqWindow,
+		AnomalyFreqRatio:       flagLogsAnomalyFreqRatio,
+		AnomalyFeedbackFile:    flagLogsAnomalyFeedbackFile,
 	}
 
 	if flagLogsAnomalySelftest {
