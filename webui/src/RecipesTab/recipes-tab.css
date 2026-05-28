@@ -18,17 +18,8 @@
 .rcp-list li { display: flex; gap: 8px; align-items: center; padding: 4px 6px; flex-wrap: wrap; }
 .rcp-empty { color: #6e7681; font-style: italic; }
 .rcp-err { color: #f85149; }
-.rcp-warn { color: #d29922; margin: 0.35rem 0 0; font-size: 0.9rem; }
 .rcp-link { background: transparent; border: 0; color: #58a6ff; cursor: pointer; padding: 0; text-align: left; font: inherit; }
-.rcp-btn { padding: 6px 10px; background: #21262d; border: 0; color: #c9d1d9; border-radius: 4px; cursor: pointer; min-height: 44px; }
-.rcp-btn--pri { background: #238636; color: #fff; }
-.rcp-btn--danger { background: #da3633; color: #fff; }
-.rcp-btn--ghost { background: transparent; min-height: auto; padding: 2px 8px; }
-.rcp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.rcp-tabstrip { display: flex; gap: 4px; }
-.rcp-tab { background: transparent; border: 1px solid #30363d; padding: 6px 12px; color: #8b949e; cursor: pointer; min-height: 44px; }
-.rcp-tab--active { color: #f0f6fc; background: #0d2233; border-color: #1f6feb; }
 
 .rcp-steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .rcp-steps li { display: grid; grid-template-columns: auto 80px auto auto 1fr; gap: 8px; align-items: baseline; padding: 4px 6px; }
@@ -98,33 +89,7 @@
   .rcp-steps li { grid-template-columns: 1fr; }
   .rcp-list li { flex-direction: column; align-items: flex-start; }
   .rcp-step__footer { flex-direction: column; align-items: stretch; }
-  .rcp-step__footer .rcp-btn { width: 100%; }
   .rcp-env__row { grid-template-columns: 1fr; }
-}
-
-.rcp-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 0.5rem;
-  font-size: 0.9em;
-}
-
-.rcp-table th {
-  text-align: left;
-  padding: 0.5rem;
-  border-bottom: 1px solid var(--border-color, #ccc);
-  color: var(--text-muted, #666);
-  font-weight: 500;
-}
-
-.rcp-table td {
-  padding: 0.5rem;
-  border-bottom: 1px solid var(--border-color, #eee);
-  vertical-align: middle;
-}
-
-.rcp-table tr:last-child td {
-  border-bottom: none;
 }
 
 .rcp-table__actions {

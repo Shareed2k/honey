@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button, Checkbox, Input, InputNumber, Select } from 'antd';
 import type {
   ParsedRecipeAgentTransfer,
   ParsedRecipeFileTransfer,
@@ -33,11 +34,11 @@ export function GraphStepFields({
     <>
       <label className="rcp-edit__field">
         id
-        <input value={step.id ?? ''} onChange={(e) => onChange({ id: e.target.value || undefined })} />
+        <Input value={step.id ?? ''} onChange={(e) => onChange({ id: e.target.value || undefined })} />
       </label>
       <label className="rcp-edit__field">
         depends (comma-separated)
-        <input
+        <Input
           value={dependsText(step.depends)}
           onChange={(e) => {
             const deps = parseDependsText(e.target.value);
@@ -62,7 +63,7 @@ export function HostField({
     return (
       <label className="rcp-edit__field">
         host
-        <input
+        <Input
           value={step.host ?? '_'}
           onChange={(e) => onChange({ host: e.target.value || '_' })}
           title='Use "_" for local/single; "*" or host name for remote targets'
@@ -73,7 +74,7 @@ export function HostField({
   return (
     <label className="rcp-edit__field">
       host
-      <input value={step.host ?? ''} onChange={(e) => onChange({ host: e.target.value })} />
+      <Input value={step.host ?? ''} onChange={(e) => onChange({ host: e.target.value })} />
     </label>
   );
 }
@@ -88,7 +89,7 @@ export function RunAsField({
   return (
     <label className="rcp-edit__field">
       run_as
-      <input
+      <Input
         value={step.run_as ?? ''}
         onChange={(e) => onChange({ run_as: e.target.value || undefined })}
       />
@@ -106,7 +107,7 @@ export function StepCommandEditor({
   return (
     <label className="rcp-edit__field rcp-edit__field--multiline">
       command
-      <textarea
+      <Input.TextArea
         value={step.command ?? ''}
         rows={Math.min(12, Math.max(2, (step.command ?? '').split('\n').length))}
         onChange={(e) => onChange({ command: e.target.value })}
@@ -127,15 +128,15 @@ export function StepScriptEditor({
     <>
       <label className="rcp-edit__field">
         local path
-        <input value={s.local ?? ''} onChange={(e) => onChange({ ...s, local: e.target.value })} />
+        <Input value={s.local ?? ''} onChange={(e) => onChange({ ...s, local: e.target.value })} />
       </label>
       <label className="rcp-edit__field">
         remote path
-        <input value={s.remote ?? ''} onChange={(e) => onChange({ ...s, remote: e.target.value })} />
+        <Input value={s.remote ?? ''} onChange={(e) => onChange({ ...s, remote: e.target.value })} />
       </label>
       <label className="rcp-edit__field rcp-edit__field--multiline">
         body (optional inline script)
-        <textarea
+        <Input.TextArea
           value={s.body ?? ''}
           rows={Math.min(16, Math.max(3, (s.body ?? '').split('\n').length))}
           onChange={(e) => onChange({ ...s, body: e.target.value || undefined })}
@@ -159,16 +160,16 @@ export function StepFileTransferEditor({
     <>
       <label className="rcp-edit__field">
         local
-        <input value={t.local ?? ''} onChange={(e) => onChange({ ...t, local: e.target.value })} />
+        <Input value={t.local ?? ''} onChange={(e) => onChange({ ...t, local: e.target.value })} />
       </label>
       <label className="rcp-edit__field">
         remote
-        <input value={t.remote ?? ''} onChange={(e) => onChange({ ...t, remote: e.target.value })} />
+        <Input value={t.remote ?? ''} onChange={(e) => onChange({ ...t, remote: e.target.value })} />
       </label>
       {label === 'put' ? (
         <label className="rcp-edit__field rcp-edit__field--multiline">
           body (optional)
-          <textarea
+          <Input.TextArea
             value={t.body ?? ''}
             rows={4}
             onChange={(e) => onChange({ ...t, body: e.target.value || undefined })}
@@ -210,15 +211,15 @@ export function StepPluginEditor({
     <>
       <label className="rcp-edit__field">
         plugin id
-        <input value={p.id ?? ''} onChange={(e) => onChange({ ...p, id: e.target.value })} />
+        <Input value={p.id ?? ''} onChange={(e) => onChange({ ...p, id: e.target.value })} />
       </label>
       <label className="rcp-edit__field">
         action
-        <input value={p.action ?? ''} onChange={(e) => onChange({ ...p, action: e.target.value })} />
+        <Input value={p.action ?? ''} onChange={(e) => onChange({ ...p, action: e.target.value })} />
       </label>
       <label className="rcp-edit__field rcp-edit__field--multiline">
         config (JSON object)
-        <textarea
+        <Input.TextArea
           value={configJson}
           rows={6}
           spellCheck={false}
@@ -254,65 +255,59 @@ export function StepTunnelEditor({
     <>
       <label className="rcp-edit__field">
         mode
-        <select value={t.mode ?? 'local'} onChange={(e) => patch({ mode: e.target.value || undefined })}>
-          <option value="local">local</option>
-          <option value="remote">remote</option>
-          <option value="dynamic">dynamic</option>
-        </select>
+        <Select
+          value={t.mode ?? 'local'}
+          onChange={(val) => patch({ mode: val || undefined })}
+          options={[
+            { value: 'local', label: 'local' },
+            { value: 'remote', label: 'remote' },
+            { value: 'dynamic', label: 'dynamic' },
+          ]}
+        />
       </label>
       <label className="rcp-edit__field">
         remote_host
-        <input
+        <Input
           value={t.remote_host ?? ''}
           onChange={(e) => patch({ remote_host: e.target.value || undefined })}
         />
       </label>
       <label className="rcp-edit__field">
         remote_port
-        <input
-          type="number"
-          value={t.remote_port ?? ''}
-          onChange={(e) => {
-            const n = parseOptionalInt(e.target.value);
-            patch({ remote_port: n });
-          }}
+        <InputNumber
+          value={t.remote_port ?? undefined}
+          onChange={(val) => patch({ remote_port: val ?? undefined })}
         />
       </label>
       <label className="rcp-edit__field">
         local_port
-        <input
-          type="number"
-          value={t.local_port ?? ''}
-          onChange={(e) => {
-            const n = parseOptionalInt(e.target.value);
-            patch({ local_port: n });
-          }}
+        <InputNumber
+          value={t.local_port ?? undefined}
+          onChange={(val) => patch({ local_port: val ?? undefined })}
         />
       </label>
-      <label className="rcp-edit__field">
-        <input
-          type="checkbox"
-          checked={t.use_ssh_config ?? false}
-          onChange={(e) => patch({ use_ssh_config: e.target.checked || undefined })}
-        />{' '}
+      <Checkbox
+        checked={t.use_ssh_config ?? false}
+        onChange={(e) => patch({ use_ssh_config: e.target.checked || undefined })}
+      >
         use_ssh_config
-      </label>
+      </Checkbox>
       <details className="rcp-edit__details">
         <summary>Advanced tunnel options</summary>
         <label className="rcp-edit__field">
           bind
-          <input value={t.bind ?? ''} onChange={(e) => patch({ bind: e.target.value || undefined })} />
+          <Input value={t.bind ?? ''} onChange={(e) => patch({ bind: e.target.value || undefined })} />
         </label>
         <label className="rcp-edit__field">
           ssh_config_match
-          <input
+          <Input
             value={t.ssh_config_match ?? ''}
             onChange={(e) => patch({ ssh_config_match: e.target.value || undefined })}
           />
         </label>
         <label className="rcp-edit__field">
           share_key
-          <input value={t.share_key ?? ''} onChange={(e) => patch({ share_key: e.target.value || undefined })} />
+          <Input value={t.share_key ?? ''} onChange={(e) => patch({ share_key: e.target.value || undefined })} />
         </label>
       </details>
     </>
@@ -340,65 +335,61 @@ export function StepAgentTransferEditor({
   }
   const cloudProvider = a.cloud?.provider ?? 's3';
   const knownProviders: readonly string[] = AGENT_TRANSFER_CLOUD_PROVIDERS;
+  const providerOptions = [
+    ...AGENT_TRANSFER_CLOUD_PROVIDERS.map((p) => ({ value: p, label: p })),
+    ...(!knownProviders.includes(cloudProvider)
+      ? [{ value: cloudProvider, label: cloudProvider }]
+      : []),
+  ];
   return (
     <>
       <label className="rcp-edit__field">
         dest_host
-        <input value={a.dest_host ?? ''} onChange={(e) => patch({ dest_host: e.target.value })} />
+        <Input value={a.dest_host ?? ''} onChange={(e) => patch({ dest_host: e.target.value })} />
       </label>
       <label className="rcp-edit__field">
         source_path
-        <input value={a.source_path ?? ''} onChange={(e) => patch({ source_path: e.target.value })} />
+        <Input value={a.source_path ?? ''} onChange={(e) => patch({ source_path: e.target.value })} />
       </label>
       <label className="rcp-edit__field">
         dest_path
-        <input value={a.dest_path ?? ''} onChange={(e) => patch({ dest_path: e.target.value })} />
+        <Input value={a.dest_path ?? ''} onChange={(e) => patch({ dest_path: e.target.value })} />
       </label>
       <fieldset className="rcp-edit__cloud">
         <legend>cloud</legend>
         <label className="rcp-edit__field">
           provider
-          <select
+          <Select
             value={cloudProvider}
-            onChange={(e) => patchCloud({ provider: e.target.value })}
-          >
-            {AGENT_TRANSFER_CLOUD_PROVIDERS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-            {!knownProviders.includes(cloudProvider) ? (
-              <option value={cloudProvider}>{cloudProvider}</option>
-            ) : null}
-          </select>
+            onChange={(val) => patchCloud({ provider: val })}
+            options={providerOptions}
+          />
         </label>
         <label className="rcp-edit__field">
           bucket
-          <input value={a.cloud?.bucket ?? ''} onChange={(e) => patchCloud({ bucket: e.target.value })} />
+          <Input value={a.cloud?.bucket ?? ''} onChange={(e) => patchCloud({ bucket: e.target.value })} />
         </label>
         <label className="rcp-edit__field">
           prefix
-          <input
+          <Input
             value={a.cloud?.prefix ?? ''}
             onChange={(e) => patchCloud({ prefix: e.target.value || undefined })}
           />
         </label>
         <label className="rcp-edit__field">
           region
-          <input
+          <Input
             value={a.cloud?.region ?? ''}
             onChange={(e) => patchCloud({ region: e.target.value || undefined })}
           />
         </label>
       </fieldset>
-      <label className="rcp-edit__field">
-        <input
-          type="checkbox"
-          checked={a.keep_object ?? false}
-          onChange={(e) => patch({ keep_object: e.target.checked || undefined })}
-        />{' '}
+      <Checkbox
+        checked={a.keep_object ?? false}
+        onChange={(e) => patch({ keep_object: e.target.checked || undefined })}
+      >
         keep_object
-      </label>
+      </Checkbox>
     </>
   );
 }
@@ -420,27 +411,25 @@ export function StepNotifyEditor({
   return (
     <fieldset className="rcp-edit__notify">
       <legend>
-        <label className="rcp-edit__notify-toggle">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => onChange(e.target.checked ? {} : undefined)}
-          />
+        <Checkbox
+          checked={enabled}
+          onChange={(e) => onChange(e.target.checked ? {} : undefined)}
+        >
           notify
-        </label>
+        </Checkbox>
       </legend>
       {enabled ? (
         <>
           <label className="rcp-edit__field">
             notify_subject
-            <input
+            <Input
               value={n.notify_subject ?? ''}
               onChange={(e) => patch({ notify_subject: e.target.value || undefined })}
             />
           </label>
           <label className="rcp-edit__field rcp-edit__field--multiline">
             message
-            <textarea
+            <Input.TextArea
               value={n.message ?? ''}
               rows={3}
               onChange={(e) => patch({ message: e.target.value || undefined })}
@@ -473,15 +462,12 @@ export function StepRetryEditor({
   return (
     <fieldset className="rcp-edit__retry">
       <legend>
-        <label className="rcp-edit__retry-toggle">
-          <input
-            type="checkbox"
-            aria-label="retry"
-            checked={enabled}
-            onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_STEP_RETRY } : undefined)}
-          />
+        <Checkbox
+          checked={enabled}
+          onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_STEP_RETRY } : undefined)}
+        >
           retry
-        </label>
+        </Checkbox>
       </legend>
       {enabled ? (
         <>
@@ -491,53 +477,48 @@ export function StepRetryEditor({
           </p>
           <label className="rcp-edit__field">
             attempts
-            <input
-              type="number"
+            <InputNumber
               min={1}
-              value={cfg.attempts ?? ''}
-              onChange={(e) => {
-                const n = parseOptionalInt(e.target.value);
-                patch({ attempts: n !== undefined && n >= 1 ? n : undefined });
+              value={cfg.attempts ?? undefined}
+              onChange={(val) => {
+                patch({ attempts: val !== null && val >= 1 ? val : undefined });
               }}
             />
           </label>
           <label className="rcp-edit__field">
             delay_ms
-            <input
-              type="number"
+            <InputNumber
               min={0}
-              value={cfg.delay_ms ?? ''}
-              onChange={(e) => {
-                const n = parseOptionalInt(e.target.value);
-                patch({ delay_ms: n !== undefined && n >= 0 ? n : undefined });
+              value={cfg.delay_ms ?? undefined}
+              onChange={(val) => {
+                patch({ delay_ms: val !== null && val >= 0 ? val : undefined });
               }}
             />
           </label>
           <label className="rcp-edit__field">
             max_delay_ms
-            <input
-              type="number"
+            <InputNumber
               min={0}
-              value={cfg.max_delay_ms ?? ''}
-              onChange={(e) => {
-                const n = parseOptionalInt(e.target.value);
-                patch({ max_delay_ms: n !== undefined && n >= 0 ? n : undefined });
+              value={cfg.max_delay_ms ?? undefined}
+              onChange={(val) => {
+                patch({ max_delay_ms: val !== null && val >= 0 ? val : undefined });
               }}
             />
           </label>
           <label className="rcp-edit__field">
             backoff
-            <select
+            <Select
               value={cfg.backoff ?? 'fixed'}
-              onChange={(e) =>
+              onChange={(val) =>
                 patch({
-                  backoff: e.target.value === 'exponential' ? 'exponential' : 'fixed',
+                  backoff: val === 'exponential' ? 'exponential' : 'fixed',
                 })
               }
-            >
-              <option value="fixed">fixed</option>
-              <option value="exponential">exponential</option>
-            </select>
+              options={[
+                { value: 'fixed', label: 'fixed' },
+                { value: 'exponential', label: 'exponential' },
+              ]}
+            />
           </label>
         </>
       ) : null}

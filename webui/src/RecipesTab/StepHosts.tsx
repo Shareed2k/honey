@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Button, Typography } from 'antd';
 import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
 
 type Props = {
@@ -32,7 +33,7 @@ export function StepHosts({ records, hosts, onHostsChange, onNext, reconcileNote
   return (
     <div className="rcp-step rcp-step--hosts">
       <header className="rcp-step__header">
-        <h2>① Pick hosts</h2>
+        <Typography.Title level={5} style={{ margin: 0 }}>① Pick hosts</Typography.Title>
         <p className="rcp-step__hint">
           {hosts.length === 0
             ? 'Select hosts to run this recipe against. Selections sync with the Search tab.'
@@ -48,14 +49,13 @@ export function StepHosts({ records, hosts, onHostsChange, onNext, reconcileNote
         onFilterChange={setFilter}
       />
       <footer className="rcp-step__footer">
-        <button
-          type="button"
-          className="rcp-btn rcp-btn--pri"
+        <Button
+          type="primary"
           disabled={hosts.length === 0}
           onClick={onNext}
         >
           Next → recipe
-        </button>
+        </Button>
       </footer>
     </div>
   );

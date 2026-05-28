@@ -6,6 +6,8 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { sql as sqlLang, PostgreSQL } from '@codemirror/lang-sql';
 import { keymap, type EditorView } from '@codemirror/view';
 import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
+import { Alert, Button, Card, Descriptions, Input, Modal, Pagination, Select, Space, Table, Tag, Typography } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import './apps-tab.css';
 
 type CatalogTree = {
@@ -88,6 +90,11 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
   const [schemaFilter, setSchemaFilter] = useState<string>('');
   const [expandedSchemas, setExpandedSchemas] = useState<Record<string, boolean>>({});
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+  const [appFilter, setAppFilter] = useState('');
+  const [appTypeFilter, setAppTypeFilter] = useState<string>('all');
+  const [appPage, setAppPage] = useState(1);
+  const APP_PAGE_SIZE = 12;
+  const [sessionFilter, setSessionFilter] = useState('');
 
   const loadData = useCallback(async () => {
     try {
@@ -245,310 +252,404 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
     return filtered;
   }, [catalogTree, schemaFilter]);
 
+  const appList = React.useMemo(() => Object.values(apps), [apps]);
+
+  const filteredApps = React.useMemo(() => {
+    const q = appFilter.trim().toLowerCase();
+    return appList.filter((app) => {
+      if (appTypeFilter !== 'all' && app.type !== appTypeFilter) return false;
+      if (!q) return true;
+      return (
+        app.name.toLowerCase().includes(q) ||
+        (app.mode || '').toLowerCase().includes(q) ||
+        (app.backend || '').toLowerCase().includes(q) ||
+        (app.provider || '').toLowerCase().includes(q)
+      );
+    });
+  }, [appList, appFilter, appTypeFilter]);
+
+  const pagedApps = React.useMemo(() => {
+    const start = (appPage - 1) * APP_PAGE_SIZE;
+    return filteredApps.slice(start, start + APP_PAGE_SIZE);
+  }, [filteredApps, appPage]);
+
+  useEffect(() => { setAppPage(1); }, [appFilter, appTypeFilter]);
+
+  const filteredSessions = React.useMemo(() => {
+    const q = sessionFilter.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) =>
+      s.app.name.toLowerCase().includes(q) ||
+      s.app.type.toLowerCase().includes(q) ||
+      (s.app.mode || '').toLowerCase().includes(q)
+    );
+  }, [sessions, sessionFilter]);
+
+  const sessionColumns: ColumnsType<ProxySession> = [
+    { title: 'App', dataIndex: ['app', 'name'], key: 'app_name' },
+    { title: 'Type', dataIndex: ['app', 'type'], key: 'app_type' },
+    {
+      title: 'Local Address',
+      key: 'local_addr',
+      render: (_: unknown, sess: ProxySession) => sess.app.type === 'http' ? (
+        <a href={`${window.location.protocol}//${sess.app.name}.localhost${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} target="_blank" rel="noreferrer" title={`Internal Proxy -> ${sess.app.upstream}`}>
+          Open Web App ↗
+        </a>
+      ) : (
+        <Space>
+          <span>{sess.local_addr || 'Web Proxy Only'}</span>
+          {sess.app.type === 'tcp' && (sess.app.mode || '').toLowerCase() === 'postgres' && (
+            <Button size="small" onClick={() => openSqlModal(sess)}>SQL</Button>
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: 'Upstream',
+      key: 'upstream',
+      render: (_: unknown, sess: ProxySession) => sess.app.upstream === '[encrypted]' ? '(encrypted)' : sess.app.upstream,
+    },
+    {
+      title: 'Started',
+      key: 'started',
+      render: (_: unknown, sess: ProxySession) => new Date(sess.started_at).toLocaleTimeString(),
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, sess: ProxySession) => (
+        <Button loading={stoppingSession === sess.id} onClick={() => handleStop(sess.id)}>Stop</Button>
+      ),
+    },
+  ];
+
+  const sqlResultColumns: ColumnsType<Record<string, unknown>> = queryRows.length > 0
+    ? Object.keys(queryRows[0]).map((k) => ({
+        title: k,
+        dataIndex: k,
+        key: k,
+        ellipsis: true,
+        render: (val: unknown) => String(val ?? ''),
+      }))
+    : [];
+
   return (
     <div className="apps-tab">
-      {error && <p style={{ color: '#f66' }}>{error}</p>}
-      
+      {error && <Alert type="error" title={error} style={{ marginBottom: 12 }} />}
+
       <section className="apps-section">
-        <h3>Configured Apps</h3>
-        {Object.keys(apps).length === 0 ? (
-          <p style={{ opacity: 0.8 }}>No apps configured in honey.yaml.</p>
+        <Typography.Title level={5}>Configured Apps</Typography.Title>
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Input
+            placeholder="Filter by name, mode, backend…"
+            value={appFilter}
+            onChange={(e) => setAppFilter(e.target.value)}
+            allowClear
+            style={{ width: 240 }}
+          />
+          <Select
+            value={appTypeFilter}
+            onChange={setAppTypeFilter}
+            style={{ width: 110 }}
+            options={[
+              { value: 'all', label: 'All types' },
+              { value: 'http', label: 'HTTP' },
+              { value: 'tcp', label: 'TCP' },
+            ]}
+          />
+        </Space>
+        {appList.length === 0 ? (
+          <Typography.Text type="secondary">No apps configured in honey.yaml.</Typography.Text>
+        ) : filteredApps.length === 0 ? (
+          <Typography.Text type="secondary">No apps match the current filter.</Typography.Text>
         ) : (
-          <div className="apps-grid">
-            {Object.values(apps).map((app) => {
-              const activeSession = sessions.find(s => s.app.name === app.name);
-              return (
-              <div key={app.name} className="app-card">
-                <h4>{app.name}</h4>
-                <div className="app-details">
-                  <div><strong>Type:</strong> {app.type}</div>
-                  {app.backend && <div><strong>Backend:</strong> {app.backend}</div>}
-                  {app.provider && <div><strong>Provider:</strong> {app.provider}</div>}
-                  {app.target_regex ? (
-                    <div><strong>Target Regex:</strong> {app.target_regex}</div>
-                  ) : (
-                    <div><strong>Target:</strong> {app.target || 'local'}</div>
-                  )}
-                  <div>
-                    <strong>Upstream:</strong>{' '}
-                    {app.upstream === '[encrypted]' ? (
-                      <span style={{ opacity: 0.8 }}>(encrypted)</span>
-                    ) : (
-                      <span
-                        title={app.upstream}
-                        style={{
-                          display: 'inline-block',
-                          maxWidth: '100%',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          verticalAlign: 'bottom',
-                        }}
-                      >
-                        {app.upstream}
-                      </span>
-                    )}
-                  </div>
-                  {app.local_port > 0 && <div><strong>Local Port:</strong> {app.local_port}</div>}
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                  {activeSession ? (
-                    <>
-                      {app.type === 'http' && (
-                        <a 
-                          href={`${window.location.protocol}//${app.name}.localhost${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} 
-                          target="_blank" 
-                          rel="noreferrer" 
-                          className="button primary"
-                          style={{ textDecoration: 'none', textAlign: 'center', flex: 1, padding: '0.4rem', border: '1px solid transparent', borderRadius: '4px', background: '#2563eb', color: '#fff', fontSize: '0.85rem' }}
+          <>
+            <div className="apps-grid">
+              {pagedApps.map((app) => {
+                const activeSession = sessions.find((s) => s.app.name === app.name);
+                return (
+                  <Card key={app.name} size="small" title={app.name} className="app-card">
+                    <Descriptions
+                      column={1}
+                      size="small"
+                      colon={false}
+                      labelStyle={{ width: 90, color: 'var(--ant-color-text-secondary)', fontSize: '0.82rem' }}
+                      contentStyle={{ fontSize: '0.82rem' }}
+                      items={[
+                        {
+                          key: 'type',
+                          label: 'Type',
+                          children: (
+                            <Space size={4}>
+                              {app.type}
+                              {app.mode && <Tag color="blue">{app.mode}</Tag>}
+                            </Space>
+                          ),
+                        },
+                        ...(app.backend ? [{ key: 'backend', label: 'Backend', children: app.backend }] : []),
+                        ...(app.provider ? [{ key: 'provider', label: 'Provider', children: app.provider }] : []),
+                        {
+                          key: 'target',
+                          label: app.target_regex ? 'Target Regex' : 'Target',
+                          children: app.target_regex || app.target || 'local',
+                        },
+                        {
+                          key: 'upstream',
+                          label: 'Upstream',
+                          children:
+                            app.upstream === '[encrypted]' ? (
+                              <Typography.Text type="secondary">(encrypted)</Typography.Text>
+                            ) : (
+                              <Typography.Text ellipsis={{ tooltip: app.upstream }}>
+                                {app.upstream}
+                              </Typography.Text>
+                            ),
+                        },
+                        ...(app.local_port > 0
+                          ? [{ key: 'port', label: 'Local Port', children: app.local_port }]
+                          : []),
+                      ]}
+                    />
+                    <Space style={{ marginTop: 8, width: '100%' }}>
+                      {activeSession ? (
+                        <>
+                          {app.type === 'http' && (
+                            <Button
+                              type="primary"
+                              href={`${window.location.protocol}//${app.name}.localhost${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ flex: 1 }}
+                            >
+                              Open App ↗
+                            </Button>
+                          )}
+                          <Button
+                            style={{ flex: 1 }}
+                            loading={stoppingSession === activeSession.id}
+                            onClick={() => handleStop(activeSession.id)}
+                          >
+                            Stop
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          type="primary"
+                          style={{ width: '100%' }}
+                          loading={loadingApp === app.name}
+                          onClick={() => handleStart(app.name)}
                         >
-                          Open App ↗
-                        </a>
+                          Start {app.type.toUpperCase()}
+                        </Button>
                       )}
-                      <button
-                        style={{ flex: 1 }}
-                        disabled={stoppingSession === activeSession.id}
-                        onClick={() => handleStop(activeSession.id)}
-                      >
-                        {stoppingSession === activeSession.id ? 'Stopping...' : 'Stop'}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className="primary"
-                      style={{ width: '100%' }}
-                      disabled={loadingApp === app.name}
-                      onClick={() => handleStart(app.name)}
-                    >
-                      {loadingApp === app.name ? 'Starting...' : `Start ${app.type.toUpperCase()}`}
-                    </button>
-                  )}
-                </div>
+                    </Space>
+                  </Card>
+                );
+              })}
+            </div>
+            {filteredApps.length > APP_PAGE_SIZE && (
+              <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                <Pagination
+                  current={appPage}
+                  pageSize={APP_PAGE_SIZE}
+                  total={filteredApps.length}
+                  onChange={setAppPage}
+                  showTotal={(total) => `${total} apps`}
+                  size="small"
+                />
               </div>
-            )})}
-          </div>
+            )}
+          </>
         )}
       </section>
 
       <section className="sessions-section" style={{ marginTop: '2rem' }}>
-        <h3>Active Proxy Sessions</h3>
+        <Typography.Title level={5}>Active Proxy Sessions</Typography.Title>
         {sessions.length === 0 ? (
-          <p style={{ opacity: 0.8 }}>No active proxy sessions.</p>
+          <Typography.Text type="secondary">No active proxy sessions.</Typography.Text>
         ) : (
-          <table className="sessions-table">
-            <thead>
-              <tr>
-                <th>App</th>
-                <th>Type</th>
-                <th>Local Address</th>
-                <th>Upstream</th>
-                <th>Started</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((sess) => (
-                <tr key={sess.id}>
-                  <td>{sess.app.name}</td>
-                  <td>{sess.app.type}</td>
-                  <td>
-                    {sess.app.type === 'http' ? (
-                      <a href={`${window.location.protocol}//${sess.app.name}.localhost${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} target="_blank" rel="noreferrer" title={`Internal Proxy -> ${sess.app.upstream}`}>
-                        Open Web App ↗
-                      </a>
-                    ) : (
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <span>{sess.local_addr || 'Web Proxy Only'}</span>
-                        {sess.app.type === 'tcp' && (sess.app.mode || '').toLowerCase() === 'postgres' && (
-                          <button onClick={() => openSqlModal(sess)}>SQL</button>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                  <td
-                    title={sess.app.upstream === '[encrypted]' ? '' : sess.app.upstream}
-                    style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  >
-                    {sess.app.upstream === '[encrypted]' ? '(encrypted)' : sess.app.upstream}
-                  </td>
-                  <td>{new Date(sess.started_at).toLocaleTimeString()}</td>
-                  <td>
-                    <button
-                      disabled={stoppingSession === sess.id}
-                      onClick={() => handleStop(sess.id)}
-                    >
-                      {stoppingSession === sess.id ? 'Stopping...' : 'Stop'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            <Space style={{ marginBottom: 8 }}>
+              <Input
+                placeholder="Filter sessions…"
+                value={sessionFilter}
+                onChange={(e) => setSessionFilter(e.target.value)}
+                allowClear
+                style={{ width: 220 }}
+              />
+            </Space>
+            {filteredSessions.length === 0 ? (
+              <Typography.Text type="secondary">No sessions match the filter.</Typography.Text>
+            ) : (
+              <Table<ProxySession>
+                dataSource={filteredSessions}
+                columns={sessionColumns}
+                rowKey="id"
+                size="small"
+                pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (n) => `${n} sessions` }}
+              />
+            )}
+          </>
         )}
       </section>
 
-      {sqlSession && (
-        <div className="modal-backdrop" onClick={() => setSqlSession(null)}>
-          <div className="modal sql-modal" role="dialog" aria-labelledby="sql-modal-title" onClick={(e) => e.stopPropagation()}>
-            <div className="sql-layout">
-            <aside className="sql-sidebar">
-              <h3 id="sql-modal-title" style={{ marginTop: 0 }}>Postgres Catalog</h3>
-              <div className="sql-schema-search-wrap">
-                <input
-                  className="sql-schema-search"
-                  type="text"
-                  placeholder="Search schema..."
-                  aria-label="Search schema"
-                  value={schemaFilter}
-                  onChange={(e) => setSchemaFilter(e.target.value)}
-                />
-              </div>
-              {catalog ? (
-                <>
-                  <div style={{ marginBottom: '0.75rem' }}>
-                    <strong>Databases</strong>
-                    <div className="sql-chip-list">
-                      {catalog.databases.map((d) => <span className="sql-chip" key={d}>{d}</span>)}
-                    </div>
-                  </div>
-                  <div>
-                    <strong>Schemas & Tables</strong>
-                    {filteredCatalogTree.length === 0 ? (
-                      <p style={{ opacity: 0.75 }}>No schema objects match "{schemaFilter}".</p>
-                    ) : (
-                      <div className="sql-schema-tree">
-                        {filteredCatalogTree.map(({ schema, tables }) => {
-                          const schemaOpen = expandedSchemas[schema] ?? true;
-                          return (
-                            <div key={schema} className="sql-schema-group">
-                              <button className="sql-tree-toggle" onClick={() => toggleSchema(schema)}>
-                                <span>{schemaOpen ? '▾' : '▸'}</span>
-                                <strong>{schema}</strong>
-                                <span className="sql-muted">{tables.length} tables</span>
-                              </button>
-                              {schemaOpen && (
-                                <div className="sql-table-list">
-                                  {tables.map((t) => {
-                                    const tk = `${schema}.${t.name}`;
-                                    const tableOpen = expandedTables[tk] ?? false;
-                                    return (
-                                      <div key={tk} className="sql-table-item">
-                                        <div className="sql-table-row">
-                                          <button className="sql-tree-toggle sql-table-name" onClick={() => toggleTable(schema, t.name)}>
-                                            <span>{tableOpen ? '▾' : '▸'}</span>
-                                            <span>{t.name}</span>
-                                          </button>
-                                          <div className="sql-table-actions">
-                                            <button onClick={() => useTableSnippet(schema, t.name)} title="Insert SELECT snippet">↦</button>
-                                          </div>
-                                        </div>
-                                        {tableOpen && t.columns.length > 0 && (
-                                          <div className="sql-column-list">
-                                            {t.columns.map((c) => (
-                                              <div key={`${tk}.${c}`} className="sql-column-item">{c}</div>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <p style={{ opacity: 0.75 }}>{sqlLoading ? 'Loading catalog...' : 'No catalog loaded.'}</p>
-              )}
-            </aside>
-            <section className="sql-content">
-              <h3 style={{ marginTop: 0 }}>SQL Editor - {sqlSession.app.name}</h3>
-              <div className="sql-editor-wrap">
-                {(() => {
-                  const completionOptions = buildCatalogCompletions(catalog);
-                  const completionSource = catalogCompletionSource(completionOptions);
-                  return (
-                <CodeMirror
-                  value={sql}
-                  height="180px"
-                  theme={oneDark}
-                  onChange={(value) => setSql(value)}
-                  onCreateEditor={(view) => setEditorView(view)}
-                  extensions={[
-                    sqlLang({ dialect: PostgreSQL }),
-                    autocompletion({ override: [completionSource] }),
-                    keymap.of([
-                      {
-                        key: 'Mod-Enter',
-                        run: () => {
-                          void runSelectedSql();
-                          return true;
-                        },
-                      },
-                    ]),
-                  ]}
-                  basicSetup={{
-                    lineNumbers: true,
-                    foldGutter: true,
-                    highlightActiveLine: true,
-                    bracketMatching: true,
-                  }}
-                />
-                  );
-                })()}
-              </div>
-              <div className="sql-controls">
-                <button className="primary" onClick={runSql} disabled={sqlLoading}>{sqlLoading ? 'Running...' : 'Run Query'}</button>
-                <button onClick={runSelectedSql} disabled={sqlLoading}>Run Selection (Cmd/Ctrl+Enter)</button>
-                <button onClick={() => setSqlSession(null)}>Close</button>
-              </div>
-              <div className="sql-history-wrap">
-                <label style={{ display: 'block', marginBottom: 4, fontSize: 12, opacity: 0.8 }}>History</label>
-                <select
-                  value={selectedHistory}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setSelectedHistory(v);
-                    if (v) setSql(v);
-                  }}
-                  style={{ width: '100%' }}
-                >
-                  <option value="">Select previous query...</option>
-                  {sqlHistory.map((h, idx) => (
-                    <option key={`${idx}:${h.slice(0, 20)}`} value={h}>
-                      {h.length > 120 ? `${h.slice(0, 120)}...` : h}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {sqlError && <p style={{ color: '#f66' }}>{sqlError}</p>}
-              <div className="sql-results-wrap">
-                {queryRows.length === 0 ? (
-                  <p style={{ opacity: 0.75 }}>No rows yet.</p>
-                ) : (
-                  <div className="sql-table-scroll">
-                    <table className="sessions-table sql-results-table">
-                      <thead>
-                        <tr>{Object.keys(queryRows[0] || {}).map((k) => <th key={k}>{k}</th>)}</tr>
-                      </thead>
-                      <tbody>
-                        {queryRows.map((row, i) => (
-                          <tr key={i}>{Object.keys(queryRows[0] || {}).map((k) => <td key={k} title={String(row[k] ?? '')}>{String(row[k] ?? '')}</td>)}</tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </section>
+      <Modal
+        open={!!sqlSession}
+        title={sqlSession ? `SQL Editor — ${sqlSession.app.name}` : 'SQL Editor'}
+        onCancel={() => setSqlSession(null)}
+        footer={null}
+        width="min(1100px, 96vw)"
+        styles={{ body: { padding: 0 } }}
+      >
+        <div className="sql-layout">
+          <aside className="sql-sidebar">
+            <Typography.Title level={5} style={{ margin: '0 0 8px' }}>Postgres Catalog</Typography.Title>
+            <div className="sql-schema-search-wrap">
+              <Input.Search
+                placeholder="Search schema..."
+                aria-label="Search schema"
+                value={schemaFilter}
+                onChange={(e) => setSchemaFilter(e.target.value)}
+                allowClear
+              />
             </div>
-          </div>
+            {catalog ? (
+              <>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <strong>Databases</strong>
+                  <div className="sql-chip-list">
+                    {catalog.databases.map((d) => <span className="sql-chip" key={d}>{d}</span>)}
+                  </div>
+                </div>
+                <div>
+                  <strong>Schemas & Tables</strong>
+                  {filteredCatalogTree.length === 0 ? (
+                    <p style={{ opacity: 0.75 }}>No schema objects match "{schemaFilter}".</p>
+                  ) : (
+                    <div className="sql-schema-tree">
+                      {filteredCatalogTree.map(({ schema, tables }) => {
+                        const schemaOpen = expandedSchemas[schema] ?? true;
+                        return (
+                          <div key={schema} className="sql-schema-group">
+                            <button className="sql-tree-toggle" onClick={() => toggleSchema(schema)}>
+                              <span>{schemaOpen ? '▾' : '▸'}</span>
+                              <strong>{schema}</strong>
+                              <span className="sql-muted">{tables.length} tables</span>
+                            </button>
+                            {schemaOpen && (
+                              <div className="sql-table-list">
+                                {tables.map((t) => {
+                                  const tk = `${schema}.${t.name}`;
+                                  const tableOpen = expandedTables[tk] ?? false;
+                                  return (
+                                    <div key={tk} className="sql-table-item">
+                                      <div className="sql-table-row">
+                                        <button className="sql-tree-toggle sql-table-name" onClick={() => toggleTable(schema, t.name)}>
+                                          <span>{tableOpen ? '▾' : '▸'}</span>
+                                          <span>{t.name}</span>
+                                        </button>
+                                        <div className="sql-table-actions">
+                                          <button onClick={() => useTableSnippet(schema, t.name)} title="Insert SELECT snippet">↦</button>
+                                        </div>
+                                      </div>
+                                      {tableOpen && t.columns.length > 0 && (
+                                        <div className="sql-column-list">
+                                          {t.columns.map((c) => (
+                                            <div key={`${tk}.${c}`} className="sql-column-item">{c}</div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p style={{ opacity: 0.75 }}>{sqlLoading ? 'Loading catalog...' : 'No catalog loaded.'}</p>
+            )}
+          </aside>
+          <section className="sql-content">
+            <div className="sql-editor-wrap">
+              {(() => {
+                const completionOptions = buildCatalogCompletions(catalog);
+                const completionSource = catalogCompletionSource(completionOptions);
+                return (
+                  <CodeMirror
+                    value={sql}
+                    height="180px"
+                    theme={oneDark}
+                    onChange={(value) => setSql(value)}
+                    onCreateEditor={(view) => setEditorView(view)}
+                    extensions={[
+                      sqlLang({ dialect: PostgreSQL }),
+                      autocompletion({ override: [completionSource] }),
+                      keymap.of([
+                        {
+                          key: 'Mod-Enter',
+                          run: () => {
+                            void runSelectedSql();
+                            return true;
+                          },
+                        },
+                      ]),
+                    ]}
+                    basicSetup={{
+                      lineNumbers: true,
+                      foldGutter: true,
+                      highlightActiveLine: true,
+                      bracketMatching: true,
+                    }}
+                  />
+                );
+              })()}
+            </div>
+            <div className="sql-controls">
+              <Button type="primary" loading={sqlLoading} onClick={runSql}>Run Query</Button>
+              <Button loading={sqlLoading} onClick={runSelectedSql}>Run Selection (Cmd/Ctrl+Enter)</Button>
+              <Button onClick={() => setSqlSession(null)}>Close</Button>
+            </div>
+            <div className="sql-history-wrap">
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 12, opacity: 0.8 }}>History</label>
+              <Select
+                value={selectedHistory || undefined}
+                onChange={(v) => { setSelectedHistory(v); setSql(v); }}
+                placeholder="Select previous query..."
+                style={{ width: '100%' }}
+                options={sqlHistory.map((h, i) => ({
+                  value: h,
+                  label: h.length > 120 ? h.slice(0, 120) + '...' : h,
+                  key: `${i}:${h.slice(0, 20)}`,
+                }))}
+                allowClear
+              />
+            </div>
+            {sqlError && <Alert type="error" title={sqlError} style={{ marginTop: 8 }} />}
+            <div className="sql-results-wrap">
+              {queryRows.length === 0 ? (
+                <p style={{ opacity: 0.75 }}>No rows yet.</p>
+              ) : (
+                <div className="sql-table-scroll">
+                  <Table<Record<string, unknown>>
+                    dataSource={queryRows.map((row, i) => ({ ...row, __key: i }))}
+                    columns={sqlResultColumns}
+                    rowKey="__key"
+                    size="small"
+                    pagination={false}
+                    scroll={{ x: 'max-content' }}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

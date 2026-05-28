@@ -11,19 +11,9 @@
 }
 
 .app-card {
-  background: #14171c;
-  border: 1px solid #2a3140;
-  border-radius: 8px;
-  padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-}
-
-.app-card h4 {
-  margin: 0;
-  font-size: 1.1rem;
-  color: #fff;
 }
 
 .app-details {
@@ -34,40 +24,11 @@
   opacity: 0.85;
 }
 
-.sessions-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-
-.sessions-table th,
-.sessions-table td {
-  padding: 0.5rem;
-  text-align: left;
-  border-bottom: 1px solid #2a3140;
-}
-
-.sessions-table a {
-  color: #6eb0ff;
-  text-decoration: none;
-}
-
-.sessions-table a:hover {
-  text-decoration: underline;
-}
-
-.sql-modal {
-  width: min(1240px, 96vw);
-  height: min(90vh, 860px);
-  padding: 0.75rem;
-  overflow: hidden;
-}
-
 .sql-layout {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 0.75rem;
-  height: 100%;
+  height: min(80vh, 760px);
   min-width: 0;
 }
 
@@ -121,39 +82,8 @@
   overflow: auto;
 }
 
-.sql-results-table {
-  width: max-content;
-  min-width: 100%;
-  table-layout: fixed;
-}
-
-.sql-results-table th,
-.sql-results-table td {
-  max-width: 280px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sql-results-table th {
-  position: sticky;
-  top: 0;
-  background: #14171c;
-  z-index: 1;
-}
-
 .sql-schema-search-wrap {
   margin-bottom: 0.6rem;
-}
-
-.sql-schema-search {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #2a3140;
-  background: #0f1217;
-  color: #d9e1ee;
-  border-radius: 6px;
-  padding: 0.45rem 0.55rem;
 }
 
 .sql-chip-list {
