@@ -40,7 +40,6 @@ var (
 	flagConsulDC           string
 	flagConsulToken        string
 	flagKubeconfig         string
-	flagConfig             string
 	flagBackends           string
 	flagProxmoxURL         string
 	flagProxmoxUser        string
@@ -76,7 +75,6 @@ func init() {
 }
 
 func addSearchCoreFlags(cmd *cobra.Command, k8sModeDefault string) {
-	cmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
 	cmd.Flags().StringVar(&flagName, "name", "", "Substring filter on instance/node/pod name (case-insensitive)")
 	cmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
 	cmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")

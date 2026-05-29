@@ -31,7 +31,10 @@ Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox
 * [honey config](honey_config.md)	 - Manage honey configuration
 * [honey cue-exec](honey_cue-exec.md)	 - Resolve a CUE recipe against search results and optionally run steps over SSH
 * [honey cue-validate](honey_cue-validate.md)	 - Validate a CUE remote recipe (commands and/or SFTP put/get steps)
+* [honey exec](honey_exec.md)	 - Run a shell command on matching hosts in parallel
 * [honey inventory](honey_inventory.md)	 - Print Ansible-compatible JSON dynamic inventory from the same search as honey search
+* [honey logs](honey_logs.md)	 - Aggregate logs across matching hosts, pods, and containers
+* [honey macros](honey_macros.md)	 - Run predefined macros from a honeyfile manifest
 * [honey mcp](honey_mcp.md)	 - Run the Model Context Protocol (stdio) server
 * [honey plugins](honey_plugins.md)	 - List loaded WASM plugins
 * [honey search](honey_search.md)	 - Search instances across providers in parallel

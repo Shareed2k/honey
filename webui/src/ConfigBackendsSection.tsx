@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
-import { useForm, useFieldArray, FormProvider, useFormContext } from 'react-hook-form';
+import { useForm, useFieldArray, FormProvider, useFormContext, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { Alert, Button, Card, Checkbox, Divider, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { apiDelete, apiGet, apiPost, apiPutJson } from './api';
 import type { ConfigSchemaFieldSpec, ConfigUISchema } from './api';
 
@@ -42,13 +44,13 @@ function initDraft(fields: ConfigSchemaFieldSpec[]): Record<string, unknown> {
 
 function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
   const shape: Record<string, z.ZodTypeAny> = {};
-  
+
   for (const f of fields) {
     let fieldSchema: z.ZodTypeAny;
-    
+
     if (f.type === 'string') {
       let strSchema: z.ZodTypeAny = z.string();
-      
+
       if (f.format === 'ip') {
         strSchema = z.string().refine((val) => {
           if (!val && !f.required) return true;
@@ -113,10 +115,10 @@ function buildZodSchema(fields: ConfigSchemaFieldSpec[]): z.ZodTypeAny {
         fieldSchema = z.union([fieldSchema, z.literal(''), z.undefined()]).optional();
       }
     }
-    
+
     shape[f.key] = fieldSchema;
   }
-  
+
   return z.object(shape);
 }
 
@@ -195,105 +197,129 @@ export function ConfigBackendsSection({ onSaved, schema }: Props) {
   };
 
   const remove = (kind: string, index: number) => {
-    if (!window.confirm(`Delete ${kind} backend #${index}?`)) {
-      return;
-    }
-    void persist(() => apiDelete(`/api/v1/config/backends/${kind}/${index}`));
+    Modal.confirm({
+      title: `Delete ${kind} backend #${index}?`,
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      onOk: () => void persist(() => apiDelete(`/api/v1/config/backends/${kind}/${index}`)),
+    });
   };
 
   const renderRows = (kind: string, rows: unknown[]) => {
     const list = rows as { name?: string }[];
+    const cols: ColumnsType<{ name?: string }> = [
+      {
+        title: '#',
+        key: 'idx',
+        width: 48,
+        render: (_: unknown, _row: unknown, i: number) => i,
+      },
+      {
+        title: 'Name',
+        key: 'name',
+        render: (_: unknown, row: { name?: string }) => row.name?.trim() || '(unnamed)',
+      },
+      {
+        title: 'Actions',
+        key: 'actions',
+        width: 140,
+        render: (_: unknown, row: { name?: string }, i: number) => (
+          <Space size={4}>
+            <Button size="small" disabled={busy} onClick={() => openEdit(kind, i, row)}>
+              Edit
+            </Button>
+            <Button size="small" danger disabled={busy} onClick={() => remove(kind, i)}>
+              Delete
+            </Button>
+          </Space>
+        ),
+      },
+    ];
     return (
-      <table style={{ width: '100%', marginTop: '0.35rem' }}>
-        <thead>
-          <tr>
-            <th style={{ textAlign: 'left', width: '3rem' }}>#</th>
-            <th style={{ textAlign: 'left' }}>Name</th>
-            <th style={{ textAlign: 'left' }}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {list.map((row, i) => {
-            const displayName = row.name?.trim() ? row.name : '(unnamed)';
-            return (
-              <tr key={`${kind}-${i}`}>
-                <td>{i}</td>
-                <td>{displayName}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <button type="button" disabled={busy} onClick={() => openEdit(kind, i, row)}>
-                    Edit
-                  </button>{' '}
-                  <button type="button" disabled={busy} onClick={() => remove(kind, i)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <Table
+        dataSource={list}
+        columns={cols}
+        rowKey={(_row, i) => `${kind}-${i ?? 0}`}
+        size="small"
+        pagination={false}
+      />
     );
   };
 
   return (
-    <section style={{ marginTop: '1.25rem', borderTop: '1px solid #333', paddingTop: '1rem' }}>
-      <h2 style={{ fontSize: '1.1rem' }}>Backends (structured)</h2>
-      <p style={{ fontSize: '0.8rem', opacity: 0.8 }}>
-        REST paths use YAML keys from <code>backend_order</code> (e.g. <code>gcp</code>, <code>aws</code>, <code>kubernetes</code>, <code>consul</code>, <code>proxmox</code>, <code>truenas</code>, <code>local</code>, <code>docker</code>).
-        Search provider id for Kubernetes is <code>k8s</code>; backend rows list <code>kubernetes</code> as kind.
-      </p>
-      {err ? <p style={{ color: '#f66' }}>{err}</p> : null}
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-        <button type="button" disabled={busy} onClick={() => void load()}>
-          Reload backends JSON
-        </button>
-      </div>
-      {!schema ? <p style={{ opacity: 0.8, fontSize: '0.85rem' }}>Config schema is required to render backend forms.</p> : null}
-      {data ? (
-        <div style={{ display: 'grid', gap: '1rem' }}>
-          {(schema?.backend_order || []).map((kind) => {
-            const rows = (data[kind] || []) as unknown[];
-            const backendDef = schema?.backends[kind];
-            return (
-              <div key={kind}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <strong>{backendDef?.label || kind}</strong>
-                  <button type="button" disabled={busy || !schema} onClick={() => openAdd(kind)}>
-                    Add
-                  </button>
-                  <span style={{ fontSize: '0.75rem', opacity: 0.75 }}>
-                    Secrets and full fields appear only in Add/Edit.
-                  </span>
+    <>
+      <Divider />
+      <section>
+        <Typography.Title level={5}>Backends (structured)</Typography.Title>
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+          REST paths use YAML keys from <Typography.Text code>backend_order</Typography.Text> (e.g.{' '}
+          <Typography.Text code>gcp</Typography.Text>, <Typography.Text code>aws</Typography.Text>,{' '}
+          <Typography.Text code>kubernetes</Typography.Text>, <Typography.Text code>consul</Typography.Text>,{' '}
+          <Typography.Text code>proxmox</Typography.Text>, <Typography.Text code>truenas</Typography.Text>,{' '}
+          <Typography.Text code>local</Typography.Text>, <Typography.Text code>docker</Typography.Text>).
+          Search provider id for Kubernetes is <Typography.Text code>k8s</Typography.Text>; backend rows list{' '}
+          <Typography.Text code>kubernetes</Typography.Text> as kind.
+        </Typography.Text>
+        {err ? <Alert type="error" message={err} style={{ marginBottom: 8 }} /> : null}
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Button disabled={busy} onClick={() => void load()}>Reload backends JSON</Button>
+        </Space>
+        {!schema ? (
+          <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+            Config schema is required to render backend forms.
+          </Typography.Text>
+        ) : null}
+        {data ? (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            {(schema?.backend_order || []).map((kind) => {
+              const rows = (data[kind] || []) as unknown[];
+              const backendDef = schema?.backends[kind];
+              return (
+                <div key={kind}>
+                  <Space wrap style={{ marginBottom: 4 }}>
+                    <Typography.Text strong>{backendDef?.label || kind}</Typography.Text>
+                    <Button size="small" disabled={busy || !schema} onClick={() => openAdd(kind)}>
+                      Add
+                    </Button>
+                    <Typography.Text type="secondary">
+                      Secrets and full fields appear only in Add/Edit.
+                    </Typography.Text>
+                  </Space>
+                  {rows.length === 0 ? (
+                    <Typography.Text type="secondary">(none)</Typography.Text>
+                  ) : (
+                    renderRows(kind, rows)
+                  )}
                 </div>
-                {rows.length === 0 ? <p style={{ opacity: 0.7, fontSize: '0.85rem' }}>(none)</p> : renderRows(kind, rows)}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
+              );
+            })}
+          </Space>
+        ) : null}
 
-      {editor ? (
-        <EditorModal 
-           editor={editor} 
-           schema={schema} 
-           busy={busy}
-           error={err}
-           onClose={() => {
-             setErr(null);
-             setEditor(null);
-           }} 
-           onSave={async (body) => {
-             const { kind, index } = editor;
-             const ok = index === null
-               ? await persist(() => apiPost(`/api/v1/config/backends/${kind}`, body))
-               : await persist(() => apiPutJson(`/api/v1/config/backends/${kind}/${index}`, body));
-             if (ok) {
-               setEditor(null);
-             }
-           }} 
-        />
-      ) : null}
-    </section>
+        {editor ? (
+          <EditorModal
+            editor={editor}
+            schema={schema}
+            busy={busy}
+            error={err}
+            onClose={() => {
+              setErr(null);
+              setEditor(null);
+            }}
+            onSave={async (body) => {
+              const { kind, index } = editor;
+              const ok =
+                index === null
+                  ? await persist(() => apiPost(`/api/v1/config/backends/${kind}`, body))
+                  : await persist(() => apiPutJson(`/api/v1/config/backends/${kind}/${index}`, body));
+              if (ok) {
+                setEditor(null);
+              }
+            }}
+          />
+        ) : null}
+      </section>
+    </>
   );
 }
 
@@ -313,7 +339,7 @@ function EditorModal({
   onSave: (body: any) => Promise<void>;
 }) {
   const backendDef = schema?.backends[editor.kind];
-  
+
   const zodSchema = useMemo(() => {
     if (!backendDef) return z.any();
     return buildZodSchema(backendDef.fields);
@@ -330,50 +356,35 @@ function EditorModal({
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.6)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 50,
-      }}
+    <Modal
+      open
+      title={`${editor.index === null ? 'Add' : 'Edit'} ${editor.kind}`}
+      onCancel={onClose}
+      footer={null}
+      width="min(460px, 92vw)"
+      destroyOnHidden
     >
-      <div
-        style={{
-          background: '#1a1a1a',
-          padding: '1rem',
-          borderRadius: 8,
-          minWidth: 'min(420px, 92vw)',
-          maxHeight: '90vh',
-          overflow: 'auto',
-        }}
-      >
-        <h3 style={{ marginTop: 0 }}>
-          {editor.index === null ? 'Add' : 'Edit'} {editor.kind}
-        </h3>
-        {error ? <div style={{ color: '#f66', marginBottom: '1rem', padding: '0.5rem', border: '1px solid #f66', borderRadius: 4 }}>{error}</div> : null}
-        {backendDef ? (
-          <FormProvider {...methods}>
-            <form onSubmit={methods.handleSubmit(onSubmit)}>
-              <BackendFormFields fields={backendDef.fields} path="" />
-              <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-                <button type="submit" className="primary" disabled={busy}>
-                  Save
-                </button>
-                <button type="button" disabled={busy} onClick={onClose}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </FormProvider>
-        ) : (
-          <p style={{ color: '#f66' }}>Missing schema for backend kind "{editor.kind}".</p>
-        )}
-      </div>
-    </div>
+      {error ? <Alert type="error" message={error} style={{ marginBottom: 12 }} /> : null}
+      {backendDef ? (
+        <FormProvider {...methods}>
+          <form onSubmit={methods.handleSubmit(onSubmit)}>
+            <BackendFormFields fields={backendDef.fields} path="" />
+            <Space style={{ marginTop: 12 }}>
+              <Button type="primary" htmlType="submit" disabled={busy}>
+                Save
+              </Button>
+              <Button disabled={busy} onClick={onClose}>
+                Cancel
+              </Button>
+            </Space>
+          </form>
+        </FormProvider>
+      ) : (
+        <Typography.Text type="danger">
+          Missing schema for backend kind &ldquo;{editor.kind}&rdquo;.
+        </Typography.Text>
+      )}
+    </Modal>
   );
 }
 
@@ -384,93 +395,143 @@ function BackendFormFields({
   fields: ConfigSchemaFieldSpec[];
   path: string;
 }) {
-  const { register, formState: { errors } } = useFormContext();
+  const { control, formState: { errors } } = useFormContext();
 
   return (
     <>
       {fields.map((field) => {
         const label = field.required ? `${field.label} *` : field.label;
         const fieldPath = path ? `${path}.${field.key}` : field.key;
-        
+
         // Deep error resolution for nested arrays
         const error = fieldPath.split('.').reduce((obj: any, key) => (obj ? obj[key] : undefined), errors);
         const errorMessage = error?.message as string | undefined;
 
         if (field.type === 'object') {
           return (
-            <div key={field.key} style={{ marginBottom: '1rem', padding: '0.5rem', borderLeft: '2px solid #444', marginLeft: '0.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <strong style={{ opacity: 0.9 }}>{label}</strong>
-              </div>
+            <Card key={field.key} size="small" title={<Typography.Text strong>{label}</Typography.Text>} style={{ marginBottom: 8 }}>
               <BackendFormFields fields={field.items || []} path={fieldPath} />
-            </div>
+            </Card>
           );
         }
 
         if (field.type === 'array') {
           return (
-            <div key={field.key} style={{ marginBottom: '1rem', padding: '0.5rem', border: '1px solid #333', borderRadius: 4 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <strong>{label}</strong>
-              </div>
-              
+            <Card key={field.key} size="small" title={<Typography.Text strong>{label}</Typography.Text>} style={{ marginBottom: 8 }}>
               <ArrayFieldManager field={field} path={fieldPath} />
-              
-              {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
-            </div>
+              {errorMessage && (
+                <Typography.Text type="danger" style={{ fontSize: '0.75rem' }}>
+                  {errorMessage}
+                </Typography.Text>
+              )}
+            </Card>
           );
         }
 
         if (field.type === 'boolean') {
           return (
-            <label key={field.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.5rem' }}>
-              <input type="checkbox" {...register(fieldPath)} />
-              {label}
-              {errorMessage && <span style={{ color: '#f66', fontSize: '0.75rem', marginLeft: 'auto' }}>{errorMessage}</span>}
-            </label>
+            <div key={field.key} style={{ marginBottom: 8 }}>
+              <Controller
+                control={control}
+                name={fieldPath}
+                render={({ field: f }) => (
+                  <Checkbox checked={!!f.value} onChange={(e) => f.onChange(e.target.checked)}>
+                    {label}
+                  </Checkbox>
+                )}
+              />
+              {errorMessage && (
+                <Typography.Text type="danger" style={{ display: 'block', fontSize: '0.75rem' }}>
+                  {errorMessage}
+                </Typography.Text>
+              )}
+            </div>
           );
         }
 
         if (field.enum && field.enum.length > 0) {
           return (
-            <label key={field.key} style={{ display: 'block', marginBottom: '0.5rem' }}>
-              <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
-              <select style={{ width: '100%', borderColor: errorMessage ? '#f66' : undefined }} {...register(fieldPath)}>
-                {field.enum.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-              {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
-            </label>
+            <div key={field.key} style={{ marginBottom: 8 }}>
+              <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                {label}
+              </Typography.Text>
+              <Controller
+                control={control}
+                name={fieldPath}
+                render={({ field: f }) => (
+                  <Select
+                    {...f}
+                    style={{ width: '100%' }}
+                    status={errorMessage ? 'error' : undefined}
+                    options={field.enum!.map((o) => ({ value: o, label: o }))}
+                  />
+                )}
+              />
+              {errorMessage && (
+                <Typography.Text type="danger" style={{ display: 'block', fontSize: '0.75rem' }}>
+                  {errorMessage}
+                </Typography.Text>
+              )}
+            </div>
           );
         }
 
         if (field.type === 'integer') {
           return (
-            <label key={field.key} style={{ display: 'block', marginBottom: '0.5rem' }}>
-              <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
-              <input
-                type="number"
-                style={{ width: '100%', borderColor: errorMessage ? '#f66' : undefined }}
-                {...register(fieldPath, { valueAsNumber: true })}
+            <div key={field.key} style={{ marginBottom: 8 }}>
+              <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                {label}
+              </Typography.Text>
+              <Controller
+                control={control}
+                name={fieldPath}
+                render={({ field: f }) => (
+                  <InputNumber
+                    {...f}
+                    style={{ width: '100%' }}
+                    status={errorMessage ? 'error' : undefined}
+                  />
+                )}
               />
-              {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
-            </label>
+              {errorMessage && (
+                <Typography.Text type="danger" style={{ display: 'block', fontSize: '0.75rem' }}>
+                  {errorMessage}
+                </Typography.Text>
+              )}
+            </div>
           );
         }
 
         return (
-          <label key={field.key} style={{ display: 'block', marginBottom: '0.5rem' }}>
-            <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{label}</div>
-            <input
-              type={field.secret ? 'password' : 'text'}
-              style={{ width: '100%', borderColor: errorMessage ? '#f66' : undefined }}
-              {...register(fieldPath)}
+          <div key={field.key} style={{ marginBottom: 8 }}>
+            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+              {label}
+            </Typography.Text>
+            <Controller
+              control={control}
+              name={fieldPath}
+              render={({ field: f }) =>
+                field.secret ? (
+                  <Input.Password
+                    {...f}
+                    style={{ width: '100%' }}
+                    status={errorMessage ? 'error' : undefined}
+                  />
+                ) : (
+                  <Input
+                    {...f}
+                    style={{ width: '100%' }}
+                    status={errorMessage ? 'error' : undefined}
+                  />
+                )
+              }
             />
-            {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
-          </label>
+            {errorMessage && (
+              <Typography.Text type="danger" style={{ display: 'block', fontSize: '0.75rem' }}>
+                {errorMessage}
+              </Typography.Text>
+            )}
+          </div>
         );
       })}
     </>
@@ -478,60 +539,71 @@ function BackendFormFields({
 }
 
 function ArrayFieldManager({ field, path }: { field: ConfigSchemaFieldSpec, path: string }) {
-  const { control, register, formState: { errors } } = useFormContext();
+  const { control, formState: { errors } } = useFormContext();
   const { fields, append, remove } = useFieldArray({ control, name: path });
-  
+
   return (
     <div>
-      <div style={{ marginBottom: '0.5rem' }}>
-        <button
-          type="button"
-          onClick={() => {
-            const newItem = field.items && field.items.length > 0 && field.items[0].key !== '' 
-                ? initDraft(field.items) 
-                : '';
-            append(newItem);
-          }}
-        >
-          Add Item
-        </button>
-      </div>
-      
-      {fields.length === 0 ? <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>No items.</div> : null}
-      
+      <Button
+        size="small"
+        type="dashed"
+        style={{ marginBottom: 8 }}
+        onClick={() => {
+          const newItem =
+            field.items && field.items.length > 0 && field.items[0].key !== ''
+              ? initDraft(field.items)
+              : '';
+          append(newItem);
+        }}
+      >
+        Add Item
+      </Button>
+
+      {fields.length === 0 ? (
+        <Typography.Text type="secondary">No items.</Typography.Text>
+      ) : null}
+
       {fields.map((item, idx) => {
-        const itemError = path.split('.').reduce((obj: any, key) => (obj ? obj[key] : undefined), errors)?.[idx];
+        const itemError = path
+          .split('.')
+          .reduce((obj: any, key) => (obj ? obj[key] : undefined), errors)?.[idx];
         const errorMessage = itemError?.message as string | undefined;
 
         return (
-          <div key={item.id} style={{ marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: 4 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Item #{idx}</span>
-              <button
-                type="button"
-                style={{ fontSize: '0.7rem', padding: '2px 6px' }}
-                onClick={() => remove(idx)}
-              >
+          <Card key={item.id} size="small" style={{ marginBottom: 8 }}>
+            <Space style={{ marginBottom: 4, width: '100%', justifyContent: 'space-between' }}>
+              <Typography.Text strong>Item #{idx}</Typography.Text>
+              <Button size="small" danger onClick={() => remove(idx)}>
                 Remove
-              </button>
-            </div>
-            
-            {field.items && field.items.length > 0 && field.items[0].key !== "" ? (
-              <BackendFormFields
-                fields={field.items}
-                path={`${path}.${idx}`}
-              />
+              </Button>
+            </Space>
+
+            {field.items && field.items.length > 0 && field.items[0].key !== '' ? (
+              <BackendFormFields fields={field.items} path={`${path}.${idx}`} />
             ) : (
               <>
-                <input
-                  type="text"
-                  style={{ width: '100%', borderColor: errorMessage ? '#f66' : undefined }}
-                  {...register(`${path}.${idx}` as const)}
+                <Controller
+                  control={control}
+                  name={`${path}.${idx}` as const}
+                  render={({ field: f }) => (
+                    <Input
+                      {...f}
+                      style={{ width: '100%' }}
+                      status={errorMessage ? 'error' : undefined}
+                    />
+                  )}
                 />
-                {errorMessage && <div style={{ color: '#f66', fontSize: '0.75rem', marginTop: '0.25rem' }}>{errorMessage}</div>}
+                {errorMessage && (
+                  <Typography.Text
+                    type="danger"
+                    style={{ display: 'block', fontSize: '0.75rem', marginTop: 2 }}
+                  >
+                    {errorMessage}
+                  </Typography.Text>
+                )}
               </>
             )}
-          </div>
+          </Card>
         );
       })}
     </div>

@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect } from 'react';
+import { Input, Space, Table, Typography } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 
 export type HostRecord = {
   provider: string;
@@ -34,7 +37,7 @@ type Props = {
   /** Notifies the parent of the currently visible (filtered) records. */
   onVisibleRecordsChange?: (visible: HostRecord[]) => void;
   /** Click handler for the row body (outside checkbox/action controls). */
-  onRowClick?: (rec: HostRecord, event: React.MouseEvent<HTMLTableRowElement>) => void;
+  onRowClick?: (rec: HostRecord, event: React.MouseEvent<HTMLElement>) => void;
   /** Drop handler for per-row file drag-and-drop. */
   onRowDrop?: (rec: HostRecord, files: FileList | null) => void;
   /** Returns true if the row should render with the "open detail" highlight. */
@@ -46,8 +49,6 @@ type Props = {
   /** Notified on filter change. Required if `filter` is controlled. */
   onFilterChange?: (q: string) => void;
 };
-
-const DEFAULT_PAGE_SIZE = 25;
 
 export function HostPicker(props: Props) {
   const {
@@ -74,9 +75,6 @@ export function HostPicker(props: Props) {
     }
   };
 
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [currentPage, setCurrentPage] = useState(1);
-
   const displayRecords = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) {
@@ -89,126 +87,71 @@ export function HostPicker(props: Props) {
     onVisibleRecordsChange?.(displayRecords);
   }, [displayRecords, onVisibleRecordsChange]);
 
-  const totalRows = displayRecords.length;
-  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  const pageStart = (currentPage - 1) * pageSize;
-  const pageEnd = pageStart + pageSize;
-  const pagedRecords = useMemo(
-    () => displayRecords.slice(pageStart, pageEnd),
-    [displayRecords, pageStart, pageEnd],
-  );
-  const showingFrom = totalRows === 0 ? 0 : pageStart + 1;
-  const showingTo = totalRows === 0 ? 0 : Math.min(pageEnd, totalRows);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [filter, pageSize, records]);
-
-  useEffect(() => {
-    setCurrentPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [totalPages]);
-
   return (
     <>
-      <div style={{ marginBottom: '0.5rem' }}>
-        <input
+      <Space style={{ marginBottom: 8 }}>
+        <Input
           placeholder="Filter results (provider, name, IP, zone, meta…)"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          style={{ width: 'min(100%, 420px)' }}
+          allowClear
+          style={{ width: 300 }}
         />
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center', marginTop: '0.4rem' }}>
-          <span style={{ fontSize: '0.8rem', opacity: 0.75 }}>
-            Showing {showingFrom}-{showingTo} of {totalRows} (total results: {records.length})
-          </span>
-          <label style={{ fontSize: '0.8rem', opacity: 0.9 }}>
-            Rows per page{' '}
-            <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
-              style={{ marginLeft: 4 }}
-            >
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
-          </label>
-          <button type="button" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
-            Prev
-          </button>
-          <span style={{ fontSize: '0.8rem' }}>
-            Page {currentPage} of {totalPages}
-          </span>
-          <button type="button" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
-            Next
-          </button>
-        </div>
-      </div>
+        <Typography.Text type="secondary">
+          {displayRecords.length} result{displayRecords.length === 1 ? '' : 's'}
+        </Typography.Text>
+      </Space>
 
-      <div style={{ overflowX: 'auto' }} onDragOver={(e) => e.preventDefault()}>
-        <table>
-          <thead>
-            <tr>
-              <th style={{ width: 36 }}>Sel.</th>
-              <th>Provider</th>
-              <th>Name</th>
-              <th>IP</th>
-              <th>Zone</th>
-              {renderRowActions ? <th>Actions</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {pagedRecords.map((rec) => {
-              const highlighted = isRowHighlighted ? isRowHighlighted(rec) : false;
-              return (
-                <tr
-                  key={recordKey(rec)}
-                  style={{
-                    cursor: onRowClick ? 'pointer' : undefined,
-                    background: highlighted ? 'rgba(100, 149, 237, 0.12)' : undefined,
-                  }}
-                  onClick={
-                    onRowClick
-                      ? (e) => {
-                          const el = e.target as HTMLElement;
-                          if (el.closest('button, input, a, textarea, select, label')) {
-                            return;
-                          }
-                          onRowClick(rec, e);
-                        }
-                      : undefined
-                  }
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={
-                    onRowDrop
-                      ? (e) => {
-                          e.preventDefault();
-                          onRowDrop(rec, e.dataTransfer.files);
-                        }
-                      : undefined
-                  }
-                >
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={!!selectedKeys[recordKey(rec)]}
-                      onChange={() => onToggleRow(rec)}
-                      aria-label={`Select ${rec.name}`}
-                    />
-                  </td>
-                  <td>{rec.provider}</td>
-                  <td>{rec.name}</td>
-                  <td>{rec.primary_ip}</td>
-                  <td>{rec.zone || ''}</td>
-                  {renderRowActions ? (
-                    <td style={{ whiteSpace: 'nowrap' }}>{renderRowActions(rec)}</td>
-                  ) : null}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <Table<HostRecord>
+        dataSource={displayRecords}
+        rowKey={recordKey}
+        size="small"
+        pagination={{
+          pageSize: 25,
+          showSizeChanger: true,
+          pageSizeOptions: ['25', '50', '100'],
+          showTotal: (total) => `${total} results`,
+        }}
+        rowSelection={{
+          selectedRowKeys: Object.keys(selectedKeys).filter((k) => selectedKeys[k]),
+          onSelect: (record) => onToggleRow(record),
+          onSelectAll: (_selected, _rows, changeRows) => {
+            changeRows.forEach((r) => onToggleRow(r));
+          },
+        }}
+        onRow={(rec) => ({
+          style: { cursor: onRowClick ? 'pointer' : undefined },
+          className: isRowHighlighted?.(rec) ? 'host-row--highlighted' : undefined,
+          onClick: (e) => {
+            const el = e.target as HTMLElement;
+            if (!el.closest('button, input, a, textarea, select, label')) {
+              onRowClick?.(rec, e);
+            }
+          },
+          onDragOver: (e) => e.preventDefault(),
+          onDrop: onRowDrop
+            ? (e) => {
+                e.preventDefault();
+                onRowDrop(rec, e.dataTransfer.files);
+              }
+            : undefined,
+        })}
+        columns={[
+          { title: 'Provider', dataIndex: 'provider', key: 'provider' },
+          { title: 'Name', dataIndex: 'name', key: 'name' },
+          { title: 'IP', dataIndex: 'primary_ip', key: 'primary_ip' },
+          { title: 'Zone', dataIndex: 'zone', key: 'zone', render: (v?: string) => v ?? '' },
+          ...(renderRowActions
+            ? ([
+                {
+                  title: 'Actions',
+                  key: 'actions',
+                  render: (_: unknown, rec: HostRecord) => renderRowActions(rec),
+                },
+              ] as ColumnsType<HostRecord>)
+            : []),
+        ]}
+      />
     </>
   );
 }

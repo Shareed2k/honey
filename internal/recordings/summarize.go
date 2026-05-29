@@ -58,7 +58,7 @@ func BuildSummarizePrompt(events []Event) string {
 	planRunes := 0
 	for _, e := range events {
 		if e.Type == "data" && e.Direction == "plan" && e.DataB64 != "" {
-			chunk := decodeDataB64(e.DataB64)
+			chunk := DecodeDataB64(e.DataB64)
 			r := []rune(chunk)
 			if planRunes+len(r) > maxSummarizePlanRunes {
 				chunk = string(r[:maxSummarizePlanRunes-planRunes]) + "\n…(plan truncated)"
@@ -118,7 +118,8 @@ func clipRunes(s string, limit int) string {
 	return string(r[:limit]) + "\n…(truncated)"
 }
 
-func decodeDataB64(b64 string) string {
+// DecodeDataB64 decodes a base64-encoded recording data payload to a UTF-8 string.
+func DecodeDataB64(b64 string) string {
 	raw, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
 		return ""

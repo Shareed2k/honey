@@ -1,0 +1,9 @@
+text,label
+INFO service startup complete,0
+INFO healthcheck status=ok latency_ms=12,0
+INFO user session renewed id=123456,0
+WARN retrying upstream request attempt=2,0
+ERROR authentication failed for user admin,1
+ERROR database timeout waiting for connection,1
+FATAL panic in worker loop index out of range,1
+ERROR permission denied writing /var/lib/app/state,1

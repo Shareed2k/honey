@@ -28,6 +28,94 @@ brew install --cask shareed2k/tap/honey
 go build -o honey ./cmd/honey
 ```
 
+## Macros manifest (v1alpha1)
+
+Honey supports Kubernetes-style macro manifests:
+
+- `apiVersion: honey.shareed2k.io/v1alpha1`
+- `kind: MacroSet`
+- `metadata.name`
+- `spec.macros` map
+
+Example file: `examples/macros/honeyfile.yaml`
+
+Run macros:
+
+```bash
+# List available macros
+./honey macros --file examples/macros/honeyfile.yaml --list
+
+# List as JSON
+./honey macros --file examples/macros/honeyfile.yaml --list --output json
+
+# Dry-run one macro
+./honey macros --file examples/macros/honeyfile.yaml --dry-run restart-nginx
+
+# Execute one macro
+./honey macros --file examples/macros/honeyfile.yaml restart-nginx
+```
+
+### Encrypted app upstream (secure:v1)
+
+For app proxy DSNs (including `mode: postgres` TCP apps), `upstream` can be encrypted inline as:
+
+- `secure:v1:<nonce-b64>:<ciphertext-b64>`
+
+At runtime, Honey decrypts this on app/proxy start using `defaults.secretsprovider` and
+`defaults.encryptedkey` from config. If decryption fails, app start fails. Listing apps still works.
+
+For `kind: exec` macros, you can use either:
+
+- `command: "single command"`
+- `commands:` list (joined as `&&` and run in order)
+
+## Logs anomaly detection (embedded)
+
+`honey logs` includes embedded anomaly scoring and can tag or filter suspicious lines without an external scorer.
+
+```bash
+# Stream journal logs for a unit with anomaly tags
+./honey logs "web-*" --unit nginx --follow --anomaly
+
+# Only print anomalous lines above threshold
+./honey logs "web-*" --unit nginx --anomaly --anomaly-only --anomaly-threshold 0.93
+
+# Fail startup if detector/model initialization fails
+./honey logs "web-*" --unit nginx --anomaly --anomaly-strict
+
+# Validate model/tokenizer/runtime quickly (no host streaming)
+./honey logs "web-*" --anomaly --anomaly-selftest \
+  --anomaly-model ./models/distilbert-log-anomaly.onnx \
+  --anomaly-tokenizer ./models/vocab.txt
+
+# Optional model path (validated at startup)
+./honey logs "web-*" --unit nginx --anomaly \
+  --anomaly-model ./models/distilbert-log-anomaly.onnx \
+  --anomaly-tokenizer ./models/vocab.txt
+```
+
+Flags:
+
+- `--anomaly`: enable embedded anomaly detection
+- `--anomaly-model`: local ONNX model path to validate/use during detector init
+- `--anomaly-tokenizer`: path to DistilBERT `vocab.txt` (defaults to `<model-dir>/vocab.txt`)
+- `--anomaly-threshold`: score cutoff from `0..1` (default `0.90`)
+- `--anomaly-window`: sliding window size (default `32`)
+- `--anomaly-only`: suppress non-anomalous lines
+- `--anomaly-strict`: return an error if detector initialization fails
+- `--anomaly-selftest`: run local detector init + sample scoring smoke test
+
+Runtime library lookup for embedded ONNX mode:
+
+- `HONEY_ONNXRUNTIME_LIB_DIR`: absolute directory containing ONNX runtime shared libraries
+- default bundled lookup: `runtime/onnx/<os>/<arch>/` relative to the honey binary
+
+DistilBERT ONNX expectations:
+
+- inputs must include `input_ids` and `attention_mask` (optional `token_type_ids`)
+- output should be binary score/probability (`[1,1]` or logits like `[1,2]`)
+- tokenizer vocab must include `[PAD]`, `[UNK]`, `[CLS]`, `[SEP]`
+
 ## MCP server (stdio)
 
 `honey mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/) server over **stdin/stdout** using the official [`go-sdk`](https://github.com/modelcontextprotocol/go-sdk). **Do not log to stdout** (only stderr); stdout is reserved for the JSON-RPC stream.
@@ -449,7 +537,7 @@ Embedded **loopback-only** web server with a random bearer token (override with 
 
 ```bash
 # One-time: build UI assets into internal/webserver/static (CI runs this automatically)
-make webui
+task webui
 
 go build -o honey ./cmd/honey
 ./honey web --listen 127.0.0.1:8765 --config ~/.config/honey/config.yaml
@@ -460,7 +548,7 @@ go build -o honey ./cmd/honey
 
 Optional flags include `--record-dir` (session recordings; optional `defaults.record_retention` such as `30d` for automatic purge of stale `.hrec.jsonl` files, and `DELETE /api/v1/recordings/{file_name}` from the web UI), `--files-root` (file browser root; defaults to `$HONEY_FILES_ROOT` or `$HOME`), `--agent-bin` / `--agent-build-cache-dir` for the transfer agent, and **`--metrics-listen`** (loopback-only Prometheus scrape endpoint at `/metrics`, separate from the token-protected UI). When the server cannot `go build` the agent (no checkout), Honey **downloads** prebuilt `honey-transfer-agent` from the **same GitHub release tag as this `honey` binary** (`…/releases/download/<vTAG>/honey-transfer-agent-<goos>-<goarch>`; dev builds use `…/latest/download/…`). Override with **`HONEY_TRANSFER_AGENT_DOWNLOAD_BASE`** or **`HONEY_TRANSFER_AGENT_DOWNLOAD_URL`**, or disable the default with **`HONEY_TRANSFER_AGENT_DOWNLOAD_DISABLE_DEFAULT=1`** (see `website/docs/web-ui.md`).
 
-Open the **URL printed on stderr** (includes `?token=…`). The web UI **API** tab embeds **Swagger UI** against the same OpenAPI document as **`GET /api/v1/openapi.json`** (same auth as other routes); regenerate the spec with **`make openapi`** or `go generate` in `internal/webserver` after changing handler comments. Deep-link the tab with **`?tab=api-docs`**. Notable API routes: `GET /api/v1/meta` (includes `terminal_assist_available`, `session_recording_available`, and `metrics_url` when `--metrics-listen` is set), `POST /api/v1/search`, `GET`/`PUT /api/v1/config`, structured backends under `/api/v1/config/backends/…` (path segment **`kubernetes`** matches YAML; search uses provider id **`k8s`**), `POST /api/v1/upload`, **`GET /api/v1/terminal-assist/models`** and **`POST /api/v1/terminal-assist`** (terminal AI), **`POST /api/v1/recipes/assist`** (recipe AI), recordings under `/api/v1/recordings`, WebSocket **`GET /ws/ssh?token=…`**. Authenticate with `Authorization: Bearer <token>` or `X-Honey-Token`.
+Open the **URL printed on stderr** (includes `?token=…`). The web UI **API** tab embeds **Swagger UI** against the same OpenAPI document as **`GET /api/v1/openapi.json`** (same auth as other routes); regenerate the spec with **`task openapi`** or `go generate` in `internal/webserver` after changing handler comments. Deep-link the tab with **`?tab=api-docs`**. Notable API routes: `GET /api/v1/meta` (includes `terminal_assist_available`, `session_recording_available`, and `metrics_url` when `--metrics-listen` is set), `POST /api/v1/search`, `GET`/`PUT /api/v1/config`, structured backends under `/api/v1/config/backends/…` (path segment **`kubernetes`** matches YAML; search uses provider id **`k8s`**), `POST /api/v1/upload`, **`GET /api/v1/terminal-assist/models`** and **`POST /api/v1/terminal-assist`** (terminal AI), **`POST /api/v1/recipes/assist`** (recipe AI), recordings under `/api/v1/recordings`, WebSocket **`GET /ws/ssh?token=…`**. Authenticate with `Authorization: Bearer <token>` or `X-Honey-Token`.
 
 **Local UI dev** (Vite proxies to the Go server): run `honey web` on `8765`, then `cd webui && npm install && npm run dev` and open Vite’s URL.
 

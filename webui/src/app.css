@@ -1,72 +1,5 @@
-* {
-  box-sizing: border-box;
-}
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  background: #0f1115;
-  color: #e6e6e6;
-}
-main {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 1rem;
-}
-nav.tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-}
-nav.tabs button {
-  background: #1a1d24;
-  border: 1px solid #2a3140;
-  color: #e6e6e6;
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  cursor: pointer;
-}
-nav.tabs button.active {
-  background: #2d3a52;
-  border-color: #4a6fa5;
-}
-input,
-textarea,
-select {
-  background: #1a1d24;
-  border: 1px solid #2a3140;
-  color: #e6e6e6;
-  padding: 0.4rem 0.6rem;
-  border-radius: 4px;
-}
-button.primary {
-  background: #3d6fb8;
-  border: none;
-  color: #fff;
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  cursor: pointer;
-}
-button.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-th,
-td {
-  border: 1px solid #2a3140;
-  padding: 0.35rem 0.5rem;
-  text-align: left;
-}
-th {
-  background: #1a1d24;
-}
-tr:nth-child(even) {
-  background: #14171c;
 }
 .modal-backdrop {
   position: fixed;
@@ -399,51 +332,6 @@ tr:nth-child(even) {
   border: 0;
 }
 
-.upload-progress-track {
-  width: 100%;
-  height: 10px;
-  border-radius: 999px;
-  background: #14171c;
-  border: 1px solid #2a3140;
-  overflow: hidden;
-}
-
-.upload-progress-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #335a92, #5a8fd8);
-  transition: width 0.15s ease-out;
-}
-
-.upload-progress-fill-indeterminate {
-  width: 32%;
-  animation: upload-progress-slide 1.05s ease-in-out infinite;
-}
-
-.upload-progress-fill-awaiting {
-  width: 100%;
-  background: linear-gradient(90deg, #335a92 0%, #5a8fd8 38%, #335a92 78%);
-  background-size: 220% 100%;
-  animation: upload-progress-shimmer 1.35s linear infinite;
-}
-
-@keyframes upload-progress-slide {
-  0% {
-    transform: translateX(0);
-  }
-  100% {
-    transform: translateX(212%);
-  }
-}
-
-@keyframes upload-progress-shimmer {
-  0% {
-    background-position: 100% 0;
-  }
-  100% {
-    background-position: -100% 0;
-  }
-}
 
 /* Terminal Tabs */
 .terminal-tabs-header {
@@ -582,31 +470,6 @@ tr:nth-child(even) {
   align-items: stretch;
   gap: 0.5rem;
   flex: 1;
-}
-
-/* Global floating terminal button */
-.floating-terminal-btn {
-  position: fixed;
-  bottom: 2rem;
-  right: 2rem;
-  background-color: #3b82f6;
-  color: white;
-  border: 1px solid #2563eb;
-  border-radius: 9999px;
-  padding: 0.75rem 1.5rem;
-  font-weight: 600;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  cursor: pointer;
-  z-index: 40;
-  transition: transform 0.2s, background-color 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.floating-terminal-btn:hover {
-  background-color: #2563eb;
-  transform: translateY(-2px);
 }
 
 /* Terminal Tab Carousel Navigation */
@@ -758,4 +621,14 @@ tr:nth-child(even) {
 .honey-openapi-swagger .swagger-ui .dialog-ux .modal-ux-content .btn {
   color: #e6e6e6 !important;
   border-color: #4a6fa5 !important;
+}
+
+.host-row--highlighted td {
+  background: rgba(100, 149, 237, 0.12) !important;
+}
+
+.rcp-summary {
+  max-height: 28vh;
+  overflow: auto;
+  margin-bottom: 0.5rem;
 }

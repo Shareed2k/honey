@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
@@ -34,6 +36,26 @@ type DockerDiscover struct {
 	Platform string `yaml:"platform,omitempty" json:"platform,omitempty" honey:"label=Remote OS;enum=linux|windows"`
 }
 
+// Logs holds per-command defaults for honey logs.
+type Logs struct {
+	Anomaly                bool    `yaml:"anomaly"                     json:"anomaly"                     honey:"label=Enable anomaly detection"`
+	AnomalyModel           string  `yaml:"anomaly_model,omitempty"     json:"anomaly_model,omitempty"     honey:"label=Path to ONNX model file"`
+	AnomalyThresh          float64 `yaml:"anomaly_threshold,omitempty" json:"anomaly_threshold,omitempty" honey:"label=Anomaly score threshold (0–1)"`
+	AnomalyWindow          int     `yaml:"anomaly_window,omitempty"    json:"anomaly_window,omitempty"    honey:"label=Anomaly sliding window size"`
+	AnomalyOnly            bool    `yaml:"anomaly_only"                json:"anomaly_only"                honey:"label=Only output anomalous lines"`
+	AnomalyStrict          bool    `yaml:"anomaly_strict"              json:"anomaly_strict"              honey:"label=Fail if anomaly detector cannot init"`
+	AnomalyTokPath         string  `yaml:"anomaly_tokenizer,omitempty"  json:"anomaly_tokenizer,omitempty"  honey:"label=Path to vocab.txt tokenizer file"`
+	AnomalyEndpoint        string  `yaml:"anomaly_endpoint,omitempty"      json:"anomaly_endpoint,omitempty"      honey:"label=OpenAI-compatible API URL for LLM anomaly detection (Ollama/LM Studio)"`
+	AnomalyLLMModel        string  `yaml:"anomaly_llm_model,omitempty"     json:"anomaly_llm_model,omitempty"     honey:"label=Model name for LLM anomaly endpoint"`
+	AnomalyContextLines    int     `yaml:"anomaly_context_lines,omitempty"    json:"anomaly_context_lines,omitempty"    honey:"label=Number of recent lines sent as context to the LLM anomaly detector"`
+	AnomalyFilterThreshold float64 `yaml:"anomaly_filter_threshold,omitempty" json:"anomaly_filter_threshold,omitempty" honey:"label=Skip LLM when fast detector score is below this value (CoLA two-tier; 0=disabled)"`
+	AnomalyFreqWindow      int     `yaml:"anomaly_freq_window,omitempty"      json:"anomaly_freq_window,omitempty"      honey:"label=Short window size for rate-ratio burst detection (0=disabled, default 100)"`
+	AnomalyFreqRatio       float64 `yaml:"anomaly_freq_ratio,omitempty"       json:"anomaly_freq_ratio,omitempty"       honey:"label=Short/long rate ratio that triggers a frequency-spike anomaly (default 5.0)"`
+	AnomalyFeedbackFile    string  `yaml:"anomaly_feedback_file,omitempty"   json:"anomaly_feedback_file,omitempty"    honey:"label=Append scored log lines as JSONL to this file for review and threshold calibration"`
+	AlertEnabled           bool    `yaml:"alert_enabled"              json:"alert_enabled"              honey:"label=Alert on anomalies"`
+	AlertSuppressDuration  string  `yaml:"alert_suppress_duration,omitempty" json:"alert_suppress_duration,omitempty" honey:"label=Alert suppression window (e.g. 5m)"`
+}
+
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
 	SSHUser         string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
@@ -48,6 +70,7 @@ type Defaults struct {
 	NameRegex       string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
 	AISystemPrompt  string         `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step"`
 	DockerDiscover  DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover Defaults"`
+	Logs            Logs           `yaml:"logs,omitempty" json:"logs,omitempty" honey:"label=Logs command defaults"`
 
 	// secretsprovider unwraps the stack AES data key (see internal/cuetry/secrets/doc.go).
 	// Examples: gcpkms://projects/…/cryptoKeys/…, awskms://, vault-transit://mount/key,
@@ -188,19 +211,31 @@ func (f *File) Save(path string) error {
 	return nil
 }
 
-// Load reads and parses a YAML config file.
+// Load reads and parses a YAML config file using viper.
+// The returned *File is populated from the YAML file, with any HONEY_* environment
+// variables able to override individual fields (e.g. HONEY_DEFAULTS_SSH_USER).
 func Load(path string) (*File, error) {
 	if path == "" {
 		return nil, errors.New("config path empty")
 	}
 	zap.L().Debug("loading config file", zap.String("path", path))
-	b, err := safepath.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var f File
-	if err := yaml.Unmarshal(b, &f); err != nil {
+
+	v := viper.NewWithOptions(viper.KeyDelimiter("."))
+	v.SetConfigFile(path)
+	v.SetEnvPrefix("HONEY")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+
+	var f File
+	if err := v.Unmarshal(&f, func(dc *mapstructure.DecoderConfig) {
+		dc.TagName = "yaml"
+		dc.WeaklyTypedInput = true
+	}); err != nil {
+		return nil, fmt.Errorf("decode config %s: %w", path, err)
 	}
 
 	if f.Apps != nil {

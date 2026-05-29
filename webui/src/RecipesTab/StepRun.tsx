@@ -1,5 +1,6 @@
 // webui/src/RecipesTab/StepRun.tsx
 import { useEffect, useState } from 'react';
+import { Button, Typography } from 'antd';
 import { cueExecStream, type CueExecRequest, type HostExecResultRow, type ParsedRecipe } from '../api';
 import type { HostRecord } from '../HostPicker';
 import type { EnvPair, LiveState } from './types';
@@ -82,7 +83,7 @@ export function StepRun(props: Props) {
   return (
     <div className="rcp-step rcp-step--run">
       <header className="rcp-step__header">
-        <h2>④ Run</h2>
+        <Typography.Title level={5} style={{ margin: 0 }}>④ Run</Typography.Title>
         <div className="rcp-run-summary">
           <span className="rcp-ok">{ok} ok</span> ·{' '}
           <span className="rcp-err">{err} err</span> ·{' '}
@@ -90,9 +91,9 @@ export function StepRun(props: Props) {
           <span> · status: {state.status}</span>
         </div>
         {state.status === 'running' ? (
-          <button type="button" className="rcp-btn" onClick={handleCancel}>
+          <Button onClick={handleCancel}>
             cancel run
-          </button>
+          </Button>
         ) : null}
       </header>
 
@@ -118,20 +119,18 @@ export function StepRun(props: Props) {
       {state.status !== 'running' ? (
         <footer className="rcp-step__footer">
           {canViewRecording ? (
-            <button
-              type="button"
-              className="rcp-btn"
+            <Button
               onClick={() => props.onViewRecording(recordingFileName!)}
             >
               View recording
-            </button>
+            </Button>
           ) : null}
-          <button type="button" className="rcp-btn" onClick={props.onStartNew}>
+          <Button onClick={props.onStartNew}>
             start new
-          </button>
-          <button type="button" className="rcp-btn rcp-btn--pri" onClick={props.onRunAgain}>
+          </Button>
+          <Button type="primary" onClick={props.onRunAgain}>
             Run again
-          </button>
+          </Button>
         </footer>
       ) : null}
     </div>

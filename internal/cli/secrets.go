@@ -68,7 +68,6 @@ defaults.secretsprovider. Does not modify config files.`,
 
 func init() {
 	rootCmd.AddCommand(secretsCmd)
-	secretsCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths)")
 	secretsCmd.AddCommand(secretsSealCmd, secretsUnsealCmd, secretsKeyringInitCmd)
 
 	secretsKeyringInitCmd.Flags().StringVar(&flagKeyringService, "service", "honey", "Keyring service name (keyring://service/user)")

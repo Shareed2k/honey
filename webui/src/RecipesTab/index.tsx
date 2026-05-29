@@ -1,5 +1,6 @@
 // webui/src/RecipesTab/index.tsx
 import { useCallback, useState } from 'react';
+import { message } from 'antd';
 import type { HostRecord } from '../HostPicker';
 import { parseDiskRecipe, type ParsedRecipe, type RecentRunEntry } from '../api';
 import { reconcileHosts } from '../hostReconcile';
@@ -52,7 +53,7 @@ export function RecipesTab(props: Props) {
       setHostReconcileNote(null);
       setState((s) => ({ ...s, recipe: { kind: 'disk', path }, edits: parsed, step: 3 }));
     } catch (e) {
-      alert(`Could not load recipe: ${e instanceof Error ? e.message : String(e)}`);
+      void message.error(`Could not load recipe: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -74,7 +75,7 @@ export function RecipesTab(props: Props) {
         step: 3,
       }));
     } catch (e) {
-      alert(`Could not load recipe: ${e instanceof Error ? e.message : String(e)}`);
+      void message.error(`Could not load recipe: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

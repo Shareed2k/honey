@@ -12,6 +12,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/recordings"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -19,6 +20,7 @@ import (
 var (
 	flagCueExecExecute bool
 	flagCueExecEnv     []string
+	flagRetryFailed    string
 
 	cueExecCmd = &cobra.Command{
 		Use:   "cue-exec <recipe.cue> [name]",
@@ -64,6 +66,7 @@ func init() {
 	cueExecCmd.Flags().AddFlagSet(searchCmd.Flags())
 	cueExecCmd.Flags().BoolVar(&flagCueExecExecute, "execute", false, "Run steps over SSH/SFTP (default: dry-run, print resolved plan only)")
 	cueExecCmd.Flags().StringArrayVarP(&flagCueExecEnv, "env", "e", nil, "Remote env for command/script (repeat: -e KEY=value); overrides recipe env on duplicate keys")
+	cueExecCmd.Flags().StringVar(&flagRetryFailed, "retry-failed", "", "Re-run only hosts that did not succeed in this recording (basename, e.g. 20260529_….hrec.jsonl)")
 }
 
 func runCueExec(cmd *cobra.Command, args []string) error {
@@ -87,6 +90,25 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	if flagRetryFailed != "" {
+		dir := resolveRecordingsDir(cmd)
+		prevEvents, err := recordings.LoadEvents(dir, flagRetryFailed)
+		if err != nil {
+			return fmt.Errorf("--retry-failed: %w", err)
+		}
+		succeeded := recordings.SucceededHosts(prevEvents)
+		filtered := records[:0]
+		for _, r := range records {
+			if _, ok := succeeded[r.Name+"@"+r.PrimaryIP]; !ok {
+				filtered = append(filtered, r)
+			}
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "retry-failed: %d succeeded host(s) skipped, retrying %d\n",
+			len(succeeded), len(filtered))
+		records = filtered
+	}
+
 	if len(records) == 0 {
 		return fmt.Errorf("search returned no hosts; widen filters or fix recipe host keys")
 	}

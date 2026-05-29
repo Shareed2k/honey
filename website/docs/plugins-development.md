@@ -47,7 +47,7 @@ honey plugins list --config ~/.config/honey/config.yaml
 Install the echo example:
 
 ```bash
-make build-plugin-examples
+task build-plugin-examples
 mkdir -p ~/.config/honey/plugins/echo
 cp examples/plugins/echo/plugin.yaml ~/.config/honey/plugins/echo/
 cp examples/plugins/echo/plugin.wasm ~/.config/honey/plugins/echo/
@@ -364,7 +364,7 @@ Shipped under [`plugins/`](https://github.com/shareed2k/honey/tree/main/plugins)
 Build and install:
 
 ```bash
-make build-plugin-modules
+task build-plugin-modules
 mkdir -p ~/.config/honey/plugins/bash
 cp examples/plugins/bash/plugin.yaml examples/plugins/bash/plugin.wasm ~/.config/honey/plugins/bash/
 ```
@@ -415,13 +415,13 @@ GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .
 From the honey repo root (echo example):
 
 ```bash
-make build-plugin-examples
+task build-plugin-examples
 ```
 
 Built-in Ansible-like modules (`bash`, `shell`, `copy`, `template`, `file`, `service`, `rclone`):
 
 ```bash
-make build-plugin-modules
+task build-plugin-modules
 ```
 
 This also copies the echo wasm into `internal/plugins/testdata/echo/` for CI.

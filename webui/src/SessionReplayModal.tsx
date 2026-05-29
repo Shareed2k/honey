@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import stripAnsi from 'strip-ansi';
+import { Alert, Button, Modal, Select, Space, Spin, Typography } from 'antd';
 import { deleteRecording, fetchRecordingEvents, fetchTerminalAssistModels, summarizeRecording } from './api';
 import type {
   HostExecResultRow,
@@ -220,22 +221,24 @@ export function SessionReplayModal({
   }, [assistAvailable]);
 
   async function handleDelete() {
-    if (!selectedFile || deleteBusy) {
-      return;
-    }
-    if (!window.confirm(`Delete recording ${selectedFile}?`)) {
-      return;
-    }
-    setDeleteBusy(true);
-    try {
-      await deleteRecording(selectedFile);
-      refreshList();
-      onClose();
-    } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDeleteBusy(false);
-    }
+    if (!selectedFile || deleteBusy) return;
+    Modal.confirm({
+      title: `Delete recording ${selectedFile}?`,
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setDeleteBusy(true);
+        try {
+          await deleteRecording(selectedFile);
+          refreshList();
+          onClose();
+        } catch (e) {
+          setLoadErr(e instanceof Error ? e.message : String(e));
+        } finally {
+          setDeleteBusy(false);
+        }
+      },
+    });
   }
 
   async function handleSummarize() {
@@ -383,140 +386,131 @@ export function SessionReplayModal({
   const duration = useMemo(() => (events.length ? events[events.length - 1].time_ms || 0 : 0), [events]);
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <div className="modal" role="dialog" aria-label={`Replay: ${record.name}`}>
-        <header>
-          <strong>
-            Replay
-            {record.primary_ip?.trim()
-              ? ` — ${record.name} (${record.primary_ip})`
-              : record.name
-                ? ` — ${record.name}`
-                : ''}
-          </strong>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </header>
-        {listStats ? (
-          <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', opacity: 0.85 }}>
-            {listStats.file_count} file{listStats.file_count === 1 ? '' : 's'} · {formatBytes(listStats.total_bytes)}
-            {retention?.enabled && retention.max_age ? (
-              <> · auto-delete older than {retention.max_age}</>
-            ) : null}
-          </p>
-        ) : null}
-        <div className="modal-replay-toolbar">
-          <select
-            value={selectedFile}
-            onChange={(e) => setSelectedFile(e.target.value)}
-            style={{ minWidth: 280, maxWidth: 480 }}
-          >
-            {recordings.map((r) => (
-              <option key={r.file_name} value={r.file_name}>
-                {r.file_name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={loading || events.length === 0}
-            onClick={() => {
-              const term = termRef.current;
-              if (term) {
-                term.clear();
-                term.reset();
-              }
-              const pre = structuredRef.current;
-              if (pre && selectedFile) {
-                const open = events.find((e) => e.type === 'open');
-                pre.textContent =
-                  `Replaying ${selectedFile}\n` +
-                  (open?.message ? `[open] ${open.message}\n\n` : '\n');
-              }
-              setCursor(0);
-              setElapsedBase(0);
-              elapsedRef.current = 0;
-            }}
-          >
-            Restart
-          </button>
-          <button type="button" disabled={loading || events.length === 0} onClick={() => setPlaying((p) => !p)}>
-            {playing ? 'Pause' : 'Play'}
-          </button>
-          <label style={{ fontSize: '0.85rem' }}>
-            Speed{' '}
-            <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
-              <option value={0.5}>0.5x</option>
-              <option value={1}>1x</option>
-              <option value={2}>2x</option>
-              <option value={4}>4x</option>
-            </select>
-          </label>
-          <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>
-            {Math.round(elapsedBase)}ms / {duration}ms
-          </span>
-          {assistAvailable ? (
-            <>
-              {assistModelsLoading ? (
-                <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Loading models…</span>
-              ) : assistModels.length > 0 ? (
-                <label style={{ fontSize: '0.85rem' }}>
-                  Model{' '}
-                  <select
-                    value={assistSelectedModel}
-                    onChange={(e) => setAssistSelectedModel(e.target.value)}
-                    style={{ minWidth: 140 }}
-                  >
-                    {assistModels.map((id) => (
-                      <option key={id} value={id}>
-                        {id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <span style={{ fontSize: '0.8rem', color: '#d29922' }}>No models available</span>
-              )}
-              <button
-                type="button"
-                disabled={loading || !selectedFile || summaryBusy || !assistCanSummarize}
-                onClick={() => void handleSummarize()}
-              >
-                {summaryBusy ? 'Summarizing…' : 'Summarize run'}
-              </button>
-            </>
+    <Modal
+      open
+      title={`Replay${
+        record.primary_ip?.trim()
+          ? ` — ${record.name} (${record.primary_ip})`
+          : record.name
+            ? ` — ${record.name}`
+            : ''
+      }`}
+      onCancel={onClose}
+      footer={null}
+      width="min(960px, 96vw)"
+      styles={{ body: { height: 'min(580px, 80vh)', display: 'flex', flexDirection: 'column', padding: '8px 12px' } }}
+      destroyOnHidden
+    >
+      {listStats ? (
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: '0.85rem' }}>
+          {listStats.file_count} file{listStats.file_count === 1 ? '' : 's'} · {formatBytes(listStats.total_bytes)}
+          {retention?.enabled && retention.max_age ? (
+            <> · auto-delete older than {retention.max_age}</>
           ) : null}
-          <button type="button" disabled={!selectedFile || deleteBusy} onClick={() => void handleDelete()}>
-            {deleteBusy ? 'Deleting…' : 'Delete'}
-          </button>
+        </Typography.Text>
+      ) : null}
+      <div className="modal-replay-toolbar">
+        <Select
+          value={selectedFile}
+          onChange={(v) => setSelectedFile(v)}
+          style={{ minWidth: 200, maxWidth: 400, flex: 1 }}
+          options={recordings.map((r) => ({ value: r.file_name, label: r.file_name }))}
+        />
+        <Button
+          disabled={loading || events.length === 0}
+          onClick={() => {
+            const term = termRef.current;
+            if (term) { term.clear(); term.reset(); }
+            const pre = structuredRef.current;
+            if (pre && selectedFile) {
+              const open = events.find((e) => e.type === 'open');
+              pre.textContent = `Replaying ${selectedFile}\n` + (open?.message ? `[open] ${open.message}\n\n` : '\n');
+            }
+            setCursor(0);
+            setElapsedBase(0);
+            elapsedRef.current = 0;
+          }}
+        >
+          Restart
+        </Button>
+        <Button disabled={loading || events.length === 0} onClick={() => setPlaying((p) => !p)}>
+          {playing ? 'Pause' : 'Play'}
+        </Button>
+        <Space size={4}>
+          <Typography.Text type="secondary">Speed</Typography.Text>
+          <Select
+            value={speed}
+            onChange={(v) => setSpeed(Number(v))}
+            style={{ width: 72 }}
+            size="small"
+            options={[
+              { value: 0.5, label: '0.5x' },
+              { value: 1, label: '1x' },
+              { value: 2, label: '2x' },
+              { value: 4, label: '4x' },
+            ]}
+          />
+        </Space>
+        <Typography.Text type="secondary">
+          {Math.round(elapsedBase)}ms / {duration}ms
+        </Typography.Text>
+        {assistAvailable ? (
+          <>
+            {assistModelsLoading ? (
+              <Space size={4}>
+                <Spin size="small" />
+                <Typography.Text type="secondary">Loading models…</Typography.Text>
+              </Space>
+            ) : assistModels.length > 0 ? (
+              <Space size={4}>
+                <Typography.Text type="secondary">Model</Typography.Text>
+                <Select
+                  value={assistSelectedModel}
+                  onChange={(v) => setAssistSelectedModel(v)}
+                  style={{ minWidth: 140 }}
+                  size="small"
+                  options={assistModels.map((id) => ({ value: id, label: id }))}
+                />
+              </Space>
+            ) : (
+              <Typography.Text type="warning">No models available</Typography.Text>
+            )}
+            <Button
+              disabled={loading || !selectedFile || summaryBusy || !assistCanSummarize}
+              onClick={() => void handleSummarize()}
+            >
+              {summaryBusy ? 'Summarizing…' : 'Summarize run'}
+            </Button>
+          </>
+        ) : null}
+        <Button danger disabled={!selectedFile || deleteBusy} onClick={() => void handleDelete()}>
+          {deleteBusy ? 'Deleting…' : 'Delete'}
+        </Button>
+      </div>
+      {loadErr ? <Alert type="error" message={loadErr} showIcon style={{ marginBottom: 8 }} /> : null}
+      {assistModelsErr ? <Alert type="warning" message={assistModelsErr} showIcon style={{ marginBottom: 8 }} /> : null}
+      {summaryErr ? <Alert type="error" message={summaryErr} showIcon style={{ marginBottom: 8 }} /> : null}
+      {summary ? (
+        <div className="rcp-summary">
+          <Suspense fallback={<pre>{summary}</pre>}>
+            <AiMarkdown content={summary} />
+          </Suspense>
         </div>
-        {loadErr ? <p style={{ color: '#f66', marginTop: 0 }}>{loadErr}</p> : null}
-        {assistModelsErr ? <p style={{ color: '#d29922', marginTop: 0, fontSize: '0.85rem' }}>{assistModelsErr}</p> : null}
-        {summaryErr ? <p style={{ color: '#f66', marginTop: 0 }}>{summaryErr}</p> : null}
-        {summary ? (
-          <div className="rcp-summary" style={{ maxHeight: '28vh', overflow: 'auto', marginBottom: '0.5rem' }}>
-            <Suspense fallback={<pre>{summary}</pre>}>
-              <AiMarkdown content={summary} />
-            </Suspense>
+      ) : null}
+      <div className="term-wrap">
+        {!hasStructuredLog ? (
+          <div className="term-xterm-host" ref={ref} />
+        ) : (
+          <div className="term-xterm-host">
+            <pre ref={structuredRef} className="term-structured-replay" />
+          </div>
+        )}
+        {loading ? (
+          <div className="term-connect-overlay" aria-live="polite" aria-atomic="true">
+            <Spin />
           </div>
         ) : null}
-        <div className="term-wrap">
-          {!hasStructuredLog ? (
-            <div className="term-xterm-host" ref={ref} />
-          ) : (
-            <div className="term-xterm-host">
-              <pre ref={structuredRef} className="term-structured-replay" />
-            </div>
-          )}
-          {loading ? (
-            <div className="term-connect-overlay" aria-live="polite" aria-atomic="true">
-              <div className="term-spinner" role="status" />
-              <span className="sr-only">Loading recording…</span>
-            </div>
-          ) : null}
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

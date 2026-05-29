@@ -23,6 +23,7 @@ var (
 	webAgentBin           string
 	webAgentBuildCacheDir string
 	webMetricsListen      string
+	webAllowLogsCommand   bool
 )
 
 var webCmd = &cobra.Command{
@@ -39,6 +40,7 @@ func init() {
 	webCmd.Flags().StringVar(&webAgentBin, "agent-bin", "", "Explicit path to honey-transfer-agent binary (optional)")
 	webCmd.Flags().StringVar(&webAgentBuildCacheDir, "agent-build-cache-dir", "", "Directory used to cache auto-built honey-transfer-agent binary")
 	webCmd.Flags().StringVar(&webMetricsListen, "metrics-listen", "", "Optional loopback host:port for Prometheus /metrics (e.g. 127.0.0.1:9091)")
+	webCmd.Flags().BoolVar(&webAllowLogsCommand, "allow-logs-command", false, "Allow callers to run arbitrary remote commands via the logs streaming endpoint (disabled by default)")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -87,6 +89,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		Metrics:            prom,
 		NoCache:            flagNoCache,
 		Refresh:            flagRefresh,
+		AllowLogsCommand:   webAllowLogsCommand,
 	})
 	if err != nil {
 		return err

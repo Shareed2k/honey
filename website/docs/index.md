@@ -327,7 +327,7 @@ If a provider is unreachable, the command fails (use `--provider` to narrow scop
 
 ## Embedded web UI (`honey web`)
 
-Loopback HTTP server with bearer token auth (see the repository **README** for `make webui`, listen address, and `HONEY_WEB_TOKEN`). The bundled UI covers search (with provider/backend dropdowns), raw YAML config, structured **backends** JSON CRUD under `/api/v1/config/backends/…`, and a WebSocket terminal on `/ws/ssh` for **SSH** hosts and **Kubernetes pods** (ephemeral container exec). REST path segments use YAML keys such as **`kubernetes`**; search filters still use the provider id **`k8s`**.
+Loopback HTTP server with bearer token auth (see the repository **README** for `task webui`, listen address, and `HONEY_WEB_TOKEN`). The bundled UI covers search (with provider/backend dropdowns), raw YAML config, structured **backends** JSON CRUD under `/api/v1/config/backends/…`, and a WebSocket terminal on `/ws/ssh` for **SSH** hosts and **Kubernetes pods** (ephemeral container exec). REST path segments use YAML keys such as **`kubernetes`**; search filters still use the provider id **`k8s`**.
 
 ## Layout
 

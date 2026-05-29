@@ -935,6 +935,7 @@ export function uploadFormDataWithProgress(
 export interface AppConfig {
   name: string;
   type: string;
+  mode?: string;
   target?: string;
   target_regex?: string;
   backend?: string;
@@ -992,4 +993,84 @@ export async function stopProxySession(id: string): Promise<void> {
     const errorText = await res.text();
     throw new Error(errorText || res.statusText);
   }
+}
+
+export interface PostgresCatalog {
+  databases: string[];
+  schemas: string[];
+  tables: Record<string, string[]>;
+  columns: Record<string, string[]>;
+}
+
+export interface PostgresQueryResponse {
+  rows: Record<string, unknown>[];
+}
+
+export async function fetchPostgresCatalog(sessionId: string): Promise<PostgresCatalog> {
+  const res = await apiGet(`/api/v1/postgres/catalog?session_id=${encodeURIComponent(sessionId)}`);
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || res.statusText);
+  }
+  return await res.json();
+}
+
+export async function runPostgresQuery(sessionId: string, sql: string, database?: string): Promise<PostgresQueryResponse> {
+  const res = await apiPost('/api/v1/postgres/query', {
+    session_id: sessionId,
+    sql,
+    database,
+    readonly: true,
+    timeout_ms: 15000,
+    limit: 1000,
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || res.statusText);
+  }
+  return await res.json();
+}
+
+export interface LogsStreamRequest {
+  records: HostRecord[];
+  ssh_user?: string;
+  source?: string;
+  follow?: boolean;
+  tail?: number;
+  since?: string;
+  container?: string;
+  unit?: string;
+  command?: string;
+  run_as?: string;
+  grep?: string;
+  labels?: string[];
+  anomaly?: boolean;
+  anomaly_threshold?: number;
+  anomaly_only?: boolean;
+  anomaly_model?: string;
+  anomaly_tokenizer?: string;
+  anomaly_endpoint?: string;
+  anomaly_llm_model?: string;
+  anomaly_context?: number;
+  anomaly_filter_threshold?: number;
+  anomaly_freq_window?: number;
+  anomaly_freq_ratio?: number;
+}
+
+export async function streamLogs(
+  req: LogsStreamRequest,
+  onLine: (line: string) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const r = await fetch('/api/v1/logs/stream', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  await readNDJSON<{ line: string }>(r, (obj) => onLine(obj.line));
 }
