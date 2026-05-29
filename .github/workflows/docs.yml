@@ -30,20 +30,7 @@ jobs:
           node-version: 20
 
       - name: Generate CLI Documentation
-        run: |
-          go run ./cmd/honey docs ./website/docs/cli
-          # README as docs home (front matter + body; drop repo H1 to avoid colliding with doc title)
-          {
-            printf '%s\n' '---' 'id: index' 'title: Honey Documentation' 'slug: /' '---'
-            tail -n +2 README.md
-          } > website/docs/index.md
-          sed -i 's|docs/assets|assets|g' website/docs/index.md || true
-          # Rewrite legacy repo-relative links if README still contains them
-          sed -i \
-            -e 's|](website/docs/providers/index\.md)|](/providers)|g' \
-            -e 's|](website/docs/providers/\([^)]*\)\.md)|](/providers/\1)|g' \
-            -e 's|](examples/config/)|(https://github.com/shareed2k/honey/tree/main/examples/config)|g' \
-            website/docs/index.md
+        run: go run ./cmd/honey docs ./website/docs/cli
 
       - name: Install dependencies
         working-directory: website

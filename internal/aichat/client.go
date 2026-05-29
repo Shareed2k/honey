@@ -97,15 +97,15 @@ func Complete(ctx context.Context, system, user, model string, maxOutputTokens i
 	if err != nil {
 		return "", err
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
 	var parsed chatResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return "", fmt.Errorf("decode response: %w (http %d)", err, resp.StatusCode)
 	}
 	if parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
 		return "", fmt.Errorf("api error: %s (http %d)", parsed.Error.Message, resp.StatusCode)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	if len(parsed.Choices) < 1 {
 		return "", fmt.Errorf("empty choices in response (http %d)", resp.StatusCode)
