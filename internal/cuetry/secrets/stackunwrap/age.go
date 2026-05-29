@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"filippo.io/age"
-	"filippo.io/age/armor"
 
 	"github.com/shareed2k/honey/internal/safepath"
 )
@@ -79,15 +78,8 @@ func loadAgeIdentities(path string) ([]age.Identity, error) {
 	return ids, nil
 }
 
-func decryptAgeToBytes(ids []age.Identity, ciphertext []byte) ([]byte, error) {
-	src := bytes.NewReader(ciphertext)
-	var dec interface{ Read([]byte) (int, error) }
-	if bytes.HasPrefix(ciphertext, []byte(armor.Header)) {
-		dec = armor.NewReader(src)
-	} else {
-		dec = src
-	}
-	r, err := age.Decrypt(dec, ids...)
+func decryptAgeToBytes(ids []age.Identity, armored []byte) ([]byte, error) {
+	r, err := age.Decrypt(bytes.NewReader(armored), ids...)
 	if err != nil {
 		return nil, fmt.Errorf("age decrypt stack key: %w", err)
 	}

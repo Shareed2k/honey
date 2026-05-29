@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"filippo.io/age"
-	"filippo.io/age/armor"
 )
 
 func TestAge_Unwrap_inlineCiphertext(t *testing.T) {
@@ -23,8 +22,7 @@ func TestAge_Unwrap_inlineCiphertext(t *testing.T) {
 	}
 	key := bytes.Repeat([]byte{0xab}, 32)
 	var buf bytes.Buffer
-	aw := armor.NewWriter(&buf)
-	w, err := age.Encrypt(aw, id.Recipient())
+	w, err := age.Encrypt(&buf, id.Recipient())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,9 +30,6 @@ func TestAge_Unwrap_inlineCiphertext(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := aw.Close(); err != nil {
 		t.Fatal(err)
 	}
 	u := Age{IdentityFile: idPath}

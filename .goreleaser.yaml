@@ -18,19 +18,6 @@ builds:
     binary: honey
     env:
       - CGO_ENABLED=1
-      - >-
-        {{- if eq .Os "linux" }}
-          {{- if eq .Arch "amd64"}}CC=x86_64-linux-gnu-gcc{{end}}
-          {{- if eq .Arch "arm64"}}CC=aarch64-linux-gnu-gcc{{end}}
-        {{- end}}
-        {{- if eq .Os "darwin" }}
-          {{- if eq .Arch "amd64"}}CC=o64-clang{{end}}
-          {{- if eq .Arch "arm64"}}CC=oa64-clang{{end}}
-        {{- end}}
-        {{- if eq .Os "windows" }}
-          {{- if eq .Arch "amd64"}}CC=x86_64-w64-mingw32-gcc{{end}}
-          {{- if eq .Arch "arm64"}}CC=aarch64-w64-mingw32-gcc{{end}}
-        {{- end}}
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
