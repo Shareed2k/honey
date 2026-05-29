@@ -54,18 +54,7 @@ func init() {
 }
 
 func runPluginsList(cmd *cobra.Command, _ []string) error {
-	cfgPath, err := config.ResolvePath(flagConfig)
-	if err != nil {
-		return err
-	}
-	var cfg *config.File
-	if cfgPath != "" {
-		cfg, err = config.Load(cfgPath)
-		if err != nil {
-			return err
-		}
-	}
-	mgr, err := plugins.Open(context.Background(), cfg)
+	mgr, err := plugins.Open(context.Background(), resolvedCfg)
 	if err != nil {
 		return err
 	}
@@ -89,19 +78,8 @@ func runPluginsInstall(cmd *cobra.Command, args []string) error {
 	// Resolve plugins directory: --dir flag → config plugins.directory → default
 	dir := strings.TrimSpace(pluginsInstallDir)
 	if dir == "" {
-		cfgPath, err := config.ResolvePath(flagConfig)
-		if err != nil {
-			return err
-		}
-		var cfg *config.File
-		if cfgPath != "" {
-			cfg, err = config.Load(cfgPath)
-			if err != nil {
-				return err
-			}
-		}
-		if cfg != nil && strings.TrimSpace(cfg.Plugins.Directory) != "" {
-			dir = strings.TrimSpace(cfg.Plugins.Directory)
+		if resolvedCfg != nil && strings.TrimSpace(resolvedCfg.Plugins.Directory) != "" {
+			dir = strings.TrimSpace(resolvedCfg.Plugins.Directory)
 		} else {
 			dir = config.DefaultPluginsDir()
 		}

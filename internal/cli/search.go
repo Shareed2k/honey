@@ -156,17 +156,8 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 		DockerSSHUser:       flagSSHUser,
 	}
 
-	cfgPath, err := config.ResolvePath(flagConfig)
-	if err != nil {
-		return nil, "", nil, "", err
-	}
-	var cfg *config.File
-	if cfgPath != "" {
-		cfg, err = config.Load(cfgPath)
-		if err != nil {
-			return nil, "", nil, cfgPath, fmt.Errorf("config: %w", err)
-		}
-	}
+	cfgPath := resolvedCfgPath
+	cfg := resolvedCfg
 	hostexec.ReconfigureFromHoneyConfig(cfg)
 
 	cacheTTL := flagCacheTTL

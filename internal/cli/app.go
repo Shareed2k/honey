@@ -15,17 +15,15 @@ import (
 
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/appsecret"
-	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
 var (
-	flagAppPort      int
-	flagAppBrowser   bool
-	flagAppNoBrowser bool
-	flagAppPrintURL  bool
+	flagAppPort     int
+	flagAppBrowser  bool
+	flagAppPrintURL bool
 )
 
 var appCmd = &cobra.Command{
@@ -37,16 +35,8 @@ var appListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List configured applications",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		cfgPath, err := config.ResolvePath(flagConfig)
-		if err != nil {
-			return err
-		}
-		cfg, err := config.Load(cfgPath)
-		if err != nil {
-			return err
-		}
-
-		if len(cfg.Apps) == 0 {
+		cfg := resolvedCfg
+		if cfg == nil || len(cfg.Apps) == 0 {
 			fmt.Println("No apps configured.")
 			return nil
 		}
@@ -76,7 +66,6 @@ func init() {
 
 	appOpenCmd.Flags().IntVar(&flagAppPort, "port", 0, "Override local port")
 	appOpenCmd.Flags().BoolVar(&flagAppBrowser, "browser", false, "Open browser automatically")
-	appOpenCmd.Flags().BoolVar(&flagAppNoBrowser, "no-browser", false, "Do not open browser")
 	appOpenCmd.Flags().BoolVar(&flagAppPrintURL, "print-url", false, "Print only the URL (useful for scripting)")
 	appOpenCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	appOpenCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
@@ -150,13 +139,10 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, c
 }
 
 func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error {
-	cfgPath, err := config.ResolvePath(flagConfig)
-	if err != nil {
-		return err
-	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
+	cfgPath := resolvedCfgPath
+	cfg := resolvedCfg
+	if cfg == nil {
+		return fmt.Errorf("no config file found; run 'honey config' to create one")
 	}
 
 	app, ok := cfg.Apps[name]
@@ -219,9 +205,6 @@ func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error 
 		shouldOpen := app.OpenBrowser
 		if flagAppBrowser {
 			shouldOpen = true
-		}
-		if flagAppNoBrowser {
-			shouldOpen = false
 		}
 		if shouldOpen && !flagAppPrintURL {
 			_ = openBrowser(localURL)

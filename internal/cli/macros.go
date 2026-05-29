@@ -280,11 +280,9 @@ func runLogsMacro(cmd *cobra.Command, m macros.Macro) error {
 }
 
 func runAppMacro(cmd *cobra.Command, m macros.Macro) error {
-	flagAppBrowser = true
-	flagAppNoBrowser = false
-	if m.OpenBrowser != nil && !*m.OpenBrowser {
-		flagAppBrowser = false
-		flagAppNoBrowser = true
+	flagAppBrowser = false
+	if m.OpenBrowser != nil && *m.OpenBrowser {
+		flagAppBrowser = true
 	}
 	return runProxyApp(cmd, m.App, apps.AppTypeHTTP)
 }
