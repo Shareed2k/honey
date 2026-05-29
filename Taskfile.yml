@@ -53,6 +53,11 @@ tasks:
           cp plugins/$dir/plugin.yaml plugins/$dir/plugin.wasm examples/plugins/$dir/
         done
 
+  package-plugins:
+    desc: Package built plugin modules as release archives (dist/plugins/)
+    cmds:
+      - bash scripts/package-plugins.sh
+
   anomaly-install:
     desc: Install Python dependencies for anomaly detection training
     cmds:
