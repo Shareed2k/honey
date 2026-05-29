@@ -90,36 +90,20 @@ jobs:
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/goreleaser/goreleaser-cross:v1.26.2-3
     needs: [test]
     strategy:
       fail-fast: false
       matrix:
         include:
-          - goos: linux
-            goarch: amd64
-            ext: ""
-          - goos: linux
-            goarch: arm64
-            ext: ""
-          - goos: darwin
-            goarch: amd64
-            ext: ""
-          - goos: darwin
-            goarch: arm64
-            ext: ""
-          - goos: windows
-            goarch: amd64
-            ext: ".exe"
-          - goos: windows
-            goarch: arm64
-            ext: ".exe"
+          - {goos: linux,   goarch: amd64, cc: gcc,                     ext: ""}
+          - {goos: linux,   goarch: arm64, cc: aarch64-linux-gnu-gcc,   ext: ""}
+          - {goos: darwin,  goarch: amd64, cc: o64-clang,               ext: ""}
+          - {goos: darwin,  goarch: arm64, cc: oa64-clang,              ext: ""}
+          - {goos: windows, goarch: amd64, cc: x86_64-w64-mingw32-gcc,  ext: ".exe"}
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
 
       - uses: actions/setup-node@v6
         with:
@@ -134,12 +118,14 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "1"
+          CC: ${{ matrix.cc }}
+          GOTOOLCHAIN: auto
         run: |
           set -euo pipefail
           VERSION="0.0.0-ci+${GITHUB_SHA:0:12}"
           DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           OUT="honey-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
-          go build -trimpath \
+          go build -trimpath -buildvcs=false \
             -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=${DATE}" \
             -o "${OUT}" \
             ./cmd/honey
