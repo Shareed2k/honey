@@ -291,6 +291,71 @@ warning: ensemble mode active (ONNX + LLM) — both detectors score every log li
 
 ---
 
+## Alerting
+
+When anomalies are detected, honey can send notifications to Slack, Telegram, or any HTTP webhook using the `--alert` flag on `honey logs`. Alerting auto-enables `--anomaly`.
+
+```bash
+# Alert via Slack when anomalies appear in prod logs
+HONEY_NOTIFY_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \
+honey logs prod-cluster \
+  --anomaly-only \
+  --alert \
+  --alert-suppress 5m
+```
+
+### Environment variables
+
+Configure at least one receiver before using `--alert`:
+
+| Variable | Description |
+|----------|-------------|
+| `HONEY_NOTIFY_HTTP_URL` | Comma-separated HTTP POST URL(s) for a generic JSON webhook. Honey POSTs `{"subject": "...", "message": "..."}`. |
+| `HONEY_NOTIFY_SLACK_WEBHOOK_URL` | Slack incoming webhook URL. Honey posts `{"text": "<subject>\n<body>"}`. |
+| `HONEY_NOTIFY_TELEGRAM_BOT_TOKEN` | Telegram bot token. |
+| `HONEY_NOTIFY_TELEGRAM_CHAT_IDS` | Comma-separated Telegram chat IDs (integers). |
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--alert` | false | Send anomaly notifications via `HONEY_NOTIFY_*` env vars (auto-enables `--anomaly`) |
+| `--alert-suppress` | `5m` | Suppress repeated alerts for the same source+reason pair for this duration (`0` = no deduplication) |
+
+### How deduplication works
+
+Each alert is fingerprinted by `(source, reason-category)`. If the same pair fires within the suppress window it is silently dropped — you get one notification per type of anomaly per host within the window, not one per matching line. Set `--alert-suppress 0` to disable deduplication and send every anomaly.
+
+### Notification payload
+
+| Field | Example |
+|-------|---------|
+| Subject | `[honey] anomaly on prod-web-1` |
+| Body | Source, score, reason, UTC timestamp, and the raw log line |
+
+### Example: Slack + anomaly-only live tail
+
+```bash
+HONEY_NOTIFY_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../xxx \
+honey logs prod-cluster \
+  --follow \
+  --anomaly-only \
+  --alert \
+  --alert-suppress 10m \
+  --anomaly-endpoint http://localhost:11434/v1
+```
+
+### YAML configuration
+
+```yaml
+defaults:
+  logs:
+    alert_enabled: true
+    alert_suppress_duration: "5m"
+```
+
+---
+
 ## Troubleshooting
 
 **`anomaly detector disabled: ...`** (without `--anomaly-strict`): The detector failed to initialize but honey continues without it. Add `--anomaly-strict` to surface the error.

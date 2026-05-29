@@ -170,6 +170,10 @@ backends:
 ## Guides
 
 - [Docker auto-discover on cloud VMs](./docker-auto-discover.md) — find containers on GCP/AWS instances with `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1`
+- [Macros (honeyfile)](./macros.md) — reusable named operations for exec, recipes, logs, and app/tunnel tasks
+- [MCP Server](./mcp-server.md) — use honey as an MCP tool server in Cursor, LM Studio, and OpenCode
+- [Plugins](./plugins.md) — install and configure WASM plugins; extend CUE recipes with custom steps
+- [Session Recordings](./recordings.md) — list, search, export, replay, and prune terminal session recordings
 - [Web UI & AI assist](./web-ui.md)
 - [CUE recipes](./cue-recipes.md)
 

@@ -27,3 +27,30 @@ jobs:
             release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  upload-plugins:
+    name: Build and upload WASM plugins
+    runs-on: ubuntu-latest
+    needs: goreleaser
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build WASM plugins
+        run: |
+          for dir in bash shell copy template file service postgres rclone; do
+            echo "building plugins/$dir"
+            (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .)
+          done
+
+      - name: Package plugin archives
+        run: bash scripts/package-plugins.sh
+
+      - name: Upload plugin archives to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/plugins/honey-plugin-*.tar.gz
