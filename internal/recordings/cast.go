@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/bytedance/sonic"
+	"github.com/shareed2k/honey/internal/jsonutil"
 )
 
 type castHeader struct {
@@ -32,7 +32,7 @@ func ExportCast(events []Event, basename string, w io.Writer) error {
 		}
 	}
 
-	hdr, _ := sonic.Marshal(castHeader{
+	hdr, _ := jsonutil.Marshal(castHeader{
 		Version:   3,
 		Term:      castTerm{Cols: cols, Rows: rows, Type: "xterm-256color"},
 		Timestamp: parseFilenameTimestamp(basename),
@@ -57,7 +57,7 @@ func ExportCast(events []Event, basename string, w io.Writer) error {
 
 		switch {
 		case e.Type == "resize":
-			data, _ := sonic.Marshal(fmt.Sprintf("%dx%d", e.Cols, e.Rows))
+			data, _ := jsonutil.Marshal(fmt.Sprintf("%dx%d", e.Cols, e.Rows))
 			fmt.Fprintf(w, "[%.6f,\"r\",%s]\n", interval, data)
 			prevMS = e.TimeMS
 
@@ -66,7 +66,7 @@ func ExportCast(events []Event, basename string, w io.Writer) error {
 			if err != nil {
 				continue
 			}
-			data, _ := sonic.Marshal(string(raw))
+			data, _ := jsonutil.Marshal(string(raw))
 			fmt.Fprintf(w, "[%.6f,\"o\",%s]\n", interval, data)
 			prevMS = e.TimeMS
 
@@ -75,7 +75,7 @@ func ExportCast(events []Event, basename string, w io.Writer) error {
 			if err != nil {
 				continue
 			}
-			data, _ := sonic.Marshal(string(raw))
+			data, _ := jsonutil.Marshal(string(raw))
 			fmt.Fprintf(w, "[%.6f,\"i\",%s]\n", interval, data)
 			prevMS = e.TimeMS
 

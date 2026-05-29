@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/bytedance/sonic"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 	"go.uber.org/zap"
@@ -26,6 +25,7 @@ import (
 	"github.com/shareed2k/honey/internal/anomaly"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/jsonutil"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 	"github.com/shareed2k/honey/internal/recipenotify"
 )
@@ -53,7 +53,7 @@ func (f *feedbackWriter) write(source, line string, r anomaly.Result) {
 		Reason:  r.Reason,
 		Anomaly: r.Anomaly,
 	}
-	b, err := sonic.Marshal(rec)
+	b, err := jsonutil.Marshal(rec)
 	if err != nil {
 		return
 	}

@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/jsonutil"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
@@ -49,7 +49,7 @@ func (s *Server) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req logsStreamRequest
-	if err := sonic.Unmarshal(body, &req); err != nil {
+	if err := jsonutil.Unmarshal(body, &req); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
@@ -143,7 +143,7 @@ func (s *Server) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	enc := sonic.ConfigDefault.NewEncoder(w)
+	enc := jsonutil.NewEncoder(w)
 	scanner := bufio.NewScanner(pr)
 	lineCount := 0
 	for scanner.Scan() {

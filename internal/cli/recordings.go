@@ -11,9 +11,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/shareed2k/honey/internal/aichat"
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/jsonutil"
 	"github.com/shareed2k/honey/internal/recordings"
 	"github.com/shareed2k/honey/internal/ui"
 	"github.com/spf13/cobra"
@@ -157,7 +157,7 @@ var recordingsStatsCmd = &cobra.Command{
 		}
 
 		if flagStatsJSON {
-			out, err := sonic.MarshalIndent(stats, "", "  ")
+			out, err := jsonutil.MarshalIndent(stats, "", "  ")
 			if err != nil {
 				return err
 			}
