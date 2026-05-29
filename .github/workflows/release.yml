@@ -40,15 +40,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
       - name: Build WASM plugins
-        run: |
-          for dir in bash shell copy template file service postgres rclone; do
-            echo "building plugins/$dir"
-            (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .)
-          done
+        run: task build-plugin-modules
 
       - name: Package plugin archives
-        run: bash scripts/package-plugins.sh
+        run: task package-plugins
 
       - name: Upload plugin archives to release
         uses: softprops/action-gh-release@v2
