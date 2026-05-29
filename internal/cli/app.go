@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/apps"
+	"github.com/shareed2k/honey/internal/appsecret"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/proxy"
@@ -77,8 +78,6 @@ func init() {
 	appOpenCmd.Flags().BoolVar(&flagAppBrowser, "browser", false, "Open browser automatically")
 	appOpenCmd.Flags().BoolVar(&flagAppNoBrowser, "no-browser", false, "Do not open browser")
 	appOpenCmd.Flags().BoolVar(&flagAppPrintURL, "print-url", false, "Print only the URL (useful for scripting)")
-	appOpenCmd.Flags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)")
-
 	appOpenCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	appOpenCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	appOpenCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
@@ -168,6 +167,11 @@ func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error 
 	if forceType != "" && app.Type != forceType {
 		return fmt.Errorf("app %q is type %s, expected %s", name, app.Type, forceType)
 	}
+	resolvedUpstream, err := appsecret.ResolveUpstream(cmd.Context(), cfg, app.Upstream)
+	if err != nil {
+		return err
+	}
+	app.Upstream = resolvedUpstream
 
 	if flagAppPort > 0 {
 		app.LocalPort = flagAppPort

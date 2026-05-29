@@ -11,7 +11,7 @@ The Web UI binds to **loopback only** (`127.0.0.1`, `localhost`, or `::1`) and u
 
 ```bash
 # One-time: embed UI assets into the binary tree (CI usually does this)
-make webui
+task webui
 
 go build -o honey ./cmd/honey
 honey web --listen 127.0.0.1:8765 --config ~/.config/honey/config.yaml
@@ -148,6 +148,59 @@ aws s3api put-bucket-lifecycle-configuration \
 - the file size exceeds `presigned_max_size`,
 - the cloud SDK fails to sign a URL (e.g., GCS without a service-account key file).
 
+### Apps and TCP proxy
+
+Honey can proxy HTTP and TCP connections to remote services defined under `apps.*` in the honey config file.
+
+**PostgreSQL mode** (`apps.mode: postgres`) tells Honey to parse a `postgres://` or `postgresql://` URI and connect to the extracted host and port, rather than using the raw upstream string as the dial target. This is useful when the upstream is a full DSN that includes credentials and database name.
+
+```yaml
+apps:
+  my-db:
+    type: tcp
+    mode: postgres
+    upstream: "postgres://user:pass@db.internal:5432/mydb"
+```
+
+#### Encrypted upstreams
+
+App upstreams can be stored encrypted in the config file using the `secure:v1:` format. Honey decrypts them at runtime using the configured secret provider; the web API returns `[encrypted]` in place of the plaintext value when listing apps.
+
+```yaml
+defaults:
+  secretsprovider: age
+  encryptedkey: key.txt
+  ageidentityfile: ~/.age/identity
+
+apps:
+  my-db:
+    type: tcp
+    mode: postgres
+    upstream: "secure:v1:<nonce-b64>:<ciphertext-b64>"
+```
+
+Use `honey secrets seal` to encrypt a value. See [`honey secrets seal`](./cli/honey_secrets_seal.md).
+
+### PostgreSQL SQL editor
+
+When a `postgres`-mode TCP app is active in the web UI, Honey exposes inline SQL access without requiring a separate client. The **Apps** tab surfaces a query editor backed by two API endpoints:
+
+- `POST /api/postgres/catalog?session_id=<sid>` — returns databases, schemas, tables, and columns for the connected database
+- `POST /api/postgres/query` — executes SQL against the session
+
+Query request body:
+
+```json
+{
+  "session_id": "string",
+  "sql": "SELECT ...",
+  "database": "mydb",
+  "readonly": true,
+  "timeout_ms": 5000,
+  "limit": 200
+}
+```
+
 ### CUE recipes
 
 - Open and run recipes from the UI (same semantics as `honey cue-exec`), including optional **`agent_transfer`** steps (A→cloud→B); the server passes its configured honey YAML path for `cloud_backend_ref` signing, like **`POST /api/v1/files/agent-transfer`**.
@@ -209,7 +262,7 @@ After setting the key, restart `honey web`. **`GET /api/v1/meta`** includes `"te
 
 Authenticate all routes below except static files: `Authorization: Bearer <token>` or `X-Honey-Token: <token>` (or `?token=` for GET).
 
-**OpenAPI 3:** `GET /api/v1/openapi.json` returns the machine-readable spec for the REST surface (same auth). In the web UI, open the **API** tab (or `?tab=api-docs`) for an embedded **Swagger UI** explorer, including “Try it out” with your session token. Regenerate from the repo with `make openapi` (runs `go generate` in `internal/webserver`).
+**OpenAPI 3:** `GET /api/v1/openapi.json` returns the machine-readable spec for the REST surface (same auth). In the web UI, open the **API** tab (or `?tab=api-docs`) for an embedded **Swagger UI** explorer, including “Try it out” with your session token. Regenerate from the repo with `task openapi` (runs `go generate` in `internal/webserver`).
 
 ### Meta and discovery
 
@@ -236,6 +289,11 @@ Authenticate all routes below except static files: `Authorization: Bearer <token
 - `POST /api/v1/files/remote/list` — list on remote host.
 - `POST /api/v1/files/copy` — copy between locations.
 - `POST /api/v1/files/agent-transfer` — cloud/agent pipeline.
+
+### PostgreSQL
+
+- `POST /api/postgres/catalog?session_id=<sid>` — schema introspection (databases, schemas, tables, columns) for an active postgres session.
+- `POST /api/postgres/query` — execute SQL (body: `session_id`, `sql`, `database`, `readonly`, `timeout_ms`, `limit`).
 
 ### Recipes
 
@@ -277,7 +335,7 @@ The frontend lives in `webui` (Vite + React).
 For production, build assets into the embed tree:
 
 ```bash
-make webui
+task webui
 ```
 
 Then rebuild `honey` so `internal/webserver/static` is included.

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/shareed2k/honey/internal/apps"
@@ -33,7 +35,8 @@ func StartTCPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sessi
 			}
 
 			go func() {
-				upstreamConn, err := dialer.DialContext(sessionCtx, "tcp", app.Upstream)
+				upstreamAddr := tcpDialAddress(app)
+				upstreamConn, err := dialer.DialContext(sessionCtx, "tcp", upstreamAddr)
 				if err != nil {
 					_ = clientConn.Close()
 					return
@@ -63,6 +66,23 @@ func StartTCPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sessi
 			}
 		},
 	}, nil
+}
+
+func tcpDialAddress(app apps.AppConfig) string {
+	if app.Type != apps.AppTypeTCP || !strings.EqualFold(strings.TrimSpace(app.Mode), "postgres") {
+		return app.Upstream
+	}
+	u, err := url.Parse(strings.TrimSpace(app.Upstream))
+	if err != nil {
+		return app.Upstream
+	}
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return app.Upstream
+	}
+	if strings.TrimSpace(u.Host) == "" {
+		return app.Upstream
+	}
+	return u.Host
 }
 
 func proxyConn(a, b net.Conn) {

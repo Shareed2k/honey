@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/logger"
 	_ "github.com/shareed2k/honey/internal/provider/all" // register all providers natively during boot
 	"github.com/shareed2k/honey/internal/searchrun"
@@ -16,17 +17,27 @@ import (
 var (
 	flagDebugLog  string
 	flagRecordDir string
+	flagConfig    string
+
+	// set once by PersistentPreRunE; safe to read from any subcommand RunE.
+	resolvedCfgPath string
+	resolvedCfg     *config.File
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "honey",
 	Short: Tagline,
 	Long:  "Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox.",
-	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		if err := logger.Init(flagDebugLog); err != nil {
 			return err
 		}
 		zap.L().Debug("Logger initialized", zap.String("args", strings.Join(os.Args, " ")))
+		resolvedCfgPath, _ = config.ResolvePath(flagConfig)
+		if resolvedCfgPath != "" {
+			resolvedCfg, _ = config.Load(resolvedCfgPath)
+		}
+		applyCommandFlagDefaults(cmd, resolvedCfgPath)
 		return nil
 	},
 	PersistentPostRun: func(_ *cobra.Command, _ []string) {
@@ -45,6 +56,7 @@ func init() {
 	rootCmd.SetUsageTemplate(BannerText() + "\n\n" + defaultUsage)
 
 	rootCmd.PersistentFlags().StringVar(&flagDebugLog, "debug-log", "", "Path to write debug logs (disables debug logging if empty)")
+	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths)")
 	rootCmd.PersistentFlags().StringVar(&flagRecordDir, "record-dir", "", "Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default <directory of config.yaml>/records")
 
 	rootCmd.PersistentFlags().DurationVar(&flagCacheTTL, "cache-ttl", searchrun.DefaultCacheTTL, "Cache time-to-live (host discovery)")

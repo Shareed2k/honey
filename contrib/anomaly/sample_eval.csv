@@ -1,0 +1,6 @@
+text,label
+INFO cache warmup completed,0
+INFO request handled status=200 duration_ms=23,0
+WARN slow query detected duration_ms=850,0
+ERROR failed to open TLS private key,1
+ERROR out of memory killed process app-worker,1

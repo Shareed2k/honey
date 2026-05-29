@@ -1,11 +1,26 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { ConfigProvider, theme } from 'antd';
 import { App } from './App';
 import '@xterm/xterm/css/xterm.css';
 import './app.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <ConfigProvider
+      theme={{
+        algorithm: theme.darkAlgorithm,
+        token: {
+          colorBgBase: '#0f1115',
+          colorPrimary: '#3d6fb8',
+          colorBgContainer: '#141922',
+          colorBorderSecondary: '#2a3140',
+          borderRadius: 4,
+          fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+        },
+      }}
+    >
+      <App />
+    </ConfigProvider>
   </React.StrictMode>,
 );

@@ -17,6 +17,7 @@ type MetaResponse struct {
 	SessionRecordingRetention string `json:"session_recording_retention,omitempty"`
 	SessionRecordingLastPurge string `json:"session_recording_last_purge_at,omitempty"`
 	TerminalAssistAvailable   bool   `json:"terminal_assist_available"`
+	LogsCommandAllowed        bool   `json:"logs_command_allowed"`
 	MetricsURL                string `json:"metrics_url,omitempty"`
 }
 

@@ -2,11 +2,13 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/anomaly"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -33,14 +35,34 @@ func TestWritePrefixedLineFiltering(t *testing.T) {
 	re := regexp.MustCompile("(?i)error")
 
 	// Match
-	writePrefixedLine(&out, &mu, "P: ", "An error occurred", re, false)
+	writePrefixedLine(context.Background(), &out, &mu, "P: ", "An error occurred", re, false, nil, false, nil, nil)
 	// No match
-	writePrefixedLine(&out, &mu, "P: ", "Just some info", re, false)
+	writePrefixedLine(context.Background(), &out, &mu, "P: ", "Just some info", re, false, nil, false, nil, nil)
 
 	got := out.String()
 	want := "P: An error occurred\n"
 	if got != want {
 		t.Fatalf("filtering got %q, want %q", got, want)
+	}
+}
+
+func TestWritePrefixedLineAnomalyOnly(t *testing.T) {
+	var out bytes.Buffer
+	var mu sync.Mutex
+	d, err := anomaly.NewEmbeddedDetector(anomaly.Options{Threshold: 0.9, Window: 16})
+	if err != nil {
+		t.Fatalf("new detector: %v", err)
+	}
+
+	writePrefixedLine(context.Background(), &out, &mu, "P: ", "all good", nil, false, d, true, nil, nil)
+	writePrefixedLine(context.Background(), &out, &mu, "P: ", "panic in worker", nil, false, d, true, nil, nil)
+
+	got := out.String()
+	if !strings.Contains(got, "[ANOM score=") {
+		t.Fatalf("expected anomaly annotation, got %q", got)
+	}
+	if strings.Contains(got, "all good") {
+		t.Fatalf("expected non-anomaly line filtered, got %q", got)
 	}
 }
 
@@ -148,5 +170,16 @@ func TestLogCommandWithRunAsRejectsUnsafeUser(t *testing.T) {
 	_, err := logCommandWithRunAs(LogOptions{Command: "id", RunAs: "root;rm"})
 	if err == nil {
 		t.Fatal("expected invalid run_as error")
+	}
+}
+
+func TestStreamLogsAnomalyStrictInitFailure(t *testing.T) {
+	err := StreamLogs(context.Background(), "", nil, LogOptions{
+		Anomaly:       true,
+		AnomalyModel:  "/path/does/not/exist/model.onnx",
+		AnomalyStrict: true,
+	}, NewClientCache(), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected strict anomaly init failure")
 	}
 }

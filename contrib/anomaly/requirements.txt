@@ -1,0 +1,7 @@
+torch
+transformers
+datasets
+accelerate
+onnx
+onnxscript
+huggingface_hub[cli]

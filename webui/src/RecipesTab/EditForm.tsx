@@ -1,5 +1,6 @@
 // webui/src/RecipesTab/EditForm.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Input, Select } from 'antd';
 import {
   validateRecipeContent,
   type ParsedRecipe,
@@ -141,34 +142,35 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, 
       {dirty ? (
         <div className="rcp-edit__dirty">
           <span>Modified</span>
-          <input
+          <Input
             placeholder={`${baseRecipe.name} — copy`}
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
           />
-          <button type="button" onClick={() => onSaveAsDraft(draftName || `${baseRecipe.name} — copy`)}>
+          <Button onClick={() => onSaveAsDraft(draftName || `${baseRecipe.name} — copy`)}>
             save as draft
-          </button>
+          </Button>
         </div>
       ) : null}
 
       <div className="rcp-edit__add-step">
-        <button type="button" className="rcp-btn rcp-btn--ghost" onClick={() => setShowAddPicker((v) => !v)}>
+        <Button onClick={() => setShowAddPicker((v) => !v)}>
           + Add step
-        </button>
+        </Button>
         {showAddPicker ? (
           <span className="rcp-edit__add-step-picker">
-            <select value={addKind} onChange={(e) => setAddKind(e.target.value as RecipeStepKind)}>
-              {ADD_STEP_KINDS.map((k) => (
-                <option key={k} value={k} disabled={!canAddStepKind(k, recipe)}>
-                  {k}
-                  {k === 'ai' && !canAddStepKind('ai', recipe) ? ' (one per recipe)' : ''}
-                </option>
-              ))}
-            </select>
-            <button type="button" className="rcp-btn" onClick={addStep} disabled={!canAddStepKind(addKind, recipe)}>
+            <Select
+              value={addKind}
+              onChange={(val) => setAddKind(val as RecipeStepKind)}
+              options={ADD_STEP_KINDS.map((k) => ({
+                value: k,
+                label: k === 'ai' && !canAddStepKind('ai', recipe) ? `${k} (one per recipe)` : k,
+                disabled: !canAddStepKind(k, recipe),
+              }))}
+            />
+            <Button onClick={addStep} disabled={!canAddStepKind(addKind, recipe)}>
               append
-            </button>
+            </Button>
           </span>
         ) : null}
       </div>
@@ -184,18 +186,18 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, 
               <span className="rcp-edit__idx">{i + 1}</span>
               <span className="rcp-edit__kind">{kind}</span>
               <span className="rcp-edit__actions">
-                <button type="button" onClick={() => moveStep(i, -1)} aria-label="move up">
+                <Button type="text" size="small" onClick={() => moveStep(i, -1)} aria-label="move up">
                   ↑
-                </button>
-                <button type="button" onClick={() => moveStep(i, +1)} aria-label="move down">
+                </Button>
+                <Button type="text" size="small" onClick={() => moveStep(i, +1)} aria-label="move down">
                   ↓
-                </button>
-                <button type="button" onClick={() => duplicateStep(i)} aria-label="duplicate">
+                </Button>
+                <Button type="text" size="small" onClick={() => duplicateStep(i)} aria-label="duplicate">
                   ⎘
-                </button>
-                <button type="button" onClick={() => removeStep(i)} aria-label="delete">
+                </Button>
+                <Button type="text" size="small" onClick={() => removeStep(i)} aria-label="delete">
                   ✕
-                </button>
+                </Button>
               </span>
             </header>
 
@@ -251,14 +253,14 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, 
                   <>
                     <label className="rcp-edit__field">
                       model
-                      <input
+                      <Input
                         value={s.ai?.model ?? ''}
                         onChange={(e) => updateStep(i, { ai: { ...(s.ai ?? {}), model: e.target.value } })}
                       />
                     </label>
                     <label className="rcp-edit__field rcp-edit__field--multiline">
                       prompt
-                      <textarea
+                      <Input.TextArea
                         value={s.ai?.prompt ?? ''}
                         rows={6}
                         onChange={(e) => updateStep(i, { ai: { ...(s.ai ?? {}), prompt: e.target.value } })}
@@ -270,7 +272,7 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, 
                   <>
                     <label className="rcp-edit__field rcp-edit__field--multiline">
                       template (Go template body)
-                      <textarea
+                      <Input.TextArea
                         value={s.template?.template ?? ''}
                         rows={Math.min(16, Math.max(3, (s.template?.template ?? '').split('\n').length))}
                         onChange={(e) => updateTemplate(i, { template: e.target.value })}
@@ -278,7 +280,7 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, 
                     </label>
                     <label className="rcp-edit__field rcp-edit__field--multiline">
                       data (JSON object)
-                      <textarea
+                      <Input.TextArea
                         value={dataJson}
                         rows={6}
                         spellCheck={false}
@@ -288,7 +290,7 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, 
                     </label>
                     <label className="rcp-edit__field">
                       output (capture variable name)
-                      <input
+                      <Input
                         value={s.template?.output ?? ''}
                         placeholder="e.g. RESULT"
                         onChange={(e) => updateTemplate(i, { output: e.target.value || undefined })}
@@ -341,7 +343,7 @@ function TemplateEnvFromEditor({
         <div key={idx} className="rcp-edit__env-from-row">
           <label className="rcp-edit__field">
             step id
-            <input
+            <Input
               value={ref.step ?? ''}
               onChange={(e) =>
                 updateRef(idx, {
@@ -353,7 +355,7 @@ function TemplateEnvFromEditor({
           </label>
           <label className="rcp-edit__field">
             from_output
-            <input
+            <Input
               value={ref.from_output ?? ''}
               onChange={(e) =>
                 updateRef(idx, {
@@ -365,7 +367,7 @@ function TemplateEnvFromEditor({
           </label>
           <label className="rcp-edit__field">
             env key → stdout
-            <input
+            <Input
               value={Object.keys(ref.map)[0] ?? ''}
               onChange={(e) => {
                 const k = e.target.value || 'VAR';
@@ -373,14 +375,14 @@ function TemplateEnvFromEditor({
               }}
             />
           </label>
-          <button type="button" className="rcp-btn rcp-btn--ghost rcp-btn--small" onClick={() => removeRef(idx)}>
+          <Button size="small" onClick={() => removeRef(idx)}>
             remove
-          </button>
+          </Button>
         </div>
       ))}
-      <button type="button" className="rcp-btn rcp-btn--ghost rcp-btn--small" onClick={addRef}>
+      <Button size="small" onClick={addRef}>
         add env_from
-      </button>
+      </Button>
     </fieldset>
   );
 }

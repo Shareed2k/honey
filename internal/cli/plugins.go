@@ -24,7 +24,6 @@ var pluginsListCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(pluginsCmd)
-	pluginsCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths)")
 	pluginsCmd.AddCommand(pluginsListCmd)
 }
 

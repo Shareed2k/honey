@@ -13,3 +13,6 @@ contrib/ansible/inventory_plugins/__pycache__
 
 *.wasm
 *.wasm.gz
+
+models
+runtime
