@@ -78,7 +78,6 @@ changelog:
 
 homebrew_casks:
   - name: honey
-    no_quarantine: true
     repository:
       owner: shareed2k
       name: homebrew-tap
@@ -86,10 +85,20 @@ homebrew_casks:
     directory: Casks
     homepage: "https://github.com/shareed2k/honey"
     description: "Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox"
+    dependencies:
+      - formula: openssh
+      - formula: tmux
     completions:
       bash: completions/honey.bash
       zsh: completions/honey.zsh
       fish: completions/honey.fish
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "#{staged_path}/honey"]
+          end
 
 mcp:
   name: "io.github.Shareed2k/honey"

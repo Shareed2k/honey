@@ -3,7 +3,7 @@ id: web-ui
 title: Web UI & AI assist
 ---
 
-Honey includes an embedded web server that serves a React-based UI, providing a visual interface for search, configuration, browser terminal sessions, optional session recording, file transfer, and AI-assisted help for terminals and CUE recipes.
+Honey includes an embedded web server that serves a React + [Ant Design](https://ant.design/) UI, providing a visual interface for search, configuration, browser terminal sessions, optional session recording, file transfer, and AI-assisted help for terminals and CUE recipes.
 
 The Web UI binds to **loopback only** (`127.0.0.1`, `localhost`, or `::1`) and uses **token-based** authentication.
 

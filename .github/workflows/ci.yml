@@ -32,6 +32,13 @@ jobs:
       - name: Build web UI (embed static)
         run: make webui
 
+      - name: Build WASM plugins
+        run: |
+          for dir in bash shell copy template file service postgres rclone; do
+            echo "building plugins/$dir"
+            (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .)
+          done
+
       - name: Go test
         run: go test ./... -count=1
 
