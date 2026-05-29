@@ -17,6 +17,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: Build web UI
+        run: task webui
+
       - name: Run GoReleaser (cross)
         run: |
           docker run --rm \
