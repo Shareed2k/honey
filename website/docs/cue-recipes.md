@@ -387,5 +387,5 @@ See [`honey cue-exec` — kv_tunnel](./cli/honey_cue-exec.md) and [`kv_tunnel_mu
 ## Related
 
 - [Web UI — CUE recipes](./web-ui.md#cue-recipes)
-- [Getting started — CUE recipes (short)](./index.md#cue-recipes-experimental)
+- [Getting started — CUE recipes (short)](./index.md)
 - [CLI: honey cue-exec](./cli/honey_cue-exec.md)

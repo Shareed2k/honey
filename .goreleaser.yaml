@@ -5,7 +5,7 @@ project_name: honey
 before:
   hooks:
     - go mod tidy
-    - go tool task webui
+    - sh -c 'test -f internal/webserver/static/index.html || go tool task webui'
     - go generate ./...
     - mkdir -p completions
     - go run ./cmd/honey completion bash > completions/honey.bash
