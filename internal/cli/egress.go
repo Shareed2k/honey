@@ -16,6 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/tun"
 )
 
 var (
@@ -24,6 +25,8 @@ var (
 	flagEgressTun       bool     // enable TUN mode (requires root + tun2proxy)
 	flagEgressAutoProxy bool     // auto-configure system SOCKS5 proxy
 	flagEgressBypass    []string // extra IPs/CIDRs to bypass the TUN tunnel
+	flagEgressNets      []string // route only these CIDRs (complement becomes --bypass)
+	flagEgressAutoNets  bool     // discover remote subnets via SSH and use as --nets
 )
 
 var egressCmd = &cobra.Command{
@@ -46,6 +49,8 @@ func init() {
 	egressCmd.Flags().BoolVar(&flagEgressTun, "tun", false, "Enable TUN mode: transparent VPN via tun2proxy (requires root)")
 	egressCmd.Flags().BoolVar(&flagEgressAutoProxy, "auto-proxy", false, "Auto-configure system SOCKS5 proxy settings (macOS)")
 	egressCmd.Flags().StringArrayVar(&flagEgressBypass, "bypass", nil, "IP or CIDR to bypass the TUN tunnel (repeatable; loopback/link-local auto-excluded)")
+	egressCmd.Flags().StringArrayVar(&flagEgressNets, "nets", nil, "Route only these CIDRs through the tunnel (default: all traffic). Requires --tun. Repeatable.")
+	egressCmd.Flags().BoolVar(&flagEgressAutoNets, "auto-nets", false, "Discover routable subnets on the remote host via SSH and route only those (requires --tun)")
 	egressCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "SSH user override")
 	egressCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	egressCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend filter")
@@ -57,6 +62,12 @@ func runEgress(cmd *cobra.Command, args []string) error {
 
 	if net.ParseIP(flagEgressBind) == nil && !isValidHostname(flagEgressBind) {
 		return fmt.Errorf("invalid --bind value %q: must be an IP address or hostname", flagEgressBind)
+	}
+	if (flagEgressAutoNets || len(flagEgressNets) > 0) && !flagEgressTun {
+		return fmt.Errorf("--auto-nets and --nets require --tun")
+	}
+	if flagEgressTun && os.Getuid() != 0 {
+		return fmt.Errorf("--tun requires root, re-run with sudo")
 	}
 
 	sshUser := flagSSHUser
@@ -108,6 +119,15 @@ func runEgress(cmd *cobra.Command, args []string) error {
 		peerIPs = append(peerIPs, ip)
 	}
 
+	nets := flagEgressNets
+	if flagEgressAutoNets && len(wclients) > 0 {
+		discovered := tun.QueryRemoteNets(wclients[0].Client)
+		if len(discovered) > 0 {
+			fmt.Printf("Auto-nets discovered: %s\n", strings.Join(discovered, ", "))
+			nets = append(nets, discovered...)
+		}
+	}
+
 	socksHost, socksPort, stop, err := sshclient.StartDynamicForwardMulti(ctx, wclients, flagEgressBind, flagEgressPort)
 	if err != nil {
 		return fmt.Errorf("start SOCKS5 proxy: %w", err)
@@ -115,7 +135,14 @@ func runEgress(cmd *cobra.Command, args []string) error {
 	defer stop()
 
 	if flagEgressTun {
-		return runTunMode(ctx, socksHost, socksPort, strings.Join(peerNames, ", "), peerIPs, flagEgressBypass)
+		return tun.Run(ctx, tun.Config{
+			SOCKSHost:     socksHost,
+			SOCKSPort:     socksPort,
+			HostName:      strings.Join(peerNames, ", "),
+			SSHIPs:        peerIPs,
+			ExtraBypasses: flagEgressBypass,
+			Nets:          nets,
+		})
 	}
 
 	printEgressInstructions(peerNames, socksHost, socksPort)
