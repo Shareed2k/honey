@@ -134,10 +134,18 @@ func (passthroughResolver) Resolve(ctx context.Context, _ string) (context.Conte
 	return ctx, nil, nil
 }
 
-// dialSSH calls client.Dial with a hard timeout so slow-failing channels
-// (e.g. TCP connect to a firewalled IP that never sends RST) release their
-// semaphore slot instead of holding it for the full TCP timeout (~75 s).
-func dialSSH(client *ssh.Client, network, addr string) (net.Conn, error) {
+// contextDialer is satisfied by *SSHPool. *ssh.Client does not implement it.
+type contextDialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
+}
+
+// dialSSH opens a channel through client, honouring ctx cancellation.
+// For *SSHPool (contextDialer) it calls DialContext directly — no goroutine, no leak.
+// For plain *ssh.Client it falls back to a goroutine that is cleaned up on ctx cancel.
+func dialSSH(ctx context.Context, client SSHDialer, network, addr string) (net.Conn, error) {
+	if cd, ok := client.(contextDialer); ok {
+		return cd.DialContext(ctx, network, addr)
+	}
 	type result struct {
 		conn net.Conn
 		err  error
@@ -150,8 +158,13 @@ func dialSSH(client *ssh.Client, network, addr string) (net.Conn, error) {
 	select {
 	case r := <-ch:
 		return r.conn, r.err
-	case <-time.After(10 * time.Second):
-		return nil, fmt.Errorf("ssh dial timeout")
+	case <-ctx.Done():
+		go func() {
+			if r := <-ch; r.conn != nil {
+				_ = r.conn.Close()
+			}
+		}()
+		return nil, ctx.Err()
 	}
 }
 
@@ -178,15 +191,17 @@ func StartDynamicForward(ctx context.Context, client *ssh.Client, bindHost strin
 	srv := socks5.NewServer(
 		socks5.WithResolver(passthroughResolver{}),
 		socks5.WithDial(func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialCtx, cancel := context.WithTimeout(ctx, 31*time.Second)
+			defer cancel()
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-time.After(5 * time.Second):
 				return nil, fmt.Errorf("ssh channel limit reached")
-			case <-ctx.Done():
-				return nil, ctx.Err()
+			case <-dialCtx.Done():
+				return nil, dialCtx.Err()
 			}
-			return dialSSH(client, network, addr)
+			return dialSSH(dialCtx, client, network, addr)
 		}),
 	)
 
@@ -207,9 +222,10 @@ func StartDynamicForward(ctx context.Context, client *ssh.Client, bindHost strin
 	return addr.IP.String(), addr.Port, stopFn, nil
 }
 
-// WeightedClient pairs an SSH client with a routing weight for StartDynamicForwardMulti.
+// WeightedClient pairs an SSH dialer with a routing weight for StartDynamicForwardMulti.
+// *ssh.Client satisfies SSHDialer; *SSHPool also satisfies it.
 type WeightedClient struct {
-	Client *ssh.Client
+	Client SSHDialer
 	Weight int
 }
 
@@ -234,7 +250,7 @@ func StartDynamicForwardMulti(ctx context.Context, clients []WeightedClient, bin
 	}
 
 	b := balance.NewBalance()
-	clientMap := make(map[string]*ssh.Client, len(clients))
+	clientMap := make(map[string]SSHDialer, len(clients))
 	for i, wc := range clients {
 		w := wc.Weight
 		if w <= 0 {
@@ -257,16 +273,18 @@ func StartDynamicForwardMulti(ctx context.Context, clients []WeightedClient, bin
 	srv := socks5.NewServer(
 		socks5.WithResolver(passthroughResolver{}),
 		socks5.WithDial(func(ctx context.Context, network, tgt string) (net.Conn, error) {
+			dialCtx, cancel := context.WithTimeout(ctx, 31*time.Second)
+			defer cancel()
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-time.After(5 * time.Second):
 				return nil, fmt.Errorf("ssh channel limit reached")
-			case <-ctx.Done():
-				return nil, ctx.Err()
+			case <-dialCtx.Done():
+				return nil, dialCtx.Err()
 			}
 			id := b.Get()
-			return dialSSH(clientMap[id], network, tgt)
+			return dialSSH(dialCtx, clientMap[id], network, tgt)
 		}),
 	)
 

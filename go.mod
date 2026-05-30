@@ -38,8 +38,10 @@ require (
 	github.com/hashicorp/consul/api v1.34.3
 	github.com/hashicorp/golang-lru v1.0.2
 	github.com/hashicorp/vault/api v1.23.0
+	github.com/iamcalledrob/netstatus v1.0.2
 	github.com/itchyny/gojq v0.12.19
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/puddle/v2 v2.2.2
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/melbahja/goph v1.5.0
@@ -204,7 +206,6 @@ require (
 	github.com/itchyny/timefmt-go v0.1.8 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

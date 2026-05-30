@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -27,6 +28,7 @@ var (
 	flagEgressBypass    []string // extra IPs/CIDRs to bypass the TUN tunnel
 	flagEgressNets      []string // route only these CIDRs (complement becomes --bypass)
 	flagEgressAutoNets  bool     // discover remote subnets via SSH and use as --nets
+	flagEgressPoolSize  int      // number of parallel SSH connections per host
 )
 
 var egressCmd = &cobra.Command{
@@ -51,6 +53,7 @@ func init() {
 	egressCmd.Flags().StringArrayVar(&flagEgressBypass, "bypass", nil, "IP or CIDR to bypass the TUN tunnel (repeatable; loopback/link-local auto-excluded)")
 	egressCmd.Flags().StringArrayVar(&flagEgressNets, "nets", nil, "Route only these CIDRs through the tunnel (default: all traffic). Requires --tun. Repeatable.")
 	egressCmd.Flags().BoolVar(&flagEgressAutoNets, "auto-nets", false, "Discover routable subnets on the remote host via SSH and route only those (requires --tun)")
+	egressCmd.Flags().IntVar(&flagEgressPoolSize, "pool-size", 1, "Parallel SSH connections per host; >1 increases throughput and reconnects on drop")
 	egressCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "SSH user override")
 	egressCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	egressCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend filter")
@@ -78,6 +81,7 @@ func runEgress(cmd *cobra.Command, args []string) error {
 	var wclients []sshclient.WeightedClient
 	var peerNames []string
 	var peerIPs []string
+	var discoveredNets []string
 
 	for _, arg := range args {
 		hostArg, weight := parseEgressArg(arg)
@@ -100,6 +104,7 @@ func runEgress(cmd *cobra.Command, args []string) error {
 		if ip == "" {
 			return fmt.Errorf("host %q has no IP address", rec.Name)
 		}
+		zap.L().Debug("resolved host", zap.String("name", rec.Name), zap.String("ip", ip))
 		sshPort := 0
 		if p, ok := hosts.MetaSSHPort(&rec); ok {
 			sshPort = p
@@ -113,19 +118,33 @@ func runEgress(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("ssh connect to %s: %w", rec.Name, err)
 		}
-		defer honeyClient.Close()
-		wclients = append(wclients, sshclient.WeightedClient{Client: honeyClient.LeafSSH(), Weight: weight})
+		zap.L().Debug("ssh connected", zap.String("host", rec.Name), zap.String("ip", ip))
+		// Run auto-nets on first host using this connection before pool takes over.
+		if flagEgressAutoNets && len(discoveredNets) == 0 {
+			discoveredNets = tun.QueryRemoteNets(honeyClient.LeafSSH())
+			zap.L().Debug("auto-nets discovered", zap.Strings("nets", discoveredNets))
+		}
+		_ = honeyClient.Close()
+
+		capturedUser, capturedIP, capturedPort, capturedIdentity := sshUser, ip, sshPort, identity
+		dialFn := func() (*sshclient.HoneyClient, error) {
+			return sshclient.DialHoneyClient(capturedUser, capturedIP, capturedPort, capturedIdentity)
+		}
+		pool, poolErr := sshclient.NewSSHPool(ctx, flagEgressPoolSize, dialFn)
+		if poolErr != nil {
+			return fmt.Errorf("pool for %s: %w", rec.Name, poolErr)
+		}
+		zap.L().Debug("ssh pool created", zap.String("host", rec.Name), zap.Int("size", flagEgressPoolSize))
+		defer pool.Close()
+		wclients = append(wclients, sshclient.WeightedClient{Client: pool, Weight: weight})
 		peerNames = append(peerNames, rec.Name)
 		peerIPs = append(peerIPs, ip)
 	}
 
 	nets := flagEgressNets
-	if flagEgressAutoNets && len(wclients) > 0 {
-		discovered := tun.QueryRemoteNets(wclients[0].Client)
-		if len(discovered) > 0 {
-			fmt.Printf("Auto-nets discovered: %s\n", strings.Join(discovered, ", "))
-			nets = append(nets, discovered...)
-		}
+	if flagEgressAutoNets && len(discoveredNets) > 0 {
+		fmt.Printf("Auto-nets discovered: %s\n", strings.Join(discoveredNets, ", "))
+		nets = append(nets, discoveredNets...)
 	}
 
 	socksHost, socksPort, stop, err := sshclient.StartDynamicForwardMulti(ctx, wclients, flagEgressBind, flagEgressPort)
@@ -133,8 +152,10 @@ func runEgress(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("start SOCKS5 proxy: %w", err)
 	}
 	defer stop()
+	zap.L().Debug("socks5 proxy started", zap.String("addr", net.JoinHostPort(socksHost, strconv.Itoa(socksPort))))
 
 	if flagEgressTun {
+		zap.L().Debug("starting tun mode", zap.Strings("nets", nets), zap.Strings("ssh_ips", peerIPs))
 		return tun.Run(ctx, tun.Config{
 			SOCKSHost:     socksHost,
 			SOCKSPort:     socksPort,
@@ -156,6 +177,7 @@ func runEgress(cmd *cobra.Command, args []string) error {
 	}
 
 	<-ctx.Done()
+	zap.L().Debug("egress shutting down")
 	fmt.Println("\nShutting down egress proxy...")
 	return nil
 }

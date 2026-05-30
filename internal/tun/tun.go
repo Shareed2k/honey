@@ -10,6 +10,8 @@ import (
 	"syscall"
 
 	gossh "golang.org/x/crypto/ssh"
+
+	"go.uber.org/zap"
 )
 
 // Config holds everything Run needs to start tun2proxy.
@@ -30,6 +32,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	zap.L().Debug("tun2proxy binary found", zap.String("path", bin))
 
 	args := []string{
 		"--proxy", fmt.Sprintf("socks5://%s:%d", cfg.SOCKSHost, cfg.SOCKSPort),
@@ -52,6 +55,7 @@ func Run(ctx context.Context, cfg Config) error {
 	for _, cidr := range ComplementCIDRs(cfg.Nets) {
 		args = append(args, "--bypass", cidr)
 	}
+	zap.L().Debug("tun2proxy args", zap.Strings("args", args))
 
 	fmt.Printf("Starting tun2proxy (VPN exit via %s)...\nPress Ctrl+C to stop.\n", cfg.HostName)
 	// #nosec G204 -- bin is resolved via LookPath or a hardcoded trusted path.
@@ -61,12 +65,14 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("tun2proxy start: %w", err)
 	}
+	zap.L().Debug("tun2proxy started", zap.Int("pid", cmd.Process.Pid))
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
 	select {
 	case <-ctx.Done():
+		zap.L().Debug("tun2proxy sending SIGTERM")
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		<-done
 		return nil
@@ -74,6 +80,7 @@ func Run(ctx context.Context, cfg Config) error {
 		if err != nil {
 			return fmt.Errorf("tun2proxy: %w", err)
 		}
+		zap.L().Debug("tun2proxy exited cleanly")
 		return nil
 	}
 }
@@ -90,7 +97,10 @@ func QueryRemoteNets(client *gossh.Client) []string {
 	if err != nil || len(out) == 0 {
 		return nil
 	}
-	return parseRouteOutput(string(out))
+	zap.L().Debug("remote route query returned", zap.Int("bytes", len(out)))
+	nets := parseRouteOutput(string(out))
+	zap.L().Debug("remote nets parsed", zap.Strings("nets", nets))
+	return nets
 }
 
 func parseRouteOutput(output string) []string {
