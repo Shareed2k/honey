@@ -13,8 +13,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
 	"github.com/shareed2k/honey/internal/pvelxc"
 )
 
@@ -79,7 +79,7 @@ func (s *Server) handlePveQemuVncOffer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"qemu vnc is not available for this host"}`, http.StatusBadRequest)
 		return
 	}
-	b, ok := hostexec.ProxmoxBackendByName(rec.Meta["backend_name"])
+	b, ok := proxmoxprovider.BackendByName(rec.Meta["backend_name"])
 	if !ok {
 		http.Error(w, `{"error":"proxmox backend not configured"}`, http.StatusBadRequest)
 		return
@@ -160,7 +160,7 @@ func (s *Server) handleWebProxmoxQemuVNC(w http.ResponseWriter, r *http.Request)
 	delete(s.pveQemuVncByID, sid)
 	s.pveQemuVncMu.Unlock()
 
-	b, ok := hostexec.ProxmoxBackendByName(sess.BackendName)
+	b, ok := proxmoxprovider.BackendByName(sess.BackendName)
 	if !ok {
 		http.Error(w, `{"error":"proxmox backend not configured"}`, http.StatusBadRequest)
 		return

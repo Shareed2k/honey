@@ -114,7 +114,7 @@ exec python3 -u /tmp/honey-kv-bridge.py
 
 	execErr := make(chan error, 1)
 	go func() {
-		execErr <- k8c.execInPod(execCtx, []string{"sh", "-c", bootstrap}, prIn, pwOut, io.Discard, false, nil)
+		execErr <- k8c.ExecInPod(execCtx, []string{"sh", "-c", bootstrap}, prIn, pwOut, io.Discard, false, nil)
 	}()
 
 	ready := make(chan int, 1)

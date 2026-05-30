@@ -3,7 +3,10 @@ package dockerprovider
 import (
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -27,16 +30,41 @@ func (dockerFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []h
 }
 
 func (dockerFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	bc := BackendConfig{
-		Host:          strings.TrimSpace(f.DockerHost),
-		ViaLocal:      strings.TrimSpace(f.DockerViaLocal),
-		Socket:        strings.TrimSpace(f.DockerSocket),
-		Platform:      strings.TrimSpace(f.DockerPlatform),
-		Mode:          strings.TrimSpace(f.DockerMode),
-		AllContainers: f.DockerAllContainers,
+	host := strings.TrimSpace(f.DockerHost)
+	if host == "" {
+		host = strings.TrimSpace(cliFlags.host)
 	}
-	if h := strings.TrimSpace(f.DockerViaSSHHost); h != "" {
-		bc.ViaSSH.Host = h
+	viaLocal := strings.TrimSpace(f.DockerViaLocal)
+	if viaLocal == "" {
+		viaLocal = strings.TrimSpace(cliFlags.viaLocal)
+	}
+	socket := strings.TrimSpace(f.DockerSocket)
+	if socket == "" {
+		socket = strings.TrimSpace(cliFlags.socket)
+	}
+	platform := strings.TrimSpace(f.DockerPlatform)
+	if platform == "" {
+		platform = strings.TrimSpace(cliFlags.platform)
+	}
+	mode := strings.TrimSpace(f.DockerMode)
+	if mode == "" {
+		mode = strings.TrimSpace(cliFlags.mode)
+	}
+	allContainers := f.DockerAllContainers || cliFlags.allContainers
+	bc := BackendConfig{
+		Host:          host,
+		ViaLocal:      viaLocal,
+		Socket:        socket,
+		Platform:      platform,
+		Mode:          mode,
+		AllContainers: allContainers,
+	}
+	viaSSHHost := strings.TrimSpace(f.DockerViaSSHHost)
+	if viaSSHHost == "" {
+		viaSSHHost = strings.TrimSpace(cliFlags.viaSSHHost)
+	}
+	if viaSSHHost != "" {
+		bc.ViaSSH.Host = viaSSHHost
 	}
 	return &Docker{Config: bc}
 }
@@ -57,26 +85,52 @@ func (dockerFactory) BackendKind() string { return "docker" }
 
 func (dockerFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Docker }
 
+func (dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
+
+func (dockerFactory) ProviderName() string { return "docker" }
+
+func (dockerFactory) ExecutorFor(r hosts.Record) hostexec.Executor {
+	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
+	if k == "container" || k == "swarm_task" {
+		return DockerExecutor{}
+	}
+	return nil
+}
+
+func (dockerFactory) ReconfigureFromConfig(cfg *config.File) { reconfigureDocker(cfg) }
+
 func applyDockerFlags(bc *BackendConfig, f searchrun.ProviderFlags) {
-	if strings.TrimSpace(f.DockerHost) != "" {
-		bc.Host = strings.TrimSpace(f.DockerHost)
+	if v := strings.TrimSpace(f.DockerHost); v != "" {
+		bc.Host = v
+	} else if v := strings.TrimSpace(cliFlags.host); v != "" {
+		bc.Host = v
 	}
-	if strings.TrimSpace(f.DockerViaLocal) != "" {
-		bc.ViaLocal = strings.TrimSpace(f.DockerViaLocal)
+	if v := strings.TrimSpace(f.DockerViaLocal); v != "" {
+		bc.ViaLocal = v
+	} else if v := strings.TrimSpace(cliFlags.viaLocal); v != "" {
+		bc.ViaLocal = v
 	}
-	if strings.TrimSpace(f.DockerViaSSHHost) != "" {
-		bc.ViaSSH.Host = strings.TrimSpace(f.DockerViaSSHHost)
+	if v := strings.TrimSpace(f.DockerViaSSHHost); v != "" {
+		bc.ViaSSH.Host = v
+	} else if v := strings.TrimSpace(cliFlags.viaSSHHost); v != "" {
+		bc.ViaSSH.Host = v
 	}
-	if strings.TrimSpace(f.DockerSocket) != "" {
-		bc.Socket = strings.TrimSpace(f.DockerSocket)
+	if v := strings.TrimSpace(f.DockerSocket); v != "" {
+		bc.Socket = v
+	} else if v := strings.TrimSpace(cliFlags.socket); v != "" {
+		bc.Socket = v
 	}
-	if strings.TrimSpace(f.DockerPlatform) != "" {
-		bc.Platform = strings.TrimSpace(f.DockerPlatform)
+	if v := strings.TrimSpace(f.DockerPlatform); v != "" {
+		bc.Platform = v
+	} else if v := strings.TrimSpace(cliFlags.platform); v != "" {
+		bc.Platform = v
 	}
-	if strings.TrimSpace(f.DockerMode) != "" {
-		bc.Mode = strings.TrimSpace(f.DockerMode)
+	if v := strings.TrimSpace(f.DockerMode); v != "" {
+		bc.Mode = v
+	} else if v := strings.TrimSpace(cliFlags.mode); v != "" {
+		bc.Mode = v
 	}
-	if f.DockerAllContainers {
+	if f.DockerAllContainers || cliFlags.allContainers {
 		bc.AllContainers = true
 	}
 }

@@ -51,9 +51,6 @@ func (k *K8s) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 	}
 	overrides := &clientcmd.ConfigOverrides{}
 	ctxName := k.Context
-	if q.KubeContext != "" {
-		ctxName = q.KubeContext
-	}
 	if ctxName != "" {
 		overrides.CurrentContext = ctxName
 	}
@@ -67,10 +64,7 @@ func (k *K8s) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error)
 		return nil, err
 	}
 
-	mode := q.K8sMode
-	if mode == "" {
-		mode = k.Mode
-	}
+	mode := k.Mode
 	if mode == "" {
 		mode = "nodes"
 	}
@@ -235,10 +229,7 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 				}
 			}
 		}
-		img := q.K8sDebugImage
-		if img == "" {
-			img = k.DebugImage
-		}
+		img := k.DebugImage
 		if img != "" {
 			meta["debug_image"] = img
 		}

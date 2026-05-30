@@ -60,7 +60,7 @@ var logsCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(logsCmd)
-	addSearchCoreFlags(logsCmd, "pods")
+	addSearchCoreFlags(logsCmd)
 	logsCmd.Flags().BoolVarP(&flagLogsFollow, "follow", "f", false, "Follow logs")
 	logsCmd.Flags().Int64Var(&flagLogsTail, "tail", 100, "Number of lines to show from the end")
 	logsCmd.Flags().DurationVar(&flagLogsSince, "since", 0, "Only show logs newer than duration ago (e.g. 10m, 1h)")

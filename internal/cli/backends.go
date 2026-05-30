@@ -11,9 +11,7 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-var (
-	flagBackendsJSON bool
-)
+var flagBackendsJSON bool
 
 var backendsCmd = &cobra.Command{
 	Use:   "backends",

@@ -8,6 +8,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/sshclient"
 )
@@ -41,7 +42,7 @@ func ResolveAppDialerWithCache(user string, rec hosts.Record, cache *ClientCache
 	if !appDialerUsesSSH(rec) {
 		var executor hostexec.Executor
 		if rec.Provider == "truenas" {
-			executor = hostexec.TrueNASAPIShellExecutor()
+			executor = truenasprovider.APIShellExecutor()
 		} else {
 			executor = hostexec.ForRecord(rec)
 		}

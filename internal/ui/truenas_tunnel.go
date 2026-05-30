@@ -15,8 +15,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"github.com/shareed2k/honey/internal/truenasshell"
 )
@@ -88,7 +88,7 @@ func trueNASDialBridgeBootstrap(remoteHost, remotePort string) string {
 	)
 }
 
-func startTrueNASBridge(ctx context.Context, b hostexec.TrueNASBackendRuntime, shellRec hosts.Record, targetName string, target trueNASBridgeTarget) (*trueNASBridge, error) {
+func startTrueNASBridge(ctx context.Context, b truenasprovider.TrueNASBackendRuntime, shellRec hosts.Record, targetName string, target trueNASBridgeTarget) (*trueNASBridge, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -190,7 +190,7 @@ func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address 
 	if r.Provider != "truenas" || !hosts.IsTrueNASAPIShellRecord(r) {
 		return nil, fmt.Errorf("truenas dial: record does not support API shell")
 	}
-	b, ok := hostexec.TrueNASBackendByName(r.Meta["backend_name"])
+	b, ok := truenasprovider.BackendByName(r.Meta["backend_name"])
 	if !ok {
 		return nil, fmt.Errorf("truenas backend not configured")
 	}
@@ -308,14 +308,14 @@ func (c *truenasInMemConn) SetWriteDeadline(_ time.Time) error { return nil }
 // RunTrueNASTunnel listens locally and forwards each connection through the TrueNAS API shell
 // dial bridge into the guest at remoteHost:remotePort (as seen from inside the guest).
 func RunTrueNASTunnel(ctx context.Context, _ string, r hosts.Record, localFwd string, out io.Writer) error {
-	if !hostexec.TruenasTunnelUsesAPIShell(r) {
+	if !truenasprovider.TruenasTunnelUsesAPIShell(r) {
 		return fmt.Errorf("truenas tunnel: record does not use API shell transport")
 	}
 	localPort, remoteHost, remotePort, err := sshclient.ParseLocalForward(localFwd)
 	if err != nil {
 		return err
 	}
-	b, ok := hostexec.TrueNASBackendByName(r.Meta["backend_name"])
+	b, ok := truenasprovider.BackendByName(r.Meta["backend_name"])
 	if !ok {
 		return fmt.Errorf("truenas backend not configured")
 	}

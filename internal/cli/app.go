@@ -17,6 +17,7 @@ import (
 	"github.com/shareed2k/honey/internal/appsecret"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/proxy"
+	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
@@ -70,13 +71,7 @@ func init() {
 	appOpenCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	appOpenCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	appOpenCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
-	appOpenCmd.Flags().StringVar(&flagGCPProject, "gcp-project", "", "GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)")
-	appOpenCmd.Flags().StringVar(&flagGCPZone, "gcp-zone", "", "Limit GCP to a single zone (default: all zones)")
-	appOpenCmd.Flags().StringVar(&flagAWSProfile, "aws-profile", "", "AWS shared config profile")
-	appOpenCmd.Flags().StringVar(&flagAWSRegion, "aws-region", "", "AWS region (default: from profile/env)")
-	appOpenCmd.Flags().StringVar(&flagKubeContext, "kube-context", "", "Kubernetes context override")
-	appOpenCmd.Flags().StringVar(&flagKubeconfig, "kubeconfig", "", "Path to kubeconfig file")
-	appOpenCmd.Flags().StringVar(&flagK8sMode, "k8s-mode", "nodes", "Kubernetes search mode: nodes or pods")
+	searchrun.RegisterAllProviderFlags(appOpenCmd)
 }
 
 func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, cache *ui.ClientCache) (proxy.Dialer, io.Closer, error) {
@@ -98,19 +93,12 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, c
 		}
 	}
 	in := hostapi.SearchHostsInput{
-		Name:        app.Target,
-		NameRegex:   app.TargetRegex,
-		ConfigPath:  cfgPath,
-		SSHUser:     flagSSHUser,
-		Providers:   searchProviders,
-		Backends:    searchBackends,
-		GCPProject:  flagGCPProject,
-		GCPZone:     flagGCPZone,
-		AWSProfile:  flagAWSProfile,
-		AWSRegion:   flagAWSRegion,
-		KubeContext: flagKubeContext,
-		Kubeconfig:  flagKubeconfig,
-		K8sMode:     flagK8sMode,
+		Name:       app.Target,
+		NameRegex:  app.TargetRegex,
+		ConfigPath: cfgPath,
+		SSHUser:    flagSSHUser,
+		Providers:  searchProviders,
+		Backends:   searchBackends,
 	}
 	out, err := hostapi.SearchHosts(ctx, &in)
 	if err != nil {

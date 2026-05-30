@@ -36,9 +36,6 @@ var _ hosts.Backend = (*Consul)(nil)
 func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	cfg := api.DefaultConfig()
 	addr := c.Addr
-	if q.ConsulAddr != "" {
-		addr = q.ConsulAddr
-	}
 	if addr != "" {
 		cfg.Address = strings.TrimPrefix(addr, "http://")
 		cfg.Address = strings.TrimPrefix(cfg.Address, "https://")
@@ -46,9 +43,6 @@ func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, err
 		cfg.Address = strings.TrimPrefix(strings.TrimPrefix(v, "http://"), "https://")
 	}
 	tok := c.Token
-	if q.ConsulToken != "" {
-		tok = q.ConsulToken
-	}
 	if tok != "" {
 		cfg.Token = tok
 	} else if v := os.Getenv("CONSUL_HTTP_TOKEN"); v != "" {
@@ -62,9 +56,6 @@ func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, err
 
 	opts := &api.QueryOptions{}
 	dc := c.Datacenter
-	if q.ConsulDatacenter != "" {
-		dc = q.ConsulDatacenter
-	}
 	if dc != "" {
 		opts.Datacenter = dc
 	}

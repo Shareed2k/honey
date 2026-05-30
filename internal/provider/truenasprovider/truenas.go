@@ -50,15 +50,9 @@ func (t *TrueNAS) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, er
 	}
 	apiKey := strings.TrimSpace(t.APIKey)
 	if apiKey == "" {
-		apiKey = strings.TrimSpace(q.TrueNASAPIKey)
-	}
-	if apiKey == "" {
 		return nil, fmt.Errorf("truenas %s: api_key is required", t.URL)
 	}
 	user := strings.TrimSpace(t.Username)
-	if user == "" {
-		user = strings.TrimSpace(q.TrueNASUser)
-	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
 	defer cancel()

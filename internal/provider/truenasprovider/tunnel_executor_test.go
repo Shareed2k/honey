@@ -1,10 +1,9 @@
-package hostexec
+package truenasprovider
 
 import (
-	"context"
-	"io"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -32,15 +31,27 @@ func TestTruenasTunnelUsesAPIShell(t *testing.T) {
 	}
 }
 
+func TestAPIShellExecutorType(t *testing.T) {
+	ex := APIShellExecutor()
+	if _, ok := ex.(truenasExecutor); !ok {
+		t.Fatalf("expected truenasExecutor, got %T", ex)
+	}
+}
+
 func TestForRecord_TruenasGuestUsesAPIShellExecutor(t *testing.T) {
-	SetTrueNASRunTunnel(func(context.Context, string, hosts.Record, string, io.Writer) error {
+	hostexec.SetExecutorResolver(func(r hosts.Record) hostexec.Executor {
+		if TruenasTunnelUsesAPIShell(r) {
+			return apiShellExecutor
+		}
 		return nil
 	})
+	t.Cleanup(func() { hostexec.SetExecutorResolver(nil) })
+
 	r := hosts.Record{
 		Provider: "truenas",
 		Meta:     map[string]string{"kind": "virt_instance", "id": "x"},
 	}
-	ex := ForRecord(r)
+	ex := hostexec.ForRecord(r)
 	if _, ok := ex.(truenasExecutor); !ok {
 		t.Fatalf("expected truenasExecutor, got %T", ex)
 	}

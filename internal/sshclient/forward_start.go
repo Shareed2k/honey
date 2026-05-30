@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mr-karan/balance"
+	socks5 "github.com/things-go/go-socks5"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -115,7 +117,45 @@ func StartRemoteForward(ctx context.Context, client *ssh.Client, remoteBind stri
 	return remoteAddr, stopFn, nil
 }
 
-// StartDynamicForward starts a minimal SOCKS5 CONNECT proxy on bindHost:localPort via client.
+// tunModeMaxChannels is the maximum number of concurrent SSH channels allowed
+// when the SOCKS5 proxy is used as the tun2proxy backend. Without a cap,
+// background OS traffic floods the SSH session with hundreds of simultaneous
+// channel opens, exhausting the server's resources.
+const tunModeMaxChannels = 30
+
+// passthroughResolver tells go-socks5 not to resolve DNS locally.
+// Hostnames pass through to ssh.Client.Dial, which forwards them to the SSH
+// server for remote resolution — necessary when local DNS is intercepted
+// (e.g. tun2proxy virtual DNS mode returns fake 198.18.x.x IPs that the SSH
+// server cannot reach).
+type passthroughResolver struct{}
+
+func (passthroughResolver) Resolve(ctx context.Context, _ string) (context.Context, net.IP, error) {
+	return ctx, nil, nil
+}
+
+// dialSSH calls client.Dial with a hard timeout so slow-failing channels
+// (e.g. TCP connect to a firewalled IP that never sends RST) release their
+// semaphore slot instead of holding it for the full TCP timeout (~75 s).
+func dialSSH(client *ssh.Client, network, addr string) (net.Conn, error) {
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		conn, err := client.Dial(network, addr)
+		ch <- result{conn, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.conn, r.err
+	case <-time.After(10 * time.Second):
+		return nil, fmt.Errorf("ssh dial timeout")
+	}
+}
+
+// StartDynamicForward starts a SOCKS5 proxy on bindHost:localPort that tunnels via client.
 func StartDynamicForward(ctx context.Context, client *ssh.Client, bindHost string, localPort int) (socksHost string, socksPort int, stop func(), err error) {
 	if client == nil {
 		return "", 0, nil, fmt.Errorf("nil ssh client")
@@ -132,13 +172,23 @@ func StartDynamicForward(ctx context.Context, client *ssh.Client, bindHost strin
 	if err != nil {
 		return "", 0, nil, fmt.Errorf("listen %s:%d: %w", bindHost, localPort, err)
 	}
-	addr := ln.Addr().String()
-	host, portStr, splitErr := net.SplitHostPort(addr)
-	if splitErr != nil {
-		_ = ln.Close()
-		return "", 0, nil, splitErr
-	}
-	port, _ := strconv.Atoi(portStr)
+	addr := ln.Addr().(*net.TCPAddr)
+
+	sem := make(chan struct{}, tunModeMaxChannels)
+	srv := socks5.NewServer(
+		socks5.WithResolver(passthroughResolver{}),
+		socks5.WithDial(func(ctx context.Context, network, addr string) (net.Conn, error) {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-time.After(5 * time.Second):
+				return nil, fmt.Errorf("ssh channel limit reached")
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			return dialSSH(client, network, addr)
+		}),
+	)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	var once sync.Once
@@ -152,9 +202,89 @@ func StartDynamicForward(ctx context.Context, client *ssh.Client, bindHost strin
 		<-runCtx.Done()
 		_ = ln.Close()
 	}()
+	go func() { _ = srv.Serve(ln) }()
 
-	go acceptDynamicSOCKS5Loop(runCtx, ln, client)
-	return host, port, stopFn, nil
+	return addr.IP.String(), addr.Port, stopFn, nil
+}
+
+// WeightedClient pairs an SSH client with a routing weight for StartDynamicForwardMulti.
+type WeightedClient struct {
+	Client *ssh.Client
+	Weight int
+}
+
+// StartDynamicForwardMulti starts a SOCKS5 proxy that distributes connections
+// across clients using smooth weighted round-robin (NGINX algorithm via mr-karan/balance).
+// Weight <= 0 defaults to 1. Single-client slices work correctly.
+func StartDynamicForwardMulti(ctx context.Context, clients []WeightedClient, bindHost string, localPort int) (socksHost string, socksPort int, stop func(), err error) {
+	if len(clients) == 0 {
+		return "", 0, nil, fmt.Errorf("no SSH clients provided")
+	}
+	for i, c := range clients {
+		if c.Client == nil {
+			return "", 0, nil, fmt.Errorf("nil SSH client at index %d", i)
+		}
+	}
+	if localPort < 0 || localPort >= 65536 {
+		return "", 0, nil, fmt.Errorf("local port out of range: %d", localPort)
+	}
+	bindHost = strings.TrimSpace(bindHost)
+	if bindHost == "" {
+		bindHost = "127.0.0.1"
+	}
+
+	b := balance.NewBalance()
+	clientMap := make(map[string]*ssh.Client, len(clients))
+	for i, wc := range clients {
+		w := wc.Weight
+		if w <= 0 {
+			w = 1
+		}
+		id := strconv.Itoa(i)
+		clientMap[id] = wc.Client
+		if addErr := b.Add(id, w); addErr != nil {
+			return "", 0, nil, fmt.Errorf("balance.Add index %d: %w", i, addErr)
+		}
+	}
+
+	ln, err := net.Listen("tcp", net.JoinHostPort(bindHost, strconv.Itoa(localPort)))
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("listen %s:%d: %w", bindHost, localPort, err)
+	}
+	addr := ln.Addr().(*net.TCPAddr)
+
+	sem := make(chan struct{}, tunModeMaxChannels)
+	srv := socks5.NewServer(
+		socks5.WithResolver(passthroughResolver{}),
+		socks5.WithDial(func(ctx context.Context, network, tgt string) (net.Conn, error) {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-time.After(5 * time.Second):
+				return nil, fmt.Errorf("ssh channel limit reached")
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			id := b.Get()
+			return dialSSH(clientMap[id], network, tgt)
+		}),
+	)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	var once sync.Once
+	stopFn := func() {
+		once.Do(func() {
+			cancel()
+			_ = ln.Close()
+		})
+	}
+	go func() {
+		<-runCtx.Done()
+		_ = ln.Close()
+	}()
+	go func() { _ = srv.Serve(ln) }()
+
+	return addr.IP.String(), addr.Port, stopFn, nil
 }
 
 // StartUDPRelay bridges a local UDP listener to a remote UDP target via SSH.
@@ -324,78 +454,6 @@ func closeWrite(c net.Conn) error {
 		return tc.CloseWrite()
 	}
 	return nil
-}
-
-func acceptDynamicSOCKS5Loop(ctx context.Context, ln net.Listener, client *ssh.Client) {
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			continue
-		}
-		go handleSOCKS5Connect(ctx, conn, client)
-	}
-}
-
-func handleSOCKS5Connect(_ context.Context, conn net.Conn, client *ssh.Client) {
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
-	buf := make([]byte, 257)
-	n, err := io.ReadAtLeast(conn, buf, 2)
-	if err != nil || n < 2 || buf[0] != 0x05 {
-		return
-	}
-	nmethods := int(buf[1])
-	if n < 2+nmethods {
-		return
-	}
-	if _, err = conn.Write([]byte{0x05, 0x00}); err != nil {
-		return
-	}
-	n, err = io.ReadAtLeast(conn, buf[:7], 7)
-	if err != nil || n < 7 || buf[0] != 0x05 || buf[1] != 0x01 {
-		return
-	}
-	atyp := buf[3]
-	var host string
-	var idx int
-	switch atyp {
-	case 0x01:
-		if n < 10 {
-			return
-		}
-		host = net.IP(buf[4:8]).String()
-		idx = 8
-	case 0x03:
-		hostLen := int(buf[4])
-		if n < 5+hostLen+2 {
-			return
-		}
-		host = string(buf[5 : 5+hostLen])
-		idx = 5 + hostLen
-	case 0x04:
-		if n < 22 {
-			return
-		}
-		host = net.IP(buf[4:20]).String()
-		idx = 20
-	default:
-		return
-	}
-	port := int(buf[idx])<<8 | int(buf[idx+1])
-	_ = conn.SetDeadline(time.Time{})
-
-	target := net.JoinHostPort(host, strconv.Itoa(port))
-	remote, err := client.Dial("tcp", target)
-	if err != nil {
-		_, _ = conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-		return
-	}
-	defer func() { _ = remote.Close() }()
-	_, _ = conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-	bridgeConns(conn, remote)
 }
 
 func startRemoteSocatUDPRelay(ctx context.Context, client *ssh.Client, remoteHost string, remotePort int) (relayPort int, stop func(), err error) {

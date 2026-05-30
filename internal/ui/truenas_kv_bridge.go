@@ -12,8 +12,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"github.com/shareed2k/honey/internal/stepkv"
 	"github.com/shareed2k/honey/internal/truenasshell"
@@ -68,7 +68,7 @@ func attachTrueNASKVForRecord(ctx context.Context, user string, r hosts.Record, 
 			}
 		}
 	}
-	b, ok := hostexec.TrueNASBackendByName(r.Meta["backend_name"])
+	b, ok := truenasprovider.BackendByName(r.Meta["backend_name"])
 	if !ok {
 		return nil, nil, fmt.Errorf("truenas backend not configured")
 	}
@@ -85,7 +85,7 @@ func (c *RecipeKVCoordinator) EnsureTrueNASAPIShellBridgeEnv(ctx context.Context
 	})
 }
 
-func startTrueNASAPIShellKVBridge(ctx context.Context, b hostexec.TrueNASBackendRuntime, rec hosts.Record, kvSess *stepkv.Session) (map[string]string, func(), error) {
+func startTrueNASAPIShellKVBridge(ctx context.Context, b truenasprovider.TrueNASBackendRuntime, rec hosts.Record, kvSess *stepkv.Session) (map[string]string, func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

@@ -3,6 +3,8 @@ package searchrun
 import (
 	"reflect"
 
+	"github.com/spf13/cobra"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -56,4 +58,18 @@ func ListBackendRows(cfg *config.File) []config.BackendRow {
 		rows = append(rows, factory.BackendRows(cfg)...)
 	}
 	return rows
+}
+
+// FlagRegistrar is optionally implemented by provider factories that expose CLI flags.
+type FlagRegistrar interface {
+	RegisterFlags(cmd *cobra.Command)
+}
+
+// RegisterAllProviderFlags calls RegisterFlags on each factory that implements FlagRegistrar.
+func RegisterAllProviderFlags(cmd *cobra.Command) {
+	for _, f := range factories {
+		if r, ok := f.(FlagRegistrar); ok {
+			r.RegisterFlags(cmd)
+		}
+	}
 }

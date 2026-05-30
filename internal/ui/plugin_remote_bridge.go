@@ -15,9 +15,9 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
-
 	"github.com/shareed2k/honey/internal/plugins"
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/truenasshell"
 )
@@ -114,7 +114,7 @@ func (b *pluginRemoteBridge) remoteExecSSH(in apiv1.RemoteExecInput) apiv1.Remot
 }
 
 func (b *pluginRemoteBridge) remoteExecTrueNAS(ctx context.Context, in apiv1.RemoteExecInput) apiv1.RemoteExecOutput {
-	backend, ok := hostexec.TrueNASBackendByName(b.record.Meta["backend_name"])
+	backend, ok := truenasprovider.BackendByName(b.record.Meta["backend_name"])
 	if !ok {
 		return apiv1.RemoteExecOutput{Failed: true, Error: "truenas backend not configured"}
 	}

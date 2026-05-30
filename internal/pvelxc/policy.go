@@ -3,8 +3,8 @@ package pvelxc
 import (
 	"strings"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
 )
 
 // ShouldUsePVETTY reports whether the Proxmox guest should use the PVE serial/text console
@@ -20,12 +20,12 @@ func ShouldUsePVETTY(rec hosts.Record) bool {
 	if strings.TrimSpace(rec.Meta["node"]) == "" || strings.TrimSpace(rec.Meta["vmid"]) == "" {
 		return false
 	}
-	b, ok := hostexec.ProxmoxBackendByName(rec.Meta["backend_name"])
+	b, ok := proxmoxprovider.BackendByName(rec.Meta["backend_name"])
 	if !ok {
 		return false
 	}
 	switch b.ExecMode {
-	case hostexec.ProxmoxExecPVE, hostexec.ProxmoxExecHybrid:
+	case proxmoxprovider.ProxmoxExecPVE, proxmoxprovider.ProxmoxExecHybrid:
 	default:
 		return false
 	}

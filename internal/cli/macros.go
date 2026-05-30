@@ -86,6 +86,13 @@ spec:
     postgres-tunnel:
       kind: tunnel
       app: "postgres-tcp"
+
+    # Exit traffic through a honey-managed host (VPN-like)
+    corp-vpn:
+      kind: egress
+      host: "corp-bastion"
+      port: 1080
+      auto_proxy: true
 `
 
 var macrosInitCmd = &cobra.Command{
@@ -158,6 +165,8 @@ func runMacros(cmd *cobra.Command, args []string) error {
 		return runAppMacro(cmd, m)
 	case "tunnel":
 		return runTunnelMacro(cmd, m)
+	case "egress":
+		return runEgressMacro(cmd, m)
 	default:
 		return fmt.Errorf("unsupported macro kind %q", m.Kind)
 	}
@@ -173,6 +182,9 @@ func printMacrosList(set *macros.MacroSet) error {
 		target := m.Target
 		if target == "" {
 			target = m.App
+		}
+		if target == "" {
+			target = m.EgressHost
 		}
 		fmt.Printf("%s\t%s\t%s\n", name, m.Kind, target)
 	}
@@ -290,4 +302,23 @@ func runAppMacro(cmd *cobra.Command, m macros.Macro) error {
 func runTunnelMacro(cmd *cobra.Command, m macros.Macro) error {
 	// Detached/background is handled by proxy manager internals in runProxyApp.
 	return runProxyApp(cmd, m.App, apps.AppTypeTCP)
+}
+
+func runEgressMacro(cmd *cobra.Command, m macros.Macro) error {
+	flagEgressPort = m.EgressPort
+	if flagEgressPort == 0 {
+		flagEgressPort = 1080
+	}
+	flagEgressBind = m.EgressBind
+	if flagEgressBind == "" {
+		flagEgressBind = "127.0.0.1"
+	}
+	flagEgressTun = m.EgressTun
+	flagEgressAutoProxy = m.EgressAutoProxy
+	flagEgressBypass = m.EgressBypass
+	args := append([]string(nil), m.EgressHosts...)
+	if strings.TrimSpace(m.EgressHost) != "" {
+		args = append(args, strings.TrimSpace(m.EgressHost))
+	}
+	return runEgress(cmd, args)
 }

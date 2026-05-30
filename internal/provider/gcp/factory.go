@@ -3,6 +3,8 @@ package gcp
 import (
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
@@ -21,8 +23,14 @@ func (gcpFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 		if proj == "" {
 			proj = f.GCPProject
 		}
+		if proj == "" {
+			proj = cliFlags.project
+		}
 		if zone == "" {
 			zone = f.GCPZone
+		}
+		if zone == "" {
+			zone = cliFlags.zone
 		}
 		b := searchrun.WithDockerDiscover(
 			&GCP{Name: e.Name, Project: proj, Zone: zone},
@@ -34,8 +42,16 @@ func (gcpFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 }
 
 func (gcpFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
+	proj := f.GCPProject
+	if proj == "" {
+		proj = cliFlags.project
+	}
+	zone := f.GCPZone
+	if zone == "" {
+		zone = cliFlags.zone
+	}
 	return searchrun.WithDockerDiscover(
-		&GCP{Project: f.GCPProject, Zone: f.GCPZone},
+		&GCP{Project: proj, Zone: zone},
 		config.DockerDiscover{}, // no defaults available in Default() since cfg is nil
 	)
 }
@@ -51,3 +67,5 @@ func (gcpFactory) BackendRows(cfg *config.File) []config.BackendRow {
 func (gcpFactory) BackendKind() string { return "gcp" }
 
 func (gcpFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.GCP }
+
+func (gcpFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
