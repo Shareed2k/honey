@@ -15,6 +15,13 @@ env:
   CGO_ENABLED: 1
 
 tasks:
+  lint:
+    desc: Run Go linters and security checks
+    cmds:
+      - go tool golangci-lint run
+      - go tool govulncheck ./...
+      - go tool gosec -fmt text -severity medium -quiet ./...
+
   webui:
     desc: Build the React web UI and embed assets
     dir: webui
