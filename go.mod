@@ -330,3 +330,5 @@ tool (
 	github.com/securego/gosec/v2/cmd/gosec
 	golang.org/x/vuln/cmd/govulncheck
 )
+
+replace github.com/iamcalledrob/netstatus => github.com/Shareed2k/netstatus v0.0.0-20260530172819-951d05b96664

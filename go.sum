@@ -60,6 +60,8 @@ github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
+github.com/Shareed2k/netstatus v0.0.0-20260530172819-951d05b96664 h1:HkUxl1tTwcEOvwbyk/jrh5tCnFBm6+UH0ANW7lECEFg=
+github.com/Shareed2k/netstatus v0.0.0-20260530172819-951d05b96664/go.mod h1:OkyqZo9liIcbqu10htMXx85IQgk86hxHHiJwziNms0A=
 github.com/Telmate/proxmox-api-go v0.0.0-20260526212231-19794abe0b9e h1:Ej7PPoU5zJMNy/balYbLomflwoHu3SoJaz/kEvdJA/E=
 github.com/Telmate/proxmox-api-go v0.0.0-20260526212231-19794abe0b9e/go.mod h1:90hDRcdB9vqdHdtkKje50NGkGbphbGKhtefqezo/Bgc=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=
@@ -446,8 +448,6 @@ github.com/hashicorp/vault/api v1.23.0 h1:gXgluBsSECfRWTSW9niY2jwg2e9mMJc4WoHNv4
 github.com/hashicorp/vault/api v1.23.0/go.mod h1:zransKiB9ftp+kgY8ydjnvCU7Wk8i9L0DYWpXeMj9ko=
 github.com/hexops/gotextdiff v1.0.3 h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUqJM=
 github.com/hexops/gotextdiff v1.0.3/go.mod h1:pSWU5MAI3yDq+fZBTazCSJysOMbxWL1BSow5/V2vxeg=
-github.com/iamcalledrob/netstatus v1.0.2 h1:JuhOv15WsvZNVYpVk9VfnACMtjGhSP28+94w5AX//60=
-github.com/iamcalledrob/netstatus v1.0.2/go.mod h1:OkyqZo9liIcbqu10htMXx85IQgk86hxHHiJwziNms0A=
 github.com/ianlancetaylor/demangle v0.0.0-20240805132620-81f5be970eca h1:T54Ema1DU8ngI+aef9ZhAhNGQhcRTrWxVeG07F+c/Rw=
 github.com/ianlancetaylor/demangle v0.0.0-20240805132620-81f5be970eca/go.mod h1:gx7rwoVhcfuVKG5uya9Hs3Sxj7EIvldVofAWIUtGouw=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=

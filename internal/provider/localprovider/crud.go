@@ -3,7 +3,6 @@ package localprovider
 
 import (
 	"fmt"
-	"strings"
 
 	"charm.land/huh/v2"
 	"github.com/shareed2k/honey/internal/config"
@@ -28,27 +27,44 @@ func (localCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 }
 
 func (localCRUD) Add(cfg *config.File) error {
-	var name, hostsStr string
-	err := huh.NewForm(
+	var name string
+	if err := huh.NewForm(
 		huh.NewGroup(
-			huh.NewInput().Title("Name").Value(&name),
-			huh.NewText().Title("Hosts (comma-separated hostnames or IPs for a simple setup)").Value(&hostsStr),
+			huh.NewInput().Title("Backend name").Value(&name),
 		),
-	).Run()
-	if err == nil {
-		var parsedHosts []config.LocalHost
-		for _, h := range strings.Split(hostsStr, ",") {
-			h = strings.TrimSpace(h)
-			if h != "" {
-				parsedHosts = append(parsedHosts, config.LocalHost{Name: h, PrimaryIP: h})
-			}
-		}
-		cfg.Backends.Local = append(cfg.Backends.Local, config.LocalBackend{
-			Name:  name,
-			Hosts: parsedHosts,
-		})
+	).Run(); err != nil {
+		return err
 	}
-	return err
+
+	var hosts []config.LocalHost
+	for {
+		var hostName, primaryIP, sshUser string
+		var addAnother bool
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().Title("Host name").Value(&hostName),
+				huh.NewInput().Title("Primary IP").Value(&primaryIP),
+				huh.NewInput().Title("SSH user for host (optional, leave blank for default)").Value(&sshUser),
+				huh.NewConfirm().Title("Add another host?").Value(&addAnother),
+			),
+		).Run(); err != nil {
+			return err
+		}
+		hosts = append(hosts, config.LocalHost{
+			Name:      hostName,
+			PrimaryIP: primaryIP,
+			SSHUser:   sshUser,
+		})
+		if !addAnother {
+			break
+		}
+	}
+
+	cfg.Backends.Local = append(cfg.Backends.Local, config.LocalBackend{
+		Name:  name,
+		Hosts: hosts,
+	})
+	return nil
 }
 
 func (localCRUD) Edit(cfg *config.File, idx int) error {
@@ -56,42 +72,61 @@ func (localCRUD) Edit(cfg *config.File, idx int) error {
 		return fmt.Errorf("index out of bounds")
 	}
 	b := cfg.Backends.Local[idx]
-	var hostsStr string
-	var hNames []string
-	for _, h := range b.Hosts {
-		hNames = append(hNames, h.Name)
-	}
-	hostsStr = strings.Join(hNames, ", ")
 
-	err := huh.NewForm(
+	if err := huh.NewForm(
 		huh.NewGroup(
-			huh.NewInput().Title("Name").Value(&b.Name),
-			huh.NewText().Title("Hosts (comma-separated hostnames/IPs)").Value(&hostsStr),
+			huh.NewInput().Title("Backend name").Value(&b.Name),
+		),
+	).Run(); err != nil {
+		return err
+	}
+
+	// Edit each existing host in turn.
+	for i := range b.Hosts {
+		h := &b.Hosts[i]
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().Title(fmt.Sprintf("Host %d — name", i+1)).Value(&h.Name),
+				huh.NewInput().Title(fmt.Sprintf("Host %d — primary IP", i+1)).Value(&h.PrimaryIP),
+				huh.NewInput().Title(fmt.Sprintf("Host %d — SSH user (optional)", i+1)).Value(&h.SSHUser),
+				huh.NewInput().Title(fmt.Sprintf("Host %d — zone (optional)", i+1)).Value(&h.Zone),
+				huh.NewInput().Title(fmt.Sprintf("Host %d — region (optional)", i+1)).Value(&h.Region),
+			),
+		).Run(); err != nil {
+			return err
+		}
+	}
+
+	// Offer to append new hosts.
+	var addMore bool
+	_ = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().Title("Add more hosts?").Value(&addMore),
 		),
 	).Run()
-	if err == nil {
-		var parsedHosts []config.LocalHost
-		for _, h := range strings.Split(hostsStr, ",") {
-			h = strings.TrimSpace(h)
-			if h != "" {
-				// We try to retain existing IPs if the name hasn't changed. Simple implementation here.
-				found := false
-				for _, exist := range b.Hosts {
-					if exist.Name == h {
-						parsedHosts = append(parsedHosts, exist)
-						found = true
-						break
-					}
-				}
-				if !found {
-					parsedHosts = append(parsedHosts, config.LocalHost{Name: h, PrimaryIP: h})
-				}
-			}
+	for addMore {
+		var hostName, primaryIP, sshUser string
+		var again bool
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().Title("Host name").Value(&hostName),
+				huh.NewInput().Title("Primary IP").Value(&primaryIP),
+				huh.NewInput().Title("SSH user (optional)").Value(&sshUser),
+				huh.NewConfirm().Title("Add another host?").Value(&again),
+			),
+		).Run(); err != nil {
+			return err
 		}
-		b.Hosts = parsedHosts
-		cfg.Backends.Local[idx] = b
+		b.Hosts = append(b.Hosts, config.LocalHost{
+			Name:      hostName,
+			PrimaryIP: primaryIP,
+			SSHUser:   sshUser,
+		})
+		addMore = again
 	}
-	return err
+
+	cfg.Backends.Local[idx] = b
+	return nil
 }
 
 func (localCRUD) Delete(cfg *config.File, idx int) error {

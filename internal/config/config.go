@@ -108,6 +108,7 @@ type LocalHost struct {
 	ExtraIPs  []string          `yaml:"extra_ips,omitempty" json:"extra_ips,omitempty" honey:"label=Extra IPs" validate:"dive,ip"`
 	Zone      string            `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone" mod:"trim"`
 	Region    string            `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region" mod:"trim"`
+	SSHUser   string            `yaml:"ssh_user,omitempty" json:"ssh_user,omitempty" honey:"label=SSH user for host" mod:"trim"`
 	Meta      map[string]string `yaml:"meta,omitempty" json:"meta,omitempty" honey:"label=Metadata"`
 }
 
@@ -115,7 +116,7 @@ type LocalHost struct {
 type GCPBackend struct {
 	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
 	Project        string         `yaml:"project" json:"project" honey:"label=Project" validate:"required" mod:"trim"`
-	Zone           string         `yaml:"zone" json:"zone" honey:"label=Zone" mod:"trim"`
+	Zone           string         `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
@@ -123,25 +124,25 @@ type GCPBackend struct {
 type AWSBackend struct {
 	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
 	Profile        string         `yaml:"profile" json:"profile" honey:"label=Profile" validate:"required" mod:"trim"`
-	Region         string         `yaml:"region" json:"region" honey:"label=Region" mod:"trim"`
+	Region         string         `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // KubernetesBackend configures one Kubernetes nodes/pods listing.
 type KubernetesBackend struct {
 	Name       string `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
-	Context    string `yaml:"context" json:"context" honey:"label=Context" mod:"trim"`
-	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig" honey:"label=Kubeconfig path" mod:"trim"`
+	Context    string `yaml:"context,omitempty" json:"context,omitempty" honey:"label=Context" mod:"trim"`
+	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty" honey:"label=Kubeconfig path" mod:"trim"`
 	Mode       string `yaml:"mode" json:"mode" honey:"label=Mode;enum=nodes|pods;enum_as_warning;default=nodes" mod:"trim"`
-	DebugImage string `yaml:"debug_image" json:"debug_image" honey:"label=Debug image" mod:"trim"`
+	DebugImage string `yaml:"debug_image,omitempty" json:"debug_image,omitempty" honey:"label=Debug image" mod:"trim"`
 }
 
 // ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
 	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
 	Addr           string         `yaml:"addr" json:"addr" honey:"label=Address" validate:"required,url" mod:"trim"`
-	Datacenter     string         `yaml:"datacenter" json:"datacenter" honey:"label=Datacenter" mod:"trim"`
-	Token          string         `yaml:"token" json:"token" honey:"label=Token;secret" mod:"trim"`
+	Datacenter     string         `yaml:"datacenter,omitempty" json:"datacenter,omitempty" honey:"label=Datacenter" mod:"trim"`
+	Token          string         `yaml:"token,omitempty" json:"token,omitempty" honey:"label=Token;secret" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
@@ -149,12 +150,12 @@ type ConsulBackend struct {
 type ProxmoxBackend struct {
 	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
 	URL            string         `yaml:"url" json:"url" honey:"label=URL" validate:"required,url" mod:"trim"`
-	User           string         `yaml:"user" json:"user" honey:"label=User" validate:"required_without=TokenID" mod:"trim"`
-	Password       string         `yaml:"password" json:"password" honey:"label=Password;secret" validate:"required_without=TokenSecret" mod:"trim"`
-	TokenID        string         `yaml:"token_id" json:"token_id" honey:"label=Token ID" validate:"required_without=User" mod:"trim"`
-	TokenSecret    string         `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret" validate:"required_without=Password" mod:"trim"`
+	User           string         `yaml:"user,omitempty" json:"user,omitempty" honey:"label=User" validate:"required_without=TokenID" mod:"trim"`
+	Password       string         `yaml:"password,omitempty" json:"password,omitempty" honey:"label=Password;secret" validate:"required_without=TokenSecret" mod:"trim"`
+	TokenID        string         `yaml:"token_id,omitempty" json:"token_id,omitempty" honey:"label=Token ID" validate:"required_without=User" mod:"trim"`
+	TokenSecret    string         `yaml:"token_secret,omitempty" json:"token_secret,omitempty" honey:"label=Token secret;secret" validate:"required_without=Password" mod:"trim"`
 	Insecure       bool           `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
-	ExecMode       string         `yaml:"exec_mode" json:"exec_mode" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning" mod:"trim"`
+	ExecMode       string         `yaml:"exec_mode,omitempty" json:"exec_mode,omitempty" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
@@ -173,7 +174,7 @@ type TrueNASBackend struct {
 
 // DockerViaSSH configures an explicit SSH hop for Honey's SSH stack (not Moby ssh://).
 type DockerViaSSH struct {
-	Host         string `yaml:"host" json:"host" honey:"label=SSH host" mod:"trim"`
+	Host         string `yaml:"host,omitempty" json:"host,omitempty" honey:"label=SSH host" mod:"trim"`
 	Port         int    `yaml:"port,omitempty" json:"port,omitempty" honey:"label=SSH port (0 = ssh_config default)"`
 	User         string `yaml:"user,omitempty" json:"user,omitempty" honey:"label=SSH user" mod:"trim"`
 	IdentityFile string `yaml:"identity_file,omitempty" json:"identity_file,omitempty" honey:"label=SSH identity file" mod:"trim"`
@@ -182,7 +183,7 @@ type DockerViaSSH struct {
 // DockerBackend configures one Docker Engine API endpoint (local socket, tcp, ssh://, or Honey SSH).
 type DockerBackend struct {
 	Name          string       `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
-	Host          string       `yaml:"host" json:"host" honey:"label=Host (unix://, tcp://, ssh://; empty = DOCKER_HOST / local socket)" mod:"trim"`
+	Host          string       `yaml:"host,omitempty" json:"host,omitempty" honey:"label=Host (unix://, tcp://, ssh://; empty = DOCKER_HOST / local socket)" mod:"trim"`
 	ViaLocal      string       `yaml:"via_local,omitempty" json:"via_local,omitempty" honey:"label=Local backend name (SSH hop via backends.local)" mod:"trim"`
 	ViaSSH        DockerViaSSH `yaml:"via_ssh,omitempty" json:"via_ssh,omitempty" honey:"label=SSH hop (overrides via_local when host set)"`
 	Socket        string       `yaml:"socket,omitempty" json:"socket,omitempty" honey:"label=Remote Engine socket (default /var/run/docker.sock on linux)" mod:"trim"`
@@ -191,9 +192,9 @@ type DockerBackend struct {
 	Mode          string       `yaml:"mode" json:"mode" honey:"label=Mode;enum=containers|swarm|both;enum_as_warning;default=containers" mod:"trim"`
 	AllContainers bool         `yaml:"all_containers" json:"all_containers" honey:"label=Include stopped containers;default=false"`
 	TLSVerify     bool         `yaml:"tls_verify" json:"tls_verify" honey:"label=Verify TLS (tcp hosts);default=true"`
-	CACert        string       `yaml:"ca_cert" json:"ca_cert" honey:"label=CA certificate path" mod:"trim"`
-	Cert          string       `yaml:"cert" json:"cert" honey:"label=Client certificate path" mod:"trim"`
-	Key           string       `yaml:"key" json:"key" honey:"label=Client key path;secret" mod:"trim"`
+	CACert        string       `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty" honey:"label=CA certificate path" mod:"trim"`
+	Cert          string       `yaml:"cert,omitempty" json:"cert,omitempty" honey:"label=Client certificate path" mod:"trim"`
+	Key           string       `yaml:"key,omitempty" json:"key,omitempty" honey:"label=Client key path;secret" mod:"trim"`
 }
 
 // Save serializes the config and writes it to path.

@@ -45,6 +45,9 @@ func (l *Local) Search(_ context.Context, q hosts.Query) ([]hosts.Record, error)
 		for k, v := range h.Meta {
 			meta[k] = v
 		}
+		if h.SSHUser != "" {
+			meta["ssh_user"] = h.SSHUser
+		}
 
 		out = append(out, hosts.Record{
 			Provider:  "local",

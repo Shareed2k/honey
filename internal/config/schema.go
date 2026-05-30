@@ -220,6 +220,12 @@ func schemaFieldsFromStruct(t reflect.Type) []SchemaField {
 		var items []SchemaField
 
 		switch f.Type.Kind() {
+		case reflect.Ptr:
+			ft, ok := schemaTypeForGoType(f.Type.Elem())
+			if !ok {
+				continue
+			}
+			fieldType = ft
 		case reflect.Struct:
 			fieldType = SchemaFieldTypeObject
 			items = schemaFieldsFromStruct(f.Type)
