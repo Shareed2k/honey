@@ -37,9 +37,6 @@ var _ hosts.Backend = (*GCP)(nil)
 // Search returns Compute Engine instances matching the query.
 func (g *GCP) Search(ctx context.Context, q hosts.Query) (out []hosts.Record, err error) {
 	project := g.Project
-	if q.GCPProject != "" {
-		project = q.GCPProject
-	}
 	if project == "" {
 		project = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	}
@@ -62,9 +59,6 @@ func (g *GCP) Search(ctx context.Context, q hosts.Query) (out []hosts.Record, er
 	}()
 
 	zone := g.Zone
-	if q.GCPZone != "" {
-		zone = q.GCPZone
-	}
 
 	if zone != "" {
 		it := client.List(ctx, &computepb.ListInstancesRequest{

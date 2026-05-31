@@ -1,0 +1,76 @@
+version: 2
+
+project_name: honey
+
+before:
+  hooks:
+    - go mod tidy
+    - sh -c 'test -f internal/webserver/static/index.html || go tool task webui'
+    - go generate ./...
+
+builds:
+  - id: honey
+    main: ./cmd/honey
+    binary: honey
+    env:
+      - CGO_ENABLED=1
+      - >-
+        CC={{- if eq .Os "darwin" -}}
+          {{- if eq .Arch "amd64" }}o64-clang{{- else }}oa64-clang{{- end -}}
+        {{- else if eq .Os "windows" -}}
+          {{- if eq .Arch "amd64" }}x86_64-w64-mingw32-gcc{{- else }}aarch64-w64-mingw32-gcc{{- end -}}
+        {{- else if eq .Os "linux" -}}
+          {{- if eq .Arch "arm64" }}aarch64-linux-gnu-gcc{{- else }}gcc{{- end -}}
+        {{- end }}
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+      - completions/*
+      - runtime/onnx/**
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  prerelease: auto

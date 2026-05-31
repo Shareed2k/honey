@@ -5,8 +5,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 )
 
@@ -23,7 +23,7 @@ func SetDockerSSHBorrowCache(c *ClientCache) {
 }
 
 func init() {
-	hostexec.RegisterDockerSSHBorrower(borrowDockerSSHFromCache)
+	dockerprovider.RegisterDockerSSHBorrower(borrowDockerSSHFromCache)
 }
 
 func borrowDockerSSHFromCache(user string, hop hosts.Record) (*ssh.Client, bool) {

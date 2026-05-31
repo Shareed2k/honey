@@ -7,6 +7,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
 )
 
@@ -27,7 +28,7 @@ backends:
 	if err := loadHostexecFromHoneyConfig(cfgPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := hostexec.TrueNASBackendByName("lab"); !ok {
+	if _, ok := truenasprovider.BackendByName("lab"); !ok {
 		t.Fatal("expected truenas backend lab after load")
 	}
 	rec := hosts.Record{

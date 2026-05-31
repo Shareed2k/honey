@@ -7,13 +7,12 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 )
 
 // DockerTerminalSize is a cols/rows pair for docker exec resize.
-type DockerTerminalSize struct {
-	Cols int
-	Rows int
-}
+// It is an alias for dockerprovider.DockerTerminalSize.
+type DockerTerminalSize = dockerprovider.DockerTerminalSize
 
 // RunDockerWebTTY runs an interactive shell in a container with TTY over stdin/stdout.
 func RunDockerWebTTY(
@@ -37,5 +36,5 @@ func RunDockerWebTTY(
 	}
 
 	execEnv, _ := cuetry.EnvForDockerInteractive(&r)
-	return dc.execInteractive(ctx, dockerInteractiveShellCmd(dc), execEnv, stdin, stdout, cols, rows, resizeCh)
+	return dc.ExecInteractive(ctx, dockerprovider.DockerInteractiveShellCmd(dc), execEnv, stdin, stdout, cols, rows, resizeCh)
 }

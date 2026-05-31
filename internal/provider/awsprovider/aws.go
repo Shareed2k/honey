@@ -38,16 +38,10 @@ var _ hosts.Backend = (*AWS)(nil)
 func (a *AWS) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	opts := []func(*config.LoadOptions) error{}
 	profile := a.Profile
-	if q.AWSProfile != "" {
-		profile = q.AWSProfile
-	}
 	if profile != "" {
 		opts = append(opts, config.WithSharedConfigProfile(profile))
 	}
 	region := a.Region
-	if q.AWSRegion != "" {
-		region = q.AWSRegion
-	}
 	if region != "" {
 		opts = append(opts, config.WithRegion(region))
 	}

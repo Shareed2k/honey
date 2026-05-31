@@ -6,8 +6,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"github.com/shareed2k/honey/internal/truenasshell"
 )
@@ -16,7 +16,7 @@ func runTrueNASShellInteractive(ctx context.Context, console string, r hosts.Rec
 	if !truenasshell.ShouldUseTrueNASShell(r, console) {
 		return fmt.Errorf("truenas api shell not available for this record")
 	}
-	b, ok := hostexec.TrueNASBackendByName(r.Meta["backend_name"])
+	b, ok := truenasprovider.BackendByName(r.Meta["backend_name"])
 	if !ok {
 		return fmt.Errorf("truenas backend not configured")
 	}

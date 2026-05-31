@@ -13,7 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
 )
 
 // QemuVncProxyData is the vncproxy response for QEMU graphics console.
@@ -23,7 +23,7 @@ type QemuVncProxyData struct {
 }
 
 // PostQemuVncProxy calls POST /nodes/{node}/qemu/{vmid}/vncproxy with websocket=1.
-func PostQemuVncProxy(ctx context.Context, b hostexec.ProxmoxBackendRuntime, node string, vmid int) (QemuVncProxyData, error) {
+func PostQemuVncProxy(ctx context.Context, b proxmoxprovider.ProxmoxBackendRuntime, node string, vmid int) (QemuVncProxyData, error) {
 	var zero QemuVncProxyData
 	apiBase := APIBase(b.URL)
 	vncURL := fmt.Sprintf("%s/nodes/%s/qemu/%d/vncproxy", apiBase, url.PathEscape(node), vmid)
@@ -83,7 +83,7 @@ func QemuGraphicsWebSocketURL(apiBase, node string, vmid int, port, vncticket st
 }
 
 // DialQemuGraphicsVNCWS dials PVE qemu vncwebsocket using an existing vncproxy port and ticket (single-use; short-lived).
-func DialQemuGraphicsVNCWS(ctx context.Context, b hostexec.ProxmoxBackendRuntime, node string, vmid int, port, ticket string) (*websocket.Conn, error) {
+func DialQemuGraphicsVNCWS(ctx context.Context, b proxmoxprovider.ProxmoxBackendRuntime, node string, vmid int, port, ticket string) (*websocket.Conn, error) {
 	wsURL, err := QemuGraphicsWebSocketURL(APIBase(b.URL), node, vmid, port, ticket)
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func DialQemuGraphicsVNCWS(ctx context.Context, b hostexec.ProxmoxBackendRuntime
 }
 
 // DialQemuGraphicsVNC opens a websocket to PVE for the VM graphical console (no xterm login; RFB starts from server).
-func DialQemuGraphicsVNC(ctx context.Context, b hostexec.ProxmoxBackendRuntime, node string, vmid int) (*websocket.Conn, error) {
+func DialQemuGraphicsVNC(ctx context.Context, b proxmoxprovider.ProxmoxBackendRuntime, node string, vmid int) (*websocket.Conn, error) {
 	vp, err := PostQemuVncProxy(ctx, b, node, vmid)
 	if err != nil {
 		return nil, err

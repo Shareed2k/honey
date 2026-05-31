@@ -27,7 +27,8 @@ func (truenasCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 
 func (truenasCRUD) Add(cfg *config.File) error {
 	var name, url, user, apiKey, sshUser string
-	var insecure bool
+	var insecure, inclAppliance, inclVMs, inclVirt bool
+	inclAppliance, inclVMs, inclVirt = true, true, true
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Name").Value(&name),
@@ -36,16 +37,22 @@ func (truenasCRUD) Add(cfg *config.File) error {
 			huh.NewInput().Title("API key").EchoMode(huh.EchoModePassword).Value(&apiKey),
 			huh.NewInput().Title("SSH user for appliance (optional)").Value(&sshUser),
 			huh.NewConfirm().Title("Insecure (skip TLS verify)?").Value(&insecure),
+			huh.NewConfirm().Title("List appliance?").Value(&inclAppliance),
+			huh.NewConfirm().Title("List KVM VMs?").Value(&inclVMs),
+			huh.NewConfirm().Title("List virt instances?").Value(&inclVirt),
 		),
 	).Run()
 	if err == nil {
 		cfg.Backends.TrueNAS = append(cfg.Backends.TrueNAS, config.TrueNASBackend{
-			Name:     name,
-			URL:      url,
-			Username: user,
-			APIKey:   apiKey,
-			SSHUser:  sshUser,
-			Insecure: insecure,
+			Name:             name,
+			URL:              url,
+			Username:         user,
+			APIKey:           apiKey,
+			SSHUser:          sshUser,
+			Insecure:         insecure,
+			IncludeAppliance: &inclAppliance,
+			IncludeVMs:       &inclVMs,
+			IncludeVirt:      &inclVirt,
 		})
 	}
 	return err
@@ -56,6 +63,10 @@ func (truenasCRUD) Edit(cfg *config.File, idx int) error {
 		return fmt.Errorf("index out of bounds")
 	}
 	b := cfg.Backends.TrueNAS[idx]
+	// Dereference *bool fields with defaults for the form.
+	inclAppliance := b.IncludeAppliance == nil || *b.IncludeAppliance
+	inclVMs := b.IncludeVMs == nil || *b.IncludeVMs
+	inclVirt := b.IncludeVirt == nil || *b.IncludeVirt
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Name").Value(&b.Name),
@@ -64,9 +75,15 @@ func (truenasCRUD) Edit(cfg *config.File, idx int) error {
 			huh.NewInput().Title("API key").EchoMode(huh.EchoModePassword).Value(&b.APIKey),
 			huh.NewInput().Title("SSH user for appliance (optional)").Value(&b.SSHUser),
 			huh.NewConfirm().Title("Insecure (skip TLS verify)?").Value(&b.Insecure),
+			huh.NewConfirm().Title("List appliance?").Value(&inclAppliance),
+			huh.NewConfirm().Title("List KVM VMs?").Value(&inclVMs),
+			huh.NewConfirm().Title("List virt instances?").Value(&inclVirt),
 		),
 	).Run()
 	if err == nil {
+		b.IncludeAppliance = &inclAppliance
+		b.IncludeVMs = &inclVMs
+		b.IncludeVirt = &inclVirt
 		cfg.Backends.TrueNAS[idx] = b
 	}
 	return err

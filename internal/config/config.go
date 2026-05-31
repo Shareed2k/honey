@@ -31,169 +31,170 @@ type File struct {
 // DockerDiscover configures auto-discovery of containers on cloud VMs.
 type DockerDiscover struct {
 	Enabled  bool   `yaml:"enabled" json:"enabled" honey:"label=Enable auto-discover"`
-	RunAs    string `yaml:"run_as,omitempty" json:"run_as,omitempty" honey:"label=Remote user for docker.sock via sudo (e.g. root)"`
-	Socket   string `yaml:"socket,omitempty" json:"socket,omitempty" honey:"label=Remote Docker socket"`
-	Platform string `yaml:"platform,omitempty" json:"platform,omitempty" honey:"label=Remote OS;enum=linux|windows"`
+	RunAs    string `yaml:"run_as,omitempty" json:"run_as,omitempty" honey:"label=Remote user for docker.sock via sudo (e.g. root)" mod:"trim"`
+	Socket   string `yaml:"socket,omitempty" json:"socket,omitempty" honey:"label=Remote Docker socket" mod:"trim"`
+	Platform string `yaml:"platform,omitempty" json:"platform,omitempty" honey:"label=Remote OS;enum=linux|windows" mod:"trim"`
 }
 
 // Logs holds per-command defaults for honey logs.
 type Logs struct {
 	Anomaly                bool    `yaml:"anomaly"                     json:"anomaly"                     honey:"label=Enable anomaly detection"`
-	AnomalyModel           string  `yaml:"anomaly_model,omitempty"     json:"anomaly_model,omitempty"     honey:"label=Path to ONNX model file"`
+	AnomalyModel           string  `yaml:"anomaly_model,omitempty"     json:"anomaly_model,omitempty"     honey:"label=Path to ONNX model file" mod:"trim"`
 	AnomalyThresh          float64 `yaml:"anomaly_threshold,omitempty" json:"anomaly_threshold,omitempty" honey:"label=Anomaly score threshold (0–1)"`
 	AnomalyWindow          int     `yaml:"anomaly_window,omitempty"    json:"anomaly_window,omitempty"    honey:"label=Anomaly sliding window size"`
 	AnomalyOnly            bool    `yaml:"anomaly_only"                json:"anomaly_only"                honey:"label=Only output anomalous lines"`
 	AnomalyStrict          bool    `yaml:"anomaly_strict"              json:"anomaly_strict"              honey:"label=Fail if anomaly detector cannot init"`
-	AnomalyTokPath         string  `yaml:"anomaly_tokenizer,omitempty"  json:"anomaly_tokenizer,omitempty"  honey:"label=Path to vocab.txt tokenizer file"`
-	AnomalyEndpoint        string  `yaml:"anomaly_endpoint,omitempty"      json:"anomaly_endpoint,omitempty"      honey:"label=OpenAI-compatible API URL for LLM anomaly detection (Ollama/LM Studio)"`
-	AnomalyLLMModel        string  `yaml:"anomaly_llm_model,omitempty"     json:"anomaly_llm_model,omitempty"     honey:"label=Model name for LLM anomaly endpoint"`
+	AnomalyTokPath         string  `yaml:"anomaly_tokenizer,omitempty"  json:"anomaly_tokenizer,omitempty"  honey:"label=Path to vocab.txt tokenizer file" mod:"trim"`
+	AnomalyEndpoint        string  `yaml:"anomaly_endpoint,omitempty"      json:"anomaly_endpoint,omitempty"      honey:"label=OpenAI-compatible API URL for LLM anomaly detection (Ollama/LM Studio)" mod:"trim"`
+	AnomalyLLMModel        string  `yaml:"anomaly_llm_model,omitempty"     json:"anomaly_llm_model,omitempty"     honey:"label=Model name for LLM anomaly endpoint" mod:"trim"`
 	AnomalyContextLines    int     `yaml:"anomaly_context_lines,omitempty"    json:"anomaly_context_lines,omitempty"    honey:"label=Number of recent lines sent as context to the LLM anomaly detector"`
 	AnomalyFilterThreshold float64 `yaml:"anomaly_filter_threshold,omitempty" json:"anomaly_filter_threshold,omitempty" honey:"label=Skip LLM when fast detector score is below this value (CoLA two-tier; 0=disabled)"`
 	AnomalyFreqWindow      int     `yaml:"anomaly_freq_window,omitempty"      json:"anomaly_freq_window,omitempty"      honey:"label=Short window size for rate-ratio burst detection (0=disabled, default 100)"`
 	AnomalyFreqRatio       float64 `yaml:"anomaly_freq_ratio,omitempty"       json:"anomaly_freq_ratio,omitempty"       honey:"label=Short/long rate ratio that triggers a frequency-spike anomaly (default 5.0)"`
-	AnomalyFeedbackFile    string  `yaml:"anomaly_feedback_file,omitempty"   json:"anomaly_feedback_file,omitempty"    honey:"label=Append scored log lines as JSONL to this file for review and threshold calibration"`
+	AnomalyFeedbackFile    string  `yaml:"anomaly_feedback_file,omitempty"   json:"anomaly_feedback_file,omitempty"    honey:"label=Append scored log lines as JSONL to this file for review and threshold calibration" mod:"trim"`
 	AlertEnabled           bool    `yaml:"alert_enabled"              json:"alert_enabled"              honey:"label=Alert on anomalies"`
-	AlertSuppressDuration  string  `yaml:"alert_suppress_duration,omitempty" json:"alert_suppress_duration,omitempty" honey:"label=Alert suppression window (e.g. 5m)"`
+	AlertSuppressDuration  string  `yaml:"alert_suppress_duration,omitempty" json:"alert_suppress_duration,omitempty" honey:"label=Alert suppression window (e.g. 5m)" mod:"trim"`
 }
 
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
-	SSHUser         string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user"`
-	CacheTTL        string         `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL"` // e.g. "5m", "1h"
-	K8sMode         string         `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning"`
-	K8sDebugImage   string         `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image"`
-	CacheDir        string         `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory"`
-	RecordDir       string         `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory"`
-	RecordRetention string         `yaml:"record_retention" json:"record_retention" honey:"label=Auto-delete recordings older than this (e.g. 720h, 30d); empty disables"`
-	Output          string         `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning"` // e.g. "table", "json", "tui" (default)
-	Name            string         `yaml:"name" json:"name" honey:"label=Name filter"`
-	NameRegex       string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex"`
-	AISystemPrompt  string         `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step"`
+	SSHUser         string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user" mod:"trim"`
+	CacheTTL        string         `yaml:"cache_ttl" json:"cache_ttl" honey:"label=Cache TTL" mod:"trim"` // e.g. "5m", "1h"
+	K8sMode         string         `yaml:"k8s_mode" json:"k8s_mode" honey:"label=Kubernetes mode;enum=nodes|pods;enum_as_warning" mod:"trim"`
+	K8sDebugImage   string         `yaml:"k8s_debug_image" json:"k8s_debug_image" honey:"label=Kubernetes debug image" mod:"trim"`
+	CacheDir        string         `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory" mod:"trim"`
+	RecordDir       string         `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory" mod:"trim"`
+	RecordRetention string         `yaml:"record_retention" json:"record_retention" honey:"label=Auto-delete recordings older than this (e.g. 720h, 30d); empty disables" mod:"trim"`
+	Output          string         `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning" mod:"trim"` // e.g. "table", "json", "tui" (default)
+	Name            string         `yaml:"name" json:"name" honey:"label=Name filter" mod:"trim"`
+	NameRegex       string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex" mod:"trim"`
+	AISystemPrompt  string         `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step" mod:"trim"`
 	DockerDiscover  DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover Defaults"`
 	Logs            Logs           `yaml:"logs,omitempty" json:"logs,omitempty" honey:"label=Logs command defaults"`
 
 	// secretsprovider unwraps the stack AES data key (see internal/cuetry/secrets/doc.go).
 	// Examples: gcpkms://projects/…/cryptoKeys/…, awskms://, vault-transit://mount/key,
 	// k8s://namespace/secret, keyring://service/user, age://, age-file://path.
-	SecretsProvider string `yaml:"secretsprovider,omitempty" json:"secretsprovider,omitempty" honey:"label=Stack secrets provider URL (e.g. gcpkms://…);reserved"`
+	SecretsProvider string `yaml:"secretsprovider,omitempty" json:"secretsprovider,omitempty" honey:"label=Stack secrets provider URL (e.g. gcpkms://…);reserved" mod:"trim"`
 	// encryptedkey is provider-specific ciphertext or field name (see secrets package doc).
-	EncryptedKey string `yaml:"encryptedkey,omitempty" json:"encryptedkey,omitempty" honey:"label=Stack encrypted data key blob;secret;reserved"`
+	EncryptedKey string `yaml:"encryptedkey,omitempty" json:"encryptedkey,omitempty" honey:"label=Stack encrypted data key blob;secret;reserved" mod:"trim"`
 }
 
 // Backends lists optional multiple instances per provider type.
 // If a slice is nil or omitted, that provider is not defined by the file (use CLI defaults).
 // If a slice is non-empty, one backend is created per element.
 type Backends struct {
-	GCP        []GCPBackend        `yaml:"gcp" json:"gcp" honey:"label=Google Cloud;order=10" validate:"dive"`
-	AWS        []AWSBackend        `yaml:"aws" json:"aws" honey:"label=AWS;order=20" validate:"dive"`
-	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes" honey:"label=Kubernetes;order=30" validate:"dive"`
-	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40" validate:"dive"`
-	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50" validate:"dive"`
-	TrueNAS    []TrueNASBackend    `yaml:"truenas" json:"truenas" honey:"label=TrueNAS;order=55" validate:"dive"`
-	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60" validate:"dive"`
-	Docker     []DockerBackend     `yaml:"docker" json:"docker" honey:"label=Docker;order=35" validate:"dive"`
+	GCP        []GCPBackend        `yaml:"gcp" json:"gcp" honey:"label=Google Cloud;order=10" validate:"dive" mod:"dive"`
+	AWS        []AWSBackend        `yaml:"aws" json:"aws" honey:"label=AWS;order=20" validate:"dive" mod:"dive"`
+	Kubernetes []KubernetesBackend `yaml:"kubernetes" json:"kubernetes" honey:"label=Kubernetes;order=30" validate:"dive" mod:"dive"`
+	Consul     []ConsulBackend     `yaml:"consul" json:"consul" honey:"label=Consul;order=40" validate:"dive" mod:"dive"`
+	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50" validate:"dive" mod:"dive"`
+	TrueNAS    []TrueNASBackend    `yaml:"truenas" json:"truenas" honey:"label=TrueNAS;order=55" validate:"dive" mod:"dive"`
+	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60" validate:"dive" mod:"dive"`
+	Docker     []DockerBackend     `yaml:"docker" json:"docker" honey:"label=Docker;order=35" validate:"dive" mod:"dive"`
 }
 
 // LocalBackend configures manually defined host lists.
 type LocalBackend struct {
-	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Hosts          []LocalHost    `yaml:"hosts" json:"hosts" honey:"label=Hosts" validate:"dive"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	Hosts          []LocalHost    `yaml:"hosts" json:"hosts" honey:"label=Hosts" validate:"dive" mod:"dive"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // LocalHost represents a manually defined static server.
 type LocalHost struct {
-	Name      string            `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	PrimaryIP string            `yaml:"primary_ip" json:"primary_ip" honey:"label=Primary IP" validate:"required,ip"`
+	Name      string            `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	PrimaryIP string            `yaml:"primary_ip" json:"primary_ip" honey:"label=Primary IP" validate:"required,ip" mod:"trim"`
 	ExtraIPs  []string          `yaml:"extra_ips,omitempty" json:"extra_ips,omitempty" honey:"label=Extra IPs" validate:"dive,ip"`
-	Zone      string            `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone"`
-	Region    string            `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region"`
+	Zone      string            `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone" mod:"trim"`
+	Region    string            `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region" mod:"trim"`
+	SSHUser   string            `yaml:"ssh_user,omitempty" json:"ssh_user,omitempty" honey:"label=SSH user for host" mod:"trim"`
 	Meta      map[string]string `yaml:"meta,omitempty" json:"meta,omitempty" honey:"label=Metadata"`
 }
 
 // GCPBackend configures one Google Cloud Compute Engine listing.
 type GCPBackend struct {
-	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Project        string         `yaml:"project" json:"project" honey:"label=Project" validate:"required"`
-	Zone           string         `yaml:"zone" json:"zone" honey:"label=Zone"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	Project        string         `yaml:"project" json:"project" honey:"label=Project" validate:"required" mod:"trim"`
+	Zone           string         `yaml:"zone,omitempty" json:"zone,omitempty" honey:"label=Zone" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // AWSBackend configures one Amazon EC2 listing.
 type AWSBackend struct {
-	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Profile        string         `yaml:"profile" json:"profile" honey:"label=Profile" validate:"required"`
-	Region         string         `yaml:"region" json:"region" honey:"label=Region"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	Profile        string         `yaml:"profile" json:"profile" honey:"label=Profile" validate:"required" mod:"trim"`
+	Region         string         `yaml:"region,omitempty" json:"region,omitempty" honey:"label=Region" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // KubernetesBackend configures one Kubernetes nodes/pods listing.
 type KubernetesBackend struct {
-	Name       string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Context    string `yaml:"context" json:"context" honey:"label=Context"`
-	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig" honey:"label=Kubeconfig path"`
-	Mode       string `yaml:"mode" json:"mode" honey:"label=Mode;enum=nodes|pods;enum_as_warning;default=nodes"`
-	DebugImage string `yaml:"debug_image" json:"debug_image" honey:"label=Debug image"`
+	Name       string `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	Context    string `yaml:"context,omitempty" json:"context,omitempty" honey:"label=Context" mod:"trim"`
+	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty" honey:"label=Kubeconfig path" mod:"trim"`
+	Mode       string `yaml:"mode" json:"mode" honey:"label=Mode;enum=nodes|pods;enum_as_warning;default=nodes" mod:"trim"`
+	DebugImage string `yaml:"debug_image,omitempty" json:"debug_image,omitempty" honey:"label=Debug image" mod:"trim"`
 }
 
 // ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
-	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Addr           string         `yaml:"addr" json:"addr" honey:"label=Address" validate:"required,url"`
-	Datacenter     string         `yaml:"datacenter" json:"datacenter" honey:"label=Datacenter"`
-	Token          string         `yaml:"token" json:"token" honey:"label=Token;secret"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	Addr           string         `yaml:"addr" json:"addr" honey:"label=Address" validate:"required,url" mod:"trim"`
+	Datacenter     string         `yaml:"datacenter,omitempty" json:"datacenter,omitempty" honey:"label=Datacenter" mod:"trim"`
+	Token          string         `yaml:"token,omitempty" json:"token,omitempty" honey:"label=Token;secret" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // ProxmoxBackend configures one Proxmox VE listing.
 type ProxmoxBackend struct {
-	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	URL            string         `yaml:"url" json:"url" honey:"label=URL" validate:"required,url"`
-	User           string         `yaml:"user" json:"user" honey:"label=User" validate:"required_without=TokenID"`
-	Password       string         `yaml:"password" json:"password" honey:"label=Password;secret" validate:"required_without=TokenSecret"`
-	TokenID        string         `yaml:"token_id" json:"token_id" honey:"label=Token ID" validate:"required_without=User"`
-	TokenSecret    string         `yaml:"token_secret" json:"token_secret" honey:"label=Token secret;secret" validate:"required_without=Password"`
+	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	URL            string         `yaml:"url" json:"url" honey:"label=URL" validate:"required,url" mod:"trim"`
+	User           string         `yaml:"user,omitempty" json:"user,omitempty" honey:"label=User" validate:"required_without=TokenID" mod:"trim"`
+	Password       string         `yaml:"password,omitempty" json:"password,omitempty" honey:"label=Password;secret" validate:"required_without=TokenSecret" mod:"trim"`
+	TokenID        string         `yaml:"token_id,omitempty" json:"token_id,omitempty" honey:"label=Token ID" validate:"required_without=User" mod:"trim"`
+	TokenSecret    string         `yaml:"token_secret,omitempty" json:"token_secret,omitempty" honey:"label=Token secret;secret" validate:"required_without=Password" mod:"trim"`
 	Insecure       bool           `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
-	ExecMode       string         `yaml:"exec_mode" json:"exec_mode" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning"`
+	ExecMode       string         `yaml:"exec_mode,omitempty" json:"exec_mode,omitempty" honey:"label=Exec mode;enum=ssh|pve|hybrid;enum_as_warning" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
 }
 
 // TrueNASBackend configures one TrueNAS SCALE controller (WebSocket API 25.04+).
 type TrueNASBackend struct {
-	Name             string `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	URL              string `yaml:"url" json:"url" honey:"label=URL" validate:"required,url"`
-	Username         string `yaml:"username,omitempty" json:"username,omitempty" honey:"label=API key username (default root)"`
-	APIKey           string `yaml:"api_key" json:"api_key" honey:"label=API key;secret" validate:"required"`
+	Name             string `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	URL              string `yaml:"url" json:"url" honey:"label=URL" validate:"required,url" mod:"trim"`
+	Username         string `yaml:"username,omitempty" json:"username,omitempty" honey:"label=API key username (default root)" mod:"trim"`
+	APIKey           string `yaml:"api_key" json:"api_key" honey:"label=API key;secret" validate:"required" mod:"trim"`
 	Insecure         bool   `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
 	IncludeAppliance *bool  `yaml:"include_appliance,omitempty" json:"include_appliance,omitempty" honey:"label=List appliance;default=true"`
 	IncludeVMs       *bool  `yaml:"include_vms,omitempty" json:"include_vms,omitempty" honey:"label=List KVM VMs;default=true"`
 	IncludeVirt      *bool  `yaml:"include_virt,omitempty" json:"include_virt,omitempty" honey:"label=List virt instances;default=true"`
-	SSHUser          string `yaml:"ssh_user,omitempty" json:"ssh_user,omitempty" honey:"label=SSH user for appliance"`
+	SSHUser          string `yaml:"ssh_user,omitempty" json:"ssh_user,omitempty" honey:"label=SSH user for appliance" mod:"trim"`
 }
 
 // DockerViaSSH configures an explicit SSH hop for Honey's SSH stack (not Moby ssh://).
 type DockerViaSSH struct {
-	Host         string `yaml:"host" json:"host" honey:"label=SSH host"`
+	Host         string `yaml:"host,omitempty" json:"host,omitempty" honey:"label=SSH host" mod:"trim"`
 	Port         int    `yaml:"port,omitempty" json:"port,omitempty" honey:"label=SSH port (0 = ssh_config default)"`
-	User         string `yaml:"user,omitempty" json:"user,omitempty" honey:"label=SSH user"`
-	IdentityFile string `yaml:"identity_file,omitempty" json:"identity_file,omitempty" honey:"label=SSH identity file"`
+	User         string `yaml:"user,omitempty" json:"user,omitempty" honey:"label=SSH user" mod:"trim"`
+	IdentityFile string `yaml:"identity_file,omitempty" json:"identity_file,omitempty" honey:"label=SSH identity file" mod:"trim"`
 }
 
 // DockerBackend configures one Docker Engine API endpoint (local socket, tcp, ssh://, or Honey SSH).
 type DockerBackend struct {
-	Name          string       `yaml:"name" json:"name" honey:"label=Name" validate:"required"`
-	Host          string       `yaml:"host" json:"host" honey:"label=Host (unix://, tcp://, ssh://; empty = DOCKER_HOST / local socket)"`
-	ViaLocal      string       `yaml:"via_local,omitempty" json:"via_local,omitempty" honey:"label=Local backend name (SSH hop via backends.local)"`
+	Name          string       `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
+	Host          string       `yaml:"host,omitempty" json:"host,omitempty" honey:"label=Host (unix://, tcp://, ssh://; empty = DOCKER_HOST / local socket)" mod:"trim"`
+	ViaLocal      string       `yaml:"via_local,omitempty" json:"via_local,omitempty" honey:"label=Local backend name (SSH hop via backends.local)" mod:"trim"`
 	ViaSSH        DockerViaSSH `yaml:"via_ssh,omitempty" json:"via_ssh,omitempty" honey:"label=SSH hop (overrides via_local when host set)"`
-	Socket        string       `yaml:"socket,omitempty" json:"socket,omitempty" honey:"label=Remote Engine socket (default /var/run/docker.sock on linux)"`
-	Platform      string       `yaml:"platform,omitempty" json:"platform,omitempty" honey:"label=Remote OS;enum=linux|windows;enum_as_warning;default=linux"`
-	RunAs         string       `yaml:"run_as,omitempty" json:"run_as,omitempty" honey:"label=Remote user for docker.sock via sudo (honey-ssh only)"`
-	Mode          string       `yaml:"mode" json:"mode" honey:"label=Mode;enum=containers|swarm|both;enum_as_warning;default=containers"`
+	Socket        string       `yaml:"socket,omitempty" json:"socket,omitempty" honey:"label=Remote Engine socket (default /var/run/docker.sock on linux)" mod:"trim"`
+	Platform      string       `yaml:"platform,omitempty" json:"platform,omitempty" honey:"label=Remote OS;enum=linux|windows;enum_as_warning;default=linux" mod:"trim"`
+	RunAs         string       `yaml:"run_as,omitempty" json:"run_as,omitempty" honey:"label=Remote user for docker.sock via sudo (honey-ssh only)" mod:"trim"`
+	Mode          string       `yaml:"mode" json:"mode" honey:"label=Mode;enum=containers|swarm|both;enum_as_warning;default=containers" mod:"trim"`
 	AllContainers bool         `yaml:"all_containers" json:"all_containers" honey:"label=Include stopped containers;default=false"`
 	TLSVerify     bool         `yaml:"tls_verify" json:"tls_verify" honey:"label=Verify TLS (tcp hosts);default=true"`
-	CACert        string       `yaml:"ca_cert" json:"ca_cert" honey:"label=CA certificate path"`
-	Cert          string       `yaml:"cert" json:"cert" honey:"label=Client certificate path"`
-	Key           string       `yaml:"key" json:"key" honey:"label=Client key path;secret"`
+	CACert        string       `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty" honey:"label=CA certificate path" mod:"trim"`
+	Cert          string       `yaml:"cert,omitempty" json:"cert,omitempty" honey:"label=Client certificate path" mod:"trim"`
+	Key           string       `yaml:"key,omitempty" json:"key,omitempty" honey:"label=Client key path;secret" mod:"trim"`
 }
 
 // Save serializes the config and writes it to path.
@@ -245,6 +246,7 @@ func Load(path string) (*File, error) {
 		}
 	}
 
+	f.Sanitize()
 	return &f, nil
 }
 
@@ -260,6 +262,7 @@ func ParseYAML(b []byte) (*File, error) {
 			f.Apps[name] = app
 		}
 	}
+	f.Sanitize()
 	if err := f.Validate(); err != nil {
 		return nil, err
 	}
@@ -412,9 +415,9 @@ func ResolveRecordDir(cfg *File, configPath string, recordDirFlag string, record
 // TransferConfig controls the agent-transfer code path. Zero values mean "use
 // defaults" — call WithDefaults() to materialize.
 type TransferConfig struct {
-	PresignedMaxSize        string `yaml:"presigned_max_size,omitempty" json:"presigned_max_size,omitempty"`
-	MultipartThreshold      string `yaml:"multipart_threshold,omitempty" json:"multipart_threshold,omitempty"`
-	PresignedURLTTL         string `yaml:"presigned_url_ttl,omitempty" json:"presigned_url_ttl,omitempty"`
+	PresignedMaxSize        string `yaml:"presigned_max_size,omitempty" json:"presigned_max_size,omitempty" mod:"trim"`
+	MultipartThreshold      string `yaml:"multipart_threshold,omitempty" json:"multipart_threshold,omitempty" mod:"trim"`
+	PresignedURLTTL         string `yaml:"presigned_url_ttl,omitempty" json:"presigned_url_ttl,omitempty" mod:"trim"`
 	PresignedRetryWithAgent *bool  `yaml:"presigned_retry_with_agent,omitempty" json:"presigned_retry_with_agent,omitempty"`
 	ForceAgentPath          bool   `yaml:"force_agent_path,omitempty" json:"force_agent_path,omitempty"`
 }

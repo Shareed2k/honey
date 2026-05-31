@@ -3,6 +3,9 @@
     "schemas": {
       "config.AWSBackend": {
         "properties": {
+          "docker_discover": {
+            "$ref": "#/components/schemas/config.DockerDiscover"
+          },
           "name": {
             "type": "string"
           },
@@ -47,6 +50,12 @@
             },
             "type": "array"
           },
+          "docker": {
+            "items": {
+              "$ref": "#/components/schemas/config.DockerBackend"
+            },
+            "type": "array"
+          },
           "gcp": {
             "items": {
               "$ref": "#/components/schemas/config.GCPBackend"
@@ -70,6 +79,12 @@
               "$ref": "#/components/schemas/config.ProxmoxBackend"
             },
             "type": "array"
+          },
+          "truenas": {
+            "items": {
+              "$ref": "#/components/schemas/config.TrueNASBackend"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -81,6 +96,9 @@
           },
           "datacenter": {
             "type": "string"
+          },
+          "docker_discover": {
+            "$ref": "#/components/schemas/config.DockerDiscover"
           },
           "name": {
             "type": "string"
@@ -95,8 +113,92 @@
         ],
         "type": "object"
       },
+      "config.DockerBackend": {
+        "properties": {
+          "all_containers": {
+            "type": "boolean"
+          },
+          "ca_cert": {
+            "type": "string"
+          },
+          "cert": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "run_as": {
+            "type": "string"
+          },
+          "socket": {
+            "type": "string"
+          },
+          "tls_verify": {
+            "type": "boolean"
+          },
+          "via_local": {
+            "type": "string"
+          },
+          "via_ssh": {
+            "$ref": "#/components/schemas/config.DockerViaSSH"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "config.DockerDiscover": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "run_as": {
+            "type": "string"
+          },
+          "socket": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "config.DockerViaSSH": {
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "identity_file": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "config.GCPBackend": {
         "properties": {
+          "docker_discover": {
+            "$ref": "#/components/schemas/config.DockerDiscover"
+          },
           "name": {
             "type": "string"
           },
@@ -138,6 +240,9 @@
       },
       "config.LocalBackend": {
         "properties": {
+          "docker_discover": {
+            "$ref": "#/components/schemas/config.DockerDiscover"
+          },
           "hosts": {
             "items": {
               "$ref": "#/components/schemas/config.LocalHost"
@@ -176,6 +281,9 @@
           "region": {
             "type": "string"
           },
+          "ssh_user": {
+            "type": "string"
+          },
           "zone": {
             "type": "string"
           }
@@ -188,8 +296,10 @@
       },
       "config.ProxmoxBackend": {
         "properties": {
+          "docker_discover": {
+            "$ref": "#/components/schemas/config.DockerDiscover"
+          },
           "exec_mode": {
-            "description": "ExecMode: ssh (default) = guest SSH for commands/SFTP/tunnels; pve = QEMU commands via guest agent API, LXC commands/SFTP over guest SSH (PVE has no LXC REST exec; web UI LXC console uses termproxy when token_id is set);\nhybrid = QEMU via guest agent + SSH for files; LXC uses guest SSH for commands and files.",
             "type": "string"
           },
           "insecure": {
@@ -215,6 +325,43 @@
           }
         },
         "required": [
+          "name",
+          "url"
+        ],
+        "type": "object"
+      },
+      "config.TrueNASBackend": {
+        "properties": {
+          "api_key": {
+            "type": "string"
+          },
+          "include_appliance": {
+            "type": "boolean"
+          },
+          "include_virt": {
+            "type": "boolean"
+          },
+          "include_vms": {
+            "type": "boolean"
+          },
+          "insecure": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ssh_user": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key",
           "name",
           "url"
         ],
@@ -248,7 +395,13 @@
           "kv_tunnel": {
             "type": "boolean"
           },
+          "notify": {
+            "type": "boolean"
+          },
           "preview": {
+            "type": "string"
+          },
+          "retry": {
             "type": "string"
           },
           "wave": {
@@ -335,6 +488,27 @@
           "consul_token": {
             "type": "string"
           },
+          "docker_all_containers": {
+            "type": "boolean"
+          },
+          "docker_host": {
+            "type": "string"
+          },
+          "docker_mode": {
+            "type": "string"
+          },
+          "docker_platform": {
+            "type": "string"
+          },
+          "docker_socket": {
+            "type": "string"
+          },
+          "docker_via_local": {
+            "type": "string"
+          },
+          "docker_via_ssh_host": {
+            "type": "string"
+          },
           "gcp_project": {
             "type": "string"
           },
@@ -385,6 +559,21 @@
           },
           "refresh": {
             "type": "boolean"
+          },
+          "ssh_user": {
+            "type": "string"
+          },
+          "truenas_api_key": {
+            "type": "string"
+          },
+          "truenas_insecure": {
+            "type": "boolean"
+          },
+          "truenas_url": {
+            "type": "string"
+          },
+          "truenas_user": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -922,8 +1111,20 @@
           "date": {
             "type": "string"
           },
+          "logs_command_allowed": {
+            "type": "boolean"
+          },
+          "metrics_url": {
+            "type": "string"
+          },
           "session_recording_available": {
             "type": "boolean"
+          },
+          "session_recording_last_purge_at": {
+            "type": "string"
+          },
+          "session_recording_retention": {
+            "type": "string"
           },
           "terminal_assist_available": {
             "type": "boolean"
@@ -971,6 +1172,12 @@
           },
           "host_count": {
             "type": "integer"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/hosts.Record"
+            },
+            "type": "array"
           },
           "recipe_content_hash": {
             "type": "string"
@@ -1121,11 +1328,20 @@
       },
       "webserver.RecordingsListResponse": {
         "properties": {
+          "file_count": {
+            "type": "integer"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/webserver.RecordingListEntry"
             },
             "type": "array"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/webserver.RecordingsRetentionInfo"
+          },
+          "total_bytes": {
+            "type": "integer"
           }
         },
         "type": "object"
@@ -1152,6 +1368,36 @@
         },
         "type": "object"
       },
+      "webserver.RecordingsRetentionInfo": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_age": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecordingsSummarizeRequest": {
+        "properties": {
+          "file_name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.RecordingsSummarizeResponse": {
+        "properties": {
+          "reply": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "webserver.ResolvedStepSummary": {
         "properties": {
           "depends": {
@@ -1172,7 +1418,13 @@
           "kind": {
             "type": "string"
           },
+          "notify": {
+            "type": "boolean"
+          },
           "preview": {
+            "type": "string"
+          },
+          "retry": {
             "type": "string"
           },
           "run_as": {
@@ -1593,7 +1845,7 @@
       "post": {
         "parameters": [
           {
-            "description": "backend kind (gcp, aws, kubernetes, consul, proxmox, local)",
+            "description": "backend kind (gcp, aws, kubernetes, consul, proxmox, truenas, local, docker)",
             "in": "path",
             "name": "kind",
             "required": true,
@@ -2778,6 +3030,121 @@
           }
         ],
         "summary": "Load recording events",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/v1/recordings/summarize": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/webserver.RecordingsSummarizeRequest"
+              }
+            }
+          },
+          "description": "recording file name",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/webserver.RecordingsSummarizeResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Summarize session recording",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/v1/recordings/{file_name}": {
+      "delete": {
+        "parameters": [
+          {
+            "description": "recording file name",
+            "in": "path",
+            "name": "file_name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Delete session recording",
         "tags": [
           "recordings"
         ]

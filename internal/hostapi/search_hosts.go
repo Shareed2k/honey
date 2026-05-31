@@ -76,16 +76,6 @@ func MergeSearchDefaultsFromConfig(cfg *config.File, q *hosts.Query) {
 			q.NameRegex = s
 		}
 	}
-	if q.K8sMode == "" {
-		if s := strings.TrimSpace(cfg.Defaults.K8sMode); s != "" {
-			q.K8sMode = s
-		}
-	}
-	if q.K8sDebugImage == "" {
-		if s := strings.TrimSpace(cfg.Defaults.K8sDebugImage); s != "" {
-			q.K8sDebugImage = s
-		}
-	}
 }
 
 // SearchHosts runs the same search pipeline as honey search / MCP search_hosts.
@@ -108,37 +98,9 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 	hostexec.ReconfigureFromHoneyConfig(cfg)
 
 	q := hosts.Query{
-		NameSubstring:       strings.TrimSpace(in.Name),
-		NameRegex:           strings.TrimSpace(in.NameRegex),
-		Providers:           hosts.ParseProviders(strings.TrimSpace(in.Providers)),
-		GCPProject:          strings.TrimSpace(in.GCPProject),
-		GCPZone:             strings.TrimSpace(in.GCPZone),
-		AWSProfile:          strings.TrimSpace(in.AWSProfile),
-		AWSRegion:           strings.TrimSpace(in.AWSRegion),
-		KubeContext:         strings.TrimSpace(in.KubeContext),
-		K8sMode:             strings.TrimSpace(in.K8sMode),
-		K8sDebugImage:       strings.TrimSpace(in.K8sDebugImage),
-		ConsulAddr:          strings.TrimSpace(in.ConsulAddr),
-		ConsulDatacenter:    strings.TrimSpace(in.ConsulDC),
-		ConsulToken:         strings.TrimSpace(in.ConsulToken),
-		ProxmoxURL:          strings.TrimSpace(in.ProxmoxURL),
-		ProxmoxUser:         strings.TrimSpace(in.ProxmoxUser),
-		ProxmoxPassword:     strings.TrimSpace(in.ProxmoxPassword),
-		ProxmoxTokenID:      strings.TrimSpace(in.ProxmoxTokenID),
-		ProxmoxTokenSecret:  strings.TrimSpace(in.ProxmoxTokenSecret),
-		ProxmoxInsecure:     in.ProxmoxInsecure,
-		TrueNASURL:          strings.TrimSpace(in.TrueNASURL),
-		TrueNASUser:         strings.TrimSpace(in.TrueNASUser),
-		TrueNASAPIKey:       strings.TrimSpace(in.TrueNASAPIKey),
-		TrueNASInsecure:     in.TrueNASInsecure,
-		DockerHost:          strings.TrimSpace(in.DockerHost),
-		DockerMode:          strings.TrimSpace(in.DockerMode),
-		DockerAllContainers: in.DockerAllContainers,
-		DockerViaLocal:      strings.TrimSpace(in.DockerViaLocal),
-		DockerViaSSHHost:    strings.TrimSpace(in.DockerViaSSHHost),
-		DockerSocket:        strings.TrimSpace(in.DockerSocket),
-		DockerPlatform:      strings.TrimSpace(in.DockerPlatform),
-		DockerSSHUser:       strings.TrimSpace(in.SSHUser),
+		NameSubstring: strings.TrimSpace(in.Name),
+		NameRegex:     strings.TrimSpace(in.NameRegex),
+		Providers:     hosts.ParseProviders(strings.TrimSpace(in.Providers)),
 	}
 	MergeSearchDefaultsFromConfig(cfg, &q)
 
@@ -168,6 +130,7 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 		AWSRegion:           strings.TrimSpace(in.AWSRegion),
 		KubeContext:         strings.TrimSpace(in.KubeContext),
 		K8sMode:             strings.TrimSpace(in.K8sMode),
+		K8sDebugImage:       strings.TrimSpace(in.K8sDebugImage),
 		Kubeconfig:          strings.TrimSpace(in.Kubeconfig),
 		ConsulAddr:          strings.TrimSpace(in.ConsulAddr),
 		ConsulDatacenter:    strings.TrimSpace(in.ConsulDC),
@@ -189,6 +152,19 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 		DockerViaSSHHost:    strings.TrimSpace(in.DockerViaSSHHost),
 		DockerSocket:        strings.TrimSpace(in.DockerSocket),
 		DockerPlatform:      strings.TrimSpace(in.DockerPlatform),
+	}
+	// Apply config defaults to pf for fields the caller left empty.
+	if cfg != nil {
+		if pf.K8sMode == "" {
+			if s := strings.TrimSpace(cfg.Defaults.K8sMode); s != "" {
+				pf.K8sMode = s
+			}
+		}
+		if pf.K8sDebugImage == "" {
+			if s := strings.TrimSpace(cfg.Defaults.K8sDebugImage); s != "" {
+				pf.K8sDebugImage = s
+			}
+		}
 	}
 	provs := searchrun.BuildProviders(cfg, pf)
 	want := hosts.ParseBackendNames(in.Backends)

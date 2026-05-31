@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -35,7 +36,11 @@ var rootCmd = &cobra.Command{
 		zap.L().Debug("Logger initialized", zap.String("args", strings.Join(os.Args, " ")))
 		resolvedCfgPath, _ = config.ResolvePath(flagConfig)
 		if resolvedCfgPath != "" {
-			resolvedCfg, _ = config.Load(resolvedCfgPath)
+			var loadErr error
+			resolvedCfg, loadErr = config.Load(resolvedCfgPath)
+			if loadErr != nil {
+				return fmt.Errorf("config: %w", loadErr)
+			}
 		}
 		applyCommandFlagDefaults(cmd, resolvedCfgPath)
 		return nil

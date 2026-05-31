@@ -10,7 +10,6 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -145,7 +144,7 @@ func newHoneySSHAPIClient(ctx context.Context, b BackendConfig, opts APIClientOp
 	if opts.BorrowedSSH != nil {
 		sshClient = opts.BorrowedSSH
 		cleanup = func() {}
-	} else if borrowed, ok := hostexec.BorrowDockerSSH(opts.SSHUser, hop.HopRecord()); ok {
+	} else if borrowed, ok := BorrowDockerSSH(opts.SSHUser, hop.HopRecord()); ok {
 		sshClient = borrowed
 		cleanup = func() {}
 	} else {
@@ -183,7 +182,7 @@ func resolveHoneySSHRunAs(b BackendConfig, opts APIClientOptions) string {
 }
 
 // NewAPIClientFromRuntime builds a client from hostexec runtime config.
-func NewAPIClientFromRuntime(ctx context.Context, rt hostexec.DockerBackendRuntime, opts APIClientOptions) (*client.Client, error) {
+func NewAPIClientFromRuntime(ctx context.Context, rt DockerBackendRuntime, opts APIClientOptions) (*client.Client, error) {
 	bc := BackendConfig{
 		Name:          rt.Name,
 		Host:          rt.Host,

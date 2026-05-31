@@ -92,5 +92,5 @@ func RunK8sPodWebTTY(
 	shCmd, _ := cuetry.ShellExportPrefixForRemote(env, "sh")
 	q := newTTYSizeQueue(cols, rows, resizeCh)
 	// Match CLI RunInteractive: pass stderr (often same writer as stdout for web); client-go expects both streams for exec.
-	return podClient.execInPod(ctx, []string{"sh", "-c", shCmd}, stdin, stdout, stderr, true, q)
+	return podClient.ExecInPod(ctx, []string{"sh", "-c", shCmd}, stdin, stdout, stderr, true, q)
 }

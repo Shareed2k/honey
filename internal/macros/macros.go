@@ -37,7 +37,7 @@ type MacroSpecs struct {
 
 // Macro describes a single named automation entry in a MacroSet.
 type Macro struct {
-	Kind string `yaml:"kind" validate:"required,oneof=exec recipe logs tunnel app"`
+	Kind string `yaml:"kind" validate:"required,oneof=exec recipe logs tunnel app egress"`
 
 	Target    string `yaml:"target"`
 	Provider  string `yaml:"provider"`
@@ -75,6 +75,15 @@ type Macro struct {
 
 	App         string `yaml:"app"`
 	OpenBrowser *bool  `yaml:"openBrowser"`
+
+	// Egress kind
+	EgressHost      string   `yaml:"host"`
+	EgressHosts     []string `yaml:"hosts"`
+	EgressPort      int      `yaml:"port"`
+	EgressBind      string   `yaml:"bind"`
+	EgressTun       bool     `yaml:"tun"`
+	EgressAutoProxy bool     `yaml:"auto_proxy"`
+	EgressBypass    []string `yaml:"bypass"`
 }
 
 // ResolvePath returns the absolute path of the honeyfile, checking --file, HONEY_MACROS_FILE, and default filenames.
@@ -150,6 +159,10 @@ func validateMacro(name string, m Macro) error {
 	case "tunnel", "app":
 		if strings.TrimSpace(m.App) == "" {
 			return fmt.Errorf("macro %q: %s requires app", name, m.Kind)
+		}
+	case "egress":
+		if strings.TrimSpace(m.EgressHost) == "" && len(m.EgressHosts) == 0 {
+			return fmt.Errorf("macro %q: egress requires host or hosts", name)
 		}
 	}
 	if strings.EqualFold(m.Shell, "powershell") && strings.TrimSpace(m.RunAs) != "" {

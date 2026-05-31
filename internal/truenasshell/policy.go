@@ -3,8 +3,8 @@ package truenasshell
 import (
 	"strings"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 )
 
 // ConsoleTrueNASAPI selects the TrueNAS middleware web shell instead of SSH.
@@ -21,6 +21,6 @@ func ShouldUseTrueNASShell(rec hosts.Record, console string) bool {
 	if err := shellOptionsSupported(rec); err != nil {
 		return false
 	}
-	_, ok := hostexec.TrueNASBackendByName(rec.Meta["backend_name"])
+	_, ok := truenasprovider.BackendByName(rec.Meta["backend_name"])
 	return ok
 }

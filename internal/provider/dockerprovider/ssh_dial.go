@@ -7,7 +7,6 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/sshclient"
 )
@@ -86,8 +85,5 @@ func DialSSH(hop SSHHop, defaultUser string) (*ssh.Client, func(), error) {
 }
 
 func localBackendsForResolve(bc BackendConfig) []config.LocalBackend {
-	if len(bc.LocalBackends) > 0 {
-		return bc.LocalBackends
-	}
-	return hostexec.ConfiguredLocalBackends()
+	return bc.LocalBackends
 }

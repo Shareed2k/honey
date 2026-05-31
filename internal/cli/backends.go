@@ -11,10 +11,7 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-var (
-	flagBackendsConfig string
-	flagBackendsJSON   bool
-)
+var flagBackendsJSON bool
 
 var backendsCmd = &cobra.Command{
 	Use:   "backends",
@@ -27,22 +24,15 @@ var backendsCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(backendsCmd)
-	backendsCmd.Flags().StringVar(&flagBackendsConfig, "config", "", "Path to honey YAML (optional; also HONEY_CONFIG or default paths)")
 	backendsCmd.Flags().BoolVar(&flagBackendsJSON, "json", false, "Print JSON (config_path + backends) instead of a table")
 }
 
 func runBackends(cmd *cobra.Command, _ []string) error {
-	cfgPath, err := config.ResolvePath(flagBackendsConfig)
-	if err != nil {
-		return err
-	}
+	cfgPath := resolvedCfgPath
 	if cfgPath == "" {
-		return fmt.Errorf("no config file found (pass --config, set HONEY_CONFIG, or add ~/.config/honey/config.yaml)")
+		return fmt.Errorf("no config file found; run 'honey config' to create one")
 	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return fmt.Errorf("config: %w", err)
-	}
+	cfg := resolvedCfg
 	rows := searchrun.ListBackendRows(cfg)
 	if flagBackendsJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())

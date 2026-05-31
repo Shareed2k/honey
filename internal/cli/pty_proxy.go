@@ -11,6 +11,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 	"github.com/shareed2k/honey/internal/webserver"
@@ -50,7 +51,7 @@ var ptyProxyCmd = &cobra.Command{
 		)
 
 		if truenasshell.ShouldUseTrueNASShell(hello.Record, hello.Console) {
-			if _, ok := hostexec.TrueNASBackendByName(hello.Record.Meta["backend_name"]); !ok {
+			if _, ok := truenasprovider.BackendByName(hello.Record.Meta["backend_name"]); !ok {
 				ptyProxyPauseOnError(fmt.Errorf("TrueNAS API shell: backend %q not found in config (check --config / HONEY_CONFIG)",
 					hello.Record.Meta["backend_name"]))
 				return nil

@@ -7,11 +7,9 @@ import (
 	"strings"
 
 	"github.com/Telmate/proxmox-api-go/proxmox"
-
-	"github.com/shareed2k/honey/internal/hostexec"
 )
 
-func dialTelmate(ctx context.Context, b hostexec.ProxmoxBackendRuntime) (*proxmox.Client, error) {
+func dialTelmate(ctx context.Context, b ProxmoxBackendRuntime) (*proxmox.Client, error) {
 	if strings.TrimSpace(b.URL) == "" {
 		return nil, fmt.Errorf("proxmox: empty API URL")
 	}
