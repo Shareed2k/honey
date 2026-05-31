@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -14,45 +13,20 @@ import (
 )
 
 // SearchHostsInput mirrors MCP search_hosts and the web /api/v1/search JSON body.
+// Overrides is an opaque map passed through to provider factories — callers do not
+// need to know which fields any specific provider accepts.
 type SearchHostsInput struct {
-	ConfigPath          string `json:"config_path,omitempty"`
-	Name                string `json:"name,omitempty"`
-	NameRegex           string `json:"name_regex,omitempty"`
-	Providers           string `json:"providers,omitempty"`
-	Backends            string `json:"backends,omitempty"`
-	GCPProject          string `json:"gcp_project,omitempty"`
-	GCPZone             string `json:"gcp_zone,omitempty"`
-	AWSProfile          string `json:"aws_profile,omitempty"`
-	AWSRegion           string `json:"aws_region,omitempty"`
-	KubeContext         string `json:"kube_context,omitempty"`
-	Kubeconfig          string `json:"kubeconfig,omitempty"`
-	K8sMode             string `json:"k8s_mode,omitempty"`
-	K8sDebugImage       string `json:"k8s_debug_image,omitempty"`
-	ConsulAddr          string `json:"consul_addr,omitempty"`
-	ConsulDC            string `json:"consul_datacenter,omitempty"`
-	ConsulToken         string `json:"consul_token,omitempty"`
-	ProxmoxURL          string `json:"proxmox_url,omitempty"`
-	ProxmoxUser         string `json:"proxmox_user,omitempty"`
-	ProxmoxPassword     string `json:"proxmox_password,omitempty"`
-	ProxmoxTokenID      string `json:"proxmox_token_id,omitempty"`
-	ProxmoxTokenSecret  string `json:"proxmox_token_secret,omitempty"`
-	ProxmoxInsecure     bool   `json:"proxmox_insecure,omitempty"`
-	TrueNASURL          string `json:"truenas_url,omitempty"`
-	TrueNASUser         string `json:"truenas_user,omitempty"`
-	TrueNASAPIKey       string `json:"truenas_api_key,omitempty"`
-	TrueNASInsecure     bool   `json:"truenas_insecure,omitempty"`
-	DockerHost          string `json:"docker_host,omitempty"`
-	DockerMode          string `json:"docker_mode,omitempty"`
-	DockerAllContainers bool   `json:"docker_all_containers,omitempty"`
-	DockerViaLocal      string `json:"docker_via_local,omitempty"`
-	DockerViaSSHHost    string `json:"docker_via_ssh_host,omitempty"`
-	DockerSocket        string `json:"docker_socket,omitempty"`
-	DockerPlatform      string `json:"docker_platform,omitempty"`
-	SSHUser             string `json:"ssh_user,omitempty"`
-	CacheTTL            string `json:"cache_ttl,omitempty"`
-	CacheDir            string `json:"cache_dir,omitempty"`
-	NoCache             bool   `json:"no_cache,omitempty"`
-	Refresh             bool   `json:"refresh,omitempty"`
+	ConfigPath string                      `json:"config_path,omitempty" mod:"trim"`
+	Name       string                      `json:"name,omitempty"        mod:"trim"`
+	NameRegex  string                      `json:"name_regex,omitempty"  mod:"trim"`
+	Providers  string                      `json:"providers,omitempty"   mod:"trim"`
+	Backends   string                      `json:"backends,omitempty"    mod:"trim"`
+	SSHUser    string                      `json:"ssh_user,omitempty"    mod:"trim"`
+	CacheTTL   string                      `json:"cache_ttl,omitempty"   mod:"trim"`
+	CacheDir   string                      `json:"cache_dir,omitempty"   mod:"trim"`
+	NoCache    bool                        `json:"no_cache,omitempty"`
+	Refresh    bool                        `json:"refresh,omitempty"`
+	Overrides  searchrun.ProviderOverrides `json:"overrides,omitempty"`
 }
 
 // SearchHostsOutput is the JSON search result.
@@ -67,12 +41,12 @@ func MergeSearchDefaultsFromConfig(cfg *config.File, q *hosts.Query) {
 		return
 	}
 	if q.NameSubstring == "" {
-		if s := strings.TrimSpace(cfg.Defaults.Name); s != "" {
+		if s := cfg.Defaults.Name; s != "" {
 			q.NameSubstring = s
 		}
 	}
 	if q.NameRegex == "" {
-		if s := strings.TrimSpace(cfg.Defaults.NameRegex); s != "" {
+		if s := cfg.Defaults.NameRegex; s != "" {
 			q.NameRegex = s
 		}
 	}
@@ -98,75 +72,13 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 	hostexec.ReconfigureFromHoneyConfig(cfg)
 
 	q := hosts.Query{
-		NameSubstring: strings.TrimSpace(in.Name),
-		NameRegex:     strings.TrimSpace(in.NameRegex),
-		Providers:     hosts.ParseProviders(strings.TrimSpace(in.Providers)),
+		NameSubstring: in.Name,
+		NameRegex:     in.NameRegex,
+		Providers:     hosts.ParseProviders(in.Providers),
 	}
 	MergeSearchDefaultsFromConfig(cfg, &q)
 
-	cacheTTL := searchrun.DefaultCacheTTL
-	if s := strings.TrimSpace(in.CacheTTL); s != "" {
-		cacheTTL, err = time.ParseDuration(s)
-		if err != nil {
-			return out, fmt.Errorf("cache_ttl: %w", err)
-		}
-	} else if cfg != nil {
-		if d, ok, perr := cfg.Defaults.DefaultsCacheTTL(); perr != nil {
-			return out, fmt.Errorf("defaults.cache_ttl: %w", perr)
-		} else if ok {
-			cacheTTL = d
-		}
-	}
-
-	cacheDir := strings.TrimSpace(in.CacheDir)
-	if cacheDir == "" && cfg != nil {
-		cacheDir = strings.TrimSpace(cfg.Defaults.CacheDir)
-	}
-
-	pf := searchrun.ProviderFlags{
-		GCPProject:          strings.TrimSpace(in.GCPProject),
-		GCPZone:             strings.TrimSpace(in.GCPZone),
-		AWSProfile:          strings.TrimSpace(in.AWSProfile),
-		AWSRegion:           strings.TrimSpace(in.AWSRegion),
-		KubeContext:         strings.TrimSpace(in.KubeContext),
-		K8sMode:             strings.TrimSpace(in.K8sMode),
-		K8sDebugImage:       strings.TrimSpace(in.K8sDebugImage),
-		Kubeconfig:          strings.TrimSpace(in.Kubeconfig),
-		ConsulAddr:          strings.TrimSpace(in.ConsulAddr),
-		ConsulDatacenter:    strings.TrimSpace(in.ConsulDC),
-		ConsulToken:         strings.TrimSpace(in.ConsulToken),
-		ProxmoxURL:          strings.TrimSpace(in.ProxmoxURL),
-		ProxmoxUser:         strings.TrimSpace(in.ProxmoxUser),
-		ProxmoxPassword:     strings.TrimSpace(in.ProxmoxPassword),
-		ProxmoxTokenID:      strings.TrimSpace(in.ProxmoxTokenID),
-		ProxmoxTokenSecret:  strings.TrimSpace(in.ProxmoxTokenSecret),
-		ProxmoxInsecure:     in.ProxmoxInsecure,
-		TrueNASURL:          strings.TrimSpace(in.TrueNASURL),
-		TrueNASUser:         strings.TrimSpace(in.TrueNASUser),
-		TrueNASAPIKey:       strings.TrimSpace(in.TrueNASAPIKey),
-		TrueNASInsecure:     in.TrueNASInsecure,
-		DockerHost:          strings.TrimSpace(in.DockerHost),
-		DockerMode:          strings.TrimSpace(in.DockerMode),
-		DockerAllContainers: in.DockerAllContainers,
-		DockerViaLocal:      strings.TrimSpace(in.DockerViaLocal),
-		DockerViaSSHHost:    strings.TrimSpace(in.DockerViaSSHHost),
-		DockerSocket:        strings.TrimSpace(in.DockerSocket),
-		DockerPlatform:      strings.TrimSpace(in.DockerPlatform),
-	}
-	// Apply config defaults to pf for fields the caller left empty.
-	if cfg != nil {
-		if pf.K8sMode == "" {
-			if s := strings.TrimSpace(cfg.Defaults.K8sMode); s != "" {
-				pf.K8sMode = s
-			}
-		}
-		if pf.K8sDebugImage == "" {
-			if s := strings.TrimSpace(cfg.Defaults.K8sDebugImage); s != "" {
-				pf.K8sDebugImage = s
-			}
-		}
-	}
-	provs := searchrun.BuildProviders(cfg, pf)
+	provs := searchrun.BuildProviders(cfg, in.Overrides)
 	want := hosts.ParseBackendNames(in.Backends)
 	if len(want) > 0 {
 		provs = hosts.FilterBackendsByNames(provs, want)
@@ -175,7 +87,7 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 		}
 	}
 
-	recs, err := searchrun.RunSearch(ctx, q, provs, cacheDir, cacheTTL, in.NoCache, in.Refresh)
+	recs, err := searchrun.RunSearch(ctx, q, provs, cfg.Defaults.CacheDir, searchrun.DefaultCacheTTL, in.NoCache, in.Refresh)
 	if err != nil {
 		return out, err
 	}

@@ -60,6 +60,8 @@ type RunTableOptions struct {
 	ConfigPath string
 	// ClientCache is an optional shared SSH client cache. If nil, one is created.
 	ClientCache *ClientCache
+	// AlertBanner is an optional one-line banner shown above the table (e.g. from `honey alert investigate`).
+	AlertBanner string
 }
 
 type model struct {
@@ -132,6 +134,7 @@ type model struct {
 	agentStorageIdx int // 0 = s3, 1 = googlecloudstorage (step 2 picker)
 	agentAwaitKeep  bool
 	agentKeepObject bool
+	alertBanner     string // non-empty: shown above title from `honey alert investigate`
 }
 
 var baseStyle = lipgloss.NewStyle().
@@ -339,6 +342,7 @@ func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *mod
 		honey:            opts.Config,
 		configPath:       strings.TrimSpace(opts.ConfigPath),
 		fileClientCache:  NewClientCache(),
+		alertBanner:      strings.TrimSpace(opts.AlertBanner),
 	}
 }
 
@@ -850,6 +854,10 @@ func (m *model) View() tea.View {
 			sub = helpStyle.Render(fmt.Sprintf("%d row(s) marked (* for parallel SSH and CUE recipe)", nMark)) + "\n"
 		}
 		title := lipgloss.NewStyle().Bold(true).Render("honey — select a host")
+		alertLine := ""
+		if m.alertBanner != "" {
+			alertLine = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true).Render("[ALERT] "+m.alertBanner) + "\n"
+		}
 		banner := ""
 		switch m.agentPick {
 		case "source":
@@ -857,7 +865,7 @@ func (m *model) View() tea.View {
 		case "dest":
 			banner = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("Pick DESTINATION host — Enter on row   Esc cancel") + "\n\n"
 		}
-		box = title + "\n" + banner + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
+		box = title + "\n" + alertLine + banner + sub + baseStyle.Render(m.tbl.View()) + "\n" + help
 	}
 
 	view := tea.NewView(box)

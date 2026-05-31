@@ -1,9 +1,11 @@
 package gcp
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
@@ -30,7 +32,7 @@ func TestDefault_FallsBackToCliFlags(t *testing.T) {
 		cliFlags.zone = ""
 	})
 
-	b := gcpFactory{}.Default(searchrun.ProviderFlags{})
+	b := gcpFactory{}.Default(searchrun.ProviderOverrides{})
 
 	if b.ID() != "gcp" {
 		t.Fatalf("ID: want %q got %q", "gcp", b.ID())
@@ -45,8 +47,8 @@ func TestDefault_FallsBackToCliFlags(t *testing.T) {
 	}
 }
 
-func TestDefault_UsesProviderFlags(t *testing.T) {
-	// cliFlags should be ignored when ProviderFlags has explicit values.
+func TestDefault_UsesProviderOverrides(t *testing.T) {
+	// cliFlags should be ignored when ProviderOverrides has explicit values.
 	cliFlags.project = "should-be-ignored"
 	cliFlags.zone = "should-be-ignored"
 	t.Cleanup(func() {
@@ -54,10 +56,8 @@ func TestDefault_UsesProviderFlags(t *testing.T) {
 		cliFlags.zone = ""
 	})
 
-	b := gcpFactory{}.Default(searchrun.ProviderFlags{
-		GCPProject: "api-proj",
-		GCPZone:    "eu-west1-b",
-	})
+	raw, _ := json.Marshal(config.GCPBackend{Project: "api-proj", Zone: "eu-west1-b"})
+	b := gcpFactory{}.Default(searchrun.ProviderOverrides{"gcp": raw})
 
 	if b.ID() != "gcp" {
 		t.Fatalf("ID: want %q got %q", "gcp", b.ID())

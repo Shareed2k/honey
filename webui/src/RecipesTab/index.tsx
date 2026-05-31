@@ -1,6 +1,6 @@
 // webui/src/RecipesTab/index.tsx
 import { useCallback, useState } from 'react';
-import { message } from 'antd';
+import { Steps, message } from 'antd';
 import type { HostRecord } from '../HostPicker';
 import { parseDiskRecipe, type ParsedRecipe, type RecentRunEntry } from '../api';
 import { reconcileHosts } from '../hostReconcile';
@@ -118,7 +118,38 @@ export function RecipesTab(props: Props) {
 
   return (
     <div className="recipes-tab">
-      <Breadcrumb step={state.step} onJump={go} />
+      <Steps
+        type="navigation"
+        size="small"
+        current={state.step - 1}
+        onChange={(current) => {
+          const nextStep = (current + 1) as WizardStep;
+          if (nextStep <= state.step) {
+            go(nextStep);
+          }
+        }}
+        items={[
+          {
+            title: 'Hosts',
+            status: state.step > 1 ? 'finish' : state.step === 1 ? 'process' : 'wait',
+          },
+          {
+            title: 'Recipe',
+            disabled: state.step < 2,
+            status: state.step > 2 ? 'finish' : state.step === 2 ? 'process' : 'wait',
+          },
+          {
+            title: 'Plan',
+            disabled: state.step < 3,
+            status: state.step > 3 ? 'finish' : state.step === 3 ? 'process' : 'wait',
+          },
+          {
+            title: 'Run',
+            disabled: state.step < 4,
+            status: state.step === 4 ? 'process' : 'wait',
+          },
+        ]}
+      />
 
       {state.step === 1 ? (
         <StepHosts
@@ -202,33 +233,6 @@ export function RecipesTab(props: Props) {
         />
       ) : null}
     </div>
-  );
-}
-
-function Breadcrumb({ step, onJump }: { step: WizardStep; onJump: (s: WizardStep) => void }) {
-  const labels: Record<WizardStep, string> = { 1: 'Hosts', 2: 'Recipe', 3: 'Plan', 4: 'Run' };
-  return (
-    <nav className="rcp-breadcrumb" aria-label="wizard steps">
-      {([1, 2, 3, 4] as WizardStep[]).map((n) => (
-        <button
-          key={n}
-          type="button"
-          className={
-            'rcp-breadcrumb__dot' +
-            (n === step
-              ? ' rcp-breadcrumb__dot--cur'
-              : n < step
-                ? ' rcp-breadcrumb__dot--done'
-                : '')
-          }
-          onClick={() => (n <= step ? onJump(n) : undefined)}
-          disabled={n > step}
-        >
-          <span className="rcp-breadcrumb__num">{n}</span>
-          <span className="rcp-breadcrumb__label">{labels[n]}</span>
-        </button>
-      ))}
-    </nav>
   );
 }
 

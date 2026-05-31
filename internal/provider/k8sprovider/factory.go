@@ -1,6 +1,7 @@
 package k8sprovider
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,65 +12,38 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+const overrideKey = "k8s"
+
+func k8sOverride(overrides searchrun.ProviderOverrides) (o config.KubernetesBackend) {
+	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	return o
+}
+
 func init() {
 	searchrun.Register(k8sFactory{})
 }
 
 type k8sFactory struct{}
 
-func (k8sFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []hosts.Backend {
+func (k8sFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+	o := k8sOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.Kubernetes))
 	for _, e := range cfg.Backends.Kubernetes {
-		kpath, ctx, mode, img := e.Kubeconfig, e.Context, e.Mode, e.DebugImage
-		if kpath == "" {
-			kpath = f.Kubeconfig
-		}
-		if kpath == "" {
-			kpath = cliFlags.kubeconfig
-		}
-		if ctx == "" {
-			ctx = f.KubeContext
-		}
-		if ctx == "" {
-			ctx = cliFlags.context
-		}
-		if mode == "" {
-			mode = f.K8sMode
-		}
-		if mode == "" {
-			mode = cliFlags.mode
-		}
-		if img == "" {
-			img = f.K8sDebugImage
-		}
-		if img == "" {
-			img = cliFlags.debugImage
-		}
+		kpath := searchrun.FirstNonEmpty(e.Kubeconfig, o.Kubeconfig, cliFlags.kubeconfig)
+		ctx := searchrun.FirstNonEmpty(e.Context, o.Context, cliFlags.context)
+		mode := searchrun.FirstNonEmpty(e.Mode, o.Mode, cliFlags.mode, strings.TrimSpace(cfg.Defaults.K8sMode))
+		img := searchrun.FirstNonEmpty(e.DebugImage, o.DebugImage, cliFlags.debugImage, strings.TrimSpace(cfg.Defaults.K8sDebugImage))
 		out = append(out, &K8s{Name: e.Name, KubeconfigPath: kpath, Context: ctx, Mode: mode, DebugImage: img})
 	}
 	return out
 }
 
-func (k8sFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	kpath := f.Kubeconfig
-	if kpath == "" {
-		kpath = cliFlags.kubeconfig
-	}
-	ctx := f.KubeContext
-	if ctx == "" {
-		ctx = cliFlags.context
-	}
-	mode := f.K8sMode
-	if mode == "" {
-		mode = cliFlags.mode
-	}
-	if mode == "" {
-		mode = "nodes"
-	}
-	img := f.K8sDebugImage
-	if img == "" {
-		img = cliFlags.debugImage
-	}
+func (k8sFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+	o := k8sOverride(overrides)
+	kpath := searchrun.FirstNonEmpty(o.Kubeconfig, cliFlags.kubeconfig)
+	ctx := searchrun.FirstNonEmpty(o.Context, cliFlags.context)
+	mode := searchrun.FirstNonEmpty(o.Mode, cliFlags.mode, "nodes")
+	img := searchrun.FirstNonEmpty(o.DebugImage, cliFlags.debugImage)
 	return &K8s{KubeconfigPath: kpath, Context: ctx, Mode: mode, DebugImage: img}
 }
 

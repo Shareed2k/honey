@@ -294,6 +294,64 @@
         ],
         "type": "object"
       },
+      "config.Logs": {
+        "properties": {
+          "alert_enabled": {
+            "type": "boolean"
+          },
+          "alert_suppress_duration": {
+            "type": "string"
+          },
+          "anomaly": {
+            "type": "boolean"
+          },
+          "anomaly_context_lines": {
+            "default": 5,
+            "type": "integer"
+          },
+          "anomaly_endpoint": {
+            "type": "string"
+          },
+          "anomaly_feedback_file": {
+            "type": "string"
+          },
+          "anomaly_filter_threshold": {
+            "type": "number"
+          },
+          "anomaly_freq_ratio": {
+            "default": 5,
+            "type": "number"
+          },
+          "anomaly_freq_window": {
+            "default": 100,
+            "type": "integer"
+          },
+          "anomaly_llm_model": {
+            "default": "llama3",
+            "type": "string"
+          },
+          "anomaly_model": {
+            "type": "string"
+          },
+          "anomaly_only": {
+            "type": "boolean"
+          },
+          "anomaly_strict": {
+            "type": "boolean"
+          },
+          "anomaly_threshold": {
+            "default": 0.9,
+            "type": "number"
+          },
+          "anomaly_tokenizer": {
+            "type": "string"
+          },
+          "anomaly_window": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "config.ProxmoxBackend": {
         "properties": {
           "docker_discover": {
@@ -461,12 +519,6 @@
       },
       "hostapi.SearchHostsInput": {
         "properties": {
-          "aws_profile": {
-            "type": "string"
-          },
-          "aws_region": {
-            "type": "string"
-          },
           "backends": {
             "type": "string"
           },
@@ -479,54 +531,6 @@
           "config_path": {
             "type": "string"
           },
-          "consul_addr": {
-            "type": "string"
-          },
-          "consul_datacenter": {
-            "type": "string"
-          },
-          "consul_token": {
-            "type": "string"
-          },
-          "docker_all_containers": {
-            "type": "boolean"
-          },
-          "docker_host": {
-            "type": "string"
-          },
-          "docker_mode": {
-            "type": "string"
-          },
-          "docker_platform": {
-            "type": "string"
-          },
-          "docker_socket": {
-            "type": "string"
-          },
-          "docker_via_local": {
-            "type": "string"
-          },
-          "docker_via_ssh_host": {
-            "type": "string"
-          },
-          "gcp_project": {
-            "type": "string"
-          },
-          "gcp_zone": {
-            "type": "string"
-          },
-          "k8s_debug_image": {
-            "type": "string"
-          },
-          "k8s_mode": {
-            "type": "string"
-          },
-          "kube_context": {
-            "type": "string"
-          },
-          "kubeconfig": {
-            "type": "string"
-          },
           "name": {
             "type": "string"
           },
@@ -536,43 +540,16 @@
           "no_cache": {
             "type": "boolean"
           },
+          "overrides": {
+            "$ref": "#/components/schemas/searchrun.ProviderOverrides"
+          },
           "providers": {
-            "type": "string"
-          },
-          "proxmox_insecure": {
-            "type": "boolean"
-          },
-          "proxmox_password": {
-            "type": "string"
-          },
-          "proxmox_token_id": {
-            "type": "string"
-          },
-          "proxmox_token_secret": {
-            "type": "string"
-          },
-          "proxmox_url": {
-            "type": "string"
-          },
-          "proxmox_user": {
             "type": "string"
           },
           "refresh": {
             "type": "boolean"
           },
           "ssh_user": {
-            "type": "string"
-          },
-          "truenas_api_key": {
-            "type": "string"
-          },
-          "truenas_insecure": {
-            "type": "boolean"
-          },
-          "truenas_url": {
-            "type": "string"
-          },
-          "truenas_user": {
             "type": "string"
           }
         },
@@ -653,6 +630,15 @@
           "type": {
             "type": "string"
           }
+        },
+        "type": "object"
+      },
+      "searchrun.ProviderOverrides": {
+        "additionalProperties": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
         },
         "type": "object"
       },
@@ -2498,6 +2484,44 @@
         "summary": "List listening ports on a host",
         "tags": [
           "search"
+        ]
+      }
+    },
+    "/api/v1/logs/default": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/config.Logs"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Logs defaults",
+        "tags": [
+          "logs"
         ]
       }
     },

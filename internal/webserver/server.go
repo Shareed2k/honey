@@ -97,6 +97,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/openapi.json", s.withAuth(s.handleOpenAPIJSON))
 	s.mux.HandleFunc("GET /api/v1/providers", s.withAuth(s.handleProviders))
 	s.mux.HandleFunc("GET /api/v1/backends", s.withAuth(s.handleBackends))
+	s.mux.HandleFunc("GET /api/v1/logs/default", s.withAuth(s.handleLogsDefault))
 	s.mux.HandleFunc("POST /api/v1/search", s.withAuth(s.handleSearch))
 	s.mux.HandleFunc("POST /api/v1/host-ports", s.withAuth(s.handleHostPorts))
 	s.mux.HandleFunc("GET /api/v1/tunnels", s.withAuth(s.handleTunnelsGet))
@@ -276,7 +277,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ProvidersResponse{
-		Providers: searchrun.ListSearchProviderIDs(searchrun.ProviderFlags{}),
+		Providers: searchrun.ListSearchProviderIDs(searchrun.ProviderOverrides{}),
 	})
 }
 

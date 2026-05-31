@@ -9,8 +9,9 @@ title: MCP Server
 
 | Tool | Purpose |
 |------|---------|
-| `search_hosts` | Same parallel search as `honey search`; arguments mirror CLI flags (snake_case JSON). Optional `config_path`; otherwise uses `HONEY_CONFIG` / default paths. |
+| `search_hosts` | Same parallel search as `honey search`; input fields mirror CLI flags (snake_case JSON). Optional `overrides` map for per-request provider settings. |
 | `list_backends` | Returns configured backends from YAML (`kind`, `name`, `hint`). Requires a resolvable config file. |
+| `exec_on_host` | Run a shell command on a host via SSH using its IP or hostname directly. Use `primary_ip` from a `search_hosts` result. |
 
 ## Cursor
 
@@ -80,6 +81,97 @@ Merge this into `~/.config/opencode/opencode.json` (global) or a project `openco
 ```
 
 Tools appear with the `honey_` prefix (e.g. `honey_search_hosts`). See [OpenCode MCP docs](https://opencode.ai/docs/mcp-servers/) for scoping tools per agent.
+
+## Tool reference
+
+### `search_hosts`
+
+```json
+{
+  "name": "postgres",
+  "name_regex": "",
+  "providers": "gcp,k8s",
+  "backends": "",
+  "no_cache": false,
+  "refresh": false,
+  "config_path": "",
+  "overrides": {
+    "gcp": { "project": "my-project", "zone": "us-central1-a" },
+    "k8s": { "context": "prod-cluster", "mode": "pods" }
+  }
+}
+```
+
+`overrides` keys match the provider ID (`gcp`, `aws`, `k8s`, `consul`, `proxmox`, `truenas`, `docker`). Fields inside each key mirror that provider's YAML backend config. Override precedence: `overrides` → YAML config value → CLI flag default.
+
+Output:
+
+```json
+{
+  "records": [
+    { "name": "pg-primary", "primary_ip": "10.0.0.5", "provider": "gcp",
+      "meta": { "zone": "us-central1-a", "project": "my-project" } }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### `list_backends`
+
+```json
+{ "config_path": "" }
+```
+
+Output:
+
+```json
+{
+  "backends": [
+    { "kind": "gcp", "name": "prod-gcp", "hint": "my-project" },
+    { "kind": "kubernetes", "name": "k8s-prod", "hint": "prod-context" }
+  ]
+}
+```
+
+---
+
+### `exec_on_host`
+
+Runs a command over SSH on a known IP or hostname. Typical pattern: call `search_hosts` first,
+then pass `primary_ip` from a result to `exec_on_host`.
+
+```json
+{
+  "host": "10.0.0.5",
+  "name": "pg-primary",
+  "command": "df -h /",
+  "shell": "bash",
+  "timeout_sec": 30
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `host` | **yes** | IP or hostname for SSH |
+| `name` | no | Display label in output (defaults to `host`) |
+| `command` | **yes** | Shell command to run |
+| `shell` | no | Wrap in `bash -c` or `sh -c`; omit for direct exec |
+| `timeout_sec` | no | 0–3600; 0 = no timeout |
+
+Output:
+
+```json
+{
+  "results": [
+    { "host": "pg-primary", "ip": "10.0.0.5",
+      "output": "Filesystem  Size  Used ...", "exit_code": 0, "error": "" }
+  ]
+}
+```
+
+---
 
 ## Notes
 

@@ -13,9 +13,10 @@ import (
 // to register itself with the search engine.
 type ProviderFactory interface {
 	// FromConfig returns a list of configured backends based on the user's YAML config.
-	FromConfig(cfg *config.File, f ProviderFlags) []hosts.Backend
+	// overrides is an opaque map; each factory extracts its own key and deserializes its section.
+	FromConfig(cfg *config.File, overrides ProviderOverrides) []hosts.Backend
 	// Default returns a single backend instance using CLI flags / defaults when no config is provided.
-	Default(f ProviderFlags) hosts.Backend
+	Default(overrides ProviderOverrides) hosts.Backend
 	// BackendRows returns a summary of configured backends for listing purposes (e.g. `honey backends`).
 	BackendRows(cfg *config.File) []config.BackendRow
 }
@@ -40,10 +41,10 @@ func Register(f ProviderFactory) {
 
 // ListSearchProviderIDs returns hosts.Backend.ID() for each registered factory's default backend,
 // in registration order (matches implicit providers when config has no backend entries).
-func ListSearchProviderIDs(f ProviderFlags) []string {
+func ListSearchProviderIDs(overrides ProviderOverrides) []string {
 	ids := make([]string, 0, len(factories))
 	for _, factory := range factories {
-		ids = append(ids, factory.Default(f).ID())
+		ids = append(ids, factory.Default(overrides).ID())
 	}
 	return ids
 }
