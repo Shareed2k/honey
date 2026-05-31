@@ -40,9 +40,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          DATE="$(date -u +%Y_%m_%d)"
+          DATE="$(date -u +%Y%m%d)"
           CHANNEL='${{ steps.channel.outputs.channel }}'
-          TAG="v${DATE}-${CHANNEL}.${GITHUB_RUN_NUMBER}"
+          TAG="v0.0.0-${CHANNEL}.${DATE}.${GITHUB_RUN_NUMBER}"
 
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
             TAG="${TAG}-${GITHUB_RUN_ATTEMPT}"
