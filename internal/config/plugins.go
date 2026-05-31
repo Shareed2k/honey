@@ -11,7 +11,7 @@ import (
 // Plugins configures WASM plugins loaded from disk (Extism).
 type Plugins struct {
 	Enabled           *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Directory         string   `yaml:"directory,omitempty" json:"directory,omitempty"`
+	Directory         string   `yaml:"directory,omitempty" json:"directory,omitempty" mod:"trim"`
 	Allowlist         []string `yaml:"allowlist,omitempty" json:"allowlist,omitempty"`
 	MaxMemoryMB       int      `yaml:"max_memory_mb,omitempty" json:"max_memory_mb,omitempty"`
 	TimeoutMS         int      `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
@@ -45,8 +45,8 @@ func (p Plugins) WithDefaults() PluginsEffective {
 	if p.Enabled != nil {
 		e.Enabled = *p.Enabled
 	}
-	if s := strings.TrimSpace(p.Directory); s != "" {
-		e.Directory = s
+	if p.Directory != "" {
+		e.Directory = p.Directory
 	} else {
 		e.Directory = DefaultPluginsDir()
 	}

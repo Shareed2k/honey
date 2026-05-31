@@ -9,6 +9,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/proxy"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 var proxyCmd = &cobra.Command{
@@ -79,11 +80,5 @@ func init() {
 	proxyTCPCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	proxyTCPCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	proxyTCPCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
-	proxyTCPCmd.Flags().StringVar(&flagGCPProject, "gcp-project", "", "GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)")
-	proxyTCPCmd.Flags().StringVar(&flagGCPZone, "gcp-zone", "", "Limit GCP to a single zone (default: all zones)")
-	proxyTCPCmd.Flags().StringVar(&flagAWSProfile, "aws-profile", "", "AWS shared config profile")
-	proxyTCPCmd.Flags().StringVar(&flagAWSRegion, "aws-region", "", "AWS region (default: from profile/env)")
-	proxyTCPCmd.Flags().StringVar(&flagKubeContext, "kube-context", "", "Kubernetes context override")
-	proxyTCPCmd.Flags().StringVar(&flagKubeconfig, "kubeconfig", "", "Path to kubeconfig file")
-	proxyTCPCmd.Flags().StringVar(&flagK8sMode, "k8s-mode", "nodes", "Kubernetes search mode: nodes or pods")
+	searchrun.RegisterAllProviderFlags(proxyTCPCmd)
 }

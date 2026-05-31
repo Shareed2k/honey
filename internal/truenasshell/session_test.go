@@ -12,8 +12,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 )
 
 func TestReadShellConnected(t *testing.T) {
@@ -112,7 +112,7 @@ func TestOpenSession_applianceMock(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "https://")
-	b := hostexec.TrueNASBackendRuntime{
+	b := truenasprovider.TrueNASBackendRuntime{
 		Name:     "lab",
 		URL:      "https://" + host,
 		Username: "root",
@@ -215,7 +215,7 @@ func TestOpenSession_virtInstanceMock(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "https://")
-	b := hostexec.TrueNASBackendRuntime{
+	b := truenasprovider.TrueNASBackendRuntime{
 		Name:     "lab",
 		URL:      "https://" + host,
 		Username: "root",

@@ -26,7 +26,7 @@ func (proxmoxCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 }
 
 func (proxmoxCRUD) Add(cfg *config.File) error {
-	var name, url, user, password, tokenID, tokenSecret string
+	var name, url, user, password, tokenID, tokenSecret, execMode string
 	var insecure bool
 	err := huh.NewForm(
 		huh.NewGroup(
@@ -37,6 +37,14 @@ func (proxmoxCRUD) Add(cfg *config.File) error {
 			huh.NewInput().Title("Token ID (optional)").Value(&tokenID),
 			huh.NewInput().Title("Token Secret (optional)").EchoMode(huh.EchoModePassword).Value(&tokenSecret),
 			huh.NewConfirm().Title("Insecure (Skip TLS Verify)?").Value(&insecure),
+			huh.NewSelect[string]().Title("Exec mode (optional)").
+				Options(
+					huh.NewOption("default (unset)", ""),
+					huh.NewOption("ssh", "ssh"),
+					huh.NewOption("pve", "pve"),
+					huh.NewOption("hybrid", "hybrid"),
+				).
+				Value(&execMode),
 		),
 	).Run()
 	if err == nil {
@@ -48,6 +56,7 @@ func (proxmoxCRUD) Add(cfg *config.File) error {
 			TokenID:     tokenID,
 			TokenSecret: tokenSecret,
 			Insecure:    insecure,
+			ExecMode:    execMode,
 		})
 	}
 	return err
@@ -67,6 +76,14 @@ func (proxmoxCRUD) Edit(cfg *config.File, idx int) error {
 			huh.NewInput().Title("Token ID (optional)").Value(&b.TokenID),
 			huh.NewInput().Title("Token Secret (optional)").EchoMode(huh.EchoModePassword).Value(&b.TokenSecret),
 			huh.NewConfirm().Title("Insecure (Skip TLS Verify)?").Value(&b.Insecure),
+			huh.NewSelect[string]().Title("Exec mode (optional)").
+				Options(
+					huh.NewOption("default (unset)", ""),
+					huh.NewOption("ssh", "ssh"),
+					huh.NewOption("pve", "pve"),
+					huh.NewOption("hybrid", "hybrid"),
+				).
+				Value(&b.ExecMode),
 		),
 	).Run()
 	if err == nil {

@@ -14,7 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
 )
 
 // APIBase normalizes a Proxmox API root to include /api2/json.
@@ -43,7 +43,7 @@ func guestPathSegment(kind string) (string, error) {
 	}
 }
 
-func postTermProxy(ctx context.Context, b hostexec.ProxmoxBackendRuntime, guest string, node string, vmid int) (termProxyData, error) {
+func postTermProxy(ctx context.Context, b proxmoxprovider.ProxmoxBackendRuntime, guest string, node string, vmid int) (termProxyData, error) {
 	var zero termProxyData
 	seg, err := guestPathSegment(guest)
 	if err != nil {
@@ -161,7 +161,7 @@ func (s *Session) Close() error {
 
 // OpenSession performs termproxy for LXC or QEMU serial, connects vncwebsocket, login handshake, and initial resize.
 // guest must be "lxc" or "qemu" (same as record meta kind).
-func OpenSession(ctx context.Context, b hostexec.ProxmoxBackendRuntime, guest, node string, vmid int, rows, cols int) (*Session, error) {
+func OpenSession(ctx context.Context, b proxmoxprovider.ProxmoxBackendRuntime, guest, node string, vmid int, rows, cols int) (*Session, error) {
 	if rows <= 0 {
 		rows = 32
 	}

@@ -3,6 +3,7 @@ package dockerprovider
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/moby/moby/client"
@@ -10,8 +11,8 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-func searchContainers(ctx context.Context, cli *client.Client, q hosts.Query, hostURI, backendName string, metaBase map[string]string) ([]hosts.Record, error) {
-	listResult, err := cli.ContainerList(ctx, ListOptionsForBackend(q.DockerAllContainers))
+func searchContainers(ctx context.Context, cli *client.Client, q hosts.Query, bc BackendConfig, hostURI, backendName string, metaBase map[string]string) ([]hosts.Record, error) {
+	listResult, err := cli.ContainerList(ctx, ListOptionsForBackend(bc.AllContainers))
 	if err != nil {
 		return nil, err
 	}
@@ -34,9 +35,7 @@ func searchContainers(ctx context.Context, cli *client.Client, q hosts.Query, ho
 			"docker_host":    hostURI,
 			"docker_backend": backendName,
 		}
-		for k, v := range metaBase {
-			meta[k] = v
-		}
+		maps.Copy(meta, metaBase)
 		for k, v := range c.Labels {
 			meta["label_"+k] = v
 		}
@@ -67,10 +66,7 @@ func searchBackend(ctx context.Context, bc BackendConfig, q hosts.Query, opts AP
 	}
 	defer cli.Close()
 
-	mode := NormalizeMode(q.DockerMode)
-	if mode == "" {
-		mode = NormalizeMode(bc.Mode)
-	}
+	mode := NormalizeMode(bc.Mode)
 	hostURI := bc.ResolvedHost()
 	backendName := strings.TrimSpace(bc.Name)
 
@@ -82,7 +78,7 @@ func searchBackend(ctx context.Context, bc BackendConfig, q hosts.Query, opts AP
 
 	var out []hosts.Record
 	if mode == "containers" || mode == "both" {
-		recs, err := searchContainers(ctx, cli, q, hostURI, backendName, metaBase)
+		recs, err := searchContainers(ctx, cli, q, bc, hostURI, backendName, metaBase)
 		if err != nil {
 			return nil, err
 		}
@@ -94,12 +90,10 @@ func searchBackend(ctx context.Context, bc BackendConfig, q hosts.Query, opts AP
 			return nil, err
 		}
 		for i := range recs {
-			for k, v := range metaBase {
-				if recs[i].Meta == nil {
-					recs[i].Meta = make(map[string]string)
-				}
-				recs[i].Meta[k] = v
+			if recs[i].Meta == nil {
+				recs[i].Meta = make(map[string]string)
 			}
+			maps.Copy(recs[i].Meta, metaBase)
 		}
 		out = append(out, recs...)
 	}
@@ -114,24 +108,15 @@ func searchBackend(ctx context.Context, bc BackendConfig, q hosts.Query, opts AP
 // searchVMContainers lists containers on one cloud VM via Honey SSH (auto-discover pass).
 func searchVMContainers(ctx context.Context, vm hosts.Record, q hosts.Query) ([]hosts.Record, error) {
 	socket := strings.TrimSpace(vm.Meta["docker_discover_socket"])
-	if socket == "" {
-		socket = strings.TrimSpace(q.DockerSocket)
-	}
 	platform := strings.TrimSpace(vm.Meta["docker_discover_platform"])
-	if platform == "" {
-		platform = strings.TrimSpace(q.DockerPlatform)
-	}
 	runAs := strings.TrimSpace(vm.Meta["docker_discover_run_as"])
 
 	bc := BackendConfig{
-		SSHUser:  strings.TrimSpace(q.DockerSSHUser),
 		Socket:   socket,
 		Platform: platform,
 		RunAs:    runAs,
-		Mode:     q.DockerMode,
 	}
 	opts := APIClientOptions{
-		SSHUser:  q.DockerSSHUser,
 		VMRecord: &vm,
 		DiscoverOpts: &DiscoverOpts{
 			Socket:   socket,

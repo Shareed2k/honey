@@ -44,7 +44,14 @@ through the same executor pipeline used by the TUI and recipe execution.`,
 
 func init() {
 	rootCmd.AddCommand(execCmd)
-	addSearchCoreFlags(execCmd, "pods")
+	addSearchCoreFlags(execCmd)
+	// exec targets pods by default (unlike search which defaults to nodes).
+	// Override the default registered by k8sprovider.RegisterFlags without
+	// marking the flag as Changed, so an explicit --k8s-mode still takes precedence.
+	if f := execCmd.Flags().Lookup("k8s-mode"); f != nil {
+		f.DefValue = "pods"
+		_ = f.Value.Set("pods")
+	}
 	execCmd.Flags().IntVar(&flagExecParallel, "parallel", 20, "Maximum concurrent command executions")
 	execCmd.Flags().IntVar(&flagExecRetry, "retry", 1, "Retry attempts per host (1 disables retries)")
 	execCmd.Flags().DurationVar(&flagExecTimeout, "timeout", 0, "Per-host command timeout (e.g. 10s, 2m); 0 disables")

@@ -7,8 +7,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
 	"github.com/shareed2k/honey/internal/pvelxc"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -19,7 +19,7 @@ func isProxmoxSerialWebPVE(rec hosts.Record) bool {
 
 // handleWebProxmoxPVESerialTTY bridges the browser WebSocket to Proxmox LXC or QEMU serial vncwebsocket (shared with TUI via pvelxc).
 func handleWebProxmoxPVESerialTTY(ctx context.Context, conn *websocket.Conn, record hosts.Record, cols, rows int, recorder *ui.SessionRecorder) {
-	b, ok := hostexec.ProxmoxBackendByName(record.Meta["backend_name"])
+	b, ok := proxmoxprovider.BackendByName(record.Meta["backend_name"])
 	if !ok {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"proxmox backend not configured"}`))
 		return

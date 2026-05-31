@@ -15,12 +15,12 @@ func resolveProxmoxExecutor(r hosts.Record) hostexec.Executor {
 	if r.Provider != "proxmox" {
 		return nil
 	}
-	b, ok := hostexec.ProxmoxBackendByName(r.Meta["backend_name"])
+	b, ok := BackendByName(r.Meta["backend_name"])
 	if !ok {
 		return nil
 	}
 	switch b.ExecMode {
-	case hostexec.ProxmoxExecPVE, hostexec.ProxmoxExecHybrid:
+	case ProxmoxExecPVE, ProxmoxExecHybrid:
 		return &proxmoxExecutor{rt: b}
 	default:
 		return nil
@@ -28,19 +28,19 @@ func resolveProxmoxExecutor(r hosts.Record) hostexec.Executor {
 }
 
 type proxmoxExecutor struct {
-	rt hostexec.ProxmoxBackendRuntime
+	rt ProxmoxBackendRuntime
 }
 
 func (p *proxmoxExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
 	kind := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
 	switch kind {
 	case "lxc":
-		if p.rt.ExecMode == hostexec.ProxmoxExecHybrid {
+		if p.rt.ExecMode == ProxmoxExecHybrid {
 			return dialHybridLXC(p.rt, user, r)
 		}
 		return dialPVELXC(p.rt, user, r)
 	case "qemu":
-		if p.rt.ExecMode == hostexec.ProxmoxExecHybrid {
+		if p.rt.ExecMode == ProxmoxExecHybrid {
 			return dialHybridQEMU(p.rt, user, r)
 		}
 		return dialPVEQEMU(p.rt, r) // *qemuGuestClient implements hostexec.HostClient

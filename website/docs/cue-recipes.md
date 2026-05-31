@@ -53,6 +53,29 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 
 Optional **`recipe.defaults`**: `run_as`, `env`, `secrets`, `kv_tunnel`, `max_parallel`, `ssh_port`, `ssh_private_key`, `k8s_debug_image`.
 
+### SSH customization
+
+`ssh_port` and `ssh_private_key` can be set at `recipe.defaults` (all steps) or on a single step (overrides defaults). `~/` is expanded in `ssh_private_key`.
+
+```cue
+recipe: {
+  name: "with-key"
+  defaults: {
+    ssh_private_key: "~/.ssh/my_staging_key"
+  }
+  steps: [{
+    host:    "*"
+    command: "hostname"
+  }, {
+    host:            "*"
+    ssh_private_key: "~/.ssh/other_key" // this step uses a different key
+    command:         "whoami"
+  }]
+}
+```
+
+Example: [`with_ssh_key.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/with_ssh_key.cue).
+
 Remote env injection (command/script/plugin): `HONEY_HOST_NAME`, `HONEY_HOST_PRIMARY_IP`, `HONEY_HOST_PROVIDER`, `HONEY_HOST_ZONE`, `HONEY_HOST_REGION`, and `HONEY_HOST_META_*` from host metadata.
 
 ## Linear vs graph execution
@@ -76,7 +99,36 @@ recipe: {
 
 ### Graph extras
 
-- **`env_from`:** map a dependency step’s **stdout** into env vars (per host). Each `env_from[].step` must appear in **`depends`**. Supported on `command`, `script`, and `plugin` only.
+**`env_from`** maps a dependency step’s output into env vars on the current step (per host). Each entry must reference a step in **`depends`**. Supported on `command`, `script`, and `plugin` only.
+
+Each `env_from` entry uses **one** of these source fields:
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `map: {KEY: "stdout"}` | Step stdout | Map raw stdout to `KEY` |
+| `extract: {KEY: ".field"}` | Step stdout (JSON) | JQ path extracted from JSON stdout |
+| `kv: {KEY: "kv_key_name"}` | Recipe KV store | Pull value written by a prior remote step |
+| `from_output: "NAME"` | Template output | Named capture from a `template` step on `host: "_"` |
+
+```cue
+// Three env_from sources in one step
+{
+  id:      "pg_followup"
+  host:    "db-*"
+  depends: ["pg_query"]
+  env_from: [{
+    step: "pg_query"
+    map:     { RAW_OUT: "stdout" }          // raw stdout
+    extract: { COUNT: ".[0].n" }            // jq on JSON stdout
+  }, {
+    kv: { THRESHOLD: "pg_activity_count" } // value written by a remote step
+  }]
+  command: "echo count=$COUNT threshold=$THRESHOLD"
+}
+```
+
+Example: [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_kv_demo.cue).
+
 - **`HONEY_STEP_ID`:** set on remote env when the step has an `id` (use to namespace shared KV keys).
 - **`kv_tunnel`:** one operator-side `stepkv` session for the whole run; see [KV tunnel](#recipe-kv-tunnel) below.
 - **Failure / skip:** if a step fails (or all hosts hit transient SSH errors), **descendants are skipped**. If an **`ai`** step becomes unreachable, the run **aborts**.
@@ -372,6 +424,36 @@ Every **`cue-exec --execute`** run starts one in-memory **stepkv** session on th
 
 See [`honey cue-exec` — kv_tunnel](./cli/honey_cue-exec.md) and [`kv_tunnel_multistep_example.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/kv_tunnel_multistep_example.cue).
 
+## Retry
+
+Steps can be retried automatically on failure. Set `retry` at `recipe.defaults` (applies to all steps) or on individual steps (overrides the default).
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `attempts` | `3` | Total attempts (1 = no retry) |
+| `delay_ms` | `1000` | Initial delay between attempts in ms |
+| `max_delay_ms` | `30000` | Maximum delay cap (for exponential backoff) |
+| `backoff` | `"fixed"` | `"fixed"` or `"exponential"` |
+
+```cue
+recipe: {
+  name: "restart-with-retry"
+  type: "graph"
+  defaults: {
+    retry: { attempts: 3, delay_ms: 2000, backoff: "exponential" }
+  }
+  steps: [{
+    id:      "verify"
+    host:    "*"
+    // per-step override: poll up to 30 times, fixed 2 s gap
+    retry:   { attempts: 30, delay_ms: 2000, backoff: "fixed" }
+    command: "service my-app status | grep -q running"
+  }]
+}
+```
+
+Example: [`kafka_controller_rolling_restart.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/kafka_controller_rolling_restart.cue) uses `attempts: 30, delay_ms: 2000, backoff: "fixed"` on the verify step.
+
 ## Secrets and env
 
 - **`env`:** literal `KEY=value` maps on command/script/plugin (and remote hooks).
@@ -383,6 +465,32 @@ See [`honey cue-exec` — kv_tunnel](./cli/honey_cue-exec.md) and [`kv_tunnel_mu
 - **Hooks** (`on_success` / `on_failure`): command/script/plugin only; local or remote follow-up per host. See [`honey cue-exec`](./cli/honey_cue-exec.md).
 - **`notify`:** optional per-step notifications after success ([nikoksr/notify](https://github.com/nikoksr/notify)).
 - **`ai`:** terminal summarizer after prior steps; optional `notify` and `when` (aggregated `steps` view).
+
+## Template functions
+
+`template` steps use Go [`text/template`](https://pkg.go.dev/text/template) with the full [slim-sprig](https://go-task.github.io/slim-sprig/) function library (string, math, date, crypto, etc.) plus two recipe-specific functions:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `kvGet "key"` | string | Read a value from the recipe KV store (`""` if missing) |
+| `kvHas "key"` | bool | Check whether a key exists in the recipe KV store |
+
+```cue
+// Local template reads a value written by a prior remote step
+{
+  id:      "render"
+  host:    "_"
+  depends: ["write_kv"]
+  template: {
+    template: "status={{ kvGet \"deploy_status\" | default \"unknown\" }}\n"
+    output:   "RESULT"
+  }
+}
+```
+
+**`template.output`** captures the rendered string under a named key. It is only supported on `host: "_"` (local steps). For per-host templates (`host: "*"`), omit `output` and pass the result downstream via `env_from[].from_output` instead.
+
+Example: [`template_kv.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/template_kv.cue).
 
 ## Related
 

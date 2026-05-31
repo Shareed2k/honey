@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"github.com/shareed2k/honey/internal/truenasshell"
 
@@ -154,7 +154,7 @@ func runOneRemoteTrueNAS(ctx context.Context, user string, r hosts.Record, cache
 		res.ErrMsg = "truenas api shell not available for this record"
 		return res
 	}
-	b, ok := hostexec.TrueNASBackendByName(r.Meta["backend_name"])
+	b, ok := truenasprovider.BackendByName(r.Meta["backend_name"])
 	if !ok {
 		res.Success = false
 		res.ErrMsg = "truenas backend not configured"

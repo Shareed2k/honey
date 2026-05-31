@@ -3,6 +3,8 @@ package awsprovider
 import (
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
@@ -21,8 +23,14 @@ func (awsFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 		if prof == "" {
 			prof = f.AWSProfile
 		}
+		if prof == "" {
+			prof = cliFlags.profile
+		}
 		if reg == "" {
 			reg = f.AWSRegion
+		}
+		if reg == "" {
+			reg = cliFlags.region
 		}
 		b := searchrun.WithDockerDiscover(
 			&AWS{Name: e.Name, Profile: prof, Region: reg},
@@ -34,8 +42,16 @@ func (awsFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 }
 
 func (awsFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
+	prof := f.AWSProfile
+	if prof == "" {
+		prof = cliFlags.profile
+	}
+	reg := f.AWSRegion
+	if reg == "" {
+		reg = cliFlags.region
+	}
 	return searchrun.WithDockerDiscover(
-		&AWS{Profile: f.AWSProfile, Region: f.AWSRegion},
+		&AWS{Profile: prof, Region: reg},
 		config.DockerDiscover{},
 	)
 }
@@ -51,3 +67,5 @@ func (awsFactory) BackendRows(cfg *config.File) []config.BackendRow {
 func (awsFactory) BackendKind() string { return "aws" }
 
 func (awsFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.AWS }
+
+func (awsFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }

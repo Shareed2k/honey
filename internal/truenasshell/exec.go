@@ -11,8 +11,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 )
 
 const (
@@ -36,7 +36,7 @@ type shellRead struct {
 }
 
 // RunRemoteCommand runs one non-interactive shell command over an API shell session.
-func RunRemoteCommand(ctx context.Context, b hostexec.TrueNASBackendRuntime, rec hosts.Record, remoteCmd string) (output []byte, exitCode int, err error) {
+func RunRemoteCommand(ctx context.Context, b truenasprovider.TrueNASBackendRuntime, rec hosts.Record, remoteCmd string) (output []byte, exitCode int, err error) {
 	remoteCmd = strings.TrimSpace(remoteCmd)
 	if remoteCmd == "" {
 		return nil, 0, nil

@@ -5,6 +5,9 @@ import (
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/dockerprovider"
+	"github.com/shareed2k/honey/internal/provider/k8sprovider"
+	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
 )
 
 // HostClient aliases the shared execution interface (see internal/hostexec).
@@ -27,11 +30,11 @@ func FormatTargetForDryRun(r hosts.Record) string {
 		return fmt.Sprintf("k8s_exec(ns=%s pod=%s)", r.Meta["namespace"], r.Meta["pod_name"])
 	}
 	if r.Provider == "proxmox" {
-		if b, ok := hostexec.ProxmoxBackendByName(r.Meta["backend_name"]); ok {
+		if b, ok := proxmoxprovider.BackendByName(r.Meta["backend_name"]); ok {
 			switch b.ExecMode {
-			case hostexec.ProxmoxExecPVE:
+			case proxmoxprovider.ProxmoxExecPVE:
 				return fmt.Sprintf("proxmox_pve(node=%s vmid=%s kind=%s)", r.Meta["node"], r.Meta["vmid"], r.Meta["kind"])
-			case hostexec.ProxmoxExecHybrid:
+			case proxmoxprovider.ProxmoxExecHybrid:
 				return fmt.Sprintf("proxmox_hybrid(node=%s vmid=%s kind=%s ip=%s)", r.Meta["node"], r.Meta["vmid"], r.Meta["kind"], r.PrimaryIP)
 			}
 		}
@@ -39,4 +42,11 @@ func FormatTargetForDryRun(r hosts.Record) string {
 	return fmt.Sprintf("ip=%s", r.PrimaryIP)
 }
 
-type k8sPodExecutor struct{}
+// Type aliases so existing ui code can continue using the unexported names
+// while the actual implementations live in the provider packages.
+type (
+	k8sPodExecutor     = k8sprovider.K8sPodExecutor
+	k8sNativeClient    = k8sprovider.K8sNativeClient
+	dockerExecutor     = dockerprovider.DockerExecutor
+	dockerNativeClient = dockerprovider.DockerNativeClient
+)

@@ -11,7 +11,7 @@ import (
 // dialPVELXC connects to the LXC guest over SSH for commands and file operations.
 // Proxmox VE does not implement HTTP POST .../lxc/{vmid}/exec on the cluster API (501);
 // the web UI shell uses termproxy/vncwebsocket instead, which honey handles in internal/webserver.
-func dialPVELXC(_ hostexec.ProxmoxBackendRuntime, user string, r hosts.Record) (hostexec.HostClient, error) {
+func dialPVELXC(_ ProxmoxBackendRuntime, user string, r hosts.Record) (hostexec.HostClient, error) {
 	if err := requireLXCMeta(r); err != nil {
 		return nil, err
 	}
@@ -21,7 +21,7 @@ func dialPVELXC(_ hostexec.ProxmoxBackendRuntime, user string, r hosts.Record) (
 // dialHybridLXC uses guest SSH for both commands and SFTP. The historical split (PVE exec + SSH
 // files) relied on a non-standard REST exec endpoint; upstream Proxmox only lists console-related
 // LXC HTTP APIs, not command execution.
-func dialHybridLXC(_ hostexec.ProxmoxBackendRuntime, user string, r hosts.Record) (hostexec.HostClient, error) {
+func dialHybridLXC(_ ProxmoxBackendRuntime, user string, r hosts.Record) (hostexec.HostClient, error) {
 	if err := requireLXCMeta(r); err != nil {
 		return nil, err
 	}

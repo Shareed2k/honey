@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/cuetry/secrets"
 	"github.com/shareed2k/honey/internal/cuetry/secrets/stack"
@@ -221,18 +220,7 @@ func secretsOptionsFromFlags() (secrets.Options, error) {
 	} else if dk != nil {
 		return secrets.Options{SymmetricDataKey: dk}, nil
 	}
-	cfgPath, err := config.ResolvePath(flagConfig)
-	if err != nil {
-		return secrets.Options{}, err
-	}
-	var cfg *config.File
-	if cfgPath != "" {
-		cfg, err = config.Load(cfgPath)
-		if err != nil {
-			return secrets.Options{}, fmt.Errorf("config: %w", err)
-		}
-	}
-	o := cuetry.SecretResolverOptionsFromHoney(cfg)
+	o := cuetry.SecretResolverOptionsFromHoney(resolvedCfg)
 	return secrets.Options{
 		SymmetricDataKey: o.SymmetricDataKey,
 		SecretsProvider:  o.SecretsProvider,

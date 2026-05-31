@@ -14,6 +14,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -167,7 +168,7 @@ func startTunnelForRecord(ctx context.Context, user string, r hosts.Record, t *c
 			return TunnelEndpoint{}, nil, err
 		}
 		return TunnelEndpoint{Host: host, Port: port, Mode: "local", RemoteHost: "pod", RemotePort: remotePort, ShareKey: t.ShareKey}, stop, nil
-	case hostexec.TruenasTunnelUsesAPIShell(r):
+	case truenasprovider.TruenasTunnelUsesAPIShell(r):
 		zap.L().Debug("recipe tunnel backend", zap.String("backend", "truenas"), zap.String("host_name", r.Name))
 		lp := localPort
 		if lp == 0 {

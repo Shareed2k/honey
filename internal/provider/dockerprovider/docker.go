@@ -35,30 +35,6 @@ var _ hosts.Backend = (*Docker)(nil)
 // Search lists containers and/or swarm tasks from the configured Engine endpoint.
 func (d *Docker) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
 	bc := d.Config
-	if s := strings.TrimSpace(q.DockerHost); s != "" {
-		bc.Host = s
-	}
-	if s := strings.TrimSpace(q.DockerViaLocal); s != "" {
-		bc.ViaLocal = s
-	}
-	if s := strings.TrimSpace(q.DockerViaSSHHost); s != "" {
-		bc.ViaSSH.Host = s
-	}
-	if s := strings.TrimSpace(q.DockerSocket); s != "" {
-		bc.Socket = s
-	}
-	if s := strings.TrimSpace(q.DockerPlatform); s != "" {
-		bc.Platform = s
-	}
-	if q.DockerAllContainers {
-		bc.AllContainers = true
-	}
-	if s := strings.TrimSpace(q.DockerMode); s != "" {
-		bc.Mode = s
-	}
-	if strings.TrimSpace(q.DockerSSHUser) != "" {
-		bc.SSHUser = strings.TrimSpace(q.DockerSSHUser)
-	}
-	opts := APIClientOptions{SSHUser: q.DockerSSHUser}
+	opts := APIClientOptions{SSHUser: bc.SSHUser}
 	return searchBackend(ctx, bc, q, opts)
 }

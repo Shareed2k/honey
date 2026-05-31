@@ -3,7 +3,10 @@ package k8sprovider
 import (
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -21,14 +24,26 @@ func (k8sFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 		if kpath == "" {
 			kpath = f.Kubeconfig
 		}
+		if kpath == "" {
+			kpath = cliFlags.kubeconfig
+		}
 		if ctx == "" {
 			ctx = f.KubeContext
+		}
+		if ctx == "" {
+			ctx = cliFlags.context
 		}
 		if mode == "" {
 			mode = f.K8sMode
 		}
+		if mode == "" {
+			mode = cliFlags.mode
+		}
 		if img == "" {
 			img = f.K8sDebugImage
+		}
+		if img == "" {
+			img = cliFlags.debugImage
 		}
 		out = append(out, &K8s{Name: e.Name, KubeconfigPath: kpath, Context: ctx, Mode: mode, DebugImage: img})
 	}
@@ -36,11 +51,26 @@ func (k8sFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 }
 
 func (k8sFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
+	kpath := f.Kubeconfig
+	if kpath == "" {
+		kpath = cliFlags.kubeconfig
+	}
+	ctx := f.KubeContext
+	if ctx == "" {
+		ctx = cliFlags.context
+	}
 	mode := f.K8sMode
+	if mode == "" {
+		mode = cliFlags.mode
+	}
 	if mode == "" {
 		mode = "nodes"
 	}
-	return &K8s{KubeconfigPath: f.Kubeconfig, Context: f.KubeContext, Mode: mode, DebugImage: f.K8sDebugImage}
+	img := f.K8sDebugImage
+	if img == "" {
+		img = cliFlags.debugImage
+	}
+	return &K8s{KubeconfigPath: kpath, Context: ctx, Mode: mode, DebugImage: img}
 }
 
 func (k8sFactory) BackendRows(cfg *config.File) []config.BackendRow {
@@ -54,3 +84,14 @@ func (k8sFactory) BackendRows(cfg *config.File) []config.BackendRow {
 func (k8sFactory) BackendKind() string { return "kubernetes" }
 
 func (k8sFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Kubernetes }
+
+func (k8sFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
+
+func (k8sFactory) ProviderName() string { return "k8s" }
+
+func (k8sFactory) ExecutorFor(r hosts.Record) hostexec.Executor {
+	if r.Meta["kind"] == "pod" {
+		return &K8sPodExecutor{}
+	}
+	return nil
+}

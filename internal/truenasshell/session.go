@@ -10,7 +10,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 )
@@ -115,7 +114,7 @@ func (s *Session) Close() error {
 }
 
 // OpenSession authenticates to TrueNAS, opens /websocket/shell for rec, and applies initial resize.
-func OpenSession(ctx context.Context, b hostexec.TrueNASBackendRuntime, rec hosts.Record, rows, cols int) (*Session, error) {
+func OpenSession(ctx context.Context, b truenasprovider.TrueNASBackendRuntime, rec hosts.Record, rows, cols int) (*Session, error) {
 	if rows <= 0 {
 		rows = 32
 	}

@@ -11,6 +11,7 @@ permissions:
 jobs:
   goreleaser:
     name: GoReleaser
+    if: ${{ !contains(github.ref_name, '-next.') && !contains(github.ref_name, '-rc.') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

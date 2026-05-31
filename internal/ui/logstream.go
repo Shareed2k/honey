@@ -288,7 +288,7 @@ func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts L
 		return fmt.Errorf("unexpected docker client type %T", dc)
 	}
 
-	logs, err := native.cli.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
+	logs, err := native.Cli.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Since:      dockerSince(opts.Since),
@@ -303,7 +303,7 @@ func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts L
 
 	stdout := newPrefixedWriter(ctx, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw, disp)
 	stderr := newPrefixedWriter(ctx, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw, disp)
-	inspect, inspectErr := native.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	inspect, inspectErr := native.Cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if inspectErr == nil && inspect.Container.Config != nil && inspect.Container.Config.Tty {
 		_, err = io.Copy(stdout, logs)
 	} else {

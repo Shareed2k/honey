@@ -37,7 +37,7 @@ func vmRefFromRecordQEMU(r hosts.Record) (*proxmox.VmRef, error) {
 	return vmr, nil
 }
 
-func dialPVEQEMU(b hostexec.ProxmoxBackendRuntime, r hosts.Record) (*qemuGuestClient, error) {
+func dialPVEQEMU(b ProxmoxBackendRuntime, r hosts.Record) (*qemuGuestClient, error) {
 	c, err := dialTelmate(context.Background(), b)
 	if err != nil {
 		return nil, err
@@ -124,7 +124,7 @@ type hybridQEMUClient struct {
 	qemu *qemuGuestClient
 }
 
-func dialHybridQEMU(b hostexec.ProxmoxBackendRuntime, user string, r hosts.Record) (hostexec.HostClient, error) {
+func dialHybridQEMU(b ProxmoxBackendRuntime, user string, r hosts.Record) (hostexec.HostClient, error) {
 	ip := strings.TrimSpace(r.PrimaryIP)
 	if ip == "" {
 		return nil, fmt.Errorf("proxmox hybrid: no primary IP for SSH file transfer")

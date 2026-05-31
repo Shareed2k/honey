@@ -215,7 +215,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "backend kind (gcp, aws, kubernetes, consul, proxmox, local)",
+                        "description": "backend kind (gcp, aws, kubernetes, consul, proxmox, truenas, local, docker)",
                         "name": "kind",
                         "in": "path",
                         "required": true
@@ -1268,6 +1268,104 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/recordings/summarize": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "recordings"
+                ],
+                "summary": "Summarize session recording",
+                "parameters": [
+                    {
+                        "description": "recording file name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/webserver.RecordingsSummarizeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/webserver.RecordingsSummarizeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/recordings/{file_name}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "recordings"
+                ],
+                "summary": "Delete session recording",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "recording file name",
+                        "name": "file_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/search": {
             "post": {
                 "security": [
@@ -1642,6 +1740,9 @@ const docTemplate = `{
                 "profile"
             ],
             "properties": {
+                "docker_discover": {
+                    "$ref": "#/definitions/config.DockerDiscover"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -1682,6 +1783,12 @@ const docTemplate = `{
                         "$ref": "#/definitions/config.ConsulBackend"
                     }
                 },
+                "docker": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/config.DockerBackend"
+                    }
+                },
                 "gcp": {
                     "type": "array",
                     "items": {
@@ -1705,6 +1812,12 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/config.ProxmoxBackend"
                     }
+                },
+                "truenas": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/config.TrueNASBackend"
+                    }
                 }
             }
         },
@@ -1721,10 +1834,94 @@ const docTemplate = `{
                 "datacenter": {
                     "type": "string"
                 },
+                "docker_discover": {
+                    "$ref": "#/definitions/config.DockerDiscover"
+                },
                 "name": {
                     "type": "string"
                 },
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "config.DockerBackend": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "all_containers": {
+                    "type": "boolean"
+                },
+                "ca_cert": {
+                    "type": "string"
+                },
+                "cert": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "run_as": {
+                    "type": "string"
+                },
+                "socket": {
+                    "type": "string"
+                },
+                "tls_verify": {
+                    "type": "boolean"
+                },
+                "via_local": {
+                    "type": "string"
+                },
+                "via_ssh": {
+                    "$ref": "#/definitions/config.DockerViaSSH"
+                }
+            }
+        },
+        "config.DockerDiscover": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "run_as": {
+                    "type": "string"
+                },
+                "socket": {
+                    "type": "string"
+                }
+            }
+        },
+        "config.DockerViaSSH": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "identity_file": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "user": {
                     "type": "string"
                 }
             }
@@ -1736,6 +1933,9 @@ const docTemplate = `{
                 "project"
             ],
             "properties": {
+                "docker_discover": {
+                    "$ref": "#/definitions/config.DockerDiscover"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -1776,6 +1976,9 @@ const docTemplate = `{
                 "name"
             ],
             "properties": {
+                "docker_discover": {
+                    "$ref": "#/definitions/config.DockerDiscover"
+                },
                 "hosts": {
                     "type": "array",
                     "items": {
@@ -1815,6 +2018,9 @@ const docTemplate = `{
                 "region": {
                     "type": "string"
                 },
+                "ssh_user": {
+                    "type": "string"
+                },
                 "zone": {
                     "type": "string"
                 }
@@ -1827,8 +2033,10 @@ const docTemplate = `{
                 "url"
             ],
             "properties": {
+                "docker_discover": {
+                    "$ref": "#/definitions/config.DockerDiscover"
+                },
                 "exec_mode": {
-                    "description": "ExecMode: ssh (default) = guest SSH for commands/SFTP/tunnels; pve = QEMU commands via guest agent API, LXC commands/SFTP over guest SSH (PVE has no LXC REST exec; web UI LXC console uses termproxy when token_id is set);\nhybrid = QEMU via guest agent + SSH for files; LXC uses guest SSH for commands and files.",
                     "type": "string"
                 },
                 "insecure": {
@@ -1850,6 +2058,43 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "user": {
+                    "type": "string"
+                }
+            }
+        },
+        "config.TrueNASBackend": {
+            "type": "object",
+            "required": [
+                "api_key",
+                "name",
+                "url"
+            ],
+            "properties": {
+                "api_key": {
+                    "type": "string"
+                },
+                "include_appliance": {
+                    "type": "boolean"
+                },
+                "include_virt": {
+                    "type": "boolean"
+                },
+                "include_vms": {
+                    "type": "boolean"
+                },
+                "insecure": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "ssh_user": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "username": {
                     "type": "string"
                 }
             }
@@ -1883,7 +2128,13 @@ const docTemplate = `{
                 "kv_tunnel": {
                     "type": "boolean"
                 },
+                "notify": {
+                    "type": "boolean"
+                },
                 "preview": {
+                    "type": "string"
+                },
+                "retry": {
                     "type": "string"
                 },
                 "wave": {
@@ -1970,6 +2221,27 @@ const docTemplate = `{
                 "consul_token": {
                     "type": "string"
                 },
+                "docker_all_containers": {
+                    "type": "boolean"
+                },
+                "docker_host": {
+                    "type": "string"
+                },
+                "docker_mode": {
+                    "type": "string"
+                },
+                "docker_platform": {
+                    "type": "string"
+                },
+                "docker_socket": {
+                    "type": "string"
+                },
+                "docker_via_local": {
+                    "type": "string"
+                },
+                "docker_via_ssh_host": {
+                    "type": "string"
+                },
                 "gcp_project": {
                     "type": "string"
                 },
@@ -2020,6 +2292,21 @@ const docTemplate = `{
                 },
                 "refresh": {
                     "type": "boolean"
+                },
+                "ssh_user": {
+                    "type": "string"
+                },
+                "truenas_api_key": {
+                    "type": "string"
+                },
+                "truenas_insecure": {
+                    "type": "boolean"
+                },
+                "truenas_url": {
+                    "type": "string"
+                },
+                "truenas_user": {
+                    "type": "string"
                 }
             }
         },
@@ -2557,8 +2844,20 @@ const docTemplate = `{
                 "date": {
                     "type": "string"
                 },
+                "logs_command_allowed": {
+                    "type": "boolean"
+                },
+                "metrics_url": {
+                    "type": "string"
+                },
                 "session_recording_available": {
                     "type": "boolean"
+                },
+                "session_recording_last_purge_at": {
+                    "type": "string"
+                },
+                "session_recording_retention": {
+                    "type": "string"
                 },
                 "terminal_assist_available": {
                     "type": "boolean"
@@ -2606,6 +2905,12 @@ const docTemplate = `{
                 },
                 "host_count": {
                     "type": "integer"
+                },
+                "hosts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/hosts.Record"
+                    }
                 },
                 "recipe_content_hash": {
                     "type": "string"
@@ -2756,11 +3061,20 @@ const docTemplate = `{
         "webserver.RecordingsListResponse": {
             "type": "object",
             "properties": {
+                "file_count": {
+                    "type": "integer"
+                },
                 "items": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/webserver.RecordingListEntry"
                     }
+                },
+                "retention": {
+                    "$ref": "#/definitions/webserver.RecordingsRetentionInfo"
+                },
+                "total_bytes": {
+                    "type": "integer"
                 }
             }
         },
@@ -2786,6 +3100,36 @@ const docTemplate = `{
                 }
             }
         },
+        "webserver.RecordingsRetentionInfo": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "max_age": {
+                    "type": "string"
+                }
+            }
+        },
+        "webserver.RecordingsSummarizeRequest": {
+            "type": "object",
+            "properties": {
+                "file_name": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                }
+            }
+        },
+        "webserver.RecordingsSummarizeResponse": {
+            "type": "object",
+            "properties": {
+                "reply": {
+                    "type": "string"
+                }
+            }
+        },
         "webserver.ResolvedStepSummary": {
             "type": "object",
             "properties": {
@@ -2807,7 +3151,13 @@ const docTemplate = `{
                 "kind": {
                     "type": "string"
                 },
+                "notify": {
+                    "type": "boolean"
+                },
                 "preview": {
+                    "type": "string"
+                },
+                "retry": {
                     "type": "string"
                 },
                 "run_as": {

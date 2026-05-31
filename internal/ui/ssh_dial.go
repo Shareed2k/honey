@@ -13,16 +13,18 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/pvelxc"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"github.com/shareed2k/honey/internal/truenasshell"
 )
 
 func init() {
-	hostexec.SetK8sExecutor(&k8sPodExecutor{})
-	hostexec.SetDockerExecutor(dockerExecutor{})
-	hostexec.SetTrueNASRunTunnel(RunTrueNASTunnel)
-	hostexec.SetTrueNASDialUpstream(DialTrueNASUpstream)
+	// K8s and Docker executors are registered in their provider packages' init() functions.
+	// The interactive session hooks are wired in ui/k8s_executor.go and ui/docker_executor.go init() functions.
+	truenasprovider.SetRunTunnel(RunTrueNASTunnel)
+	truenasprovider.SetDialUpstream(DialTrueNASUpstream)
 	hostexec.SetSSHRunInteractive(func(user string, r hosts.Record, rec any) error {
 		var sr *SessionRecorder
 		if rec != nil {
@@ -64,6 +66,9 @@ func runSSHInteractive(user string, r hosts.Record, recorder *SessionRecorder) e
 	if id, ok := hosts.MetaSSHIdentityFile(&r); ok {
 		identity = id
 	}
+	if metaUser := r.Meta["ssh_user"]; metaUser != "" && strings.TrimSpace(user) == "" {
+		user = metaUser
+	}
 	client, cleanup, err := sshclient.DialSSHClient(user, host, sshPort, identity)
 	if err != nil {
 		return err
@@ -74,7 +79,7 @@ func runSSHInteractive(user string, r hosts.Record, recorder *SessionRecorder) e
 }
 
 func runProxmoxLXCTTYInteractive(ctx context.Context, r hosts.Record, recorder *SessionRecorder) error {
-	b, ok := hostexec.ProxmoxBackendByName(r.Meta["backend_name"])
+	b, ok := proxmoxprovider.BackendByName(r.Meta["backend_name"])
 	if !ok {
 		return fmt.Errorf("proxmox backend not configured")
 	}
