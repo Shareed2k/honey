@@ -96,8 +96,8 @@ github.com/MirrexOne/unqueryvet v1.5.4 h1:38QOxShO7JmMWT+eCdDMbcUgGCOeJphVkzzRgy
 github.com/MirrexOne/unqueryvet v1.5.4/go.mod h1:fs9Zq6eh1LRIhsDIsxf9PONVUjYdFHdtkHIgZdJnyPU=
 github.com/OpenPeeDeeP/depguard/v2 v2.2.1 h1:vckeWVESWp6Qog7UZSARNqfu/cZqvki8zsuj3piCMx4=
 github.com/OpenPeeDeeP/depguard/v2 v2.2.1/go.mod h1:q4DKzC4UcVaAvcfd41CZh0PWpGgzrVxUYBlgKNGquUo=
-github.com/Shareed2k/netstatus v1.0.3-0.20260531065801-ecfc5d7ce6dd h1:wr2OihdwAxeTKN2vridopmKYE3JvjK8dDdvXQBr9y6w=
-github.com/Shareed2k/netstatus v1.0.3-0.20260531065801-ecfc5d7ce6dd/go.mod h1:OkyqZo9liIcbqu10htMXx85IQgk86hxHHiJwziNms0A=
+github.com/Shareed2k/netstatus v0.0.0-20260531075009-a3598691cb53 h1:+Mm1goTZ2Qc0JvXaIGCOggTnMzsl9dgCiBQwEV76DDY=
+github.com/Shareed2k/netstatus v0.0.0-20260531075009-a3598691cb53/go.mod h1:OkyqZo9liIcbqu10htMXx85IQgk86hxHHiJwziNms0A=
 github.com/Telmate/proxmox-api-go v0.0.0-20260526212231-19794abe0b9e h1:Ej7PPoU5zJMNy/balYbLomflwoHu3SoJaz/kEvdJA/E=
 github.com/Telmate/proxmox-api-go v0.0.0-20260526212231-19794abe0b9e/go.mod h1:90hDRcdB9vqdHdtkKje50NGkGbphbGKhtefqezo/Bgc=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=

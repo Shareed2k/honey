@@ -503,4 +503,4 @@ tool (
 	golang.org/x/vuln/cmd/govulncheck
 )
 
-replace github.com/iamcalledrob/netstatus => github.com/Shareed2k/netstatus v1.0.3-0.20260531065801-ecfc5d7ce6dd
+replace github.com/iamcalledrob/netstatus => github.com/Shareed2k/netstatus v0.0.0-20260531075009-a3598691cb53
