@@ -29,15 +29,11 @@ jobs:
         with:
           node-version: 20
 
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-
       - name: Build web UI (embed static)
-        run: task webui
+        run: go tool task webui
 
       - name: Build WASM plugins
-        run: task build-plugin-modules
+        run: go tool task build-plugin-modules
 
       - name: Go test
         run: go test ./... -count=1
@@ -57,36 +53,8 @@ jobs:
         with:
           node-version: 20
 
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build web UI (embed static)
-        run: task webui
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          args: --timeout=10m
-
-  security:
-    name: Security
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: govulncheck
-        run: go tool govulncheck ./...
-
-      - name: gosec
-        run: go tool gosec -fmt text -severity medium -quiet ./...
+      - name: Run lint + security checks
+        run: go tool task lint
 
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
