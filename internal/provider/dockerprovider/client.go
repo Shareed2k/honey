@@ -144,9 +144,6 @@ func newHoneySSHAPIClient(ctx context.Context, b BackendConfig, opts APIClientOp
 	if opts.BorrowedSSH != nil {
 		sshClient = opts.BorrowedSSH
 		cleanup = func() {}
-	} else if borrowed, ok := BorrowDockerSSH(opts.SSHUser, hop.HopRecord()); ok {
-		sshClient = borrowed
-		cleanup = func() {}
 	} else {
 		user := strings.TrimSpace(opts.SSHUser)
 		if user == "" {

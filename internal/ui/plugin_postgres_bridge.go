@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -19,25 +18,14 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	postgresPoolsOnce sync.Once
-	postgresPools     *postgres.PoolManager
-)
-
-func sharedPostgresPools() *postgres.PoolManager {
-	postgresPoolsOnce.Do(func() {
-		postgresPools = postgres.NewPoolManager()
-	})
-	return postgresPools
-}
-
 type pluginPostgresBridge struct {
-	h *plugins.HostRunContext
+	h     *plugins.HostRunContext
+	pools *postgres.PoolManager
 }
 
 // NewPluginPostgresBridge returns a PostgresBridge for one plugin host invocation.
-func NewPluginPostgresBridge(h *plugins.HostRunContext) plugins.PostgresBridge {
-	return &pluginPostgresBridge{h: h}
+func NewPluginPostgresBridge(h *plugins.HostRunContext, pools *postgres.PoolManager) plugins.PostgresBridge {
+	return &pluginPostgresBridge{h: h, pools: pools}
 }
 
 func (b *pluginPostgresBridge) Query(ctx context.Context, in apiv1.PostgresSQLInput) apiv1.PostgresOutput {
@@ -69,7 +57,7 @@ func (b *pluginPostgresBridge) runSQL(ctx context.Context, in apiv1.PostgresSQLI
 	}
 	timeout := clampPostgresTimeout(in.TimeoutMS, b.h.MaxPostgresTimeoutMS)
 	readonly := postgresReadonlyDefault(in.Readonly)
-	pools := sharedPostgresPools()
+	pools := b.pools
 	pluginID := b.h.PluginID
 	hostName := b.h.Record.Name
 
@@ -113,7 +101,7 @@ func (b *pluginPostgresBridge) Migrate(ctx context.Context, in apiv1.PostgresMig
 		return apiv1.PostgresOutput{Failed: true, Error: err.Error()}
 	}
 	timeout := clampPostgresTimeout(in.TimeoutMS, b.h.MaxPostgresTimeoutMS)
-	res, err := postgres.Migrate(ctx, sharedPostgresPools(), dsn, dir, files, postgres.MigrateOpts{
+	res, err := postgres.Migrate(ctx, b.pools, dsn, dir, files, postgres.MigrateOpts{
 		Timeout: timeout, PluginID: b.h.PluginID, HostName: b.h.Record.Name,
 	})
 	if err != nil {

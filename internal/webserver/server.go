@@ -29,6 +29,8 @@ type Options struct {
 	Token              string
 	ConfigPath         string // optional explicit --config
 	Config             *config.File
+	ExecRegistry       hostexec.Registry
+	SearchRegistry     *searchrun.Registry
 	RecordDir          string // optional session recording output dir
 	LocalFilesRoot     string // optional root for local file browser/upload/download
 	AgentBinaryPath    string // optional explicit honey-transfer-agent binary path
@@ -75,7 +77,9 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.MaxUploadSize <= 0 {
 		opts.MaxUploadSize = 100 << 20
 	}
-	hostexec.ReconfigureFromHoneyConfig(opts.Config)
+	if opts.ExecRegistry != nil {
+		opts.ExecRegistry.Reconfigure(opts.Config)
+	}
 
 	s := &Server{
 		opts:            opts,
@@ -87,7 +91,7 @@ func NewServer(opts Options) (*Server, error) {
 		pgPools:         postgres.NewPoolManager(),
 		fileClientCache: ui.NewClientCache(),
 	}
-	ui.SetDockerSSHBorrowCache(s.fileClientCache)
+	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.routes()
 	return s, nil
 }
@@ -277,7 +281,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ProvidersResponse{
-		Providers: searchrun.ListSearchProviderIDs(searchrun.ProviderOverrides{}),
+		Providers: s.opts.SearchRegistry.ListSearchProviderIDs(searchrun.ProviderOverrides{}),
 	})
 }
 
@@ -290,7 +294,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 // @Router /api/v1/backends [get]
 // @Security BearerAuth
 func (s *Server) handleBackends(w http.ResponseWriter, _ *http.Request) {
-	out, err := hostapi.ListBackends(strings.TrimSpace(s.opts.ConfigPath))
+	out, err := hostapi.ListBackends(strings.TrimSpace(s.opts.ConfigPath), s.opts.SearchRegistry)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -327,7 +331,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	in.SSHUser = s.sshUser(in.SSHUser)
 	ctx := r.Context()
 	start := time.Now()
-	out, err := hostapi.SearchHosts(ctx, &in)
+	out, err := hostapi.SearchHosts(ctx, &in, s.opts.ExecRegistry, s.opts.SearchRegistry)
 	if s.metrics != nil {
 		n := 0
 		if err == nil {

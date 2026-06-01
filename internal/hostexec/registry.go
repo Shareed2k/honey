@@ -6,92 +6,70 @@ import (
 	"io"
 	"net"
 	"strings"
-	"sync"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-var (
-	regMu sync.RWMutex
-
-	// executorResolver is wired once by searchrun.init() to dispatch records to provider executors.
-	executorResolver func(hosts.Record) Executor
-
-	// configReloader is wired once by searchrun.init() to dispatch ReconfigureFromHoneyConfig to all provider factories.
-	configReloader func(cfg *config.File)
-
-	// dialHoneyHost connects to PrimaryIP (or alias) via SSH; wired by internal/sshclient init.
-	dialHoneyHost func(user, hostAlias string, overridePort int, identityFile string) (HostClient, error)
-
-	// sshRunInteractive opens a local TTY session; wired by internal/ui init.
-	sshRunInteractive func(user string, r hosts.Record, recorder any) error
-
-	// sshRunTunnel runs SSH -L style forwarding; wired by internal/sshclient init.
-	sshRunTunnel func(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error
-)
-
-// SetConfigReloader wires a provider config reloader (called from searchrun.init).
-func SetConfigReloader(fn func(cfg *config.File)) {
-	regMu.Lock()
-	defer regMu.Unlock()
-	configReloader = fn
+// Registry handles resolving and dispatching host execution.
+type Registry interface {
+	ForRecord(r hosts.Record) Executor
+	Reconfigure(cfg *config.File)
+	RunSSHTunnel(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error
+	BorrowSSH(user string, hop hosts.Record) (interface{}, bool)
 }
 
-// SetExecutorResolver wires the provider registry's executor dispatch (called from searchrun.init).
-func SetExecutorResolver(fn func(hosts.Record) Executor) {
-	regMu.Lock()
-	defer regMu.Unlock()
-	executorResolver = fn
+// StandardRegistry implements Registry using injected behavior.
+type StandardRegistry struct {
+	Resolver       func(hosts.Record, Registry) Executor
+	Reloader       func(cfg *config.File)
+	Dialer         func(user, hostAlias string, overridePort int, identityFile string) (HostClient, error)
+	RunInteractive func(user string, r hosts.Record, recorder any) error
+	RunTunnel      func(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error
+	SSHBorrower    func(user string, hop hosts.Record) (interface{}, bool)
 }
 
-// SetDialHoney registers the SSH HostClient dialer (from sshclient.init).
-func SetDialHoney(fn func(user, hostAlias string, overridePort int, identityFile string) (HostClient, error)) {
-	regMu.Lock()
-	defer regMu.Unlock()
-	dialHoneyHost = fn
+// ForRecord returns the Executor for a search row.
+// Provider-specific dispatch is handled by the Resolver.
+// SSH is the fallback when no provider claims the record.
+func (r *StandardRegistry) ForRecord(rec hosts.Record) Executor {
+	if r.Resolver != nil {
+		if ex := r.Resolver(rec, r); ex != nil {
+			return ex
+		}
+	}
+	return &sshExecutor{reg: r}
 }
 
-// SetSSHRunInteractive registers the TTY interactive runner (from ui.init).
-func SetSSHRunInteractive(fn func(user string, r hosts.Record, recorder any) error) {
-	regMu.Lock()
-	defer regMu.Unlock()
-	sshRunInteractive = fn
+// BorrowSSH delegates to the configured SSHBorrower hook if provided.
+func (r *StandardRegistry) BorrowSSH(user string, hop hosts.Record) (interface{}, bool) {
+	if r.SSHBorrower != nil {
+		return r.SSHBorrower(user, hop)
+	}
+	return nil, false
 }
 
-// SetSSHRunTunnel registers the SSH local-forward tunnel runner (from sshclient.init).
-func SetSSHRunTunnel(fn func(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error) {
-	regMu.Lock()
-	defer regMu.Unlock()
-	sshRunTunnel = fn
-}
-
-// ReconfigureFromHoneyConfig propagates config to all registered provider factories.
-// Safe to call from CLI after loading config and from the web server on startup.
-func ReconfigureFromHoneyConfig(cfg *config.File) {
-	regMu.RLock()
-	fn := configReloader
-	regMu.RUnlock()
-	if fn != nil {
-		fn(cfg)
+// Reconfigure propagates config to all registered provider factories.
+func (r *StandardRegistry) Reconfigure(cfg *config.File) {
+	if r.Reloader != nil {
+		r.Reloader(cfg)
 	}
 }
 
-// RunSSHTunnel runs the SSH local-forward tunnel registered by sshclient.
-func RunSSHTunnel(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error {
-	regMu.RLock()
-	fn := sshRunTunnel
-	regMu.RUnlock()
-	if fn == nil {
+// RunSSHTunnel runs the SSH local-forward tunnel.
+func (r *StandardRegistry) RunSSHTunnel(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error {
+	if r.RunTunnel == nil {
 		return errTunnelNotConfigured
 	}
-	return fn(ctx, user, host, sshPort, localFwd, out)
+	return r.RunTunnel(ctx, user, host, sshPort, localFwd, out)
 }
 
-type sshExecutor struct{}
+type sshExecutor struct {
+	reg *StandardRegistry
+}
 
-func (sshExecutor) Dial(user string, r hosts.Record) (HostClient, error) {
-	if dialHoneyHost == nil {
+func (e *sshExecutor) Dial(user string, r hosts.Record) (HostClient, error) {
+	if e.reg == nil || e.reg.Dialer == nil {
 		return nil, errDialNotConfigured
 	}
 	host := strings.TrimSpace(r.PrimaryIP)
@@ -106,18 +84,18 @@ func (sshExecutor) Dial(user string, r hosts.Record) (HostClient, error) {
 	if id, ok := hosts.MetaSSHIdentityFile(&r); ok {
 		identity = id
 	}
-	return dialHoneyHost(user, host, override, identity)
+	return e.reg.Dialer(user, host, override, identity)
 }
 
-func (sshExecutor) RunInteractive(user string, r hosts.Record) error {
-	if sshRunInteractive == nil {
+func (e *sshExecutor) RunInteractive(user string, r hosts.Record) error {
+	if e.reg == nil || e.reg.RunInteractive == nil {
 		return errInteractiveNotConfigured
 	}
-	return sshRunInteractive(user, r, nil)
+	return e.reg.RunInteractive(user, r, nil)
 }
 
-func (sshExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
-	if sshRunTunnel == nil {
+func (e *sshExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
+	if e.reg == nil || e.reg.RunTunnel == nil {
 		return errTunnelNotConfigured
 	}
 	host := strings.TrimSpace(r.PrimaryIP)
@@ -128,24 +106,7 @@ func (sshExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, l
 	if p, ok := hosts.MetaSSHPort(&r); ok {
 		override = p
 	}
-	return sshRunTunnel(ctx, user, host, override, localFwd, out)
-}
-
-var defaultSSHExecutor = sshExecutor{}
-
-// ForRecord returns the Executor for a search row.
-// Provider-specific dispatch is handled by the resolver registered via SetExecutorResolver (searchrun).
-// SSH is the fallback when no provider claims the record.
-func ForRecord(r hosts.Record) Executor {
-	regMu.RLock()
-	fn := executorResolver
-	regMu.RUnlock()
-	if fn != nil {
-		if ex := fn(r); ex != nil {
-			return ex
-		}
-	}
-	return defaultSSHExecutor
+	return e.reg.RunTunnel(ctx, user, host, override, localFwd, out)
 }
 
 func (sshExecutor) DialUpstream(_ context.Context, _ string, _ hosts.Record, _ string) (net.Conn, error) {

@@ -177,7 +177,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			if resErr != nil {
 				planNote = "secret resolver: " + resErr.Error()
 			} else {
-				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil, s.metrics)
+				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil, s.metrics, s.opts.ExecRegistry, s.pgPools)
 				plan := buf.String()
 				if runErr != nil {
 					planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))

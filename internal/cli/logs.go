@@ -153,13 +153,16 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	clientCache := ui.NewClientCache()
-	ui.SetDockerSSHBorrowCache(clientCache)
 	defer clientCache.CloseAll()
 
-	records, sshUser, _, _, err := runSearchCore(cmd, []string{target})
+	records, sshUser, cfg, _, err := runSearchCore(cmd, []string{target})
 	if err != nil {
 		return err
 	}
+
+	reg := buildHostExecRegistry()
+	reg.Reconfigure(cfg)
+	clientCache.SetRegistry(reg)
 	if len(records) == 0 {
 		return fmt.Errorf("no records match %q", target)
 	}

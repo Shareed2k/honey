@@ -175,7 +175,7 @@ func (s *Server) investigate(ctx context.Context, alert amtemplate.Alert) {
 		return
 	}
 
-	records, err := hostapi.SearchHosts(ctx, &hostapi.SearchHostsInput{Name: hostQuery})
+	records, err := hostapi.SearchHosts(ctx, &hostapi.SearchHostsInput{Name: hostQuery}, nil, nil)
 	if err != nil || len(records.Records) == 0 {
 		fmt.Printf("[alert webhook] no hosts found for query %q: %v\n", hostQuery, err)
 		return
@@ -192,7 +192,7 @@ func (s *Server) investigate(ctx context.Context, alert amtemplate.Alert) {
 		recordDir = strings.TrimSpace(s.fileCfg.Defaults.RecordDir)
 	}
 
-	results, _ := ui.ExecuteSSHParallel("", records.Records, func(_ hosts.Record) string { return cmd }, 8)
+	results, _ := ui.ExecuteSSHParallel("", records.Records, func(_ hosts.Record) string { return cmd }, 8, nil)
 	// Build notification body.
 	var sb strings.Builder
 	_, _ = fmt.Fprintf(&sb, "Alert: %s\nHost query: %s\n\n", alert.Labels["alertname"], hostQuery)

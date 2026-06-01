@@ -41,10 +41,13 @@ func ResolveAppDialer(_ context.Context, user string, rec hosts.Record, _ string
 func ResolveAppDialerWithCache(user string, rec hosts.Record, cache *ClientCache) (proxy.Dialer, io.Closer, error) {
 	if !appDialerUsesSSH(rec) {
 		var executor hostexec.Executor
-		if rec.Provider == "truenas" {
+		switch {
+		case rec.Provider == "truenas":
 			executor = truenasprovider.APIShellExecutor()
-		} else {
-			executor = hostexec.ForRecord(rec)
+		case cache != nil && cache.reg != nil:
+			executor = cache.reg.ForRecord(rec)
+		default:
+			return nil, nil, fmt.Errorf("no executor registry available")
 		}
 
 		dialFn := func(ctx context.Context, _, address string) (net.Conn, error) {

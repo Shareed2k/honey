@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 )
@@ -23,8 +24,9 @@ func RunDockerWebTTY(
 	stdout io.Writer,
 	cols, rows int,
 	resizeCh <-chan DockerTerminalSize,
+	reg hostexec.Registry,
 ) error {
-	client, err := dockerExecutor{}.Dial(user, r)
+	client, err := reg.ForRecord(r).Dial(user, r)
 	if err != nil {
 		return err
 	}

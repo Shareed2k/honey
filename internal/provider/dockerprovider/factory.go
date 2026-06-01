@@ -19,9 +19,10 @@ func dockerOverride(overrides searchrun.ProviderOverrides) (o config.DockerBacke
 	return o
 }
 
-func init() {
-	searchrun.Register(dockerFactory{})
+// NewFactory returns a new factory for this provider.
+func NewFactory() searchrun.ProviderFactory {
 	searchrun.RegisterDockerDiscover(DiscoverOnVMs)
+	return dockerFactory{}
 }
 
 type dockerFactory struct{}
@@ -80,10 +81,10 @@ func (dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (dockerFactory) ProviderName() string { return "docker" }
 
-func (dockerFactory) ExecutorFor(r hosts.Record) hostexec.Executor {
+func (dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor {
 	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
 	if k == "container" || k == "swarm_task" {
-		return DockerExecutor{}
+		return &DockerExecutor{reg: reg}
 	}
 	return nil
 }

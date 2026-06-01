@@ -9,6 +9,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/sshclient"
 )
 
 func resolveProxmoxExecutor(r hosts.Record) hostexec.Executor {
@@ -58,7 +59,7 @@ func (p *proxmoxExecutor) RunTunnel(ctx context.Context, user string, r hosts.Re
 	if ip == "" {
 		return errProxmoxNoIP
 	}
-	return hostexec.RunSSHTunnel(ctx, user, ip, 0, localFwd, out)
+	return sshclient.RunTunnelGo(ctx, user, ip, 0, localFwd, out)
 }
 
 func (p *proxmoxExecutor) DialUpstream(_ context.Context, _ string, _ hosts.Record, _ string) (net.Conn, error) {

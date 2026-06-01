@@ -191,7 +191,6 @@ func runAlertInvestigate(cmd *cobra.Command, args []string) error {
 
 	// Run search and open TUI pre-filtered to the resolved host query.
 	clientCache := ui.NewClientCache()
-	ui.SetDockerSSHBorrowCache(clientCache)
 
 	// Set the name filter to the resolved host query for runSearchCore.
 	if !cmd.Flags().Changed("name") {
@@ -203,6 +202,10 @@ func runAlertInvestigate(cmd *cobra.Command, args []string) error {
 		clientCache.CloseAll()
 		return err
 	}
+
+	reg := buildHostExecRegistry()
+	reg.Reconfigure(cfg2)
+	clientCache.SetRegistry(reg)
 
 	if len(records) == 0 {
 		clientCache.CloseAll()

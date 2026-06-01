@@ -20,8 +20,9 @@ func truenasOverride(overrides searchrun.ProviderOverrides) (o config.TrueNASBac
 	return o
 }
 
-func init() {
-	searchrun.Register(truenasFactory{})
+// NewFactory returns a new factory for this provider.
+func NewFactory() searchrun.ProviderFactory {
+	return truenasFactory{}
 }
 
 type truenasFactory struct{}
@@ -80,7 +81,7 @@ func (truenasFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (truenasFactory) ProviderName() string { return "truenas" }
 
-func (truenasFactory) ExecutorFor(r hosts.Record) hostexec.Executor {
+func (truenasFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
 	if TruenasTunnelUsesAPIShell(r) {
 		return APIShellExecutor()
 	}

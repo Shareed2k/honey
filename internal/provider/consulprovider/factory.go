@@ -18,8 +18,9 @@ func consulOverride(overrides searchrun.ProviderOverrides) (o config.ConsulBacke
 	return o
 }
 
-func init() {
-	searchrun.Register(consulFactory{})
+// NewFactory returns a new factory for this provider.
+func NewFactory() searchrun.ProviderFactory {
+	return consulFactory{}
 }
 
 type consulFactory struct{}

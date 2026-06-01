@@ -10,14 +10,16 @@ import (
 	"sync/atomic"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/stepkv"
 	"go.uber.org/zap"
 )
 
-func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, cliEnv map[string]string, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, pluginMgr *plugins.Manager, secretResolver cuetry.SecretResolver, execute bool, cache *ClientCache, recipeKV *RecipeKVCoordinator, tunnelCoord *RecipeTunnelCoordinator, outputStore *cuetry.StepOutputStore, outputCapture *cuetry.RecipeOutputCapture, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) error {
+func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, cliEnv map[string]string, sshUser string, targets []hosts.Record, ch chan<- HostExecResult, pluginMgr *plugins.Manager, secretResolver cuetry.SecretResolver, execute bool, cache *ClientCache, recipeKV *RecipeKVCoordinator, tunnelCoord *RecipeTunnelCoordinator, outputStore *cuetry.StepOutputStore, outputCapture *cuetry.RecipeOutputCapture, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32, reg hostexec.Registry, pools *postgres.PoolManager) error {
 	if pluginMgr == nil || !pluginMgr.Enabled() {
 		return fmt.Errorf("plugin step requires plugins.enabled in honey config")
 	}
@@ -38,7 +40,7 @@ func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir st
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runCuePluginOnHost(ctx, recipe, recipeDir, stepIdx, kind, step, target, cliEnv, sshUser, pluginMgr, secretResolver, execute, cache, recipeKV, tunnelCoord, outputStore, outputCapture, retryCfg, obs, attemptMax)
+			res := runCuePluginOnHost(ctx, recipe, recipeDir, stepIdx, kind, step, target, cliEnv, sshUser, pluginMgr, secretResolver, execute, cache, recipeKV, tunnelCoord, outputStore, outputCapture, retryCfg, obs, attemptMax, reg, pools)
 			ch <- res
 		}()
 	}
@@ -46,7 +48,7 @@ func streamCueStepPlugin(ctx context.Context, recipe cuetry.Recipe, recipeDir st
 	return nil
 }
 
-func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, target hosts.Record, cliEnv map[string]string, sshUser string, pluginMgr *plugins.Manager, secretResolver cuetry.SecretResolver, execute bool, cache *ClientCache, recipeKV *RecipeKVCoordinator, tunnelCoord *RecipeTunnelCoordinator, outputStore *cuetry.StepOutputStore, outputCapture *cuetry.RecipeOutputCapture, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) HostExecResult {
+func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir string, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, target hosts.Record, cliEnv map[string]string, sshUser string, pluginMgr *plugins.Manager, secretResolver cuetry.SecretResolver, execute bool, cache *ClientCache, recipeKV *RecipeKVCoordinator, tunnelCoord *RecipeTunnelCoordinator, outputStore *cuetry.StepOutputStore, outputCapture *cuetry.RecipeOutputCapture, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32, reg hostexec.Registry, pools *postgres.PoolManager) HostExecResult {
 	res := HostExecResult{Name: target.Name, IP: target.PrimaryIP, Provider: target.Provider, Success: false}
 	hostJSON, err := json.Marshal(target)
 	if err != nil {
@@ -78,7 +80,7 @@ func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir str
 		return res
 	}
 	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
-	bridge := NewPluginRemoteBridge(sshUser, target, cache, recipeDir, runAs, env, pluginMgr.EffectivePaths(step.Plugin.ID))
+	bridge := NewPluginRemoteBridge(sshUser, target, cache, reg, recipeDir, runAs, env, pluginMgr.EffectivePaths(step.Plugin.ID))
 	hostCtx := &plugins.HostRunContext{
 		SSHUser:              sshUser,
 		Record:               target,
@@ -99,7 +101,7 @@ func runCuePluginOnHost(ctx context.Context, recipe cuetry.Recipe, recipeDir str
 	if secretResolver != nil {
 		hostCtx.ResolveSecret = secretResolver.Resolve
 	}
-	hostCtx.Postgres = NewPluginPostgresBridge(hostCtx)
+	hostCtx.Postgres = NewPluginPostgresBridge(hostCtx, pools)
 	callCtx := plugins.WithHostRunContext(ctx, hostCtx)
 	if kvSess != nil {
 		callCtx = plugins.WithKVSession(callCtx, kvSess)
@@ -203,7 +205,7 @@ func runCueStepPluginDry(out io.Writer, recipe cuetry.Recipe, recipeDir string, 
 		return nil
 	}
 	for _, target := range targets {
-		res := runCuePluginOnHost(context.Background(), recipe, recipeDir, i, cuetry.StepKindPlugin, step, target, cliEnv, sshUser, pluginMgr, secretResolver, false, nil, nil, nil, nil, nil, cuetry.RecipeStepRetry{}, nil, nil)
+		res := runCuePluginOnHost(context.Background(), recipe, recipeDir, i, cuetry.StepKindPlugin, step, target, cliEnv, sshUser, pluginMgr, secretResolver, false, nil, nil, nil, nil, nil, cuetry.RecipeStepRetry{}, nil, nil, nil, nil)
 		_, _ = fmt.Fprintf(out, "step %d: kind=plugin name=%q %s plugin=%s action=%s success=%v skipped=%v output=%q\n",
 			i, target.Name, FormatTargetForDryRun(target), pl.ID, pl.Action, res.Success, res.Skipped, strings.TrimSpace(res.Output))
 		if res.ErrMsg != "" {

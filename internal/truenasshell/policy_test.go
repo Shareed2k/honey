@@ -4,8 +4,9 @@ import (
 	"testing"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 func TestShouldUseTrueNASShell(t *testing.T) {
@@ -18,8 +19,9 @@ func TestShouldUseTrueNASShell(t *testing.T) {
 			},
 		},
 	}
-	hostexec.ReconfigureFromHoneyConfig(cfg)
-	defer hostexec.ReconfigureFromHoneyConfig(nil)
+	reg := searchrun.NewRegistry([]searchrun.ProviderFactory{truenasprovider.NewFactory()})
+	reg.ReconfigureFromConfig(cfg)
+	defer reg.ReconfigureFromConfig(nil)
 
 	rec := hosts.Record{
 		Provider: "truenas",

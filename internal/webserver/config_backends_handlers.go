@@ -58,6 +58,41 @@ func (s *Server) handleConfigBackendsGet(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(cfg.Backends)
 }
 
+// Helper to abstract the duplicated read-validate-save-apply cycle
+func (s *Server) updateConfigBackend(w http.ResponseWriter, updateFn func(cfg *config.File) error) {
+	cfgPath, err := s.resolveWritableConfigPath()
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	if err := updateFn(cfg); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	if err := cfg.Validate(); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	if err := saveConfigFile(cfgPath, cfg); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	s.applyInMemoryConfig(cfgPath, cfg)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
+}
+
 // handleConfigBackendsPost appends a backend entry for the given kind.
 // @Summary Append backend entry
 // @Tags config
@@ -72,36 +107,15 @@ func (s *Server) handleConfigBackendsGet(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request) {
 	kind := strings.ToLower(strings.TrimSpace(r.PathValue("kind")))
-	cfgPath, err := s.resolveWritableConfigPath()
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
-	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	if err := appendBackendByKind(cfg, kind, body); err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	if err := cfg.Validate(); err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	if err := saveConfigFile(cfgPath, cfg); err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
-	}
-	s.applyInMemoryConfig(cfgPath, cfg)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
+
+	s.updateConfigBackend(w, func(cfg *config.File) error {
+		return appendBackendByKind(cfg, kind, body, s.opts.SearchRegistry)
+	})
 }
 
 // handleConfigBackendsPut replaces a backend entry by index.
@@ -125,36 +139,15 @@ func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request)
 		httpError(w, fmt.Errorf("invalid index %q", idxStr), http.StatusBadRequest)
 		return
 	}
-	cfgPath, err := s.resolveWritableConfigPath()
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
-	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	if err := replaceBackendByKind(cfg, kind, idx, body); err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	if err := cfg.Validate(); err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	if err := saveConfigFile(cfgPath, cfg); err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
-	}
-	s.applyInMemoryConfig(cfgPath, cfg)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
+
+	s.updateConfigBackend(w, func(cfg *config.File) error {
+		return replaceBackendByKind(cfg, kind, idx, body, s.opts.SearchRegistry)
+	})
 }
 
 // handleConfigBackendsDelete removes a backend entry by index.
@@ -176,31 +169,14 @@ func (s *Server) handleConfigBackendsDelete(w http.ResponseWriter, r *http.Reque
 		httpError(w, fmt.Errorf("invalid index %q", idxStr), http.StatusBadRequest)
 		return
 	}
-	cfgPath, err := s.resolveWritableConfigPath()
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
-	}
-	if err := deleteBackendByKind(cfg, kind, idx); err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	if err := saveConfigFile(cfgPath, cfg); err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
-	}
-	s.applyInMemoryConfig(cfgPath, cfg)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(StatusResponse{Status: "ok", Path: cfgPath})
+
+	s.updateConfigBackend(w, func(cfg *config.File) error {
+		return deleteBackendByKind(cfg, kind, idx, s.opts.SearchRegistry)
+	})
 }
 
-func appendBackendByKind(cfg *config.File, kind string, body []byte) error {
-	slice, err := searchrun.GetBackendSliceByKind(cfg, kind)
+func appendBackendByKind(cfg *config.File, kind string, body []byte, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
 	if err != nil {
 		return err
 	}
@@ -212,8 +188,8 @@ func appendBackendByKind(cfg *config.File, kind string, body []byte) error {
 	return nil
 }
 
-func replaceBackendByKind(cfg *config.File, kind string, idx int, body []byte) error {
-	slice, err := searchrun.GetBackendSliceByKind(cfg, kind)
+func replaceBackendByKind(cfg *config.File, kind string, idx int, body []byte, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
 	if err != nil {
 		return err
 	}
@@ -228,8 +204,8 @@ func replaceBackendByKind(cfg *config.File, kind string, idx int, body []byte) e
 	return nil
 }
 
-func deleteBackendByKind(cfg *config.File, kind string, idx int) error {
-	slice, err := searchrun.GetBackendSliceByKind(cfg, kind)
+func deleteBackendByKind(cfg *config.File, kind string, idx int, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
 	if err != nil {
 		return err
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/shareed2k/honey/internal/alerts"
 	"github.com/shareed2k/honey/internal/anomaly"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/jsonutil"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
@@ -210,7 +211,7 @@ func streamOneLog(ctx context.Context, user string, rec hosts.Record, opts LogOp
 	case rec.Provider == "k8s" && rec.Meta["kind"] == "pod":
 		return streamK8sPodLogs(ctx, rec, opts, out, mu, prefix, grepRe, detector, fbw, disp)
 	case rec.Provider == "docker" && (rec.Meta["kind"] == "container" || rec.Meta["kind"] == "swarm_task"):
-		return streamDockerLogs(ctx, user, rec, opts, out, mu, prefix, grepRe, detector, fbw, disp)
+		return streamDockerLogs(ctx, user, rec, opts, out, mu, prefix, grepRe, detector, fbw, disp, cache.reg)
 	default:
 		return streamExecutorLogs(ctx, user, rec, opts, cache, out, mu, prefix, grepRe, detector, fbw, disp)
 	}
@@ -269,7 +270,7 @@ func streamK8sPodLogs(ctx context.Context, rec hosts.Record, opts LogOptions, ou
 	return copyPrefixedLines(ctx, r, out, mu, prefix, grepRe, opts.Highlight, detector, opts.AnomalyOnly, fbw, disp)
 }
 
-func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts LogOptions, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter, disp *alerts.Dispatcher) error {
+func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts LogOptions, out io.Writer, mu *sync.Mutex, prefix string, grepRe *regexp.Regexp, detector anomaly.Detector, fbw *feedbackWriter, disp *alerts.Dispatcher, reg hostexec.Registry) error {
 	containerID, err := dockerprovider.ContainerIDFromRecord(rec.Meta["container_id"])
 	if err != nil {
 		return err
@@ -278,7 +279,7 @@ func streamDockerLogs(ctx context.Context, user string, rec hosts.Record, opts L
 		zap.String("record", rec.Name),
 		zap.String("containerID", containerID),
 	)
-	dc, err := dockerExecutor{}.Dial(user, rec)
+	dc, err := reg.ForRecord(rec).Dial(user, rec)
 	if err != nil {
 		return err
 	}

@@ -7,24 +7,25 @@ import (
 	"os"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 )
 
 func init() {
-	dockerprovider.SetRunInteractive(func(user string, r hosts.Record) error {
-		return runDockerInteractiveWithRecorder(user, r, nil)
+	dockerprovider.SetRunInteractive(func(user string, r hosts.Record, reg hostexec.Registry) error {
+		return runDockerInteractiveWithRecorder(user, r, nil, reg)
 	})
 }
 
 // DialDockerCheck verifies that a docker record can reach the Engine API (dial + close).
 // Re-exported from dockerprovider for callers that already import ui.
-func DialDockerCheck(user string, r hosts.Record) error {
-	return dockerprovider.DialDockerCheck(user, r)
+func DialDockerCheck(user string, r hosts.Record, reg hostexec.Registry) error {
+	return dockerprovider.DialDockerCheck(user, r, reg)
 }
 
-func runDockerInteractiveWithRecorder(user string, r hosts.Record, recorder *SessionRecorder) error {
-	client, err := dockerExecutor{}.Dial(user, r)
+func runDockerInteractiveWithRecorder(user string, r hosts.Record, recorder *SessionRecorder, reg hostexec.Registry) error {
+	client, err := reg.ForRecord(r).Dial(user, r)
 	if err != nil {
 		if recorder != nil {
 			recorder.RecordError(err)

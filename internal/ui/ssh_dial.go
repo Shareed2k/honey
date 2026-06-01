@@ -25,22 +25,24 @@ func init() {
 	// The interactive session hooks are wired in ui/k8s_executor.go and ui/docker_executor.go init() functions.
 	truenasprovider.SetRunTunnel(RunTrueNASTunnel)
 	truenasprovider.SetDialUpstream(DialTrueNASUpstream)
-	hostexec.SetSSHRunInteractive(func(user string, r hosts.Record, rec any) error {
-		var sr *SessionRecorder
-		if rec != nil {
-			sr, _ = rec.(*SessionRecorder)
-		}
-		return runSSHInteractive(user, r, sr)
-	})
+}
+
+// RunSSHInteractive is the StandardRegistry implementation of RunInteractive.
+func RunSSHInteractive(user string, r hosts.Record, rec any) error {
+	var sr *SessionRecorder
+	if rec != nil {
+		sr, _ = rec.(*SessionRecorder)
+	}
+	return runSSHInteractive(user, r, sr)
 }
 
 // RunTerminalInteractive opens an interactive session (SSH, K8s, Docker, TrueNAS API shell, or Proxmox) on os.Stdin/Stdout.
-func RunTerminalInteractive(user string, r hosts.Record, console string) error {
+func RunTerminalInteractive(user string, r hosts.Record, console string, reg hostexec.Registry) error {
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
 		return runK8sInteractiveWithRecorder(user, r, nil)
 	}
 	if hosts.IsDockerRecord(r) {
-		return runDockerInteractiveWithRecorder(user, r, nil)
+		return runDockerInteractiveWithRecorder(user, r, nil, reg)
 	}
 	if truenasshell.ShouldUseTrueNASShell(r, console) {
 		return runTrueNASShellInteractive(context.Background(), console, r, nil)

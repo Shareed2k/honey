@@ -19,8 +19,9 @@ func k8sOverride(overrides searchrun.ProviderOverrides) (o config.KubernetesBack
 	return o
 }
 
-func init() {
-	searchrun.Register(k8sFactory{})
+// NewFactory returns a new factory for this provider.
+func NewFactory() searchrun.ProviderFactory {
+	return k8sFactory{}
 }
 
 type k8sFactory struct{}
@@ -63,7 +64,7 @@ func (k8sFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (k8sFactory) ProviderName() string { return "k8s" }
 
-func (k8sFactory) ExecutorFor(r hosts.Record) hostexec.Executor {
+func (k8sFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
 	if r.Meta["kind"] == "pod" {
 		return &K8sPodExecutor{}
 	}

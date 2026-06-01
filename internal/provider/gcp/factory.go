@@ -18,8 +18,9 @@ func gcpOverride(overrides searchrun.ProviderOverrides) (o config.GCPBackend) {
 	return o
 }
 
-func init() {
-	searchrun.Register(gcpFactory{})
+// NewFactory returns a new factory for this provider.
+func NewFactory() searchrun.ProviderFactory {
+	return gcpFactory{}
 }
 
 type gcpFactory struct{}

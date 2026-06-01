@@ -12,8 +12,10 @@ import (
 	"testing"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/searchrun"
 
 	// Register search providers for ListSearchProviderIDs / factories.
+	"github.com/shareed2k/honey/internal/provider/all"
 	_ "github.com/shareed2k/honey/internal/provider/awsprovider"
 	_ "github.com/shareed2k/honey/internal/provider/consulprovider"
 	_ "github.com/shareed2k/honey/internal/provider/gcp"
@@ -23,9 +25,10 @@ import (
 
 func TestProvidersEndpoint(t *testing.T) {
 	s, err := NewServer(Options{
-		ListenAddr: "127.0.0.1:0",
-		Token:      "tok",
-		Version:    "0",
+		ListenAddr:     "127.0.0.1:0",
+		Token:          "tok",
+		Version:        "0",
+		SearchRegistry: searchrun.NewRegistry(all.Factories()),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,10 +60,10 @@ func TestConfigBackendsCRUD(t *testing.T) {
 	}
 
 	s, err := NewServer(Options{
-		ListenAddr: "127.0.0.1:0",
-		Token:      "secret",
-		Version:    "0",
-		ConfigPath: cfgPath,
+		ListenAddr:     "127.0.0.1:0",
+		Token:          "secret",
+		ConfigPath:     cfgPath,
+		SearchRegistry: searchrun.NewRegistry(all.Factories()),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +179,7 @@ func TestConfigBackendsPutPathValues(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(initialAWS), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := NewServer(Options{ListenAddr: "127.0.0.1:0", Token: "t", ConfigPath: cfgPath})
+	s, err := NewServer(Options{ListenAddr: "127.0.0.1:0", Token: "t", ConfigPath: cfgPath, SearchRegistry: searchrun.NewRegistry(all.Factories())})
 	if err != nil {
 		t.Fatal(err)
 	}

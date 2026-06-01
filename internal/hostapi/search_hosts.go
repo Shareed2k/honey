@@ -53,7 +53,7 @@ func MergeSearchDefaultsFromConfig(cfg *config.File, q *hosts.Query) {
 }
 
 // SearchHosts runs the same search pipeline as honey search / MCP search_hosts.
-func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, error) {
+func SearchHosts(ctx context.Context, in *SearchHostsInput, reg hostexec.Registry, searchReg *searchrun.Registry) (SearchHostsOutput, error) {
 	out := SearchHostsOutput{Records: []hosts.Record{}}
 	if in == nil {
 		return out, fmt.Errorf("nil input")
@@ -69,7 +69,9 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 			return out, fmt.Errorf("config: %w", err)
 		}
 	}
-	hostexec.ReconfigureFromHoneyConfig(cfg)
+	if reg != nil {
+		reg.Reconfigure(cfg)
+	}
 
 	q := hosts.Query{
 		NameSubstring: in.Name,
@@ -78,7 +80,7 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput) (SearchHostsOutput, 
 	}
 	MergeSearchDefaultsFromConfig(cfg, &q)
 
-	provs := searchrun.BuildProviders(cfg, in.Overrides)
+	provs := searchReg.BuildProviders(cfg, in.Overrides)
 	want := hosts.ParseBackendNames(in.Backends)
 	if len(want) > 0 {
 		provs = hosts.FilterBackendsByNames(provs, want)

@@ -6,9 +6,11 @@ import (
 	"sync"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/postgres"
 	"go.uber.org/zap"
 )
 
@@ -31,6 +33,8 @@ func streamCueRecipeStepsGraph(
 	cache *ClientCache,
 	recipeKV *RecipeKVCoordinator,
 	tunnelCoord *RecipeTunnelCoordinator,
+	reg hostexec.Registry,
+	pools *postgres.PoolManager,
 ) error {
 	sg, err := cuetry.BuildStepGraphFromRecipe(recipe)
 	if err != nil {
@@ -54,7 +58,7 @@ func streamCueRecipeStepsGraph(
 		if len(batch) == 0 {
 			continue
 		}
-		if err := runGraphWave(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, obs, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, batch); err != nil {
+		if err := runGraphWave(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, obs, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, batch, defaultGraphStepParallelism, reg, pools); err != nil {
 			return err
 		}
 	}
@@ -131,6 +135,9 @@ func runGraphWave(
 	state []cuetry.StepRunState,
 	historyByIndex [][]HostExecResult,
 	batch []int,
+	parallelism int,
+	reg hostexec.Registry,
+	pools *postgres.PoolManager,
 ) error {
 	stepIDs := make([]string, len(batch))
 	for i, idx := range batch {
@@ -139,7 +146,7 @@ func runGraphWave(
 	zap.L().Debug("recipe graph wave", zap.Strings("step_ids", stepIDs))
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, defaultGraphStepParallelism)
+	sem := make(chan struct{}, parallelism)
 	var stateMu sync.Mutex
 	var historyMu sync.Mutex
 
@@ -153,7 +160,7 @@ func runGraphWave(
 			case <-ctx.Done():
 				return
 			}
-			graphRunOneStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, obs, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, &stateMu, &historyMu, idx)
+			graphRunOneStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, obs, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, &stateMu, &historyMu, idx, reg, pools)
 		}(idx)
 	}
 	wg.Wait()
@@ -185,6 +192,8 @@ func graphRunOneStep(
 	stateMu *sync.Mutex,
 	historyMu *sync.Mutex,
 	idx int,
+	reg hostexec.Registry,
+	pools *postgres.PoolManager,
 ) {
 	step := recipe.Steps[idx]
 	stepID := sg.IndexToID[idx]
@@ -210,7 +219,7 @@ func graphRunOneStep(
 	case cuetry.StepKindTemplate:
 		rows, stepErr = graphRunTemplateStep(ctx, recipe, recipeDir, idx, step, records, outputStore, outputCapture, secretResolver, recipeKV, execute, out)
 	default:
-		rows, stepErr = streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, idx, step, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, secretResolver, pluginMgr, execute, obs)
+		rows, stepErr = streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, idx, step, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, secretResolver, pluginMgr, execute, obs, reg, pools)
 	}
 
 	failed := stepErr != nil || (len(rows) > 0 && cueStepAllTargetsTransientTransportFailed(rows))

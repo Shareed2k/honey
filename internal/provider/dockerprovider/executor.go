@@ -17,6 +17,7 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -24,15 +25,17 @@ import (
 )
 
 // dockerRunInteractiveHook is wired by ui.init() to avoid an import cycle (ui imports dockerprovider, not vice versa).
-var dockerRunInteractiveHook func(user string, r hosts.Record) error
+var dockerRunInteractiveHook func(user string, r hosts.Record, reg hostexec.Registry) error
 
 // SetRunInteractive is called from ui.init() to wire the TTY session runner.
-func SetRunInteractive(fn func(string, hosts.Record) error) {
+func SetRunInteractive(fn func(string, hosts.Record, hostexec.Registry) error) {
 	dockerRunInteractiveHook = fn
 }
 
 // DockerExecutor implements hostexec.Executor for Docker containers.
-type DockerExecutor struct{}
+type DockerExecutor struct {
+	reg hostexec.Registry
+}
 
 // DockerNativeClient implements hostexec.HostClient via the Docker Engine API.
 type DockerNativeClient struct {
@@ -42,7 +45,7 @@ type DockerNativeClient struct {
 }
 
 // Dial connects to the Docker container and returns a DockerNativeClient.
-func (DockerExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
+func (e *DockerExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
 	if !hosts.IsDockerRecord(r) {
 		return nil, fmt.Errorf("record is not a connectable docker container")
 	}
@@ -50,7 +53,7 @@ func (DockerExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, er
 	if err != nil {
 		return nil, err
 	}
-	cli, err := DialDockerClient(user, r)
+	cli, err := e.DialDockerClient(user, r)
 	if err != nil {
 		return nil, err
 	}
@@ -62,16 +65,17 @@ func (DockerExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, er
 }
 
 // RunInteractive delegates to the hook registered by ui.init().
-func (DockerExecutor) RunInteractive(user string, r hosts.Record) error {
+func (e *DockerExecutor) RunInteractive(user string, r hosts.Record) error {
 	if dockerRunInteractiveHook == nil {
-		return fmt.Errorf("docker interactive session not configured (ui not initialized)")
+		return fmt.Errorf("interactive session not configured")
 	}
-	return dockerRunInteractiveHook(user, r)
+	return dockerRunInteractiveHook(user, r, e.reg)
 }
 
 // DialDockerCheck verifies that a docker record can reach the Engine API (dial + close).
-func DialDockerCheck(user string, r hosts.Record) error {
-	c, err := DockerExecutor{}.Dial(user, r)
+func DialDockerCheck(user string, r hosts.Record, reg hostexec.Registry) error {
+	ex := &DockerExecutor{reg: reg}
+	c, err := ex.Dial(user, r)
 	if err != nil {
 		return err
 	}
@@ -79,12 +83,12 @@ func DialDockerCheck(user string, r hosts.Record) error {
 }
 
 // RunTunnel is not supported for Docker containers.
-func (DockerExecutor) RunTunnel(context.Context, string, hosts.Record, string, io.Writer) error {
+func (e *DockerExecutor) RunTunnel(context.Context, string, hosts.Record, string, io.Writer) error {
 	return fmt.Errorf("docker provider does not support SSH-style tunnels; publish ports on the container instead")
 }
 
 // DialUpstream connects to a port inside the container via nc/socat.
-func (e DockerExecutor) DialUpstream(_ context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+func (e *DockerExecutor) DialUpstream(_ context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
 	c, err := e.Dial(user, r)
 	if err != nil {
 		return nil, err
@@ -118,7 +122,7 @@ func EffectiveDockerSSHUser(user string, r hosts.Record) string {
 }
 
 // DialDockerClient builds a moby client from record metadata (transport resolution).
-func DialDockerClient(user string, r hosts.Record) (*client.Client, error) {
+func (e *DockerExecutor) DialDockerClient(user string, r hosts.Record) (*client.Client, error) {
 	user = EffectiveDockerSSHUser(user, r)
 	opts := APIClientOptions{SSHUser: user}
 	transport := strings.TrimSpace(r.Meta["docker_transport"])
@@ -130,6 +134,13 @@ func DialDockerClient(user string, r hosts.Record) (*client.Client, error) {
 		// would match the first YAML backends.docker entry (often local DOCKER_HOST).
 		// Prefer the VM hop whenever discover metadata is present.
 		if vm, ok := VMRecordForHoneyDocker(r); ok {
+			if e.reg != nil {
+				if s, ok := e.reg.BorrowSSH(opts.SSHUser, vm); ok {
+					if sshClient, ok := s.(*ssh.Client); ok {
+						opts.BorrowedSSH = sshClient
+					}
+				}
+			}
 			bc := BackendConfig{
 				SSHUser: user,
 				RunAs:   strings.TrimSpace(r.Meta["docker_run_as"]),

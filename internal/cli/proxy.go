@@ -9,7 +9,6 @@ import (
 
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/proxy"
-	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 var proxyCmd = &cobra.Command{
@@ -80,5 +79,5 @@ func init() {
 	proxyTCPCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	proxyTCPCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	proxyTCPCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
-	searchrun.RegisterAllProviderFlags(proxyTCPCmd)
+	getSearchRegistry().RegisterAllProviderFlags(proxyTCPCmd)
 }
