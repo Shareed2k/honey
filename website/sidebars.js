@@ -18,6 +18,7 @@ const sidebars = {
     'plugins-development',
     'add-new-backend',
     'anomaly-detection',
+    'alert',
     {
       type: 'category',
       label: 'CLI Reference',

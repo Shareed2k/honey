@@ -1,6 +1,7 @@
 package dockerprovider
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,6 +12,13 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+const overrideKey = "docker"
+
+func dockerOverride(overrides searchrun.ProviderOverrides) (o config.DockerBackend) {
+	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	return o
+}
+
 func init() {
 	searchrun.Register(dockerFactory{})
 	searchrun.RegisterDockerDiscover(DiscoverOnVMs)
@@ -18,39 +26,25 @@ func init() {
 
 type dockerFactory struct{}
 
-func (dockerFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []hosts.Backend {
+func (dockerFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
 	locals := cfg.Backends.Local
 	out := make([]hosts.Backend, 0, len(cfg.Backends.Docker))
 	for _, e := range cfg.Backends.Docker {
 		bc := BackendConfigFromYAML(e, locals, "")
-		applyDockerFlags(&bc, f)
+		applyDockerFlags(&bc, overrides)
 		out = append(out, &Docker{Config: bc})
 	}
 	return out
 }
 
-func (dockerFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	host := strings.TrimSpace(f.DockerHost)
-	if host == "" {
-		host = strings.TrimSpace(cliFlags.host)
-	}
-	viaLocal := strings.TrimSpace(f.DockerViaLocal)
-	if viaLocal == "" {
-		viaLocal = strings.TrimSpace(cliFlags.viaLocal)
-	}
-	socket := strings.TrimSpace(f.DockerSocket)
-	if socket == "" {
-		socket = strings.TrimSpace(cliFlags.socket)
-	}
-	platform := strings.TrimSpace(f.DockerPlatform)
-	if platform == "" {
-		platform = strings.TrimSpace(cliFlags.platform)
-	}
-	mode := strings.TrimSpace(f.DockerMode)
-	if mode == "" {
-		mode = strings.TrimSpace(cliFlags.mode)
-	}
-	allContainers := f.DockerAllContainers || cliFlags.allContainers
+func (dockerFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+	o := dockerOverride(overrides)
+	host := strings.TrimSpace(searchrun.FirstNonEmpty(o.Host, cliFlags.host))
+	viaLocal := strings.TrimSpace(searchrun.FirstNonEmpty(o.ViaLocal, cliFlags.viaLocal))
+	socket := strings.TrimSpace(searchrun.FirstNonEmpty(o.Socket, cliFlags.socket))
+	platform := strings.TrimSpace(searchrun.FirstNonEmpty(o.Platform, cliFlags.platform))
+	mode := strings.TrimSpace(searchrun.FirstNonEmpty(o.Mode, cliFlags.mode))
+	allContainers := o.AllContainers || cliFlags.allContainers
 	bc := BackendConfig{
 		Host:          host,
 		ViaLocal:      viaLocal,
@@ -59,10 +53,7 @@ func (dockerFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
 		Mode:          mode,
 		AllContainers: allContainers,
 	}
-	viaSSHHost := strings.TrimSpace(f.DockerViaSSHHost)
-	if viaSSHHost == "" {
-		viaSSHHost = strings.TrimSpace(cliFlags.viaSSHHost)
-	}
+	viaSSHHost := strings.TrimSpace(searchrun.FirstNonEmpty(o.ViaSSH.Host, cliFlags.viaSSHHost))
 	if viaSSHHost != "" {
 		bc.ViaSSH.Host = viaSSHHost
 	}
@@ -99,38 +90,27 @@ func (dockerFactory) ExecutorFor(r hosts.Record) hostexec.Executor {
 
 func (dockerFactory) ReconfigureFromConfig(cfg *config.File) { reconfigureDocker(cfg) }
 
-func applyDockerFlags(bc *BackendConfig, f searchrun.ProviderFlags) {
-	if v := strings.TrimSpace(f.DockerHost); v != "" {
-		bc.Host = v
-	} else if v := strings.TrimSpace(cliFlags.host); v != "" {
+func applyDockerFlags(bc *BackendConfig, overrides searchrun.ProviderOverrides) {
+	o := dockerOverride(overrides)
+	if v := strings.TrimSpace(searchrun.FirstNonEmpty(o.Host, cliFlags.host)); v != "" {
 		bc.Host = v
 	}
-	if v := strings.TrimSpace(f.DockerViaLocal); v != "" {
-		bc.ViaLocal = v
-	} else if v := strings.TrimSpace(cliFlags.viaLocal); v != "" {
+	if v := strings.TrimSpace(searchrun.FirstNonEmpty(o.ViaLocal, cliFlags.viaLocal)); v != "" {
 		bc.ViaLocal = v
 	}
-	if v := strings.TrimSpace(f.DockerViaSSHHost); v != "" {
-		bc.ViaSSH.Host = v
-	} else if v := strings.TrimSpace(cliFlags.viaSSHHost); v != "" {
+	if v := strings.TrimSpace(searchrun.FirstNonEmpty(o.ViaSSH.Host, cliFlags.viaSSHHost)); v != "" {
 		bc.ViaSSH.Host = v
 	}
-	if v := strings.TrimSpace(f.DockerSocket); v != "" {
-		bc.Socket = v
-	} else if v := strings.TrimSpace(cliFlags.socket); v != "" {
+	if v := strings.TrimSpace(searchrun.FirstNonEmpty(o.Socket, cliFlags.socket)); v != "" {
 		bc.Socket = v
 	}
-	if v := strings.TrimSpace(f.DockerPlatform); v != "" {
-		bc.Platform = v
-	} else if v := strings.TrimSpace(cliFlags.platform); v != "" {
+	if v := strings.TrimSpace(searchrun.FirstNonEmpty(o.Platform, cliFlags.platform)); v != "" {
 		bc.Platform = v
 	}
-	if v := strings.TrimSpace(f.DockerMode); v != "" {
-		bc.Mode = v
-	} else if v := strings.TrimSpace(cliFlags.mode); v != "" {
+	if v := strings.TrimSpace(searchrun.FirstNonEmpty(o.Mode, cliFlags.mode)); v != "" {
 		bc.Mode = v
 	}
-	if f.DockerAllContainers || cliFlags.allContainers {
+	if o.AllContainers || cliFlags.allContainers {
 		bc.AllContainers = true
 	}
 }

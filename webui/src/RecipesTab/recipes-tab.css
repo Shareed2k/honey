@@ -1,15 +1,6 @@
 /* webui/src/RecipesTab/recipes-tab.css */
 .recipes-tab { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
-.rcp-breadcrumb { display: flex; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid #21262d; }
-.rcp-breadcrumb__dot { display: flex; align-items: center; gap: 6px; background: transparent; border: 0; color: #6e7681; cursor: pointer; padding: 6px 8px; }
-.rcp-breadcrumb__dot:disabled { cursor: default; opacity: 0.6; }
-.rcp-breadcrumb__dot--cur { color: #c9d1d9; }
-.rcp-breadcrumb__dot--done { color: #3fb950; }
-.rcp-breadcrumb__num { width: 22px; height: 22px; border-radius: 50%; background: #21262d; display: inline-flex; align-items: center; justify-content: center; }
-.rcp-breadcrumb__dot--cur .rcp-breadcrumb__num { background: #1f6feb; color: #fff; }
-.rcp-breadcrumb__dot--done .rcp-breadcrumb__num { background: #238636; color: #fff; }
-
 .rcp-step { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .rcp-step__header { display: flex; flex-direction: column; gap: 4px; }
 .rcp-step__footer { display: flex; gap: 8px; justify-content: flex-end; padding-top: 12px; border-top: 1px solid #21262d; }
@@ -85,7 +76,6 @@
 
 /* Mobile: >= 360px */
 @media (max-width: 640px) {
-  .rcp-breadcrumb__label { display: none; }
   .rcp-steps li { grid-template-columns: 1fr; }
   .rcp-list li { flex-direction: column; align-items: flex-start; }
   .rcp-step__footer { flex-direction: column; align-items: stretch; }

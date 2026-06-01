@@ -36,7 +36,6 @@ honey inventory [name] [flags]
       --aws-region string             AWS region (default: from profile/env)
       --backends string               Comma-separated backend names (YAML backends.*.name); only those entries run
       --blacklist strings             Comma-separated list of tags or label keys to ignore (e.g. 'webserver,label_env')
-      --config string                 Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)
       --consul-addr string            Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)
       --consul-datacenter string      Consul datacenter
       --consul-token string           Consul ACL token (or CONSUL_HTTP_TOKEN)
@@ -81,6 +80,7 @@ honey inventory [name] [flags]
 ```
       --cache-dir string     Override cache directory (default: XDG_CACHE_HOME/honey)
       --cache-ttl duration   Cache time-to-live (host discovery) (default 10m0s)
+      --config string        Path to honey YAML (optional; also HONEY_CONFIG or default paths)
       --debug-log string     Path to write debug logs (disables debug logging if empty)
       --no-cache             Bypass read/write cache (host discovery)
       --record-dir string    Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records

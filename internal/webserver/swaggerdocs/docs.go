@@ -776,6 +776,39 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/logs/default": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Logs defaults",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/config.Logs"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/meta": {
             "get": {
                 "security": [
@@ -2026,6 +2059,64 @@ const docTemplate = `{
                 }
             }
         },
+        "config.Logs": {
+            "type": "object",
+            "properties": {
+                "alert_enabled": {
+                    "type": "boolean"
+                },
+                "alert_suppress_duration": {
+                    "type": "string"
+                },
+                "anomaly": {
+                    "type": "boolean"
+                },
+                "anomaly_context_lines": {
+                    "type": "integer",
+                    "default": 5
+                },
+                "anomaly_endpoint": {
+                    "type": "string"
+                },
+                "anomaly_feedback_file": {
+                    "type": "string"
+                },
+                "anomaly_filter_threshold": {
+                    "type": "number"
+                },
+                "anomaly_freq_ratio": {
+                    "type": "number",
+                    "default": 5
+                },
+                "anomaly_freq_window": {
+                    "type": "integer",
+                    "default": 100
+                },
+                "anomaly_llm_model": {
+                    "type": "string",
+                    "default": "llama3"
+                },
+                "anomaly_model": {
+                    "type": "string"
+                },
+                "anomaly_only": {
+                    "type": "boolean"
+                },
+                "anomaly_strict": {
+                    "type": "boolean"
+                },
+                "anomaly_threshold": {
+                    "type": "number",
+                    "default": 0.9
+                },
+                "anomaly_tokenizer": {
+                    "type": "string"
+                },
+                "anomaly_window": {
+                    "type": "integer"
+                }
+            }
+        },
         "config.ProxmoxBackend": {
             "type": "object",
             "required": [
@@ -2194,12 +2285,6 @@ const docTemplate = `{
         "hostapi.SearchHostsInput": {
             "type": "object",
             "properties": {
-                "aws_profile": {
-                    "type": "string"
-                },
-                "aws_region": {
-                    "type": "string"
-                },
                 "backends": {
                     "type": "string"
                 },
@@ -2212,54 +2297,6 @@ const docTemplate = `{
                 "config_path": {
                     "type": "string"
                 },
-                "consul_addr": {
-                    "type": "string"
-                },
-                "consul_datacenter": {
-                    "type": "string"
-                },
-                "consul_token": {
-                    "type": "string"
-                },
-                "docker_all_containers": {
-                    "type": "boolean"
-                },
-                "docker_host": {
-                    "type": "string"
-                },
-                "docker_mode": {
-                    "type": "string"
-                },
-                "docker_platform": {
-                    "type": "string"
-                },
-                "docker_socket": {
-                    "type": "string"
-                },
-                "docker_via_local": {
-                    "type": "string"
-                },
-                "docker_via_ssh_host": {
-                    "type": "string"
-                },
-                "gcp_project": {
-                    "type": "string"
-                },
-                "gcp_zone": {
-                    "type": "string"
-                },
-                "k8s_debug_image": {
-                    "type": "string"
-                },
-                "k8s_mode": {
-                    "type": "string"
-                },
-                "kube_context": {
-                    "type": "string"
-                },
-                "kubeconfig": {
-                    "type": "string"
-                },
                 "name": {
                     "type": "string"
                 },
@@ -2269,43 +2306,16 @@ const docTemplate = `{
                 "no_cache": {
                     "type": "boolean"
                 },
+                "overrides": {
+                    "$ref": "#/definitions/searchrun.ProviderOverrides"
+                },
                 "providers": {
-                    "type": "string"
-                },
-                "proxmox_insecure": {
-                    "type": "boolean"
-                },
-                "proxmox_password": {
-                    "type": "string"
-                },
-                "proxmox_token_id": {
-                    "type": "string"
-                },
-                "proxmox_token_secret": {
-                    "type": "string"
-                },
-                "proxmox_url": {
-                    "type": "string"
-                },
-                "proxmox_user": {
                     "type": "string"
                 },
                 "refresh": {
                     "type": "boolean"
                 },
                 "ssh_user": {
-                    "type": "string"
-                },
-                "truenas_api_key": {
-                    "type": "string"
-                },
-                "truenas_insecure": {
-                    "type": "boolean"
-                },
-                "truenas_url": {
-                    "type": "string"
-                },
-                "truenas_user": {
                     "type": "string"
                 }
             }
@@ -2385,6 +2395,15 @@ const docTemplate = `{
                 },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "searchrun.ProviderOverrides": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "array",
+                "items": {
+                    "type": "integer"
                 }
             }
         },

@@ -1,9 +1,11 @@
 package awsprovider
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
@@ -30,7 +32,7 @@ func TestAWSDefault_FallsBackToCliFlags(t *testing.T) {
 		cliFlags.region = ""
 	})
 
-	b := awsFactory{}.Default(searchrun.ProviderFlags{})
+	b := awsFactory{}.Default(searchrun.ProviderOverrides{})
 
 	if b.ID() != "aws" {
 		t.Fatalf("ID: want %q got %q", "aws", b.ID())
@@ -45,8 +47,8 @@ func TestAWSDefault_FallsBackToCliFlags(t *testing.T) {
 	}
 }
 
-func TestAWSDefault_UsesProviderFlags(t *testing.T) {
-	// cliFlags should be ignored when ProviderFlags has explicit values.
+func TestAWSDefault_UsesProviderOverrides(t *testing.T) {
+	// cliFlags should be ignored when ProviderOverrides has explicit values.
 	cliFlags.profile = "should-be-ignored"
 	cliFlags.region = "should-be-ignored"
 	t.Cleanup(func() {
@@ -54,10 +56,8 @@ func TestAWSDefault_UsesProviderFlags(t *testing.T) {
 		cliFlags.region = ""
 	})
 
-	b := awsFactory{}.Default(searchrun.ProviderFlags{
-		AWSProfile: "prod",
-		AWSRegion:  "eu-central-1",
-	})
+	raw, _ := json.Marshal(config.AWSBackend{Profile: "prod", Region: "eu-central-1"})
+	b := awsFactory{}.Default(searchrun.ProviderOverrides{"aws": raw})
 
 	if b.ID() != "aws" {
 		t.Fatalf("ID: want %q got %q", "aws", b.ID())

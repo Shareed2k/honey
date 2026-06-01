@@ -1,6 +1,7 @@
 package proxmoxprovider
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,52 +12,29 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+const overrideKey = "proxmox"
+
+func proxmoxOverride(overrides searchrun.ProviderOverrides) (o config.ProxmoxBackend) {
+	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	return o
+}
+
 func init() {
 	searchrun.Register(proxmoxFactory{})
 }
 
 type proxmoxFactory struct{}
 
-func (proxmoxFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []hosts.Backend {
+func (proxmoxFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+	o := proxmoxOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.Proxmox))
 	for _, e := range cfg.Backends.Proxmox {
-		url, user, pass, tid, tsec, insecure := e.URL, e.User, e.Password, e.TokenID, e.TokenSecret, e.Insecure
-		if url == "" {
-			url = f.ProxmoxURL
-		}
-		if url == "" {
-			url = cliFlags.url
-		}
-		if user == "" {
-			user = f.ProxmoxUser
-		}
-		if user == "" {
-			user = cliFlags.user
-		}
-		if pass == "" {
-			pass = f.ProxmoxPassword
-		}
-		if pass == "" {
-			pass = cliFlags.password
-		}
-		if tid == "" {
-			tid = f.ProxmoxTokenID
-		}
-		if tid == "" {
-			tid = cliFlags.tokenID
-		}
-		if tsec == "" {
-			tsec = f.ProxmoxTokenSecret
-		}
-		if tsec == "" {
-			tsec = cliFlags.tokenSecret
-		}
-		if !insecure && f.ProxmoxInsecure {
-			insecure = true
-		}
-		if !insecure && cliFlags.insecure {
-			insecure = true
-		}
+		url := searchrun.FirstNonEmpty(e.URL, o.URL, cliFlags.url)
+		user := searchrun.FirstNonEmpty(e.User, o.User, cliFlags.user)
+		pass := searchrun.FirstNonEmpty(e.Password, o.Password, cliFlags.password)
+		tid := searchrun.FirstNonEmpty(e.TokenID, o.TokenID, cliFlags.tokenID)
+		tsec := searchrun.FirstNonEmpty(e.TokenSecret, o.TokenSecret, cliFlags.tokenSecret)
+		insecure := e.Insecure || o.Insecure || cliFlags.insecure
 		execMode := strings.ToLower(strings.TrimSpace(e.ExecMode))
 		switch execMode {
 		case "pve", "hybrid":
@@ -81,28 +59,14 @@ func (proxmoxFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []
 	return out
 }
 
-func (proxmoxFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	url := f.ProxmoxURL
-	if url == "" {
-		url = cliFlags.url
-	}
-	user := f.ProxmoxUser
-	if user == "" {
-		user = cliFlags.user
-	}
-	pass := f.ProxmoxPassword
-	if pass == "" {
-		pass = cliFlags.password
-	}
-	tid := f.ProxmoxTokenID
-	if tid == "" {
-		tid = cliFlags.tokenID
-	}
-	tsec := f.ProxmoxTokenSecret
-	if tsec == "" {
-		tsec = cliFlags.tokenSecret
-	}
-	insecure := f.ProxmoxInsecure || cliFlags.insecure
+func (proxmoxFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+	o := proxmoxOverride(overrides)
+	url := searchrun.FirstNonEmpty(o.URL, cliFlags.url)
+	user := searchrun.FirstNonEmpty(o.User, cliFlags.user)
+	pass := searchrun.FirstNonEmpty(o.Password, cliFlags.password)
+	tid := searchrun.FirstNonEmpty(o.TokenID, cliFlags.tokenID)
+	tsec := searchrun.FirstNonEmpty(o.TokenSecret, cliFlags.tokenSecret)
+	insecure := o.Insecure || cliFlags.insecure
 	return searchrun.WithDockerDiscover(
 		&Proxmox{
 			URL:         url,

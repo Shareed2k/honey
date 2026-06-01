@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	lru "github.com/hashicorp/golang-lru"
+	lru "github.com/hashicorp/golang-lru/v2"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
@@ -33,7 +33,7 @@ type llmDetector struct {
 	contextLines int
 	mu           sync.Mutex
 	recent       []string
-	cache        *lru.Cache
+	cache        *lru.Cache[string, Result]
 }
 
 func newLLMDetector(endpoint, model string, threshold float64, contextLines int) *llmDetector {
@@ -45,7 +45,7 @@ func newLLMDetector(endpoint, model string, threshold float64, contextLines int)
 	}
 	cfg := openai.DefaultConfig("ollama") // API key unused by Ollama/LM Studio
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	c, _ := lru.New(llmCacheMaxSize) // error only on size <= 0, which can't happen here
+	c, _ := lru.New[string, Result](llmCacheMaxSize) // error only on size <= 0, which can't happen here
 	return &llmDetector{
 		model:        model,
 		threshold:    threshold,
@@ -81,8 +81,7 @@ func (d *llmDetector) Score(ctx context.Context, line string) (Result, error) {
 	// Cache is only keyed on the normalized line when there is no context window,
 	// because with context the same line produces different user messages.
 	if d.contextLines == 0 {
-		if v, ok := d.cache.Get(n); ok {
-			r := v.(Result)
+		if r, ok := d.cache.Get(n); ok {
 			r.Original = line
 			return r, nil
 		}

@@ -12,7 +12,7 @@ func init() {
 
 type localFactory struct{}
 
-func (localFactory) FromConfig(cfg *config.File, _ searchrun.ProviderFlags) []hosts.Backend {
+func (localFactory) FromConfig(cfg *config.File, _ searchrun.ProviderOverrides) []hosts.Backend {
 	if cfg == nil || len(cfg.Backends.Local) == 0 {
 		return nil
 	}
@@ -30,7 +30,7 @@ func (localFactory) FromConfig(cfg *config.File, _ searchrun.ProviderFlags) []ho
 	return out
 }
 
-func (localFactory) Default(_ searchrun.ProviderFlags) hosts.Backend {
+func (localFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend {
 	return searchrun.WithDockerDiscover(
 		&Local{},
 		config.DockerDiscover{},

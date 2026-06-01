@@ -1,6 +1,7 @@
 package consulprovider
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -10,34 +11,26 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+const overrideKey = "consul"
+
+func consulOverride(overrides searchrun.ProviderOverrides) (o config.ConsulBackend) {
+	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	return o
+}
+
 func init() {
 	searchrun.Register(consulFactory{})
 }
 
 type consulFactory struct{}
 
-func (consulFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []hosts.Backend {
+func (consulFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+	o := consulOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.Consul))
 	for _, e := range cfg.Backends.Consul {
-		addr, dc, tok := e.Addr, e.Datacenter, e.Token
-		if addr == "" {
-			addr = f.ConsulAddr
-		}
-		if addr == "" {
-			addr = cliFlags.addr
-		}
-		if dc == "" {
-			dc = f.ConsulDatacenter
-		}
-		if dc == "" {
-			dc = cliFlags.datacenter
-		}
-		if tok == "" {
-			tok = f.ConsulToken
-		}
-		if tok == "" {
-			tok = cliFlags.token
-		}
+		addr := searchrun.FirstNonEmpty(e.Addr, o.Addr, cliFlags.addr)
+		dc := searchrun.FirstNonEmpty(e.Datacenter, o.Datacenter, cliFlags.datacenter)
+		tok := searchrun.FirstNonEmpty(e.Token, o.Token, cliFlags.token)
 		b := searchrun.WithDockerDiscover(
 			&Consul{Name: e.Name, Addr: addr, Datacenter: dc, Token: tok},
 			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
@@ -47,19 +40,11 @@ func (consulFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []h
 	return out
 }
 
-func (consulFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	addr := f.ConsulAddr
-	if addr == "" {
-		addr = cliFlags.addr
-	}
-	dc := f.ConsulDatacenter
-	if dc == "" {
-		dc = cliFlags.datacenter
-	}
-	tok := f.ConsulToken
-	if tok == "" {
-		tok = cliFlags.token
-	}
+func (consulFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+	o := consulOverride(overrides)
+	addr := searchrun.FirstNonEmpty(o.Addr, cliFlags.addr)
+	dc := searchrun.FirstNonEmpty(o.Datacenter, cliFlags.datacenter)
+	tok := searchrun.FirstNonEmpty(o.Token, cliFlags.token)
 	return searchrun.WithDockerDiscover(
 		&Consul{Addr: addr, Datacenter: dc, Token: tok},
 		config.DockerDiscover{},

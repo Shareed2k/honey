@@ -70,6 +70,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagCacheDir, "cache-dir", "", "Override cache directory (default: XDG_CACHE_HOME/honey)")
 
 	rootCmd.AddCommand(searchCmd)
+	rootCmd.AddCommand(alertCmd)
 	rootCmd.SilenceUsage = true
 	rootCmd.SetOut(os.Stdout)
 	rootCmd.SetErr(os.Stderr)

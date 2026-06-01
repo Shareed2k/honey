@@ -21,7 +21,7 @@ Only stderr may be used for logging; stdout carries the JSON-RPC stream.`,
 		_ = cmd
 		log.SetOutput(os.Stderr)
 		log.SetPrefix("honey mcp: ")
-		return mcpserver.Run(context.Background())
+		return mcpserver.Run(context.Background(), resolvedCfg, resolvedCfgPath)
 	},
 }
 
