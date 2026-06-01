@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/creasty/defaults"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -20,12 +21,61 @@ import (
 
 // File is the optional honey YAML configuration.
 type File struct {
-	Version  int            `yaml:"version" json:"version"`
-	Defaults Defaults       `yaml:"defaults" json:"defaults"`
-	Backends Backends       `yaml:"backends" json:"backends"`
-	Transfer TransferConfig `yaml:"transfer" json:"transfer"`
-	Plugins  Plugins        `yaml:"plugins,omitempty" json:"plugins,omitempty"`
-	Apps     apps.Config    `yaml:"apps,omitempty" json:"apps,omitempty"`
+	Version       int                `yaml:"version" json:"version"`
+	Defaults      Defaults           `yaml:"defaults" json:"defaults"`
+	Backends      Backends           `yaml:"backends" json:"backends"`
+	Transfer      TransferConfig     `yaml:"transfer" json:"transfer"`
+	Plugins       Plugins            `yaml:"plugins,omitempty" json:"plugins,omitempty"`
+	Apps          apps.Config        `yaml:"apps,omitempty" json:"apps,omitempty"`
+	AlertMappings []AlertMapping     `yaml:"alert_mappings,omitempty" json:"alert_mappings,omitempty"`
+	AlertWebhook  AlertWebhookConfig `yaml:"alert_webhook,omitempty" json:"alert_webhook,omitempty"`
+}
+
+// AlertNotifySlack configures Slack notifications for alert findings.
+type AlertNotifySlack struct {
+	WebhookURL string `yaml:"webhook_url" json:"webhook_url"`
+	ChannelID  string `yaml:"channel_id,omitempty" json:"channel_id,omitempty"`
+}
+
+// AlertNotifyHTTP configures HTTP POST notifications for alert findings.
+type AlertNotifyHTTP struct {
+	URL     string            `yaml:"url" json:"url"`
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+}
+
+// AlertNotifyTelegram configures Telegram notifications for alert findings.
+type AlertNotifyTelegram struct {
+	BotToken string   `yaml:"bot_token,omitempty" json:"bot_token,omitempty"`
+	ChatIDs  []string `yaml:"chat_ids,omitempty" json:"chat_ids,omitempty"`
+}
+
+// AlertNotify holds optional notification config for alert investigation findings.
+type AlertNotify struct {
+	Subject  string               `yaml:"subject,omitempty" json:"subject,omitempty"`
+	Slack    *AlertNotifySlack    `yaml:"slack,omitempty" json:"slack,omitempty"`
+	HTTP     *AlertNotifyHTTP     `yaml:"http,omitempty" json:"http,omitempty"`
+	Telegram *AlertNotifyTelegram `yaml:"telegram,omitempty" json:"telegram,omitempty"`
+}
+
+// AlertMapping maps Prometheus alert labels to a honey host query and optional investigation config.
+type AlertMapping struct {
+	MatchLabels map[string]string `yaml:"match_labels" json:"match_labels"`
+	// HostQuery is a Go template evaluated against alert labels to produce a honey search query.
+	// Example: "{{.cluster}}" resolves the cluster label to a substring host search.
+	HostQuery string       `yaml:"host_query" json:"host_query"`
+	Recipe    string       `yaml:"recipe,omitempty" json:"recipe,omitempty"`
+	Command   string       `yaml:"command,omitempty" json:"command,omitempty"`
+	Notify    *AlertNotify `yaml:"notify,omitempty" json:"notify,omitempty"`
+}
+
+// AlertWebhookConfig configures the Alertmanager webhook receiver server.
+type AlertWebhookConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`
+	Port            int    `yaml:"port" json:"port"`
+	Token           string `yaml:"token,omitempty" json:"token,omitempty"`
+	AutoInvestigate bool   `yaml:"auto_investigate" json:"auto_investigate"`
+	DedupWindow     string `yaml:"dedup_window,omitempty" json:"dedup_window,omitempty"`
+	DedupCapacity   int    `yaml:"dedup_capacity,omitempty" json:"dedup_capacity,omitempty"`
 }
 
 // DockerDiscover configures auto-discovery of containers on cloud VMs.
@@ -40,17 +90,17 @@ type DockerDiscover struct {
 type Logs struct {
 	Anomaly                bool    `yaml:"anomaly"                     json:"anomaly"                     honey:"label=Enable anomaly detection"`
 	AnomalyModel           string  `yaml:"anomaly_model,omitempty"     json:"anomaly_model,omitempty"     honey:"label=Path to ONNX model file" mod:"trim"`
-	AnomalyThresh          float64 `yaml:"anomaly_threshold,omitempty" json:"anomaly_threshold,omitempty" honey:"label=Anomaly score threshold (0–1)"`
+	AnomalyThresh          float64 `yaml:"anomaly_threshold,omitempty" json:"anomaly_threshold,omitempty" honey:"label=Anomaly score threshold (0–1)" default:"0.9"`
 	AnomalyWindow          int     `yaml:"anomaly_window,omitempty"    json:"anomaly_window,omitempty"    honey:"label=Anomaly sliding window size"`
 	AnomalyOnly            bool    `yaml:"anomaly_only"                json:"anomaly_only"                honey:"label=Only output anomalous lines"`
 	AnomalyStrict          bool    `yaml:"anomaly_strict"              json:"anomaly_strict"              honey:"label=Fail if anomaly detector cannot init"`
 	AnomalyTokPath         string  `yaml:"anomaly_tokenizer,omitempty"  json:"anomaly_tokenizer,omitempty"  honey:"label=Path to vocab.txt tokenizer file" mod:"trim"`
 	AnomalyEndpoint        string  `yaml:"anomaly_endpoint,omitempty"      json:"anomaly_endpoint,omitempty"      honey:"label=OpenAI-compatible API URL for LLM anomaly detection (Ollama/LM Studio)" mod:"trim"`
-	AnomalyLLMModel        string  `yaml:"anomaly_llm_model,omitempty"     json:"anomaly_llm_model,omitempty"     honey:"label=Model name for LLM anomaly endpoint" mod:"trim"`
-	AnomalyContextLines    int     `yaml:"anomaly_context_lines,omitempty"    json:"anomaly_context_lines,omitempty"    honey:"label=Number of recent lines sent as context to the LLM anomaly detector"`
+	AnomalyLLMModel        string  `yaml:"anomaly_llm_model,omitempty"     json:"anomaly_llm_model,omitempty"     honey:"label=Model name for LLM anomaly endpoint" mod:"trim" default:"llama3"`
+	AnomalyContextLines    int     `yaml:"anomaly_context_lines,omitempty"    json:"anomaly_context_lines,omitempty"    honey:"label=Number of recent lines sent as context to the LLM anomaly detector" default:"5"`
 	AnomalyFilterThreshold float64 `yaml:"anomaly_filter_threshold,omitempty" json:"anomaly_filter_threshold,omitempty" honey:"label=Skip LLM when fast detector score is below this value (CoLA two-tier; 0=disabled)"`
-	AnomalyFreqWindow      int     `yaml:"anomaly_freq_window,omitempty"      json:"anomaly_freq_window,omitempty"      honey:"label=Short window size for rate-ratio burst detection (0=disabled, default 100)"`
-	AnomalyFreqRatio       float64 `yaml:"anomaly_freq_ratio,omitempty"       json:"anomaly_freq_ratio,omitempty"       honey:"label=Short/long rate ratio that triggers a frequency-spike anomaly (default 5.0)"`
+	AnomalyFreqWindow      int     `yaml:"anomaly_freq_window,omitempty"      json:"anomaly_freq_window,omitempty"      honey:"label=Short window size for rate-ratio burst detection (0=disabled, default 100)" default:"100"`
+	AnomalyFreqRatio       float64 `yaml:"anomaly_freq_ratio,omitempty"       json:"anomaly_freq_ratio,omitempty"       honey:"label=Short/long rate ratio that triggers a frequency-spike anomaly (default 5.0)" default:"5.0"`
 	AnomalyFeedbackFile    string  `yaml:"anomaly_feedback_file,omitempty"   json:"anomaly_feedback_file,omitempty"    honey:"label=Append scored log lines as JSONL to this file for review and threshold calibration" mod:"trim"`
 	AlertEnabled           bool    `yaml:"alert_enabled"              json:"alert_enabled"              honey:"label=Alert on anomalies"`
 	AlertSuppressDuration  string  `yaml:"alert_suppress_duration,omitempty" json:"alert_suppress_duration,omitempty" honey:"label=Alert suppression window (e.g. 5m)" mod:"trim"`
@@ -238,15 +288,9 @@ func Load(path string) (*File, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("decode config %s: %w", path, err)
 	}
-
-	if f.Apps != nil {
-		for name, app := range f.Apps {
-			app.Name = name
-			f.Apps[name] = app
-		}
+	if err := finalizeAndValidate(&f); err != nil {
+		return nil, fmt.Errorf("validate config %s: %w", path, err)
 	}
-
-	f.Sanitize()
 	return &f, nil
 }
 
@@ -256,6 +300,16 @@ func ParseYAML(b []byte) (*File, error) {
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	if err := finalizeAndValidate(&f); err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+func finalizeAndValidate(f *File) error {
+	if err := defaults.Set(f); err != nil {
+		return fmt.Errorf("apply defaults: %w", err)
+	}
 	if f.Apps != nil {
 		for name, app := range f.Apps {
 			app.Name = name
@@ -264,9 +318,9 @@ func ParseYAML(b []byte) (*File, error) {
 	}
 	f.Sanitize()
 	if err := f.Validate(); err != nil {
-		return nil, err
+		return err
 	}
-	return &f, nil
+	return nil
 }
 
 // DefaultsCacheTTL parses Defaults.CacheTTL or returns empty and ok=false.

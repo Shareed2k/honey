@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -10,28 +11,25 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+const overrideKey = "gcp"
+
+func gcpOverride(overrides searchrun.ProviderOverrides) (o config.GCPBackend) {
+	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	return o
+}
+
 func init() {
 	searchrun.Register(gcpFactory{})
 }
 
 type gcpFactory struct{}
 
-func (gcpFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []hosts.Backend {
+func (gcpFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+	o := gcpOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.GCP))
 	for _, e := range cfg.Backends.GCP {
-		proj, zone := e.Project, e.Zone
-		if proj == "" {
-			proj = f.GCPProject
-		}
-		if proj == "" {
-			proj = cliFlags.project
-		}
-		if zone == "" {
-			zone = f.GCPZone
-		}
-		if zone == "" {
-			zone = cliFlags.zone
-		}
+		proj := searchrun.FirstNonEmpty(e.Project, o.Project, cliFlags.project)
+		zone := searchrun.FirstNonEmpty(e.Zone, o.Zone, cliFlags.zone)
 		b := searchrun.WithDockerDiscover(
 			&GCP{Name: e.Name, Project: proj, Zone: zone},
 			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
@@ -41,15 +39,10 @@ func (gcpFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 	return out
 }
 
-func (gcpFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	proj := f.GCPProject
-	if proj == "" {
-		proj = cliFlags.project
-	}
-	zone := f.GCPZone
-	if zone == "" {
-		zone = cliFlags.zone
-	}
+func (gcpFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+	o := gcpOverride(overrides)
+	proj := searchrun.FirstNonEmpty(o.Project, cliFlags.project)
+	zone := searchrun.FirstNonEmpty(o.Zone, cliFlags.zone)
 	return searchrun.WithDockerDiscover(
 		&GCP{Project: proj, Zone: zone},
 		config.DockerDiscover{}, // no defaults available in Default() since cfg is nil

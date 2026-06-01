@@ -31,5 +31,5 @@ honey plugins list [flags]
 
 ### SEE ALSO
 
-* [honey plugins](honey_plugins.md)	 - List loaded WASM plugins
+* [honey plugins](honey_plugins.md)	 - Manage WASM plugins
 

@@ -1057,6 +1057,34 @@ export interface LogsStreamRequest {
   anomaly_freq_ratio?: number;
 }
 
+export interface LogsDefaultsResponse {
+  anomaly: boolean;
+  anomaly_threshold: number;
+  anomaly_only: boolean;
+  anomaly_model?: string;
+  anomaly_tokenizer?: string;
+  anomaly_endpoint?: string;
+  anomaly_llm_model?: string;
+  anomaly_context_lines: number;
+  anomaly_filter_threshold: number;
+  anomaly_freq_window: number;
+  anomaly_freq_ratio: number;
+  anomaly_window?: number;
+  anomaly_strict?: boolean;
+  anomaly_feedback_file?: string;
+  alert_enabled?: boolean;
+  alert_suppress_duration?: string;
+}
+
+export async function fetchLogsDefaults(): Promise<LogsDefaultsResponse> {
+  const r = await apiGet('/api/v1/logs/default');
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return (await r.json()) as LogsDefaultsResponse;
+}
+
 export async function streamLogs(
   req: LogsStreamRequest,
   onLine: (line: string) => void,

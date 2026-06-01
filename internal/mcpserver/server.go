@@ -3,15 +3,32 @@ package mcpserver
 import (
 	"context"
 
+	"github.com/go-playground/mold/v4/modifiers"
+	"github.com/go-playground/validator/v10"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 )
 
-const serverVersion = "0.1.0"
+const serverVersion = "0.1.1"
+
+var (
+	conform  = modifiers.New()
+	validate = validator.New(validator.WithRequiredStructEnabled())
+)
+
+// serverCfg holds the config loaded by the CLI root command,
+// set once in Run() before any tool handlers are invoked.
+var (
+	serverCfg *config.File
+)
 
 // Run starts the MCP server on stdio until the client disconnects.
-func Run(ctx context.Context) error {
+// cfg and cfgPath are the honey config already loaded by the CLI root PersistentPreRunE.
+func Run(ctx context.Context, cfg *config.File, cfgPath string) error {
+	serverCfg = cfg
+	_ = cfgPath
 	s := mcp.NewServer(&mcp.Implementation{Name: "honey", Version: serverVersion}, nil)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_hosts",
@@ -21,6 +38,10 @@ func Run(ctx context.Context) error {
 		Name:        "list_backends",
 		Description: "List named backends from the honey config file (requires backends with optional name field in YAML).",
 	}, handleListBackends)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "exec_on_host",
+		Description: "Run a shell command on a host via SSH using its IP or hostname directly (use primary_ip from search_hosts). Records output to session recordings if record_dir is configured.",
+	}, handleExecOnHost)
 	return s.Run(ctx, &mcp.StdioTransport{})
 }
 
@@ -31,6 +52,12 @@ type searchHostsInput = hostapi.SearchHostsInput
 type searchHostsOutput = hostapi.SearchHostsOutput
 
 func handleSearchHosts(ctx context.Context, _ *mcp.CallToolRequest, in searchHostsInput) (*mcp.CallToolResult, searchHostsOutput, error) {
+	if err := conform.Struct(ctx, &in); err != nil {
+		return nil, searchHostsOutput{}, err
+	}
+	if err := validate.Struct(in); err != nil {
+		return nil, searchHostsOutput{}, err
+	}
 	out, err := hostapi.SearchHosts(ctx, &in)
 	if err != nil {
 		return nil, searchHostsOutput{}, err
@@ -41,7 +68,7 @@ func handleSearchHosts(ctx context.Context, _ *mcp.CallToolRequest, in searchHos
 // --- list_backends ---
 
 type listBackendsInput struct {
-	ConfigPath string `json:"config_path,omitempty" jsonschema:"explicit path to honey YAML; empty uses HONEY_CONFIG or default paths"`
+	ConfigPath string `json:"config_path,omitempty" mod:"trim"`
 }
 
 type listBackendsOutput struct {
@@ -56,7 +83,9 @@ type listBackendsRow struct {
 }
 
 func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBackendsInput) (*mcp.CallToolResult, listBackendsOutput, error) {
-	_ = ctx
+	if err := conform.Struct(ctx, &in); err != nil {
+		return nil, listBackendsOutput{}, err
+	}
 	lb, err := hostapi.ListBackends(in.ConfigPath)
 	if err != nil {
 		return nil, listBackendsOutput{}, err

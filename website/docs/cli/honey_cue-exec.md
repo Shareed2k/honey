@@ -51,7 +51,6 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
       --aws-profile string            AWS shared config profile
       --aws-region string             AWS region (default: from profile/env)
       --backends string               Comma-separated backend names (YAML backends.*.name); only those entries run
-      --config string                 Path to honey YAML (optional; also HONEY_CONFIG or default paths in README)
       --consul-addr string            Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)
       --consul-datacenter string      Consul datacenter
       --consul-token string           Consul ACL token (or CONSUL_HTTP_TOKEN)
@@ -83,6 +82,7 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
       --proxmox-token-secret string   Proxmox token secret
       --proxmox-url string            Proxmox API URL (e.g. https://10.0.0.1:8006/api2/json)
       --proxmox-user string           Proxmox user (e.g. root@pam)
+      --retry-failed string           Re-run only hosts that did not succeed in this recording (basename, e.g. 20260529_….hrec.jsonl)
       --ssh-user string               Default SSH user for connect actions (defaults to config or OS user)
       --truenas-api-key string        TrueNAS API key (or TRUENAS_API_KEY)
       --truenas-insecure              Skip TLS verification for TrueNAS
@@ -95,6 +95,7 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
 ```
       --cache-dir string     Override cache directory (default: XDG_CACHE_HOME/honey)
       --cache-ttl duration   Cache time-to-live (host discovery) (default 10m0s)
+      --config string        Path to honey YAML (optional; also HONEY_CONFIG or default paths)
       --debug-log string     Path to write debug logs (disables debug logging if empty)
       --no-cache             Bypass read/write cache (host discovery)
       --record-dir string    Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records

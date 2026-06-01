@@ -5,37 +5,36 @@ title: honey macros
 
 ## honey macros
 
-Run predefined macros from a honeyfile manifest
+Run predefined macros from honeyfile manifest
 
 ```
 honey macros [name] [flags]
 ```
 
-### Examples
-
-```
-  # List all macros in the default honeyfile
-  honey macros --list
-
-  # Execute a macro by name
-  honey macros restart-nginx
-
-  # Show resolved configuration without executing
-  honey macros restart-nginx --dry-run
-
-  # Use a specific honeyfile
-  honey macros --file /path/to/honeyfile.yaml --list
-```
-
 ### Options
 
 ```
-      --dry-run         Print resolved macro configuration and exit
-      --file string     Path to honeyfile manifest (default: honeyfile.yaml or honeyfile.yml in current directory, or $HONEY_MACROS_FILE)
-      --list            List all available macros
+      --dry-run         Print resolved macro and exit
+      --file string     Path to honeyfile manifest
+  -h, --help            help for macros
+      --list            List available macros
   -o, --output string   Output format: text or json (default "text")
+```
+
+### Options inherited from parent commands
+
+```
+      --cache-dir string     Override cache directory (default: XDG_CACHE_HOME/honey)
+      --cache-ttl duration   Cache time-to-live (host discovery) (default 10m0s)
+      --config string        Path to honey YAML (optional; also HONEY_CONFIG or default paths)
+      --debug-log string     Path to write debug logs (disables debug logging if empty)
+      --no-cache             Bypass read/write cache (host discovery)
+      --record-dir string    Session recording directory for search (TUI), web, and cue-exec; overrides defaults.record_dir; default &lt;directory of config.yaml&gt;/records
+      --refresh              Ignore cached entries and refresh (host discovery)
 ```
 
 ### SEE ALSO
 
 * [honey](honey.md)	 - DevOps tool to help find an instance in sea of clouds
+* [honey macros init](honey_macros_init.md)	 - Scaffold a honeyfile.yaml with example macros
+

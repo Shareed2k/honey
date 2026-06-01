@@ -1,6 +1,7 @@
 package truenasprovider
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 
@@ -12,31 +13,27 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+const overrideKey = "truenas"
+
+func truenasOverride(overrides searchrun.ProviderOverrides) (o config.TrueNASBackend) {
+	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	return o
+}
+
 func init() {
 	searchrun.Register(truenasFactory{})
 }
 
 type truenasFactory struct{}
 
-func (truenasFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []hosts.Backend {
+func (truenasFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+	o := truenasOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.TrueNAS))
 	for _, e := range cfg.Backends.TrueNAS {
-		url := e.URL
-		if url == "" {
-			url = f.TrueNASURL
-		}
-		if url == "" {
-			url = cliFlags.url
-		}
-		apiKey := firstNonEmpty(e.APIKey, f.TrueNASAPIKey, cliFlags.apiKey, os.Getenv("TRUENAS_API_KEY"))
-		user := e.Username
-		if user == "" {
-			user = f.TrueNASUser
-		}
-		if user == "" {
-			user = cliFlags.user
-		}
-		insecure := e.Insecure || f.TrueNASInsecure || cliFlags.insecure
+		url := searchrun.FirstNonEmpty(e.URL, o.URL, cliFlags.url)
+		apiKey := firstNonEmpty(e.APIKey, o.APIKey, cliFlags.apiKey, os.Getenv("TRUENAS_API_KEY"))
+		user := searchrun.FirstNonEmpty(e.Username, o.Username, cliFlags.user)
+		insecure := e.Insecure || o.Insecure || cliFlags.insecure
 		out = append(out, &TrueNAS{
 			Name:             e.Name,
 			URL:              url,
@@ -52,20 +49,15 @@ func (truenasFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []
 	return out
 }
 
-func (truenasFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	url := f.TrueNASURL
-	if url == "" {
-		url = cliFlags.url
-	}
-	user := f.TrueNASUser
-	if user == "" {
-		user = cliFlags.user
-	}
+func (truenasFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+	o := truenasOverride(overrides)
+	url := searchrun.FirstNonEmpty(o.URL, cliFlags.url)
+	user := searchrun.FirstNonEmpty(o.Username, cliFlags.user)
 	return &TrueNAS{
 		URL:              url,
 		Username:         user,
-		APIKey:           firstNonEmpty(f.TrueNASAPIKey, cliFlags.apiKey, os.Getenv("TRUENAS_API_KEY")),
-		Insecure:         f.TrueNASInsecure || cliFlags.insecure,
+		APIKey:           firstNonEmpty(o.APIKey, cliFlags.apiKey, os.Getenv("TRUENAS_API_KEY")),
+		Insecure:         o.Insecure || cliFlags.insecure,
 		IncludeAppliance: true,
 		IncludeVMs:       true,
 		IncludeVirt:      true,

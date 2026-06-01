@@ -4,7 +4,7 @@ import {
 } from 'antd';
 import { PlayCircleOutlined, StopOutlined, ClearOutlined } from '@ant-design/icons';
 import type { HostRecord } from '../HostPicker';
-import { apiPost, streamLogs } from '../api';
+import { apiPost, fetchLogsDefaults, streamLogs } from '../api';
 import type { LogsStreamRequest } from '../api';
 
 const ANOM_RE = /^\[ANOM /;
@@ -12,6 +12,10 @@ const LS_KEY = 'hostctl_logs_filters';
 
 function loadSaved(): Record<string, unknown> {
   try { return JSON.parse(localStorage.getItem(LS_KEY) ?? '{}'); } catch { return {}; }
+}
+
+function hasSavedField(saved: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(saved, key);
 }
 
 interface Props {
@@ -76,6 +80,50 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
       logEndRef.current?.scrollIntoView({ behavior: 'auto' });
     }
   }, [lines, autoScroll]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const defaults = await fetchLogsDefaults();
+        if (cancelled) {
+          return;
+        }
+        if (!hasSavedField(saved, 'anomaly')) {
+          setAnomaly(defaults.anomaly);
+        }
+        if (!hasSavedField(saved, 'anomalyThreshold')) {
+          setAnomalyThreshold(defaults.anomaly_threshold);
+        }
+        if (!hasSavedField(saved, 'anomalyOnly')) {
+          setAnomalyOnly(defaults.anomaly_only);
+        }
+        if (!hasSavedField(saved, 'anomalyEndpoint')) {
+          setAnomalyEndpoint(defaults.anomaly_endpoint ?? '');
+        }
+        if (!hasSavedField(saved, 'anomalyLLMModel')) {
+          setAnomalyLLMModel(defaults.anomaly_llm_model ?? 'llama3');
+        }
+        if (!hasSavedField(saved, 'anomalyContext')) {
+          setAnomalyContext(defaults.anomaly_context_lines);
+        }
+        if (!hasSavedField(saved, 'anomalyFilterThresh')) {
+          setAnomalyFilterThresh(defaults.anomaly_filter_threshold);
+        }
+        if (!hasSavedField(saved, 'anomalyFreqWindow')) {
+          setAnomalyFreqWindow(defaults.anomaly_freq_window);
+        }
+        if (!hasSavedField(saved, 'anomalyFreqRatio')) {
+          setAnomalyFreqRatio(defaults.anomaly_freq_ratio);
+        }
+      } catch {
+        // Keep existing local defaults when endpoint is unavailable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [saved]);
 
   const handleScroll = useCallback(() => {
     const el = logBoxRef.current;

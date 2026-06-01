@@ -1,6 +1,7 @@
 package awsprovider
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -10,28 +11,25 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+const overrideKey = "aws"
+
+func awsOverride(overrides searchrun.ProviderOverrides) (o config.AWSBackend) {
+	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	return o
+}
+
 func init() {
 	searchrun.Register(awsFactory{})
 }
 
 type awsFactory struct{}
 
-func (awsFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []hosts.Backend {
+func (awsFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+	o := awsOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.AWS))
 	for _, e := range cfg.Backends.AWS {
-		prof, reg := e.Profile, e.Region
-		if prof == "" {
-			prof = f.AWSProfile
-		}
-		if prof == "" {
-			prof = cliFlags.profile
-		}
-		if reg == "" {
-			reg = f.AWSRegion
-		}
-		if reg == "" {
-			reg = cliFlags.region
-		}
+		prof := searchrun.FirstNonEmpty(e.Profile, o.Profile, cliFlags.profile)
+		reg := searchrun.FirstNonEmpty(e.Region, o.Region, cliFlags.region)
 		b := searchrun.WithDockerDiscover(
 			&AWS{Name: e.Name, Profile: prof, Region: reg},
 			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
@@ -41,15 +39,10 @@ func (awsFactory) FromConfig(cfg *config.File, f searchrun.ProviderFlags) []host
 	return out
 }
 
-func (awsFactory) Default(f searchrun.ProviderFlags) hosts.Backend {
-	prof := f.AWSProfile
-	if prof == "" {
-		prof = cliFlags.profile
-	}
-	reg := f.AWSRegion
-	if reg == "" {
-		reg = cliFlags.region
-	}
+func (awsFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+	o := awsOverride(overrides)
+	prof := searchrun.FirstNonEmpty(o.Profile, cliFlags.profile)
+	reg := searchrun.FirstNonEmpty(o.Region, cliFlags.region)
 	return searchrun.WithDockerDiscover(
 		&AWS{Profile: prof, Region: reg},
 		config.DockerDiscover{},

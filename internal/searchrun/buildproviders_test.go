@@ -14,9 +14,9 @@ import (
 // tests themselves).
 type stubFactory struct{ id string }
 
-func (s stubFactory) Default(_ ProviderFlags) hosts.Backend                      { return stubBackend(s) }
-func (s stubFactory) FromConfig(_ *config.File, _ ProviderFlags) []hosts.Backend { return nil }
-func (s stubFactory) BackendRows(_ *config.File) []config.BackendRow             { return nil }
+func (s stubFactory) Default(_ ProviderOverrides) hosts.Backend                      { return stubBackend(s) }
+func (s stubFactory) FromConfig(_ *config.File, _ ProviderOverrides) []hosts.Backend { return nil }
+func (s stubFactory) BackendRows(_ *config.File) []config.BackendRow                 { return nil }
 
 type stubBackend struct{ id string }
 
@@ -35,7 +35,7 @@ func TestBuildProviders_ReturnsOnePerFactory(t *testing.T) {
 	stub := stubFactory{id: "test-stub"}
 	factories = append(factories, stub)
 
-	backends := BuildProviders(nil, ProviderFlags{})
+	backends := BuildProviders(nil, ProviderOverrides{})
 
 	if len(backends) != len(factories) {
 		t.Errorf("expected %d backends (one per factory), got %d", len(factories), len(backends))
