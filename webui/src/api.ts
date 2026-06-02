@@ -1125,6 +1125,7 @@ export interface LogsStreamRequest {
   anomaly_filter_threshold?: number;
   anomaly_freq_window?: number;
   anomaly_freq_ratio?: number;
+  anomaly_preprocessor?: string;
 }
 
 export interface LogsDefaultsResponse {
@@ -1144,6 +1145,7 @@ export interface LogsDefaultsResponse {
   anomaly_feedback_file?: string;
   alert_enabled?: boolean;
   alert_suppress_duration?: string;
+  anomaly_preprocessor?: string;
 }
 
 export async function fetchLogsDefaults(): Promise<LogsDefaultsResponse> {
@@ -1171,4 +1173,45 @@ export async function streamLogs(
     throw new Error(j.error || r.statusText);
   }
   await readNDJSON<{ line: string }>(r, (obj) => onLine(obj.line));
+}
+
+export type FeedbackRecord = {
+  ts: string;
+  source: string;
+  line: string;
+  score: number;
+  reason: string;
+  anomaly: boolean;
+};
+
+export async function fetchFeedbackRecords(): Promise<FeedbackRecord[]> {
+  const r = await apiGet('/api/v1/logs/feedback');
+  const j = (await r.json().catch(() => ({}))) as { records?: FeedbackRecord[]; error?: string };
+  if (!r.ok) {
+    throw new Error(j.error || r.statusText);
+  }
+  return j.records || [];
+}
+
+export async function saveFeedbackRecords(records: FeedbackRecord[]): Promise<void> {
+  const r = await apiPost('/api/v1/logs/feedback', { records });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+}
+
+export type FeedbackSuggestResponse = {
+  anomaly: boolean;
+  score: number;
+  reason: string;
+};
+
+export async function suggestFeedbackAnomaly(line: string, source: string): Promise<FeedbackSuggestResponse> {
+  const r = await apiPost('/api/v1/logs/feedback/suggest', { line, source });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || r.statusText);
+  }
+  return await r.json() as FeedbackSuggestResponse;
 }

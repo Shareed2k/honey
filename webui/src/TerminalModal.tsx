@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Button, Flex, InputNumber, Input, Select, Typography } from 'antd';
 import { apiGet, apiPost, getToken } from './api';
 
 type HostRecord = {
@@ -530,79 +531,83 @@ function TerminalSession({
         {termArea}
         {showAssist ? (
           <aside className="term-assist-panel" aria-label="Terminal assistant">
-            <strong style={{ fontSize: '0.9rem' }}>Assistant</strong>
-            <small>
-              Sends the last lines of scrollback plus your question using a model from the provider list. Terminal data may
-              be sensitive—only send what you are allowed to share.
-            </small>
-            {assistModelsLoading ? (
-              <small style={{ color: '#9aa4b2' }}>Loading models…</small>
-            ) : null}
-            {assistModelsErr ? (
-              <small style={{ color: '#f5a623' }}>{assistModelsErr}</small>
-            ) : null}
-            {assistModels.length > 0 ? (
-              <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                Model
-                <select value={assistSelectedModel} onChange={(e) => setAssistSelectedModel(e.target.value)}>
-                  {assistModels.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : !assistModelsLoading ? (
-              <small style={{ color: '#9aa4b2' }}>No models to choose from.</small>
-            ) : null}
-            <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-              Scrollback lines
-              <input
-                type="number"
-                min={1}
-                max={500}
-                value={assistLines}
-                onChange={(e) => setAssistLines(Number(e.target.value) || defaultScrollbackLines)}
-              />
-            </label>
-            <label style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-              Your question (optional)
-              <textarea
-                value={assistPrompt}
-                onChange={(e) => setAssistPrompt(e.target.value)}
-                placeholder="e.g. Why did this command fail?"
-                rows={3}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    void runAssist();
-                  }
-                }}
-              />
-            </label>
-            <button
-              type="button"
-              className="primary"
-              disabled={assistBusy || !assistCanAsk}
-              onClick={() => void runAssist()}
-            >
-              {assistBusy ? 'Thinking…' : 'Ask assistant'}
-            </button>
-            {assistErr ? (
-              <p style={{ color: '#f66', margin: 0, fontSize: '0.85rem' }}>{assistErr}</p>
-            ) : null}
-            {assistClipped ? (
-              <small style={{ color: '#f5a623' }}>Some scrollback was clipped by server limits.</small>
-            ) : null}
-            {assistReply ? (
-              <div className="term-assist-reply" role="region" aria-label="Assistant reply">
-                <Suspense
-                  fallback={<pre className="ai-markdown-suspense-fallback">{assistReply}</pre>}
-                >
-                  <AiMarkdown content={assistReply} />
-                </Suspense>
-              </div>
-            ) : null}
+            <Flex vertical gap="small" style={{ width: '100%', flex: 1 }}>
+              <Typography.Text strong style={{ fontSize: '0.9rem' }}>Assistant</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: '0.82rem' }}>
+                Sends the last lines of scrollback plus your question using a model from the provider list. Terminal data may
+                be sensitive—only send what you are allowed to share.
+              </Typography.Text>
+              {assistModelsLoading ? (
+                <Typography.Text type="secondary">Loading models…</Typography.Text>
+              ) : null}
+              {assistModelsErr ? (
+                <Typography.Text type="warning">{assistModelsErr}</Typography.Text>
+              ) : null}
+              {assistModels.length > 0 ? (
+                <Flex vertical gap={2} style={{ width: '100%' }}>
+                  <Typography.Text style={{ fontSize: '0.82rem' }}>Model</Typography.Text>
+                  <Select
+                    size="small"
+                    style={{ width: '100%' }}
+                    value={assistSelectedModel}
+                    onChange={setAssistSelectedModel}
+                    options={assistModels.map((id) => ({ value: id, label: id }))}
+                  />
+                </Flex>
+              ) : !assistModelsLoading ? (
+                <Typography.Text type="secondary">No models to choose from.</Typography.Text>
+              ) : null}
+              <Flex vertical gap={2} style={{ width: '100%' }}>
+                <Typography.Text style={{ fontSize: '0.82rem' }}>Scrollback lines</Typography.Text>
+                <InputNumber
+                  size="small"
+                  min={1}
+                  max={500}
+                  value={assistLines}
+                  onChange={(v) => setAssistLines(v || defaultScrollbackLines)}
+                  style={{ width: '100%' }}
+                />
+              </Flex>
+              <Flex vertical gap={2} style={{ width: '100%' }}>
+                <Typography.Text style={{ fontSize: '0.82rem' }}>Your question (optional)</Typography.Text>
+                <Input.TextArea
+                  value={assistPrompt}
+                  onChange={(e) => setAssistPrompt(e.target.value)}
+                  placeholder="e.g. Why did this command fail?"
+                  rows={3}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void runAssist();
+                    }
+                  }}
+                />
+              </Flex>
+              <Button
+                type="primary"
+                block
+                loading={assistBusy}
+                disabled={!assistCanAsk}
+                onClick={() => void runAssist()}
+              >
+                {assistBusy ? 'Thinking…' : 'Ask assistant'}
+              </Button>
+              {assistErr ? (
+                <Typography.Text type="danger" style={{ fontSize: '0.85rem' }}>{assistErr}</Typography.Text>
+              ) : null}
+              {assistClipped ? (
+                <Typography.Text type="warning">Some scrollback was clipped by server limits.</Typography.Text>
+              ) : null}
+              {assistReply ? (
+                <div className="term-assist-reply" role="region" aria-label="Assistant reply">
+                  <Suspense
+                    fallback={<pre className="ai-markdown-suspense-fallback">{assistReply}</pre>}
+                  >
+                    <AiMarkdown content={assistReply} />
+                  </Suspense>
+                </div>
+              ) : null}
+            </Flex>
           </aside>
         ) : null}
       </div>

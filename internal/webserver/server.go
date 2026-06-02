@@ -157,6 +157,9 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("POST /api/v1/postgres/query", s.withAuth(s.handlePostgresQuery))
 
 	s.mux.HandleFunc("POST /api/v1/logs/stream", s.withAuth(s.handleLogsStream))
+	s.mux.HandleFunc("GET /api/v1/logs/feedback", s.withAuth(s.handleLogsFeedbackGet))
+	s.mux.HandleFunc("POST /api/v1/logs/feedback", s.withAuth(s.handleLogsFeedbackSave))
+	s.mux.HandleFunc("POST /api/v1/logs/feedback/suggest", s.withAuth(s.handleLogsFeedbackSuggest))
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {

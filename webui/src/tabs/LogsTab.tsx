@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, AutoComplete, Button, Checkbox, Collapse, Input, InputNumber, Space, Spin, Typography,
+  Alert, AutoComplete, Button, Checkbox, Collapse, Input, InputNumber, Select, Space, Spin, Typography,
 } from 'antd';
 import { PlayCircleOutlined, StopOutlined, ClearOutlined } from '@ant-design/icons';
 import type { HostRecord } from '../HostPicker';
@@ -40,6 +40,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
   const [tail, setTail] = useState<number>((saved.tail as number) ?? 100);
 
   const [anomaly, setAnomaly] = useState<boolean>((saved.anomaly as boolean) ?? false);
+  const [anomalyPreprocessor, setAnomalyPreprocessor] = useState<string>((saved.anomalyPreprocessor as string) ?? '');
   const [anomalyThreshold, setAnomalyThreshold] = useState<number>((saved.anomalyThreshold as number) ?? 0.90);
   const [anomalyOnly, setAnomalyOnly] = useState<boolean>((saved.anomalyOnly as boolean) ?? false);
   const [anomalyEndpoint, setAnomalyEndpoint] = useState<string>((saved.anomalyEndpoint as string) ?? '');
@@ -66,12 +67,12 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
   useEffect(() => {
     localStorage.setItem(LS_KEY, JSON.stringify({
       target, source, grep, since, container, unit, command, runAs, follow, tail,
-      anomaly, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
+      anomaly, anomalyPreprocessor, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
       anomalyContext, anomalyFilterThresh, anomalyFreqWindow, anomalyFreqRatio,
     }));
   }, [
     target, source, grep, since, container, unit, command, runAs, follow, tail,
-    anomaly, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
+    anomaly, anomalyPreprocessor, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
     anomalyContext, anomalyFilterThresh, anomalyFreqWindow, anomalyFreqRatio,
   ]);
 
@@ -91,6 +92,9 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
         }
         if (!hasSavedField(saved, 'anomaly')) {
           setAnomaly(defaults.anomaly);
+        }
+        if (!hasSavedField(saved, 'anomalyPreprocessor')) {
+          setAnomalyPreprocessor(defaults.anomaly_preprocessor || '');
         }
         if (!hasSavedField(saved, 'anomalyThreshold')) {
           setAnomalyThreshold(defaults.anomaly_threshold);
@@ -209,6 +213,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
         run_as: runAs || undefined,
         grep: grep || undefined,
         anomaly,
+        anomaly_preprocessor: anomalyPreprocessor || undefined,
         anomaly_threshold: anomalyThreshold,
         anomaly_only: anomalyOnly,
         anomaly_endpoint: anomalyEndpoint || undefined,
@@ -233,7 +238,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
     }
   }, [
     target, source, grep, since, container, unit, command, runAs, follow, tail,
-    anomaly, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
+    anomaly, anomalyPreprocessor, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
     anomalyContext, anomalyFilterThresh, anomalyFreqWindow, anomalyFreqRatio,
     sshUser, providers, backends,
   ]);
@@ -333,6 +338,19 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
                   <Checkbox checked={anomalyOnly} onChange={(e) => setAnomalyOnly(e.target.checked)} disabled={!anomaly}>
                     Anomaly-only
                   </Checkbox>
+                  <Space>
+                    <Typography.Text type="secondary">Preprocessor</Typography.Text>
+                    <Select
+                      value={anomalyPreprocessor}
+                      onChange={(val) => setAnomalyPreprocessor(val)}
+                      style={{ width: 120 }}
+                      disabled={!anomaly}
+                      options={[
+                        { value: '', label: 'None' },
+                        { value: 'lshd', label: 'LSHD' },
+                      ]}
+                    />
+                  </Space>
                 </Space>
                 <Space wrap>
                   <Space>

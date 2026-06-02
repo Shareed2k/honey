@@ -93,6 +93,7 @@ type LogOptions struct {
 	AnomalyFreqWindow      int
 	AnomalyFreqRatio       float64
 	AnomalyFeedbackFile    string
+	AnomalyPreprocessor    string
 	AlertEnabled           bool
 	AlertSuppressDuration  time.Duration
 }
@@ -120,6 +121,13 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 
 	var detector anomaly.Detector
 	if opts.Anomaly {
+		if err := anomaly.LoadFeedbackDemos(opts.AnomalyFeedbackFile); err != nil {
+			if opts.AnomalyStrict {
+				return fmt.Errorf("load feedback demos: %w", err)
+			}
+			zap.L().Warn("failed to load feedback demos", zap.Error(err))
+		}
+
 		d, err := anomaly.NewEmbeddedDetector(anomaly.Options{
 			ModelPath:       strings.TrimSpace(opts.AnomalyModel),
 			Threshold:       opts.AnomalyThresh,
@@ -131,6 +139,7 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 			FilterThreshold: opts.AnomalyFilterThreshold,
 			FreqWindow:      opts.AnomalyFreqWindow,
 			FreqRatio:       opts.AnomalyFreqRatio,
+			Preprocessor:    strings.TrimSpace(opts.AnomalyPreprocessor),
 		})
 		if err != nil {
 			if opts.AnomalyStrict {

@@ -95,13 +95,14 @@ type Logs struct {
 	AnomalyOnly            bool    `yaml:"anomaly_only"                json:"anomaly_only"                honey:"label=Only output anomalous lines"`
 	AnomalyStrict          bool    `yaml:"anomaly_strict"              json:"anomaly_strict"              honey:"label=Fail if anomaly detector cannot init"`
 	AnomalyTokPath         string  `yaml:"anomaly_tokenizer,omitempty"  json:"anomaly_tokenizer,omitempty"  honey:"label=Path to vocab.txt tokenizer file" mod:"trim"`
-	AnomalyEndpoint        string  `yaml:"anomaly_endpoint,omitempty"      json:"anomaly_endpoint,omitempty"      honey:"label=OpenAI-compatible API URL for LLM anomaly detection (Ollama/LM Studio)" mod:"trim"`
+	AnomalyEndpoint        string  `yaml:"anomaly_endpoint,omitempty"      json:"anomaly_endpoint,omitempty"      honey:"label=OpenAI-compatible API URL for LLM anomaly detection (Ollama/LM Studio)" mod:"trim" default:"http://localhost:11434/v1"`
 	AnomalyLLMModel        string  `yaml:"anomaly_llm_model,omitempty"     json:"anomaly_llm_model,omitempty"     honey:"label=Model name for LLM anomaly endpoint" mod:"trim" default:"llama3"`
 	AnomalyContextLines    int     `yaml:"anomaly_context_lines,omitempty"    json:"anomaly_context_lines,omitempty"    honey:"label=Number of recent lines sent as context to the LLM anomaly detector" default:"5"`
 	AnomalyFilterThreshold float64 `yaml:"anomaly_filter_threshold,omitempty" json:"anomaly_filter_threshold,omitempty" honey:"label=Skip LLM when fast detector score is below this value (CoLA two-tier; 0=disabled)"`
 	AnomalyFreqWindow      int     `yaml:"anomaly_freq_window,omitempty"      json:"anomaly_freq_window,omitempty"      honey:"label=Short window size for rate-ratio burst detection (0=disabled, default 100)" default:"100"`
 	AnomalyFreqRatio       float64 `yaml:"anomaly_freq_ratio,omitempty"       json:"anomaly_freq_ratio,omitempty"       honey:"label=Short/long rate ratio that triggers a frequency-spike anomaly (default 5.0)" default:"5.0"`
 	AnomalyFeedbackFile    string  `yaml:"anomaly_feedback_file,omitempty"   json:"anomaly_feedback_file,omitempty"    honey:"label=Append scored log lines as JSONL to this file for review and threshold calibration" mod:"trim"`
+	AnomalyPreprocessor    string  `yaml:"anomaly_preprocessor,omitempty"    json:"anomaly_preprocessor,omitempty"     honey:"label=Name of preprocessor to run before anomaly detection (e.g. lshd)" mod:"trim"`
 	AlertEnabled           bool    `yaml:"alert_enabled"              json:"alert_enabled"              honey:"label=Alert on anomalies"`
 	AlertSuppressDuration  string  `yaml:"alert_suppress_duration,omitempty" json:"alert_suppress_duration,omitempty" honey:"label=Alert suppression window (e.g. 5m)" mod:"trim"`
 }

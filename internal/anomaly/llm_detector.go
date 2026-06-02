@@ -55,6 +55,11 @@ func newLLMDetector(endpoint, model string, threshold float64, contextLines int)
 	}
 }
 
+// NewLLMDetector exposes the internal newLLMDetector function for public use.
+func NewLLMDetector(endpoint, model string, threshold float64, contextLines int) Detector {
+	return newLLMDetector(endpoint, model, threshold, contextLines)
+}
+
 const llmSystemPrompt = `You are an expert system log analyst.
 
 Examples:
@@ -92,7 +97,7 @@ func (d *llmDetector) Score(ctx context.Context, line string) (Result, error) {
 	resp, err := d.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model: d.model,
 		Messages: []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: llmSystemPrompt},
+			{Role: openai.ChatMessageRoleSystem, Content: d.buildSystemPrompt(n)},
 			{Role: openai.ChatMessageRoleUser, Content: userMsg},
 		},
 		ResponseFormat: &openai.ChatCompletionResponseFormat{
@@ -148,5 +153,33 @@ func (d *llmDetector) buildUserMessage(normalizedLine string) string {
 	}
 	sb.WriteString("\nCurrent line: ")
 	sb.WriteString(normalizedLine)
+	return sb.String()
+}
+
+func (d *llmDetector) buildSystemPrompt(normalizedLine string) string {
+	tokens := tokenize(normalizedLine)
+	demos := SelectDefaultDemonstrations(tokens, 2)
+	if len(demos) == 0 {
+		return llmSystemPrompt
+	}
+
+	var sb strings.Builder
+	sb.WriteString("You are an expert system log analyst.\n\n")
+	sb.WriteString("Here are contextually relevant examples of logs and their correct classification:\n\n")
+
+	for i, demo := range demos {
+		scoreStr := fmt.Sprintf("%g", demo.Score)
+		if !strings.Contains(scoreStr, ".") {
+			scoreStr += ".0"
+		}
+		fmt.Fprintf(&sb, "User: %q\n", demo.Template)
+		fmt.Fprintf(&sb, "Assistant: {\"anomaly\":%t,\"score\":%s,\"reason\":%q}\n", demo.Anomaly, scoreStr, demo.Reason)
+		if i < len(demos)-1 {
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString("Analyze the log line (or sequence) below and decide if it indicates an anomaly (error, failure, crash, security issue, or unexpected behavior). When recent context lines are provided, consider them as a sequence. Return anomaly status, a score between 0.0 and 1.0, and a brief reason.")
 	return sb.String()
 }

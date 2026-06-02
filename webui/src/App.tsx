@@ -6,6 +6,7 @@ import type { MenuProps } from 'antd';
 import {
   SearchOutlined, FileOutlined, CloudOutlined, SettingOutlined,
   PlayCircleOutlined, ApiOutlined, AppstoreOutlined, DatabaseOutlined, UnorderedListOutlined,
+  CommentOutlined,
 } from '@ant-design/icons';
 import {
   apiGet,
@@ -29,6 +30,7 @@ import { LogsTab } from './tabs/LogsTab';
 import { ConfigTab } from './tabs/ConfigTab';
 import { ApiDocsTab } from './tabs/ApiDocsTab';
 import { SearchTab } from './tabs/SearchTab';
+import { FeedbackTab } from './tabs/FeedbackTab';
 import { SessionReplayModal } from './SessionReplayModal';
 import {
   TerminalTabsModal,
@@ -40,7 +42,7 @@ import {
 type BackendRow = { kind: string; name: string; hint: string };
 
 
-type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
@@ -86,7 +88,8 @@ export function App() {
       val === 'tunnels' ||
       val === 'apps' ||
       val === 'logs' ||
-      val === 'api-docs'
+      val === 'api-docs' ||
+      val === 'feedback'
     ) {
       return val as Tab;
     }
@@ -303,6 +306,7 @@ export function App() {
     { key: 'tunnels',  icon: <ApiOutlined />,        label: 'Tunnels' },
     { key: 'apps',     icon: <DatabaseOutlined />,      label: 'Apps & Proxies' },
     { key: 'logs',     icon: <UnorderedListOutlined />, label: 'Logs' },
+    { key: 'feedback', icon: <CommentOutlined />,       label: 'Logs Feedback' },
     { key: 'api-docs', icon: <AppstoreOutlined />,      label: 'API Docs' },
   ];
 
@@ -589,6 +593,8 @@ export function App() {
           </div>
 
           {tab === 'api-docs' ? <ApiDocsTab /> : null}
+
+          {tab === 'feedback' ? <FeedbackTab /> : null}
         </Layout.Content>
       </Layout>
 

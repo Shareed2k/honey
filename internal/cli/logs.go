@@ -47,6 +47,7 @@ var (
 	flagLogsAnomalyFreqWindow      int
 	flagLogsAnomalyFreqRatio       float64
 	flagLogsAnomalyFeedbackFile    string
+	flagLogsAnomalyPreprocessor    string
 	flagLogsAlert                  bool
 	flagLogsAlertSuppress          time.Duration
 )
@@ -91,6 +92,7 @@ func init() {
 	logsCmd.Flags().IntVar(&flagLogsAnomalyFreqWindow, "anomaly-freq-window", 100, "Short window size for rate-ratio burst detection (0=disabled)")
 	logsCmd.Flags().Float64Var(&flagLogsAnomalyFreqRatio, "anomaly-freq-ratio", 5.0, "Short/long rate ratio above which a log template is flagged as a frequency spike")
 	logsCmd.Flags().StringVar(&flagLogsAnomalyFeedbackFile, "anomaly-feedback-file", "", "Append scored log lines as JSONL to this file for review and threshold calibration")
+	logsCmd.Flags().StringVar(&flagLogsAnomalyPreprocessor, "anomaly-preprocessor", "", "Name of preprocessor to run before anomaly detection (e.g. lshd)")
 	logsCmd.Flags().BoolVar(&flagLogsAlert, "alert", false, "Send anomaly notifications via HONEY_NOTIFY_* env vars (auto-enables --anomaly)")
 	logsCmd.Flags().DurationVar(&flagLogsAlertSuppress, "alert-suppress", 5*time.Minute, "Suppress repeated alerts for the same source+reason pair for this duration (0=no dedup)")
 }
@@ -109,6 +111,9 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		flagLogsAnomaly = true
 	}
 	if flagLogsAlert {
+		flagLogsAnomaly = true
+	}
+	if flagLogsAnomalyPreprocessor != "" {
 		flagLogsAnomaly = true
 	}
 	if flagLogsAnomalyEndpoint != "" && flagLogsAnomalyModel != "" {
@@ -144,6 +149,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		AnomalyFreqWindow:      flagLogsAnomalyFreqWindow,
 		AnomalyFreqRatio:       flagLogsAnomalyFreqRatio,
 		AnomalyFeedbackFile:    flagLogsAnomalyFeedbackFile,
+		AnomalyPreprocessor:    flagLogsAnomalyPreprocessor,
 		AlertEnabled:           flagLogsAlert,
 		AlertSuppressDuration:  flagLogsAlertSuppress,
 	}
@@ -158,6 +164,14 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	records, sshUser, cfg, _, err := runSearchCore(cmd, []string{target})
 	if err != nil {
 		return err
+	}
+
+	if flagLogsAnomalyPreprocessor == "" && cfg != nil {
+		flagLogsAnomalyPreprocessor = cfg.Defaults.Logs.AnomalyPreprocessor
+		if flagLogsAnomalyPreprocessor != "" {
+			opts.Anomaly = true
+			opts.AnomalyPreprocessor = flagLogsAnomalyPreprocessor
+		}
 	}
 
 	reg := buildHostExecRegistry()

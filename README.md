@@ -53,6 +53,10 @@ honey search --json --provider aws,k8s web
 
 Full docs: [shareed2k.github.io/honey](https://shareed2k.github.io/honey/)
 
+## Credits & Licenses
+
+- **LogLSHD Algorithm**: Adapted from the research paper *"RT-LogAAS: A Real-Time Log Anomaly Analysis System for Net-Cloud"*, used under the [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/) license.
+
 ## License
 
 [MIT](LICENSE)
