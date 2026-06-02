@@ -1,3 +1,8 @@
+// Package anomaly provides log anomaly detection structures and algorithms.
+//
+// The standard demonstration templates and seed pool setups are compiled based on
+// the evaluations from LLMLog (VLDB 2025) and CoLA (VLDB 2025).
+// Licensed under Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International (CC BY-NC-ND 4.0).
 package anomaly
 
 import (

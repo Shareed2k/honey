@@ -39,7 +39,7 @@ title: Anomaly Detection
 
 Dealing with heterogeneous, multi-source industrial logs (PostgreSQL, Nginx, Node.js) presents high lexical variance. Traditional regular expressions (RE) are rigid and fail to handle changing formats.
 
-`honey` integrates **LogLSHD (Locality-Sensitive Hashing with Sequence-Alignment Clustering)** to convert raw, unstructured logs into clean templates in real-time ($<1$ms latency).
+`honey` integrates **LogLSHD (Locality-Sensitive Hashing with Sequence-Alignment Clustering)** to convert raw, unstructured logs into clean templates in real-time (less than 1ms latency).
 
 ### Why use LogLSHD?
 *   **Parameter Stripping**: It automatically collapses variable segments (IPs, timestamps, UUIDs, hex literals) into a single, clean template (e.g. `interface <*> is flapping`).
@@ -108,6 +108,48 @@ Tailing millions of logs can cause cognitive overload. Click **Summarize** in th
 
 *   **Template Compression**: The frontend condenses all loaded console lines into their active LSHD templates and trend statistics.
 *   **Operational Health Digest**: The LLM synthesizes this into an executive, 200-word digest summarizing system health, alerting you to abnormal spikes and structural OOM issues in seconds.
+
+---
+
+## 💻 Logs CLI Usage Examples
+
+You can run these advanced anomaly detection features directly from your terminal using the `honey logs` command.
+
+### 1. Simple Log Tailing with LogLSHD Template Processing
+Tail VM system logs or service files and group them into structured templates in real-time:
+```bash
+honey logs my-server /var/log/syslog --anomaly --anomaly-preprocessor lshd
+```
+
+### 2. High-Accuracy Anomaly Detection via Local LLM (Ollama)
+Stream log files and score them semantically using a local Llama/Qwen model with dynamic few-shot learning and active caching:
+```bash
+honey logs prod-cluster /var/log/nginx/error.log \
+  --anomaly-preprocessor lshd \
+  --anomaly-endpoint http://localhost:11434/v1 \
+  --anomaly-llm-model qwen3 \
+  --anomaly-context 0 \
+  --anomaly-only
+```
+
+### 3. CoLA-Style Two-Tier Log Pre-Screening
+Save up to 80% on local CPU and remote LLM tokens by screening benign lines with our fast heuristic model first, calling the LLM only for suspicious lines (score $\ge 0.40$):
+```bash
+honey logs k8s-pods \
+  --anomaly-preprocessor lshd \
+  --anomaly-filter-threshold 0.40 \
+  --anomaly-endpoint http://localhost:11434/v1 \
+  --anomaly-only
+```
+
+### 4. Running with Persistent Feedback Training
+Stream logs and continuously read previous manual/AI corrections so that your local LLM continues to get smarter with every log session:
+```bash
+honey logs prod-db postgres \
+  --anomaly-preprocessor lshd \
+  --anomaly-feedback-file ~/.config/honey/feedback.jsonl \
+  --anomaly-only
+```
 
 ---
 

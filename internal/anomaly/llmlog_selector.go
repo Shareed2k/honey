@@ -1,3 +1,11 @@
+// Package anomaly provides log anomaly detection structures and algorithms.
+//
+// LLMLog (Large Language Model-based Log Template Generation via LLM-driven Multi-Round Annotation)
+// is based on the greedy set-cover dynamic demonstration selection algorithm (Algorithm 3) proposed in:
+// "LLMLog: Advanced Log Template Generation via LLM-driven Multi-Round Annotation" (VLDB 2025)
+// by Fei Teng, Haoyang Li, and Lei Chen.
+// Licensed under Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International (CC BY-NC-ND 4.0).
+// For license details, see: https://creativecommons.org/licenses/by-nc-nd/4.0/
 package anomaly
 
 import (

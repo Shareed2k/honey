@@ -57,7 +57,22 @@ Full docs: [shareed2k.github.io/honey](https://shareed2k.github.io/honey/)
 
 ## Credits & Licenses
 
-- **LogLSHD Algorithm**: Adapted from the research paper *"RT-LogAAS: A Real-Time Log Anomaly Analysis System for Net-Cloud"*, used under the [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/) license.
+This project leverages state-of-the-art research algorithms to deliver real-time, context-aware operational intelligence:
+
+1.  **LogLSHD Algorithm** (Proposed by Shu-Wei Huang et al.):
+    - **Description**: Locality-Sensitive Hashing with Sequence-Alignment Clustering used for real-time log template mining.
+    - **License**: [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+    - **Citations**: *Huang, S.W., et al. "LogLSHD: Real-Time Log Template Mining via Locality-Sensitive Hashing and Dynamic Time Warping."*
+
+2.  **LLMLog Algorithm** (Proposed by Fei Teng, Haoyang Li, and Lei Chen):
+    - **Description**: Greedy set-cover adaptive demonstration selection (Algorithm 3) used for contextual few-shot prompt assembly.
+    - **License**: [Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International (CC BY-NC-ND 4.0)](https://creativecommons.org/licenses/by-nc-nd/4.0/).
+    - **Citations**: *Teng, F., Li, H., & Chen, L. "LLMLog: Advanced Log Template Generation via LLM-driven Multi-Round Annotation" (Proceedings of the VLDB Endowment, VLDB 2025).*
+
+3.  **CoLA Two-Tier Pre-Screening** (Proposed by Tang et al.):
+    - **Description**: Model collaboration pipeline filtering obvious logs via fast prescreeners to optimize LLM performance and reduce costs.
+    - **License**: [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+    - **Citations**: *Tang, et al. "CoLA: Model Collaboration for Log-based Anomaly Detection" (Proceedings of the VLDB Endowment, VLDB 2025).*
 
 ## License
 
