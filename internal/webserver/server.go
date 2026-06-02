@@ -160,6 +160,8 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("GET /api/v1/logs/feedback", s.withAuth(s.handleLogsFeedbackGet))
 	s.mux.HandleFunc("POST /api/v1/logs/feedback", s.withAuth(s.handleLogsFeedbackSave))
 	s.mux.HandleFunc("POST /api/v1/logs/feedback/suggest", s.withAuth(s.handleLogsFeedbackSuggest))
+	s.mux.HandleFunc("POST /api/v1/logs/rca", s.withAuth(s.handleLogsRCA))
+	s.mux.HandleFunc("POST /api/v1/logs/summary", s.withAuth(s.handleLogsSummary))
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {

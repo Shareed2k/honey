@@ -1215,3 +1215,30 @@ export async function suggestFeedbackAnomaly(line: string, source: string): Prom
   }
   return await r.json() as FeedbackSuggestResponse;
 }
+
+export type LogTemplateStat = {
+  template: string;
+  count: number;
+  score: number;
+};
+
+export async function fetchRcaDiagnosis(anomalyLine: string, context: string[], source: string): Promise<string> {
+  const r = await apiPost('/api/v1/logs/rca', { anomaly_line: anomalyLine, context, source });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || r.statusText);
+  }
+  const j = await r.json() as { markdown: string };
+  return j.markdown;
+}
+
+export async function fetchLogSummary(stats: LogTemplateStat[]): Promise<string> {
+  const r = await apiPost('/api/v1/logs/summary', { stats });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || r.statusText);
+  }
+  const j = await r.json() as { markdown: string };
+  return j.markdown;
+}
+

@@ -514,7 +514,20 @@ export function App() {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Layout.Sider collapsible width={200} theme="dark">
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid #1d2535' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #1d2535', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <svg viewBox="0 0 120 120" width="18" height="18" style={{ flexShrink: 0 }}>
+            <defs>
+              <linearGradient id="honeyGradSider" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#FFC107" />
+                <stop offset="100%" stopColor="#F57C00" />
+              </linearGradient>
+            </defs>
+            <polygon points="60,10 105,35 105,85 60,110 15,85 15,35" fill="url(#honeyGradSider)" />
+            <polygon points="60,20 95,40 95,80 60,100 25,80 25,40" fill="#14171c" />
+            <g transform="translate(38, 72)">
+              <text fontFamily="monospace, Consolas, 'Courier New'" fontSize="36" fontWeight="900" fill="#FFC107" letterSpacing="-2">&gt;_</text>
+            </g>
+          </svg>
           <Typography.Text strong style={{ color: '#e6e6e6', fontSize: 14 }}>
             honey
           </Typography.Text>

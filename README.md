@@ -1,3 +1,5 @@
+![honey logo](honey_logo_single.png)
+
 # honey
 
 > **Alpha software** — APIs, config schema, and CLI flags may change between releases without notice.
