@@ -1,3 +1,5 @@
+// Package anomaly provides anomaly detection algorithms based on LSH (Locality Sensitive Hashing)
+// and other clustering techniques.
 package anomaly
 
 import (
@@ -10,23 +12,27 @@ type LSHDDetector interface {
 	Detector
 }
 
+// lshdDetector implements LSHDDetector using Locality Sensitive Hashing.
 type lshdDetector struct {
 	mu       sync.Mutex
 	clusters map[int]*Cluster
-	// LSH bands (4 bands, 16 bits each)
-	bands        [4]map[uint16][]int
-	clusterCount int
+	// bands stores the hash buckets for LSH bands (4 bands, 16 bits each).
+	bands [4]map[uint16][]int
 }
 
-// Cluster represents a log cluster.
+// Cluster represents a log cluster identified by the anomaly detector.
 type Cluster struct {
-	ID       int
+	// ID is the unique identifier for the cluster.
+	ID int
+	// Template is the log template representing this cluster.
 	Template []string
-	SimHash  uint64
-	Count    int
+	// SimHash is the similarity hash for the template.
+	SimHash uint64
+	// Count is the number of logs assigned to this cluster.
+	Count int
 }
 
-// NewLSHDDetector creates a new LSHDDetector.
+// NewLSHDDetector creates a new LSHDDetector and initializes its internal data structures.
 func NewLSHDDetector() LSHDDetector {
 	d := &lshdDetector{
 		clusters: make(map[int]*Cluster),
@@ -39,13 +45,10 @@ func NewLSHDDetector() LSHDDetector {
 
 var _ LSHDDetector = (*lshdDetector)(nil)
 
-// Score implements the Detector interface.
+// Score computes an anomaly score for a given log line.
 func (d *lshdDetector) Score(_ context.Context, line string) (Result, error) {
 	d.mu.Lock()
-	_ = d.clusters
-	_ = d.bands
-	_ = d.clusterCount
-	d.mu.Unlock()
+	defer d.mu.Unlock()
 
 	// TODO: Implement LSHD-based scoring
 	return Result{
