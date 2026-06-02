@@ -28,7 +28,7 @@ func TestProvidersEndpoint(t *testing.T) {
 		ListenAddr:     "127.0.0.1:0",
 		Token:          "tok",
 		Version:        "0",
-		SearchRegistry: searchrun.NewRegistry(all.Factories()),
+		SearchRegistry: searchrun.NewRegistry(all.Factories(all.Deps{})),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestConfigBackendsCRUD(t *testing.T) {
 		ListenAddr:     "127.0.0.1:0",
 		Token:          "secret",
 		ConfigPath:     cfgPath,
-		SearchRegistry: searchrun.NewRegistry(all.Factories()),
+		SearchRegistry: searchrun.NewRegistry(all.Factories(all.Deps{})),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestConfigBackendsPutPathValues(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(initialAWS), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := NewServer(Options{ListenAddr: "127.0.0.1:0", Token: "t", ConfigPath: cfgPath, SearchRegistry: searchrun.NewRegistry(all.Factories())})
+	s, err := NewServer(Options{ListenAddr: "127.0.0.1:0", Token: "t", ConfigPath: cfgPath, SearchRegistry: searchrun.NewRegistry(all.Factories(all.Deps{}))})
 	if err != nil {
 		t.Fatal(err)
 	}

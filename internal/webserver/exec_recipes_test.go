@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 func TestRecipesViewUnauthorized(t *testing.T) {
@@ -72,6 +74,42 @@ func TestExecRejectsEmptyRecords(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestValidateExecRequest_ScriptAndRunAs(t *testing.T) {
+	t.Parallel()
+	s := &Server{}
+	rec := []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}
+
+	t.Run("valid script mode", func(t *testing.T) {
+		mode, err := s.validateExecRequest(ExecRequest{
+			SSHUser: "u", Command: "echo hi\n", ExecMode: "script",
+			ScriptInterpreter: "bash", ScriptArgs: []string{"a", "b"}, RunAs: "ops", Records: rec,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mode != execModeScript {
+			t.Fatalf("mode = %q, want %q", mode, execModeScript)
+		}
+	})
+
+	t.Run("bad run_as rejected", func(t *testing.T) {
+		if _, err := s.validateExecRequest(ExecRequest{
+			SSHUser: "u", Command: "true", RunAs: "bad user!", Records: rec,
+		}); err == nil {
+			t.Fatal("expected error for invalid run_as")
+		}
+	})
+
+	t.Run("too many script args rejected", func(t *testing.T) {
+		args := make([]string, maxWebExecArgs+1)
+		if _, err := s.validateExecRequest(ExecRequest{
+			SSHUser: "u", Command: "x", ExecMode: "script", ScriptArgs: args, Records: rec,
+		}); err == nil {
+			t.Fatal("expected error for too many script_args")
+		}
+	})
 }
 
 func TestRecipesListAndViewAllowedPath(t *testing.T) {

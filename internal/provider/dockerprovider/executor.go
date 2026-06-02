@@ -24,17 +24,17 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-// dockerRunInteractiveHook is wired by ui.init() to avoid an import cycle (ui imports dockerprovider, not vice versa).
-var dockerRunInteractiveHook func(user string, r hosts.Record, reg hostexec.Registry) error
-
-// SetRunInteractive is called from ui.init() to wire the TTY session runner.
-func SetRunInteractive(fn func(string, hosts.Record, hostexec.Registry) error) {
-	dockerRunInteractiveHook = fn
+// InteractiveRunner runs an interactive TTY session against a Docker container.
+// It is implemented in the ui package and injected via NewFactory to keep
+// dockerprovider a leaf package (ui imports dockerprovider, not vice versa).
+type InteractiveRunner interface {
+	RunInteractive(user string, r hosts.Record, reg hostexec.Registry) error
 }
 
 // DockerExecutor implements hostexec.Executor for Docker containers.
 type DockerExecutor struct {
-	reg hostexec.Registry
+	reg         hostexec.Registry
+	interactive InteractiveRunner
 }
 
 // DockerNativeClient implements hostexec.HostClient via the Docker Engine API.
@@ -64,12 +64,12 @@ func (e *DockerExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient,
 	return &DockerNativeClient{Cli: cli, ContainerID: containerID, ContainerOS: osLabel}, nil
 }
 
-// RunInteractive delegates to the hook registered by ui.init().
+// RunInteractive delegates to the injected InteractiveRunner.
 func (e *DockerExecutor) RunInteractive(user string, r hosts.Record) error {
-	if dockerRunInteractiveHook == nil {
+	if e.interactive == nil {
 		return fmt.Errorf("interactive session not configured")
 	}
-	return dockerRunInteractiveHook(user, r, e.reg)
+	return e.interactive.RunInteractive(user, r, e.reg)
 }
 
 // DialDockerCheck verifies that a docker record can reach the Engine API (dial + close).

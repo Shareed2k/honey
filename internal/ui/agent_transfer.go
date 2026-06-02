@@ -491,14 +491,19 @@ func stageSourceDestinationAgents(
 		err  error
 	}
 	outcomes := make(chan stageOutcome, 2)
-	go func() {
-		err := stageAgentBinary(&eventMu, events, emit, redactions, "stage_agent_source", srcHost, srcClient, srcAgentPath, agentRemotePath)
-		outcomes <- stageOutcome{role: "source", err: err}
-	}()
-	go func() {
-		err := stageAgentBinary(&eventMu, events, emit, redactions, "stage_agent_destination", dstHost, dstClient, dstAgentPath, agentRemotePath)
-		outcomes <- stageOutcome{role: "destination", err: err}
-	}()
+	// runStage always delivers exactly one outcome, even if stageAgentBinary
+	// panics — otherwise the for-range below would deadlock on a missing send.
+	runStage := func(role, eventName, host string, client HostClient, agentPath string) {
+		defer func() {
+			if r := recover(); r != nil {
+				outcomes <- stageOutcome{role: role, err: fmt.Errorf("stage %s panicked: %v", role, r)}
+			}
+		}()
+		err := stageAgentBinary(&eventMu, events, emit, redactions, eventName, host, client, agentPath, agentRemotePath)
+		outcomes <- stageOutcome{role: role, err: err}
+	}
+	go runStage("source", "stage_agent_source", srcHost, srcClient, srcAgentPath)
+	go runStage("destination", "stage_agent_destination", dstHost, dstClient, dstAgentPath)
 	var srcStageErr, dstStageErr error
 	for range 2 {
 		o := <-outcomes

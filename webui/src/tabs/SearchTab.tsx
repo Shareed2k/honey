@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Button, Card, Checkbox, Input, Modal, Progress, Select, Space, Table, Tag, Typography,
+  Alert, Button, Card, Checkbox, Input, Modal, Progress, Segmented, Select, Space, Table, Tag, Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -9,11 +9,15 @@ import {
   uploadFormDataWithSFTPStream,
 } from '../api';
 import type {
+  ExecOnHostsBody,
   FormDataUploadProgressEvent,
   HostExecResultRow,
   UploadStreamServerEvent,
 } from '../api';
+import type { EditorLanguage } from '../CodeEditor';
 import { HostPicker, recordKey } from '../HostPicker';
+
+const CodeEditor = lazy(() => import('../CodeEditor'));
 import type { HostRecord } from '../HostPicker';
 import type { TerminalSessionConfig, PveConsoleMode, TrueNASConsoleMode } from '../TerminalModal';
 
@@ -226,6 +230,14 @@ export function SearchTab({
   const [execErr, setExecErr] = useState<string | null>(null);
   const [execResults, setExecResults] = useState<HostExecResultRow[] | null>(null);
 
+  // Script-mode exec options (Rundeck-style: upload script, chmod +x, run, cleanup).
+  const [execMode, setExecMode] = useState<'command' | 'script'>('command');
+  const [scriptInterpreter, setScriptInterpreter] = useState(''); // '' = use shebang
+  const [interpreterArgsQuoted, setInterpreterArgsQuoted] = useState(false);
+  const [scriptInterpreterCustom, setScriptInterpreterCustom] = useState('');
+  const [removeTmpFile, setRemoveTmpFile] = useState(true);
+  const [execRunAs, setExecRunAs] = useState('');
+
   const [hostDetailRecord, setHostDetailRecord] = useState<HostRecord | null>(null);
   const [visibleRecords, setVisibleRecords] = useState<HostRecord[]>([]);
 
@@ -355,25 +367,47 @@ export function SearchTab({
     setExecResults(null);
   };
 
+  const effectiveInterpreter = scriptInterpreter === '__custom__' ? scriptInterpreterCustom.trim() : scriptInterpreter;
+
+  // Editor language follows the interpreter; '' (shebang) / custom sniff the first line.
+  const editorLanguage = useMemo<EditorLanguage>(() => {
+    if (effectiveInterpreter.includes('python')) return 'python';
+    if (/\b(bash|sh|zsh|ksh)\b/.test(effectiveInterpreter)) return 'bash';
+    const firstLine = execCommand.split('\n', 1)[0] || '';
+    if (firstLine.startsWith('#!')) {
+      if (firstLine.includes('python')) return 'python';
+      if (/\b(bash|sh|zsh|ksh)\b/.test(firstLine)) return 'bash';
+    }
+    return 'bash'; // sensible default for script mode
+  }, [effectiveInterpreter, execCommand]);
+
   const runParallelExec = async () => {
-    const cmd = execCommand.trim();
-    if (!cmd || selectedRecords.length === 0) {
-      setExecErr('Select at least one host and enter a command.');
+    const isScript = execMode === 'script';
+    const body = execCommand.trim();
+    if (!body || selectedRecords.length === 0) {
+      setExecErr(isScript ? 'Select at least one host and enter a script.' : 'Select at least one host and enter a command.');
       return;
     }
     setExecBusy(true);
     setExecErr(null);
     setExecResults([]);
     try {
-      await execOnHostsStream(
-        {
-          ssh_user: sshUser.trim(),
-          command: cmd,
-          records: selectedRecords,
-          record_session: !!(recordWebSession && meta?.session_recording_available),
-        },
-        (row) => setExecResults((prev) => [...(prev || []), row]),
-      );
+      const req: ExecOnHostsBody = {
+        ssh_user: sshUser.trim(),
+        command: execCommand,
+        records: selectedRecords,
+        record_session: !!(recordWebSession && meta?.session_recording_available),
+      };
+      if (execRunAs.trim()) req.run_as = execRunAs.trim();
+      if (isScript) {
+        req.exec_mode = 'script';
+        if (effectiveInterpreter) req.script_interpreter = effectiveInterpreter;
+        if (interpreterArgsQuoted) req.interpreter_args_quoted = true;
+        if (!removeTmpFile) req.remove_tmp_file = false;
+      } else {
+        req.command = body;
+      }
+      await execOnHostsStream(req, (row) => setExecResults((prev) => [...(prev || []), row]));
     } catch (e) {
       setExecErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -639,26 +673,89 @@ export function SearchTab({
           <Typography.Text>Selected: <strong>{selectedRecords.length}</strong></Typography.Text>
           <Button size="small" disabled={visibleRecords.length === 0} onClick={selectVisibleHosts}>Select visible</Button>
           <Button size="small" onClick={clearHostSelection}>Clear</Button>
+          <Segmented
+            size="small"
+            value={execMode}
+            onChange={(v) => setExecMode(v as 'command' | 'script')}
+            options={[{ label: 'Command', value: 'command' }, { label: 'Script', value: 'script' }]}
+          />
         </Space>
-        <Input.TextArea
-          value={execCommand}
-          onChange={(e) => setExecCommand(e.target.value)}
-          placeholder="e.g. uname -a"
-          rows={3}
-          style={{ fontFamily: 'monospace', fontSize: '0.85rem', marginBottom: 8 }}
-        />
-        <Space>
+        {execMode === 'script' ? (
+          <div style={{ marginBottom: 8, border: '1px solid #2a3140', borderRadius: 4, overflow: 'hidden' }}>
+            <Suspense fallback={<div style={{ padding: 8, fontFamily: 'monospace', fontSize: '0.85rem' }}>Loading editor…</div>}>
+              <CodeEditor
+                value={execCommand}
+                onChange={setExecCommand}
+                language={editorLanguage}
+                lint
+                height="260px"
+                placeholder={'#!/usr/bin/env bash\nset -euo pipefail\necho "$@"'}
+              />
+            </Suspense>
+          </div>
+        ) : (
+          <Input.TextArea
+            value={execCommand}
+            onChange={(e) => setExecCommand(e.target.value)}
+            placeholder="e.g. uname -a"
+            rows={3}
+            style={{ fontFamily: 'monospace', fontSize: '0.85rem', marginBottom: 8 }}
+          />
+        )}
+        {execMode === 'script' && (
+          <Space wrap style={{ marginBottom: 8 }}>
+            <Select
+              size="small"
+              value={scriptInterpreter}
+              onChange={(v) => {
+                setScriptInterpreter(v);
+                setInterpreterArgsQuoted(v === 'bash -lc' || v === 'sh -lc');
+              }}
+              style={{ width: 180 }}
+              options={[
+                { label: 'Shebang / none', value: '' },
+                { label: 'bash', value: 'bash' },
+                { label: 'bash -lc', value: 'bash -lc' },
+                { label: 'sh', value: 'sh' },
+                { label: 'python3', value: 'python3' },
+                { label: 'Custom…', value: '__custom__' },
+              ]}
+            />
+            {scriptInterpreter === '__custom__' && (
+              <Input
+                size="small"
+                placeholder="interpreter or ${scriptfile}"
+                value={scriptInterpreterCustom}
+                onChange={(e) => setScriptInterpreterCustom(e.target.value)}
+                style={{ width: 200, fontFamily: 'monospace' }}
+              />
+            )}
+            <Checkbox checked={!removeTmpFile} onChange={(e) => setRemoveTmpFile(!e.target.checked)}>
+              Keep temp file
+            </Checkbox>
+          </Space>
+        )}
+        <Space wrap style={{ marginBottom: 4 }}>
+          <Input
+            size="small"
+            prefix="Run as"
+            placeholder="sudo user (optional)"
+            value={execRunAs}
+            onChange={(e) => setExecRunAs(e.target.value)}
+            style={{ width: 220 }}
+          />
           <Button
             type="primary"
             loading={execBusy}
             disabled={selectedRecords.length === 0 || !execCommand.trim()}
             onClick={() => void runParallelExec()}
+            style={{ marginLeft: 16 }}
           >
-            Run on {selectedRecords.length} host(s)
+            {execMode === 'script' ? 'Run script on' : 'Run on'} {selectedRecords.length} host(s)
           </Button>
           <Button onClick={clearExecOutput}>Clear results</Button>
         </Space>
-        {execErr && <Alert type="error" message={execErr} style={{ marginTop: 8 }} />}
+        {execErr && <Alert type="error" title={execErr} style={{ marginTop: 8 }} />}
         {execResults && execResults.length > 0 && (
           <Table<HostExecResultRow>
             dataSource={execResults}

@@ -12,11 +12,16 @@ import (
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 )
 
-func init() {
-	dockerprovider.SetRunInteractive(func(user string, r hosts.Record, reg hostexec.Registry) error {
-		return runDockerInteractiveWithRecorder(user, r, nil, reg)
-	})
+// dockerInteractiveRunner is the ui implementation of dockerprovider.InteractiveRunner,
+// injected into the docker provider factory by the composition root.
+type dockerInteractiveRunner struct{}
+
+func (dockerInteractiveRunner) RunInteractive(user string, r hosts.Record, reg hostexec.Registry) error {
+	return runDockerInteractiveWithRecorder(user, r, nil, reg)
 }
+
+// DockerInteractiveRunner returns the ui-backed docker interactive session runner.
+func DockerInteractiveRunner() dockerprovider.InteractiveRunner { return dockerInteractiveRunner{} }
 
 // DialDockerCheck verifies that a docker record can reach the Engine API (dial + close).
 // Re-exported from dockerprovider for callers that already import ui.

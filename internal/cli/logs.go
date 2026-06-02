@@ -149,7 +149,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagLogsAnomalySelftest {
-		return runAnomalySelftest(opts)
+		return runAnomalySelftest(cmd.Context(), opts)
 	}
 
 	clientCache := ui.NewClientCache()
@@ -187,7 +187,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	return ui.StreamLogs(ctx, sshUser, records, opts, clientCache, out)
 }
 
-func runAnomalySelftest(opts ui.LogOptions) error {
+func runAnomalySelftest(ctx context.Context, opts ui.LogOptions) error {
 	if !opts.Anomaly {
 		return fmt.Errorf("--anomaly-selftest requires --anomaly")
 	}
@@ -206,7 +206,7 @@ func runAnomalySelftest(opts ui.LogOptions) error {
 	}
 	fmt.Fprintln(os.Stdout, "anomaly selftest ok: detector initialized")
 	for _, sample := range samples {
-		res, scoreErr := det.Score(context.Background(), sample)
+		res, scoreErr := det.Score(ctx, sample)
 		if scoreErr != nil {
 			return fmt.Errorf("anomaly selftest score: %w", scoreErr)
 		}

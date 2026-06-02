@@ -43,7 +43,7 @@ func ResolveAppDialerWithCache(user string, rec hosts.Record, cache *ClientCache
 		var executor hostexec.Executor
 		switch {
 		case rec.Provider == "truenas":
-			executor = truenasprovider.APIShellExecutor()
+			executor = truenasprovider.NewAPIShellExecutor(TruenasTunnelRunner(), TruenasUpstreamDialer())
 		case cache != nil && cache.reg != nil:
 			executor = cache.reg.ForRecord(rec)
 		default:

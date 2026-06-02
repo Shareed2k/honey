@@ -23,8 +23,8 @@ type pluginPostgresBridge struct {
 	pools *postgres.PoolManager
 }
 
-// NewPluginPostgresBridge returns a PostgresBridge for one plugin host invocation.
-func NewPluginPostgresBridge(h *plugins.HostRunContext, pools *postgres.PoolManager) plugins.PostgresBridge {
+// NewPostgresBridge returns a PostgresBridge for one plugin host invocation.
+func NewPostgresBridge(h *plugins.HostRunContext, pools *postgres.PoolManager) plugins.PostgresBridge {
 	return &pluginPostgresBridge{h: h, pools: pools}
 }
 

@@ -155,7 +155,13 @@ func runExec(cmd *cobra.Command, args []string) error {
 		defer close(out)
 		_ = ui.StreamSSHParallel(context.Background(), sshUser, jobs, false,
 			func(_ hosts.Record, _ map[string]string) string { return finalCmd },
-			flagExecParallel, out, clientCache, nil, false, nil, retryCfg, nil, new(atomic.Int32), reg,
+			out, ui.BatchOptions{
+				MaxConc:    flagExecParallel,
+				Cache:      clientCache,
+				RetryCfg:   retryCfg,
+				AttemptMax: new(atomic.Int32),
+				Reg:        reg,
+			},
 		)
 	}()
 

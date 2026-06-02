@@ -33,12 +33,14 @@ var ptyProxyCmd = &cobra.Command{
 
 		payloadBytes, err := base64.StdEncoding.DecodeString(args[0])
 		if err != nil {
+			zap.L().Error("pty-proxy: decode payload failed", zap.Error(err))
 			fmt.Printf("\r\n\033[31m[honey] Error decoding payload: %v\033[0m\r\n", err)
 			return nil
 		}
 
 		var hello webserver.WSHello
 		if err := json.Unmarshal(payloadBytes, &hello); err != nil {
+			zap.L().Error("pty-proxy: unmarshal payload failed", zap.Error(err))
 			fmt.Printf("\r\n\033[31m[honey] Error unmarshaling payload: %v\033[0m\r\n", err)
 			return nil
 		}
@@ -74,6 +76,7 @@ func init() {
 }
 
 func ptyProxyPauseOnError(err error) {
+	zap.L().Error("pty-proxy: connection error", zap.Error(err))
 	fmt.Printf("\r\n\033[31m[honey] Connection Error: %v\033[0m\r\n", err)
 	// Pause before returning so tmux keeps the pane open long enough for the browser to read the PTY.
 	fmt.Printf("\r\n[honey] Press ENTER to close this terminal...")

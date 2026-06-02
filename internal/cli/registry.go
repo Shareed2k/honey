@@ -12,7 +12,12 @@ var globalSearchRegistry *searchrun.Registry
 
 func getSearchRegistry() *searchrun.Registry {
 	if globalSearchRegistry == nil {
-		globalSearchRegistry = searchrun.NewRegistry(all.Factories())
+		globalSearchRegistry = searchrun.NewRegistry(all.Factories(all.Deps{
+			K8sInteractive:    ui.K8sInteractiveRunner(),
+			DockerInteractive: ui.DockerInteractiveRunner(),
+			TruenasTunnel:     ui.TruenasTunnelRunner(),
+			TruenasDialer:     ui.TruenasUpstreamDialer(),
+		}))
 	}
 	return globalSearchRegistry
 }
@@ -21,10 +26,10 @@ func getSearchRegistry() *searchrun.Registry {
 func buildHostExecRegistry() hostexec.Registry {
 	searchReg := getSearchRegistry()
 	return &hostexec.StandardRegistry{
-		Resolver:       searchReg.ResolveExecutor,
-		Reloader:       searchReg.ReconfigureFromConfig,
-		Dialer:         sshclient.DialHoneyHost,
-		RunInteractive: ui.RunSSHInteractive,
-		RunTunnel:      sshclient.RunTunnelGo,
+		Resolver:     searchReg, // *searchrun.Registry satisfies ExecutorResolver
+		Reconfigurer: searchReg, // ...and Reconfigurer
+		Dialer:       hostexec.DialerFunc(sshclient.DialHoneyHost),
+		Interactive:  hostexec.InteractiveRunnerFunc(ui.RunSSHInteractive),
+		Tunnel:       hostexec.TunnelRunnerFunc(sshclient.RunTunnelGo),
 	}
 }

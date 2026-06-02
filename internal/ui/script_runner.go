@@ -21,6 +21,11 @@ type ScriptUploadRunOptions struct {
 	ScriptInterpreter     string
 	InterpreterArgsQuoted bool
 	RemoveRemoteFile      bool
+	// ScriptArgs are positional arguments passed to the script (Rundeck-style),
+	// shell-quoted and appended after the interpreter/path.
+	ScriptArgs []string
+	// RunAs wraps the run step in sudo for that user (empty = run as the SSH user).
+	RunAs string
 }
 
 type scriptRunner struct {
@@ -62,7 +67,7 @@ func newScriptContentRunner(user, scriptContent, fileExtension string, opts Scri
 	if err != nil {
 		return nil, nil, err
 	}
-	remoteCmd, err := buildScriptInvocationCommand(remotePath, opts.ScriptInterpreter, opts.InterpreterArgsQuoted)
+	remoteCmd, err := buildScriptInvocationCommand(remotePath, opts)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
@@ -271,21 +276,29 @@ func normalizeScriptFileExtension(fileExtension string) (string, error) {
 	return ext, nil
 }
 
-func buildScriptInvocationCommand(remotePath, scriptInterpreter string, interpreterArgsQuoted bool) (string, error) {
+func buildScriptInvocationCommand(remotePath string, opts ScriptUploadRunOptions) (string, error) {
 	rp := strings.TrimSpace(remotePath)
 	if rp == "" {
 		return "", fmt.Errorf("empty script remote path")
 	}
 	quotedPath := shellQuote(rp)
-	interp := strings.TrimSpace(scriptInterpreter)
-	if interp == "" {
-		return quotedPath, nil
+	interp := strings.TrimSpace(opts.ScriptInterpreter)
+	var invocation string
+	switch {
+	case interp == "":
+		invocation = quotedPath
+	case strings.Contains(interp, "${scriptfile}"):
+		invocation = strings.ReplaceAll(interp, "${scriptfile}", quotedPath)
+	case opts.InterpreterArgsQuoted:
+		invocation = interp + " " + shellQuote(rp)
+	default:
+		invocation = interp + " " + quotedPath
 	}
-	if strings.Contains(interp, "${scriptfile}") {
-		return strings.ReplaceAll(interp, "${scriptfile}", quotedPath), nil
+	for _, a := range opts.ScriptArgs {
+		invocation += " " + shellQuote(a)
 	}
-	if interpreterArgsQuoted {
-		return interp + " " + shellQuote(rp), nil
+	if strings.TrimSpace(opts.RunAs) != "" {
+		return cuetry.WrapRemoteShell(opts.RunAs, invocation)
 	}
-	return interp + " " + quotedPath, nil
+	return invocation, nil
 }

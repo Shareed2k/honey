@@ -92,11 +92,13 @@ func NewServer(opts Options) (*Server, error) {
 		fileClientCache: ui.NewClientCache(),
 	}
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
-	s.routes()
+	if err := s.routes(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
-func (s *Server) routes() {
+func (s *Server) routes() error {
 	s.mux.HandleFunc("GET /api/v1/meta", s.withAuth(s.handleMeta))
 	s.mux.HandleFunc("GET /api/v1/openapi.json", s.withAuth(s.handleOpenAPIJSON))
 	s.mux.HandleFunc("GET /api/v1/providers", s.withAuth(s.handleProviders))
@@ -132,6 +134,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/v1/recordings/{file_name}", s.withAuth(s.handleRecordingsDelete))
 	s.mux.HandleFunc("POST /api/v1/recordings/summarize", s.withAuth(s.handleRecordingsSummarize))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
+	s.mux.HandleFunc("POST /api/v1/lint", s.withAuth(s.handleLint))
 	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
 	s.mux.HandleFunc("POST /api/v1/terminal-assist", s.withAuth(s.handleTerminalAssist))
 	s.mux.HandleFunc("GET /api/v1/terminal-assist/models", s.withAuth(s.handleTerminalAssistModels))
@@ -150,9 +153,10 @@ func (s *Server) routes() {
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("mount embedded static assets: %w", err)
 	}
 	s.mux.Handle("/", http.FileServer(http.FS(static)))
+	return nil
 }
 
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {

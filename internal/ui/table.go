@@ -1230,7 +1230,18 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			if err != nil {
 				return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nsecrets: " + err.Error()}
 			}
-			runErr := RunCueRecipeSteps(context.Background(), &buf, recipe, recipeDir, targets, sshUser, execute, nil, configPath, aiPrompt, secRes, pluginMgr, nil, nil, reg, nil)
+			runErr := RunCueRecipeSteps(context.Background(), &buf, CueRecipeRunParams{
+				Recipe:         recipe,
+				RecipeDir:      recipeDir,
+				Records:        targets,
+				SSHUser:        sshUser,
+				ConfigPath:     configPath,
+				AISystemPrompt: aiPrompt,
+				SecretResolver: secRes,
+				PluginMgr:      pluginMgr,
+				Execute:        execute,
+				Reg:            reg,
+			}, nil)
 			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
 				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
 					if rec != nil {
@@ -1280,7 +1291,18 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 				ch <- HostExecResult{Name: "cue recipe", Success: false, ErrMsg: "secrets: " + err.Error()}
 				return
 			}
-			_ = StreamCueRecipeSteps(context.Background(), recipe, recipeDir, targets, sshUser, nil, configPath, aiPrompt, secRes, pluginMgr, true, nil, ch, reg, nil)
+			_ = StreamCueRecipeSteps(context.Background(), CueRecipeRunParams{
+				Recipe:         recipe,
+				RecipeDir:      recipeDir,
+				Records:        targets,
+				SSHUser:        sshUser,
+				ConfigPath:     configPath,
+				AISystemPrompt: aiPrompt,
+				SecretResolver: secRes,
+				PluginMgr:      pluginMgr,
+				Execute:        true,
+				Reg:            reg,
+			}, ch)
 		}()
 
 		return streamStartMsg{
@@ -1349,7 +1371,7 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 				}
 				return remoteCmd
 			}
-			_ = StreamSSHParallel(context.Background(), user, jobs, false, cmdFunc, 0, ch, nil, nil, false, nil, cuetry.RecipeStepRetry{}, nil, nil, reg)
+			_ = StreamSSHParallel(context.Background(), user, jobs, false, cmdFunc, ch, BatchOptions{Reg: reg})
 		}()
 
 		return streamStartMsg{

@@ -265,7 +265,7 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 
 	bin, err := os.Executable()
 	if err != nil {
-		zap.L().Error("handleWebPtyProxy: failed to get executable", zap.Error(err))
+		// Single-handling: caller (ws_ssh) logs at Error; just wrap and return.
 		return fmt.Errorf("failed to get executable: %w", err)
 	}
 
@@ -277,7 +277,7 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		zap.L().Error("handleWebPtyProxy: failed to start pty", zap.Error(err))
+		// Single-handling: caller (ws_ssh) logs at Error; just wrap and return.
 		return fmt.Errorf("failed to start pty: %w", err)
 	}
 

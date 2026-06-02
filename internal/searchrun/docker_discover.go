@@ -14,7 +14,13 @@ type DockerDiscoverFunc func(ctx context.Context, q hosts.Query, vms []hosts.Rec
 
 var dockerDiscover DockerDiscoverFunc
 
-// RegisterDockerDiscover registers the docker auto-discover hook (from dockerprovider init).
+// RegisterDockerDiscover registers the docker auto-discover hook from dockerprovider.
+//
+// This stays an init-registered extension point (like RegisterCRUD) rather than a
+// constructor-injected dependency: the hook is consumed by dockerDiscoverWrapper
+// instances created across many unrelated provider factories (aws, gcp, proxmox,
+// local, consul) that must not import dockerprovider. Registration is the idiomatic
+// Go pattern for that one-to-many optional extension wiring.
 func RegisterDockerDiscover(fn DockerDiscoverFunc) {
 	dockerDiscover = fn
 }

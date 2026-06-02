@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -55,8 +56,11 @@ func RunParallel(
 			zap.L().Debug("provider search start", zap.String("provider", p.ID()), zap.String("backend", p.BackendName()))
 			recs, err = p.Search(ctx, q)
 			if err != nil {
-				zap.L().Error("provider search failed", zap.String("provider", p.ID()), zap.Error(err))
-				return err
+				// errgroup surfaces only the first error; log each provider's failure
+				// at Warn for attribution, then return a wrapped error for the caller
+				// to handle once at Error.
+				zap.L().Warn("provider search failed", zap.String("provider", p.ID()), zap.Error(err))
+				return fmt.Errorf("provider %s: %w", p.ID(), err)
 			}
 			zap.L().Debug("provider search success", zap.String("provider", p.ID()), zap.String("backend", p.BackendName()), zap.Int("found", len(recs)))
 

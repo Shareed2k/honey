@@ -19,7 +19,7 @@ func TestShouldUseTrueNASShell(t *testing.T) {
 			},
 		},
 	}
-	reg := searchrun.NewRegistry([]searchrun.ProviderFactory{truenasprovider.NewFactory()})
+	reg := searchrun.NewRegistry([]searchrun.ProviderFactory{truenasprovider.NewFactory(nil, nil)})
 	reg.ReconfigureFromConfig(cfg)
 	defer reg.ReconfigureFromConfig(nil)
 

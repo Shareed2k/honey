@@ -884,6 +884,15 @@
           "command": {
             "type": "string"
           },
+          "exec_mode": {
+            "type": "string"
+          },
+          "file_extension": {
+            "type": "string"
+          },
+          "interpreter_args_quoted": {
+            "type": "boolean"
+          },
           "record_session": {
             "type": "boolean"
           },
@@ -892,6 +901,21 @@
               "$ref": "#/components/schemas/hosts.Record"
             },
             "type": "array"
+          },
+          "remove_tmp_file": {
+            "type": "boolean"
+          },
+          "run_as": {
+            "type": "string"
+          },
+          "script_args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "script_interpreter": {
+            "type": "string"
           },
           "ssh_user": {
             "type": "string"
@@ -1082,6 +1106,53 @@
               "type": "string"
             },
             "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.LintDiagnostic": {
+        "properties": {
+          "col": {
+            "type": "integer"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "description": "\"error\" | \"warning\"",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.LintRequest": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "language": {
+            "description": "\"bash\" or \"python\"",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webserver.LintResponse": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/webserver.LintDiagnostic"
+            },
+            "type": "array"
+          },
+          "tool": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -2484,6 +2555,56 @@
         "summary": "List listening ports on a host",
         "tags": [
           "search"
+        ]
+      }
+    },
+    "/api/v1/lint": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/webserver.LintRequest"
+              }
+            }
+          },
+          "description": "lint request",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/webserver.LintResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Lint a script (syntax check, non-executing)",
+        "tags": [
+          "exec"
         ]
       }
     },

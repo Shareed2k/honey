@@ -20,11 +20,15 @@ import (
 	"github.com/shareed2k/honey/internal/truenasshell"
 )
 
-func init() {
-	// K8s and Docker executors are registered in their provider packages' init() functions.
-	// The interactive session hooks are wired in ui/k8s_executor.go and ui/docker_executor.go init() functions.
-	truenasprovider.SetRunTunnel(RunTrueNASTunnel)
-	truenasprovider.SetDialUpstream(DialTrueNASUpstream)
+// TruenasTunnelRunner returns the ui-backed TrueNAS API-shell port-forward runner,
+// injected into the truenas provider factory by the composition root.
+func TruenasTunnelRunner() truenasprovider.TunnelRunner {
+	return truenasprovider.TunnelRunnerFunc(RunTrueNASTunnel)
+}
+
+// TruenasUpstreamDialer returns the ui-backed TrueNAS API-shell upstream dialer.
+func TruenasUpstreamDialer() truenasprovider.UpstreamDialer {
+	return truenasprovider.UpstreamDialerFunc(DialTrueNASUpstream)
 }
 
 // RunSSHInteractive is the StandardRegistry implementation of RunInteractive.

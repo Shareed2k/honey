@@ -19,13 +19,16 @@ func dockerOverride(overrides searchrun.ProviderOverrides) (o config.DockerBacke
 	return o
 }
 
-// NewFactory returns a new factory for this provider.
-func NewFactory() searchrun.ProviderFactory {
+// NewFactory returns a new factory for this provider. interactive (implemented in
+// the ui package) is injected so resolver-created executors can run TTY sessions.
+func NewFactory(interactive InteractiveRunner) searchrun.ProviderFactory {
 	searchrun.RegisterDockerDiscover(DiscoverOnVMs)
-	return dockerFactory{}
+	return dockerFactory{interactive: interactive}
 }
 
-type dockerFactory struct{}
+type dockerFactory struct {
+	interactive InteractiveRunner
+}
 
 func (dockerFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
 	locals := cfg.Backends.Local
@@ -81,10 +84,10 @@ func (dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (dockerFactory) ProviderName() string { return "docker" }
 
-func (dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor {
+func (f dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor {
 	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
 	if k == "container" || k == "swarm_task" {
-		return &DockerExecutor{reg: reg}
+		return &DockerExecutor{reg: reg, interactive: f.interactive}
 	}
 	return nil
 }

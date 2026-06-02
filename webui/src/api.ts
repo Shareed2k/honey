@@ -683,8 +683,48 @@ async function readNDJSON<T>(
   }
 }
 
+export type ExecOnHostsBody = {
+  ssh_user: string;
+  command: string;
+  records: unknown[];
+  record_session?: boolean;
+  run_as?: string;
+  exec_mode?: 'command' | 'script';
+  script_interpreter?: string;
+  interpreter_args_quoted?: boolean;
+  file_extension?: string;
+  remove_tmp_file?: boolean;
+  script_args?: string[];
+};
+
+export type LintDiagnostic = {
+  line: number;
+  col: number;
+  severity: 'error' | 'warning';
+  message: string;
+};
+
+export type LintResponse = {
+  available: boolean;
+  tool?: string;
+  diagnostics: LintDiagnostic[];
+};
+
+export async function lintScript(language: 'bash' | 'python', content: string): Promise<LintResponse> {
+  const r = await fetch('/api/v1/lint', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ language, content }),
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return (await r.json()) as LintResponse;
+}
+
 export async function execOnHostsStream(
-  body: { ssh_user: string; command: string; records: unknown[]; record_session?: boolean },
+  body: ExecOnHostsBody,
   onRow: (row: HostExecResultRow) => void,
 ): Promise<void> {
   const r = await fetch('/api/v1/exec?stream=1', {

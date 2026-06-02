@@ -14,16 +14,27 @@ import (
 	_ "github.com/shareed2k/honey/internal/sshclient" // Registers ssh defaults
 )
 
-// Factories returns a slice of all built-in provider factories.
-func Factories() []searchrun.ProviderFactory {
+// Deps carries the ui-implemented runners injected into the providers that need
+// to call back into interactive/tunnel session handling. They are supplied by the
+// composition root (internal/cli) to keep provider packages leaf-level.
+type Deps struct {
+	K8sInteractive    k8sprovider.InteractiveRunner
+	DockerInteractive dockerprovider.InteractiveRunner
+	TruenasTunnel     truenasprovider.TunnelRunner
+	TruenasDialer     truenasprovider.UpstreamDialer
+}
+
+// Factories returns a slice of all built-in provider factories, wiring deps into
+// the providers that need them.
+func Factories(deps Deps) []searchrun.ProviderFactory {
 	return []searchrun.ProviderFactory{
 		awsprovider.NewFactory(),
 		consulprovider.NewFactory(),
-		dockerprovider.NewFactory(),
+		dockerprovider.NewFactory(deps.DockerInteractive),
 		gcp.NewFactory(),
-		k8sprovider.NewFactory(),
+		k8sprovider.NewFactory(deps.K8sInteractive),
 		localprovider.NewFactory(),
 		proxmoxprovider.NewFactory(),
-		truenasprovider.NewFactory(),
+		truenasprovider.NewFactory(deps.TruenasTunnel, deps.TruenasDialer),
 	}
 }

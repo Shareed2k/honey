@@ -6,46 +6,22 @@ import (
 	"sync"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hostexec"
-	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/metrics"
-	"github.com/shareed2k/honey/internal/plugins"
-	"github.com/shareed2k/honey/internal/postgres"
 	"go.uber.org/zap"
 )
 
 const defaultGraphStepParallelism = 8
 
-func streamCueRecipeStepsGraph(
-	ctx context.Context,
-	recipe cuetry.Recipe,
-	recipeDir string,
-	records []hosts.Record,
-	sshUser string,
-	cliEnv map[string]string,
-	configPath string,
-	aiSystemPromptFromCfg string,
-	secretResolver cuetry.SecretResolver,
-	pluginMgr *plugins.Manager,
-	execute bool,
-	obs metrics.Observer,
-	out chan<- HostExecResult,
-	cache *ClientCache,
-	recipeKV *RecipeKVCoordinator,
-	tunnelCoord *RecipeTunnelCoordinator,
-	reg hostexec.Registry,
-	pools *postgres.PoolManager,
-) error {
-	sg, err := cuetry.BuildStepGraphFromRecipe(recipe)
+func streamCueRecipeStepsGraph(ctx context.Context, run *cueRun, out chan<- HostExecResult) error {
+	sg, err := cuetry.BuildStepGraphFromRecipe(run.Recipe)
 	if err != nil {
 		return err
 	}
-	if err := ensureKVSessionForRecipe(recipe, recipeKV, execute); err != nil {
+	if err := ensureKVSessionForRecipe(run.Recipe, run.recipeKV, run.Execute); err != nil {
 		return err
 	}
-	outputStore := cuetry.NewStepOutputStore()
-	outputCapture := cuetry.NewRecipeOutputCapture()
-	n := len(recipe.Steps)
+	run.outputStore = cuetry.NewStepOutputStore()
+	run.outputCapture = cuetry.NewRecipeOutputCapture()
+	n := len(run.Recipe.Steps)
 	state := make([]cuetry.StepRunState, n)
 	historyByIndex := make([][]HostExecResult, n)
 
@@ -58,7 +34,7 @@ func streamCueRecipeStepsGraph(
 		if len(batch) == 0 {
 			continue
 		}
-		if err := runGraphWave(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, obs, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, batch, defaultGraphStepParallelism, reg, pools); err != nil {
+		if err := runGraphWave(ctx, run, out, sg, state, historyByIndex, batch, defaultGraphStepParallelism); err != nil {
 			return err
 		}
 	}
@@ -112,33 +88,7 @@ func graphShouldSkipStep(sg *cuetry.StepGraph, state []cuetry.StepRunState, idx 
 	return false
 }
 
-func runGraphWave(
-	ctx context.Context,
-	recipe cuetry.Recipe,
-	recipeDir string,
-	records []hosts.Record,
-	sshUser string,
-	cliEnv map[string]string,
-	configPath string,
-	aiSystemPromptFromCfg string,
-	secretResolver cuetry.SecretResolver,
-	pluginMgr *plugins.Manager,
-	execute bool,
-	obs metrics.Observer,
-	out chan<- HostExecResult,
-	cache *ClientCache,
-	recipeKV *RecipeKVCoordinator,
-	tunnelCoord *RecipeTunnelCoordinator,
-	outputStore *cuetry.StepOutputStore,
-	outputCapture *cuetry.RecipeOutputCapture,
-	sg *cuetry.StepGraph,
-	state []cuetry.StepRunState,
-	historyByIndex [][]HostExecResult,
-	batch []int,
-	parallelism int,
-	reg hostexec.Registry,
-	pools *postgres.PoolManager,
-) error {
+func runGraphWave(ctx context.Context, run *cueRun, out chan<- HostExecResult, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, batch []int, parallelism int) error {
 	stepIDs := make([]string, len(batch))
 	for i, idx := range batch {
 		stepIDs[i] = sg.IndexToID[idx]
@@ -160,42 +110,15 @@ func runGraphWave(
 			case <-ctx.Done():
 				return
 			}
-			graphRunOneStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, aiSystemPromptFromCfg, secretResolver, pluginMgr, execute, obs, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, sg, state, historyByIndex, &stateMu, &historyMu, idx, reg, pools)
+			graphRunOneStep(ctx, run, out, sg, state, historyByIndex, &stateMu, &historyMu, idx)
 		}(idx)
 	}
 	wg.Wait()
 	return graphAbortIfAIUnreachable(sg, state)
 }
 
-func graphRunOneStep(
-	ctx context.Context,
-	recipe cuetry.Recipe,
-	recipeDir string,
-	records []hosts.Record,
-	sshUser string,
-	cliEnv map[string]string,
-	configPath string,
-	aiSystemPromptFromCfg string,
-	secretResolver cuetry.SecretResolver,
-	pluginMgr *plugins.Manager,
-	execute bool,
-	obs metrics.Observer,
-	out chan<- HostExecResult,
-	cache *ClientCache,
-	recipeKV *RecipeKVCoordinator,
-	tunnelCoord *RecipeTunnelCoordinator,
-	outputStore *cuetry.StepOutputStore,
-	outputCapture *cuetry.RecipeOutputCapture,
-	sg *cuetry.StepGraph,
-	state []cuetry.StepRunState,
-	historyByIndex [][]HostExecResult,
-	stateMu *sync.Mutex,
-	historyMu *sync.Mutex,
-	idx int,
-	reg hostexec.Registry,
-	pools *postgres.PoolManager,
-) {
-	step := recipe.Steps[idx]
+func graphRunOneStep(ctx context.Context, run *cueRun, out chan<- HostExecResult, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, stateMu *sync.Mutex, historyMu *sync.Mutex, idx int) {
+	step := run.Recipe.Steps[idx]
 	stepID := sg.IndexToID[idx]
 	kind, classifyErr := cuetry.ClassifyStep(step)
 	if classifyErr != nil {
@@ -215,11 +138,11 @@ func graphRunOneStep(
 	var stepErr error
 	switch kind {
 	case cuetry.StepKindAI:
-		rows, stepErr = graphRunAIStep(ctx, recipe, idx, step, sg, state, historyByIndex, stateMu, historyMu, aiSystemPromptFromCfg, outputStore, secretResolver, recipeKV, cliEnv, execute, out)
+		rows, stepErr = graphRunAIStep(ctx, run, idx, step, sg, state, historyByIndex, stateMu, historyMu, out)
 	case cuetry.StepKindTemplate:
-		rows, stepErr = graphRunTemplateStep(ctx, recipe, recipeDir, idx, step, records, outputStore, outputCapture, secretResolver, recipeKV, execute, out)
+		rows, stepErr = graphRunTemplateStep(ctx, run, idx, step, out)
 	default:
-		rows, stepErr = streamCueRecipeStep(ctx, recipe, recipeDir, records, sshUser, cliEnv, configPath, idx, step, out, cache, recipeKV, tunnelCoord, outputStore, outputCapture, secretResolver, pluginMgr, execute, obs, reg, pools)
+		rows, stepErr = streamCueRecipeStep(ctx, run, idx, step, out)
 	}
 
 	failed := stepErr != nil || (len(rows) > 0 && cueStepAllTargetsTransientTransportFailed(rows))
@@ -246,30 +169,13 @@ func graphRunOneStep(
 	logGraphStepFinished(stepID, kind, cuetry.StepRunSucceeded)
 	if step.NotifyEnabled() && len(rows) > 0 {
 		body := FormatCueStepHostResultsForNotify(idx+1, rows)
-		CueStepNotifyRemote(ctx, recipe, idx+1, kind, step.Notify, body)
+		CueStepNotifyRemote(ctx, run.Recipe, idx+1, kind, step.Notify, body)
 	}
 }
 
-func graphRunAIStep(
-	ctx context.Context,
-	recipe cuetry.Recipe,
-	idx int,
-	step cuetry.RecipeStep,
-	sg *cuetry.StepGraph,
-	state []cuetry.StepRunState,
-	historyByIndex [][]HostExecResult,
-	stateMu *sync.Mutex,
-	historyMu *sync.Mutex,
-	aiSystemPromptFromCfg string,
-	outputStore *cuetry.StepResultStore,
-	secretResolver cuetry.SecretResolver,
-	recipeKV *RecipeKVCoordinator,
-	cliEnv map[string]string,
-	execute bool,
-	out chan<- HostExecResult,
-) ([]HostExecResult, error) {
-	kv := kvReaderFromCoordinator(recipeKV)
-	ok, whenErr := evalAIStepWhen(ctx, recipe, step, outputStore, secretResolver, kv, cliEnv, execute)
+func graphRunAIStep(ctx context.Context, run *cueRun, idx int, step cuetry.RecipeStep, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, stateMu *sync.Mutex, historyMu *sync.Mutex, out chan<- HostExecResult) ([]HostExecResult, error) {
+	kv := kvReaderFromCoordinator(run.recipeKV)
+	ok, whenErr := evalAIStepWhen(ctx, run.Recipe, step, run.outputStore, run.SecretResolver, kv, run.CLIEnv, run.Execute)
 	if whenErr != nil {
 		return nil, whenErr
 	}
@@ -299,7 +205,7 @@ func graphRunAIStep(
 		}
 	}
 	historyMu.Unlock()
-	res := runCueStepAIExecute(ctx, recipe, idx, step, hist, aiSystemPromptFromCfg)
+	res := runCueStepAIExecute(ctx, run.Recipe, idx, step, hist, run.AISystemPrompt)
 	out <- res
 	if !res.Success {
 		return []HostExecResult{res}, fmt.Errorf("ai step failed: %s", res.ErrMsg)
@@ -307,21 +213,8 @@ func graphRunAIStep(
 	return []HostExecResult{res}, nil
 }
 
-func graphRunTemplateStep(
-	ctx context.Context,
-	recipe cuetry.Recipe,
-	recipeDir string,
-	idx int,
-	step cuetry.RecipeStep,
-	records []hosts.Record,
-	outputStore *cuetry.StepResultStore,
-	outputCapture *cuetry.RecipeOutputCapture,
-	secretResolver cuetry.SecretResolver,
-	recipeKV *RecipeKVCoordinator,
-	execute bool,
-	out chan<- HostExecResult,
-) ([]HostExecResult, error) {
-	rows, err := streamCueTemplateStep(ctx, recipe, recipeDir, idx, step, records, outputStore, outputCapture, recipeKV, secretResolver, execute, out)
+func graphRunTemplateStep(ctx context.Context, run *cueRun, idx int, step cuetry.RecipeStep, out chan<- HostExecResult) ([]HostExecResult, error) {
+	rows, err := streamCueTemplateStep(ctx, run, idx, step, out)
 	if err != nil {
 		return rows, err
 	}

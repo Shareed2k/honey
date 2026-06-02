@@ -35,8 +35,8 @@ type pluginRemoteBridge struct {
 
 var _ plugins.RemoteBridge = (*pluginRemoteBridge)(nil)
 
-// NewPluginRemoteBridge returns a RemoteBridge for one plugin host invocation.
-func NewPluginRemoteBridge(user string, record hosts.Record, cache *ClientCache, reg hostexec.Registry, recipeDir, runAs string, env map[string]string, allowedPaths map[string]string) plugins.RemoteBridge {
+// NewRemoteBridge returns a RemoteBridge for one plugin host invocation.
+func NewRemoteBridge(user string, record hosts.Record, cache *ClientCache, reg hostexec.Registry, recipeDir, runAs string, env map[string]string, allowedPaths map[string]string) plugins.RemoteBridge {
 	return &pluginRemoteBridge{
 		user:         user,
 		record:       record,

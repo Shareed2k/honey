@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"sync"
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -16,24 +15,33 @@ var (
 	errTrueNASTunnelNotConfigured = errors.New("truenasprovider: TrueNAS API tunnel not configured (import internal/ui)")
 )
 
-var tunnelMu sync.RWMutex
-
-var truenasRunTunnel func(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error
-
-// SetRunTunnel registers the API-shell port-forward runner (from ui.init).
-func SetRunTunnel(fn func(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error) {
-	tunnelMu.Lock()
-	defer tunnelMu.Unlock()
-	truenasRunTunnel = fn
+// TunnelRunner runs the TrueNAS API-shell port-forward. UpstreamDialer dials an
+// in-memory upstream connection for the proxy path. Both are implemented in the ui
+// package and injected via NewFactory / NewAPIShellExecutor to keep truenasprovider
+// a leaf package (ui imports truenasprovider, not vice versa).
+type TunnelRunner interface {
+	RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error
 }
 
-var truenasDialUpstream func(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)
+// UpstreamDialer dials an in-memory upstream connection through the API shell.
+type UpstreamDialer interface {
+	DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)
+}
 
-// SetDialUpstream registers the in-memory upstream dialer for proxy use (from ui.init).
-func SetDialUpstream(fn func(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)) {
-	tunnelMu.Lock()
-	defer tunnelMu.Unlock()
-	truenasDialUpstream = fn
+// TunnelRunnerFunc adapts a plain function to the TunnelRunner interface.
+type TunnelRunnerFunc func(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error
+
+// RunTunnel calls f.
+func (f TunnelRunnerFunc) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
+	return f(ctx, user, r, localFwd, out)
+}
+
+// UpstreamDialerFunc adapts a plain function to the UpstreamDialer interface.
+type UpstreamDialerFunc func(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)
+
+// DialUpstream calls f.
+func (f UpstreamDialerFunc) DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+	return f(ctx, user, r, address)
 }
 
 // TruenasTunnelUsesAPIShell reports whether RunTunnel should use the TrueNAS API-shell
@@ -44,7 +52,10 @@ func TruenasTunnelUsesAPIShell(r hosts.Record) bool {
 		hosts.PrimaryIPTrimmed(r) == ""
 }
 
-type truenasExecutor struct{}
+type truenasExecutor struct {
+	tunnel TunnelRunner
+	dialer UpstreamDialer
+}
 
 func (truenasExecutor) Dial(_ string, _ hosts.Record) (hostexec.HostClient, error) {
 	return nil, errTrueNASTunnelOnly
@@ -54,29 +65,22 @@ func (truenasExecutor) RunInteractive(_ string, _ hosts.Record) error {
 	return errTrueNASTunnelOnly
 }
 
-func (truenasExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
-	tunnelMu.RLock()
-	fn := truenasRunTunnel
-	tunnelMu.RUnlock()
-	if fn == nil {
+func (e truenasExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
+	if e.tunnel == nil {
 		return errTrueNASTunnelNotConfigured
 	}
-	return fn(ctx, user, r, localFwd, out)
+	return e.tunnel.RunTunnel(ctx, user, r, localFwd, out)
 }
 
-func (truenasExecutor) DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
-	tunnelMu.RLock()
-	fn := truenasDialUpstream
-	tunnelMu.RUnlock()
-	if fn == nil {
+func (e truenasExecutor) DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+	if e.dialer == nil {
 		return nil, errTrueNASTunnelNotConfigured
 	}
-	return fn(ctx, user, r, address)
+	return e.dialer.DialUpstream(ctx, user, r, address)
 }
 
-var apiShellExecutor truenasExecutor
-
-// APIShellExecutor returns the TrueNAS API-shell executor.
-func APIShellExecutor() hostexec.Executor {
-	return apiShellExecutor
+// NewAPIShellExecutor returns the TrueNAS API-shell executor configured with the
+// injected tunnel runner and upstream dialer (both implemented in the ui package).
+func NewAPIShellExecutor(tunnel TunnelRunner, dialer UpstreamDialer) hostexec.Executor {
+	return truenasExecutor{tunnel: tunnel, dialer: dialer}
 }

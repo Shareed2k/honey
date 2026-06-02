@@ -79,7 +79,7 @@ func TestPluginPostgresBridge_storeKV(t *testing.T) {
 		PluginID: "postgres",
 		Record:   hosts.Record{Name: "db1"},
 	}
-	b := NewPluginPostgresBridge(h, nil)
+	b := NewPostgresBridge(h, nil)
 	in := apiv1.PostgresSQLInput{
 		KVKey:        "pg_activity",
 		KVKeyPerHost: true,
