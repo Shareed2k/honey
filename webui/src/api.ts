@@ -723,6 +723,36 @@ export async function lintScript(language: 'bash' | 'python', content: string): 
   return (await r.json()) as LintResponse;
 }
 
+export type ExecSnippet = {
+  id: string;
+  name: string;
+  mode: 'command' | 'script';
+  command: string;
+  script_interpreter?: string;
+  interpreter_args_quoted?: boolean;
+  run_as?: string;
+};
+
+export async function listSnippets(): Promise<ExecSnippet[]> {
+  const r = await apiGet('/api/v1/snippets');
+  if (!r.ok) throw new Error(r.statusText);
+  return (await r.json()) as ExecSnippet[];
+}
+
+export async function saveSnippet(s: Omit<ExecSnippet, 'id'> & { id?: string }): Promise<ExecSnippet> {
+  const r = await apiPost('/api/v1/snippets', s);
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return (await r.json()) as ExecSnippet;
+}
+
+export async function deleteSnippet(id: string): Promise<void> {
+  const r = await apiDelete(`/api/v1/snippets/${encodeURIComponent(id)}`);
+  if (!r.ok) throw new Error(r.statusText);
+}
+
 export async function execOnHostsStream(
   body: ExecOnHostsBody,
   onRow: (row: HostExecResultRow) => void,

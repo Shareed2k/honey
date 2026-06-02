@@ -5,11 +5,15 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   apiPost,
+  deleteSnippet,
   execOnHostsStream,
+  listSnippets,
+  saveSnippet,
   uploadFormDataWithSFTPStream,
 } from '../api';
 import type {
   ExecOnHostsBody,
+  ExecSnippet,
   FormDataUploadProgressEvent,
   HostExecResultRow,
   UploadStreamServerEvent,
@@ -238,6 +242,13 @@ export function SearchTab({
   const [removeTmpFile, setRemoveTmpFile] = useState(true);
   const [execRunAs, setExecRunAs] = useState('');
 
+  // Saved exec snippets (server-side, pluggable storage).
+  const [snippets, setSnippets] = useState<ExecSnippet[]>([]);
+  const [selectedSnippetId, setSelectedSnippetId] = useState<string | undefined>(undefined);
+  const [saveSnippetOpen, setSaveSnippetOpen] = useState(false);
+  const [saveSnippetName, setSaveSnippetName] = useState('');
+  const [snippetBusy, setSnippetBusy] = useState(false);
+
   const [hostDetailRecord, setHostDetailRecord] = useState<HostRecord | null>(null);
   const [visibleRecords, setVisibleRecords] = useState<HostRecord[]>([]);
 
@@ -380,6 +391,76 @@ export function SearchTab({
     }
     return 'bash'; // sensible default for script mode
   }, [effectiveInterpreter, execCommand]);
+
+  const INTERPRETER_PRESETS = ['', 'bash', 'bash -lc', 'sh', 'python3'];
+
+  const refreshSnippets = useCallback(async () => {
+    try {
+      setSnippets(await listSnippets());
+    } catch {
+      // snippets are optional; ignore load errors
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSnippets();
+  }, [refreshSnippets]);
+
+  const applySnippet = (id: string) => {
+    const snip = snippets.find((s) => s.id === id);
+    if (!snip) return;
+    setSelectedSnippetId(id);
+    setExecMode(snip.mode);
+    setExecCommand(snip.command);
+    setExecRunAs(snip.run_as || '');
+    const interp = snip.script_interpreter || '';
+    if (INTERPRETER_PRESETS.includes(interp)) {
+      setScriptInterpreter(interp);
+      setScriptInterpreterCustom('');
+    } else {
+      setScriptInterpreter('__custom__');
+      setScriptInterpreterCustom(interp);
+    }
+    setInterpreterArgsQuoted(!!snip.interpreter_args_quoted);
+  };
+
+  const doSaveSnippet = async () => {
+    const name = saveSnippetName.trim();
+    if (!name || !execCommand.trim()) return;
+    setSnippetBusy(true);
+    try {
+      const saved = await saveSnippet({
+        name,
+        mode: execMode,
+        command: execCommand,
+        script_interpreter: execMode === 'script' ? effectiveInterpreter : undefined,
+        interpreter_args_quoted: execMode === 'script' ? interpreterArgsQuoted : undefined,
+        run_as: execRunAs.trim() || undefined,
+      });
+      setSaveSnippetOpen(false);
+      setSaveSnippetName('');
+      await refreshSnippets();
+      setSelectedSnippetId(saved.id);
+    } catch (e) {
+      setExecErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSnippetBusy(false);
+    }
+  };
+
+  const doDeleteSnippet = async () => {
+    if (!selectedSnippetId) return;
+    setSnippetBusy(true);
+    try {
+      await deleteSnippet(selectedSnippetId);
+      setSelectedSnippetId(undefined);
+      await refreshSnippets();
+    } catch (e) {
+      setExecErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSnippetBusy(false);
+    }
+  };
 
   const runParallelExec = async () => {
     const isScript = execMode === 'script';
@@ -679,6 +760,34 @@ export function SearchTab({
             onChange={(v) => setExecMode(v as 'command' | 'script')}
             options={[{ label: 'Command', value: 'command' }, { label: 'Script', value: 'script' }]}
           />
+          <Select
+            size="small"
+            placeholder="Snippets"
+            allowClear
+            value={selectedSnippetId}
+            style={{ width: 200 }}
+            onChange={(id) => (id ? applySnippet(id) : setSelectedSnippetId(undefined))}
+            options={snippets.map((s) => ({ label: `${s.name} (${s.mode})`, value: s.id }))}
+          />
+          <Button size="small" onClick={() => { setSaveSnippetName(''); setSaveSnippetOpen(true); }} disabled={!execCommand.trim()}>
+            Save snippet
+          </Button>
+          <Button
+            size="small"
+            danger
+            disabled={!selectedSnippetId || snippetBusy}
+            onClick={() =>
+              Modal.confirm({
+                title: 'Delete snippet',
+                content: `Delete "${snippets.find((s) => s.id === selectedSnippetId)?.name}"?`,
+                okText: 'Delete',
+                okType: 'danger',
+                onOk: () => void doDeleteSnippet(),
+              })
+            }
+          >
+            Delete snippet
+          </Button>
         </Space>
         {execMode === 'script' ? (
           <div style={{ marginBottom: 8, border: '1px solid #2a3140', borderRadius: 4, overflow: 'hidden' }}>
@@ -755,6 +864,22 @@ export function SearchTab({
           </Button>
           <Button onClick={clearExecOutput}>Clear results</Button>
         </Space>
+        <Modal
+          title="Save snippet"
+          open={saveSnippetOpen}
+          onOk={() => void doSaveSnippet()}
+          onCancel={() => setSaveSnippetOpen(false)}
+          okButtonProps={{ loading: snippetBusy, disabled: !saveSnippetName.trim() }}
+          okText="Save"
+        >
+          <Input
+            placeholder="Snippet name"
+            value={saveSnippetName}
+            onChange={(e) => setSaveSnippetName(e.target.value)}
+            onPressEnter={() => void doSaveSnippet()}
+            autoFocus
+          />
+        </Modal>
         {execErr && <Alert type="error" title={execErr} style={{ marginTop: 8 }} />}
         {execResults && execResults.length > 0 && (
           <Table<HostExecResultRow>

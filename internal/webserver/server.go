@@ -20,6 +20,7 @@ import (
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/snippets"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
@@ -62,6 +63,8 @@ type Server struct {
 
 	fileClientCache *ui.ClientCache
 
+	snippetStore snippets.Store
+
 	retentionState recordingRetentionState
 
 	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
@@ -92,6 +95,7 @@ func NewServer(opts Options) (*Server, error) {
 		fileClientCache: ui.NewClientCache(),
 	}
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
+	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
 	if err := s.routes(); err != nil {
 		return nil, err
 	}
@@ -135,6 +139,9 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("POST /api/v1/recordings/summarize", s.withAuth(s.handleRecordingsSummarize))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
 	s.mux.HandleFunc("POST /api/v1/lint", s.withAuth(s.handleLint))
+	s.mux.HandleFunc("GET /api/v1/snippets", s.withAuth(s.handleSnippetsList))
+	s.mux.HandleFunc("POST /api/v1/snippets", s.withAuth(s.handleSnippetsSave))
+	s.mux.HandleFunc("DELETE /api/v1/snippets/{id}", s.withAuth(s.handleSnippetsDelete))
 	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
 	s.mux.HandleFunc("POST /api/v1/terminal-assist", s.withAuth(s.handleTerminalAssist))
 	s.mux.HandleFunc("GET /api/v1/terminal-assist/models", s.withAuth(s.handleTerminalAssistModels))

@@ -1489,6 +1489,147 @@
                 }
             }
         },
+        "/api/v1/snippets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "snippets"
+                ],
+                "summary": "List exec snippets",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/snippets.ExecSnippet"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "snippets"
+                ],
+                "summary": "Save exec snippet",
+                "parameters": [
+                    {
+                        "description": "snippet",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/snippets.ExecSnippet"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/snippets.ExecSnippet"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/snippets/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "snippets"
+                ],
+                "summary": "Delete exec snippet",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "snippet id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/webserver.StatusResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/terminal-assist": {
             "post": {
                 "security": [
@@ -2447,6 +2588,33 @@
                 "type": "array",
                 "items": {
                     "type": "integer"
+                }
+            }
+        },
+        "snippets.ExecSnippet": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "interpreter_args_quoted": {
+                    "type": "boolean"
+                },
+                "mode": {
+                    "description": "command | script",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "run_as": {
+                    "type": "string"
+                },
+                "script_interpreter": {
+                    "type": "string"
                 }
             }
         },

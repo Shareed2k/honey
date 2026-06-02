@@ -240,7 +240,15 @@ function TerminalSession({
 
     setShowConnectOverlay(true);
 
-    const term = new Terminal({ cursorBlink: true, fontSize: 14 });
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      theme: {
+        background: '#0f1115',
+        foreground: '#e8e8e8',
+        cursor: '#e8e8e8',
+      },
+    });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
