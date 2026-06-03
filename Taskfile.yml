@@ -60,7 +60,7 @@ tasks:
     desc: Build all plugin modules as WASM binaries
     cmds:
       - |
-        for dir in bash shell copy template file service postgres rclone; do
+        for dir in bash shell copy template file service postgres rclone helm; do
           echo "building plugins/$dir"
           (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .)
           mkdir -p examples/plugins/$dir

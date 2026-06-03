@@ -280,6 +280,12 @@ func recordGraphStepStdout(recipe cuetry.Recipe, step cuetry.RecipeStep, kind cu
 				store.Record(id, cuetry.MatchLocalAIHost, row.Output)
 			}
 		}
+	case cuetry.StepKindK8s:
+		for _, row := range rows {
+			if row.Success && !row.Skipped {
+				store.Record(id, hostNameFromExecResult(row.Name), row.Output)
+			}
+		}
 	}
 }
 
@@ -369,6 +375,9 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 
 	case cuetry.StepKindTunnel:
 		stepErr = streamCueStepTunnel(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
+
+	case cuetry.StepKindK8s:
+		stepErr = streamCueStepK8s(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
 	}
 
 	close(ch)

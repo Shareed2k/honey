@@ -149,6 +149,7 @@ type RecipeStep struct {
 	Template      *RecipeStepTemplate  `json:"template,omitempty"`
 	Plugin        *RecipeStepPlugin    `json:"plugin,omitempty"`
 	Tunnel        *RecipeStepTunnel    `json:"tunnel,omitempty"`
+	K8s           *RecipeStepK8s       `json:"k8s,omitempty"`
 	Notify        *RecipeNotify        `json:"notify,omitempty"`
 	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`
 	KVTunnel      *bool                `json:"kv_tunnel,omitempty"`
@@ -164,4 +165,79 @@ type RecipeStep struct {
 // NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).
 func (s RecipeStep) NotifyEnabled() bool {
 	return s.Notify != nil
+}
+
+// RecipeStepK8s configures a Kubernetes API step.
+// Exactly one action field (Apply/Delete/Scale/RolloutRestart/Wait/Get/Exec/CreateJob) must be set.
+// Output, when non-empty, stores the action result in RecipeOutputCapture for downstream env_from.
+type RecipeStepK8s struct {
+	Namespace      string             `json:"namespace,omitempty"`
+	Output         string             `json:"output,omitempty"`
+	Apply          *K8sApply          `json:"apply,omitempty"`
+	Delete         *K8sDelete         `json:"delete,omitempty"`
+	Scale          *K8sScale          `json:"scale,omitempty"`
+	RolloutRestart *K8sRolloutRestart `json:"rollout_restart,omitempty"`
+	Wait           *K8sWait           `json:"wait,omitempty"`
+	Get            *K8sGet            `json:"get,omitempty"`
+	Exec           *K8sExec           `json:"exec,omitempty"`
+	CreateJob      *K8sCreateJob      `json:"create_job,omitempty"`
+}
+
+// K8sApply applies a YAML/JSON manifest via server-side apply.
+type K8sApply struct {
+	Manifest   string `json:"manifest"`
+	Force      bool   `json:"force,omitempty"`
+	ServerSide bool   `json:"server_side,omitempty"`
+}
+
+// K8sDelete deletes a resource by kind/name (e.g. "deployment/app").
+type K8sDelete struct {
+	Resource string `json:"resource"`
+	Wait     bool   `json:"wait,omitempty"`
+}
+
+// K8sScale sets replica count on a scalable resource (e.g. "deployment/app").
+type K8sScale struct {
+	Resource string `json:"resource"`
+	Replicas int32  `json:"replicas"`
+}
+
+// K8sRolloutRestart triggers a rolling restart by patching the restart annotation.
+type K8sRolloutRestart struct {
+	Resource string `json:"resource"`
+	Wait     bool   `json:"wait,omitempty"`
+}
+
+// K8sWait polls a resource until a condition is met (e.g. "condition=available").
+type K8sWait struct {
+	Resource string `json:"resource"`
+	For      string `json:"for"`
+	Timeout  string `json:"timeout,omitempty"`
+}
+
+// K8sGet fetches a resource and writes JSON/YAML to stdout.
+type K8sGet struct {
+	Resource      string `json:"resource"`
+	LabelSelector string `json:"label_selector,omitempty"`
+	Format        string `json:"format,omitempty"`
+}
+
+// K8sExec runs a command in an existing pod container via the exec subresource.
+type K8sExec struct {
+	Pod       string   `json:"pod"`
+	Container string   `json:"container,omitempty"`
+	Command   []string `json:"command"`
+	TTY       bool     `json:"tty,omitempty"`
+}
+
+// K8sCreateJob creates a batch job and optionally waits for completion.
+type K8sCreateJob struct {
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	Command       []string          `json:"command,omitempty"`
+	Args          []string          `json:"args,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	RestartPolicy string            `json:"restart_policy,omitempty"`
+	Wait          bool              `json:"wait,omitempty"`
+	TTLSeconds    int32             `json:"ttl_seconds,omitempty"`
 }

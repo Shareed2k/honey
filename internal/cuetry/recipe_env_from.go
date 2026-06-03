@@ -28,8 +28,8 @@ func validateStepEnvFrom(stepIdx int, kind StepKind, mode ExecutionMode, step Re
 	if mode == ExecutionModeLinear {
 		return fmt.Errorf("cuetry: steps[%d].env_from is only allowed when recipe.type is \"graph\"", stepIdx)
 	}
-	if kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin && kind != StepKindTemplate {
-		return fmt.Errorf("cuetry: steps[%d]: env_from is only supported for command, script, plugin, and template steps", stepIdx)
+	if kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin && kind != StepKindTemplate && kind != StepKindK8s {
+		return fmt.Errorf("cuetry: steps[%d]: env_from is only supported for command, script, plugin, template, and k8s steps", stepIdx)
 	}
 	return nil
 }
@@ -116,37 +116,49 @@ func validateEnvFromRefs(stepIdx int, step RecipeStep, sg *StepGraph, outputByNa
 	return nil
 }
 
-// templateOutputProducers maps template.output capture names to producer step ids.
+// templateOutputProducers maps named capture names (template.output or k8s.output) to producer step ids.
 func templateOutputProducers(steps []RecipeStep) map[string]string {
 	out := make(map[string]string)
 	for _, s := range steps {
-		if s.Template == nil {
-			continue
+		id := strings.TrimSpace(s.ID)
+		if s.Template != nil {
+			if name := strings.TrimSpace(s.Template.Output); name != "" {
+				out[name] = id
+			}
 		}
-		name := strings.TrimSpace(s.Template.Output)
-		if name == "" {
-			continue
+		if s.K8s != nil {
+			if name := strings.TrimSpace(s.K8s.Output); name != "" {
+				out[name] = id
+			}
 		}
-		out[name] = strings.TrimSpace(s.ID)
 	}
 	return out
 }
 
-// validateUniqueTemplateOutputs ensures template.output names are unique in a recipe.
+// validateUniqueTemplateOutputs ensures named capture names (template.output / k8s.output) are unique in a recipe.
 func validateUniqueTemplateOutputs(steps []RecipeStep) error {
 	seen := make(map[string]int)
-	for i, s := range steps {
-		if s.Template == nil {
-			continue
-		}
-		name := strings.TrimSpace(s.Template.Output)
+	check := func(i int, name, field string) error {
 		if name == "" {
-			continue
+			return nil
 		}
 		if prev, dup := seen[name]; dup {
-			return fmt.Errorf("cuetry: steps[%d].template.output %q duplicates steps[%d]", i, name, prev)
+			return fmt.Errorf("cuetry: steps[%d].%s %q duplicates steps[%d]", i, field, name, prev)
 		}
 		seen[name] = i
+		return nil
+	}
+	for i, s := range steps {
+		if s.Template != nil {
+			if err := check(i, strings.TrimSpace(s.Template.Output), "template.output"); err != nil {
+				return err
+			}
+		}
+		if s.K8s != nil {
+			if err := check(i, strings.TrimSpace(s.K8s.Output), "k8s.output"); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

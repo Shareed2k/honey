@@ -131,6 +131,53 @@ const schemaSource = `
 		tun_remote?: int
 		remote_socat?: bool
 	})
+	k8s?: close({
+		namespace?: string
+		output?:    string
+		apply?: close({
+			manifest:     string
+			force?:       bool
+			server_side?: bool
+		})
+		delete?: close({
+			resource: string
+			wait?:    bool
+		})
+		scale?: close({
+			resource: string
+			replicas: int & >=0
+		})
+		rollout_restart?: close({
+			resource: string
+			wait?:    bool
+		})
+		wait?: close({
+			resource: string
+			"for":    string
+			timeout?: string
+		})
+		get?: close({
+			resource:       string
+			label_selector?: string
+			format?:        "json" | "yaml" | "name"
+		})
+		exec?: close({
+			pod:        string
+			container?: string
+			command:    [...string]
+			tty?:       bool
+		})
+		create_job?: close({
+			name:             string
+			image:            string
+			command?:         [...string]
+			args?:            [...string]
+			env?:             {[string]: string}
+			restart_policy?:  "Never" | "OnFailure"
+			wait?:            bool
+			ttl_seconds?:     int
+		})
+	})
 	hooks?: close({
 		on_success?: #StepHook
 		on_failure?: #StepHook

@@ -4,7 +4,7 @@ title: CUE Recipes
 slug: /cue-recipes
 ---
 
-Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each step targets hosts from your current search and performs **exactly one** action: `command`, `put`, `get`, `script`, `agent_transfer`, `ai`, `plugin` (WASM — see [Plugin development](./plugins-development.md)), or `tunnel` (operator-side port forward).
+Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each step targets hosts from your current search and performs **exactly one** action: `command`, `put`, `get`, `script`, `agent_transfer`, `ai`, `plugin` (WASM — see [Plugin development](./plugins-development.md)), `tunnel` (operator-side port forward), or `k8s` (Kubernetes API — see [Kubernetes steps](#kubernetes-steps)).
 
 Use **`honey cue-validate`** to check a file, **`honey cue-exec`** to dry-run or execute (same host resolution as `honey search`). From the search TUI, press **r** (append `!` to the path to execute). The [Web UI](./web-ui.md) Recipes tab runs the same engine.
 
@@ -47,6 +47,7 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 | `script` | SSH / k8s exec | Upload `local` → `remote`, then `sh <remote>` |
 | `plugin` | SSH / k8s exec | WASM custom step — [Plugin development](./plugins-development.md) |
 | `tunnel` | SSH / k8s / TrueNAS | Operator-side listen (local/remote/dynamic/UDP/tun) — [Tunnel steps](#tunnel-steps) |
+| `k8s` | Kubernetes API | Direct API calls: apply, delete, scale, rollout, get, exec, job — [Kubernetes steps](#kubernetes-steps) |
 | `put` / `get` | SFTP or k8s tar stream | Relative `local` paths from recipe directory |
 | `agent_transfer` | A→cloud→B | Needs honey config for `cloud_backend_ref` |
 | `ai` | Local (operator) | `host: "_"`; needs `OPENAI_API_KEY` when executing |
@@ -207,6 +208,240 @@ Files: [`graph_when.cue`](https://github.com/shareed2k/honey/blob/main/examples/
 - Dry-run plans and assist output must not show resolved secret values.
 
 Skipped hosts appear in results with **`Skipped: true`** and output `(skipped: when)`.
+
+## Kubernetes steps
+
+A **`k8s:`** step calls the Kubernetes API directly using `client-go` — no `kubectl` binary required. It targets k8s host records (`provider == "k8s"`) and reads credentials from the host's metadata fields (`kubeconfig`, `kube_context`, `namespace`). The step's optional `namespace` field overrides the host meta value.
+
+**Exactly one** action field must be set per step. No new binary dependencies — `k8s.io/client-go` is already bundled with honey.
+
+### Action reference
+
+| Action | Description |
+|--------|-------------|
+| `apply` | Apply a YAML/JSON manifest via server-side apply |
+| `delete` | Delete a resource by `kind/name` |
+| `scale` | Set replica count on a Deployment, StatefulSet, or ReplicaSet |
+| `rollout_restart` | Trigger rolling restart by patching the restart annotation |
+| `wait` | Poll until a resource condition is true |
+| `get` | Fetch a resource or list by label selector; writes JSON/YAML to stdout |
+| `exec` | Run a command in an existing pod container (no ephemeral container) |
+| `create_job` | Create a batch Job and optionally wait for completion |
+
+### Rollout restart
+
+```cue
+recipe: {
+  name: "k8s-rollout-restart"
+  steps: [{
+    host: "re:provider==k8s"
+    k8s: {
+      namespace: "production"
+      rollout_restart: {
+        resource: "deployment/api"
+        wait:     true
+      }
+    }
+  }]
+}
+```
+
+`wait: true` polls until all pods are updated and available (times out after 10 minutes). Supported resources: `deployment`, `statefulset`, `daemonset`.
+
+Example: [`k8s_rollout_restart.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/k8s_rollout_restart.cue).
+
+### Scale
+
+```cue
+recipe: {
+  name: "k8s-scale"
+  type: "graph"
+  steps: [
+    { id: "down", host: "re:provider==k8s", k8s: { scale: { resource: "deployment/worker", replicas: 0 } } },
+    { id: "up",   host: "re:provider==k8s", depends: ["down"], k8s: { scale: { resource: "deployment/worker", replicas: 3 } } },
+  ]
+}
+```
+
+Supported resources: `deployment`, `statefulset`, `replicaset`. For other scalable resources use `apply` with a patched replica count.
+
+Example: [`k8s_scale.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/k8s_scale.cue).
+
+### Wait
+
+```cue
+{
+  host: "re:provider==k8s"
+  k8s: {
+    wait: {
+      resource: "deployment/api"
+      "for":    "condition=Available"
+      timeout:  "5m"
+    }
+  }
+}
+```
+
+`for` format: `condition=<ConditionType>` (e.g. `condition=Available`, `condition=Ready`). Timeout is a Go duration string (`"2m"`, `"90s"`); default 5 minutes.
+
+### Get (with graph capture)
+
+`k8s.output` stores the action result under a named key in the graph capture store, available to downstream steps via `env_from[].from_output` or `env_from[].step`:
+
+```cue
+recipe: {
+  name: "k8s-get-pods"
+  type: "graph"
+  steps: [
+    {
+      id:   "get_pods"
+      host: "re:provider==k8s"
+      k8s: {
+        namespace: "production"
+        output:    "pods_json"
+        get: {
+          resource:       "pods"
+          label_selector: "app=api"
+          format:         "json"
+        }
+      }
+    },
+    {
+      id:      "report"
+      host:    "_"
+      depends: ["get_pods"]
+      env_from: [{
+        step: "get_pods"
+        map: PODS_JSON: "stdout"
+      }]
+      template: {
+        template: "Pods:\n{{ .PODS_JSON }}\n"
+        data:     {}
+      }
+    },
+  ]
+}
+```
+
+`format` values: `json` (default), `yaml`, `name`. `output` is only valid on `get`, `exec`, and `create_job`.
+
+Example: [`k8s_get_pods.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/k8s_get_pods.cue).
+
+### Exec
+
+Runs a command in an existing pod container via the k8s exec subresource (SPDY). Does not create an ephemeral debug container.
+
+```cue
+{
+  host: "re:provider==k8s"
+  k8s: {
+    namespace: "production"
+    exec: {
+      pod:       "api-7d6f8b9c4-xk2pq"
+      container: "api"
+      command:   ["cat", "/etc/config/app.yaml"]
+    }
+  }
+}
+```
+
+`container` is optional (uses the first container). `tty: true` allocates a pseudo-TTY (for interactive shells; not useful in automated recipes).
+
+Example: [`k8s_exec.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/k8s_exec.cue).
+
+### Create Job
+
+```cue
+{
+  host: "re:provider==k8s"
+  k8s: {
+    namespace: "production"
+    create_job: {
+      name:        "db-migrate"
+      image:       "my-app:v2.3.0"
+      command:     ["/app/migrate"]
+      args:        ["--target=latest"]
+      env: {
+        DATABASE_URL: "postgres://db.internal:5432/app"
+        LOG_LEVEL:    "info"
+      }
+      restart_policy: "Never"
+      wait:           true
+      ttl_seconds:    600
+    }
+  }
+}
+```
+
+`wait: true` polls until the job completes or fails (30 minute timeout); on completion, job pod logs are written to stdout. `ttl_seconds` configures automatic cleanup after job completion (`TTLSecondsAfterFinished`).
+
+Example: [`k8s_create_job.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/k8s_create_job.cue).
+
+### Apply
+
+Applies a YAML/JSON manifest via server-side apply (`FieldManager: "honey"`):
+
+```cue
+{
+  host: "re:provider==k8s"
+  k8s: {
+    apply: {
+      manifest: """
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: app-config
+          namespace: production
+        data:
+          LOG_LEVEL: info
+        """
+      server_side: true
+    }
+  }
+}
+```
+
+`force: true` maps to `--force-conflicts` (overwrites field manager conflicts). The namespace in the manifest takes precedence over the step `namespace` field.
+
+Example: [`k8s_apply_manifest.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/k8s_apply_manifest.cue).
+
+### Delete
+
+```cue
+{
+  host: "re:provider==k8s"
+  k8s: {
+    delete: {
+      resource: "job/db-migrate"
+      wait:     true
+    }
+  }
+}
+```
+
+`wait: true` polls until the resource is gone (5 minute timeout). `IsNotFound` is treated as success so re-running the step is idempotent.
+
+### Host metadata fields
+
+k8s host records must have the following metadata to connect:
+
+| `host.Meta` key | Required | Description |
+|-----------------|----------|-------------|
+| `kubeconfig` | No | Path to kubeconfig file; uses default rules if absent |
+| `kube_context` | No | kubeconfig context to activate |
+| `namespace` | No | Default namespace; overridden by `k8s.namespace` field |
+
+The `k8s` provider auto-populates these when hosts are discovered from cluster inventory.
+
+### Limitations
+
+- `k8s.output` is only valid on `get`, `exec`, and `create_job` actions.
+- `run_as` is not supported on `k8s` steps.
+- `apply` always uses server-side apply; `force` resolves field manager conflicts.
+- `scale` supports Deployment, StatefulSet, ReplicaSet only; use `apply` for other scalable resources.
+- `rollout_restart` supports Deployment, StatefulSet, DaemonSet only.
+- `wait` supports `condition=<Type>` format only; arbitrary JSONPath conditions are not yet supported.
+- Helm operations are out of scope — use the Helm plugin instead.
 
 ## Tunnel steps
 
@@ -497,3 +732,4 @@ Example: [`template_kv.cue`](https://github.com/shareed2k/honey/blob/main/exampl
 - [Web UI — CUE recipes](./web-ui.md#cue-recipes)
 - [Getting started — CUE recipes (short)](./index.md)
 - [CLI: honey cue-exec](./cli/honey_cue-exec.md)
+- [Kubernetes step examples](https://github.com/shareed2k/honey/tree/main/examples/recipe) — `k8s_*.cue` files

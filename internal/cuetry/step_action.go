@@ -19,6 +19,7 @@ const (
 	StepKindTemplate
 	StepKindPlugin
 	StepKindTunnel
+	StepKindK8s
 )
 
 // StepKindLabel returns a short stable name for defaults and logging.
@@ -42,12 +43,14 @@ func StepKindLabel(k StepKind) string {
 		return "plugin"
 	case StepKindTunnel:
 		return "tunnel"
+	case StepKindK8s:
+		return "k8s"
 	default:
 		return "unknown"
 	}
 }
 
-// ClassifyStep returns the step kind after validating exactly one of command / put / get / script / agent_transfer / ai / template / plugin / tunnel.
+// ClassifyStep returns the step kind after validating exactly one of command / put / get / script / agent_transfer / ai / template / plugin / tunnel / k8s.
 func ClassifyStep(s RecipeStep) (StepKind, error) {
 	cmd := strings.TrimSpace(s.Command)
 	hasPut := s.Put != nil
@@ -58,6 +61,7 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	hasTemplate := s.Template != nil
 	hasPlugin := s.Plugin != nil
 	hasTunnel := s.Tunnel != nil
+	hasK8s := s.K8s != nil
 	n := 0
 	if cmd != "" {
 		n++
@@ -86,11 +90,14 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	if hasTunnel {
 		n++
 	}
+	if hasK8s {
+		n++
+	}
 	if n == 0 {
-		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, ai, template, plugin, or tunnel")
+		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel, or k8s")
 	}
 	if n > 1 {
-		return 0, fmt.Errorf("only one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel allowed")
+		return 0, fmt.Errorf("only one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s allowed")
 	}
 	if hasPut {
 		if err := validateFileTransfer("put", s.Put); err != nil {
@@ -131,7 +138,97 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	if hasTunnel {
 		return StepKindTunnel, nil
 	}
+	if hasK8s {
+		if err := validateK8sStep(s.K8s); err != nil {
+			return 0, err
+		}
+		return StepKindK8s, nil
+	}
 	return StepKindCommand, nil
+}
+
+func validateK8sStep(k *RecipeStepK8s) error {
+	actions := 0
+	if k.Apply != nil {
+		actions++
+		if strings.TrimSpace(k.Apply.Manifest) == "" {
+			return fmt.Errorf("k8s.apply.manifest is required")
+		}
+	}
+	if k.Delete != nil {
+		actions++
+		if strings.TrimSpace(k.Delete.Resource) == "" {
+			return fmt.Errorf("k8s.delete.resource is required")
+		}
+	}
+	if k.Scale != nil {
+		actions++
+		if strings.TrimSpace(k.Scale.Resource) == "" {
+			return fmt.Errorf("k8s.scale.resource is required")
+		}
+		if k.Scale.Replicas < 0 {
+			return fmt.Errorf("k8s.scale.replicas must be >= 0")
+		}
+	}
+	if k.RolloutRestart != nil {
+		actions++
+		if strings.TrimSpace(k.RolloutRestart.Resource) == "" {
+			return fmt.Errorf("k8s.rollout_restart.resource is required")
+		}
+	}
+	if k.Wait != nil {
+		actions++
+		if strings.TrimSpace(k.Wait.Resource) == "" {
+			return fmt.Errorf("k8s.wait.resource is required")
+		}
+		if strings.TrimSpace(k.Wait.For) == "" {
+			return fmt.Errorf("k8s.wait.for is required")
+		}
+	}
+	if k.Get != nil {
+		actions++
+		if strings.TrimSpace(k.Get.Resource) == "" {
+			return fmt.Errorf("k8s.get.resource is required")
+		}
+	}
+	if k.Exec != nil {
+		actions++
+		if strings.TrimSpace(k.Exec.Pod) == "" {
+			return fmt.Errorf("k8s.exec.pod is required")
+		}
+		if len(k.Exec.Command) == 0 {
+			return fmt.Errorf("k8s.exec.command is required")
+		}
+	}
+	if k.CreateJob != nil {
+		actions++
+		if strings.TrimSpace(k.CreateJob.Name) == "" {
+			return fmt.Errorf("k8s.create_job.name is required")
+		}
+		if strings.TrimSpace(k.CreateJob.Image) == "" {
+			return fmt.Errorf("k8s.create_job.image is required")
+		}
+	}
+	if actions == 0 {
+		return fmt.Errorf("k8s step requires exactly one action (apply, delete, scale, rollout_restart, wait, get, exec, or create_job)")
+	}
+	if actions > 1 {
+		return fmt.Errorf("k8s step allows only one action per step")
+	}
+	outputActions := 0
+	if k.Get != nil {
+		outputActions++
+	}
+	if k.Exec != nil {
+		outputActions++
+	}
+	if k.CreateJob != nil {
+		outputActions++
+	}
+	if strings.TrimSpace(k.Output) != "" && outputActions == 0 {
+		return fmt.Errorf("k8s.output is only valid with get, exec, or create_job actions")
+	}
+	return nil
 }
 
 func validateFileTransfer(label string, op *RecipeFileTransfer) error {
@@ -147,8 +244,8 @@ func validateFileTransfer(label string, op *RecipeFileTransfer) error {
 // ValidateStepRunAsForKind rejects per-step run_as on put/get (SFTP only).
 // Script steps allow run_as for the execute phase; defaults.run_as applies there too.
 func ValidateStepRunAsForKind(kind StepKind, step RecipeStep) error {
-	if (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI || kind == StepKindTemplate || kind == StepKindTunnel) && strings.TrimSpace(step.RunAs) != "" {
-		return fmt.Errorf("run_as on put/get/agent_transfer/ai/template/tunnel steps is not supported (use --ssh-user)")
+	if (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI || kind == StepKindTemplate || kind == StepKindTunnel || kind == StepKindK8s) && strings.TrimSpace(step.RunAs) != "" {
+		return fmt.Errorf("run_as on put/get/agent_transfer/ai/template/tunnel/k8s steps is not supported")
 	}
 	return nil
 }
