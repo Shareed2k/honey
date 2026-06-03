@@ -426,6 +426,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
                       options={[
                         { value: '', label: 'None' },
                         { value: 'lshd', label: 'LSHD' },
+                        { value: 'lff', label: 'LFF' },
                       ]}
                     />
                   </Space>

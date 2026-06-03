@@ -78,7 +78,7 @@ type llmResult struct {
 }
 
 func (d *llmDetector) Score(ctx context.Context, line string) (Result, error) {
-	n := normalize(line)
+	n := Normalize(line)
 	if n == "" {
 		return Result{Score: 0, Anomaly: false, Reason: "empty", Original: line}, nil
 	}

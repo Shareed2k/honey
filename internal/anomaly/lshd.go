@@ -13,9 +13,10 @@ import (
 	"hash/fnv"
 	"math"
 	"math/bits"
-	"regexp"
 	"strings"
 	"sync"
+
+	regexp "github.com/coregx/coregex"
 )
 
 // LSHDDetector defines the interface for LSHD anomaly detection.

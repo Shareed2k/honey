@@ -53,7 +53,7 @@ func TestLLMDetector_BuildSystemPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			normalized := normalize(tt.logLine)
+			normalized := Normalize(tt.logLine)
 			prompt := detector.buildSystemPrompt(normalized)
 
 			for _, sub := range tt.expectedContains {

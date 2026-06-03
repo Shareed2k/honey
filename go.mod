@@ -11,6 +11,7 @@ require (
 	cloud.google.com/go/storage v1.62.2
 	cuelang.org/go v0.16.1
 	filippo.io/age v1.3.1
+	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
 	github.com/Telmate/proxmox-api-go v0.0.0-20260601171806-be33f19f9268
 	github.com/atotto/clipboard v0.1.4
 	github.com/aws/aws-sdk-go-v2 v1.41.10
@@ -22,8 +23,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.0
 	github.com/aws/smithy-go v1.27.0
 	github.com/cenkalti/backoff/v5 v5.0.3
+	github.com/coregx/coregex v0.12.21
 	github.com/creack/pty v1.1.24
 	github.com/creasty/defaults v1.8.0
+	github.com/elastic/go-elasticsearch/v8 v8.19.6
 	github.com/extism/go-pdk v1.1.3
 	github.com/extism/go-sdk v1.7.1
 	github.com/getkin/kin-openapi v0.139.0
@@ -100,6 +103,7 @@ require (
 	github.com/Antonboom/nilnil v1.1.1 // indirect
 	github.com/Antonboom/testifylint v1.6.4 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect
+	github.com/ClickHouse/ch-go v0.71.0 // indirect
 	github.com/ClickHouse/clickhouse-go-linter v1.2.0 // indirect
 	github.com/Djarvur/go-err113 v0.1.1 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.32.0 // indirect
@@ -119,6 +123,7 @@ require (
 	github.com/alfatraining/structtag v1.0.0 // indirect
 	github.com/alingse/asasalint v0.0.11 // indirect
 	github.com/alingse/nilnesserr v0.2.0 // indirect
+	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.38.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
@@ -174,6 +179,7 @@ require (
 	github.com/coder/quartz v0.3.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
+	github.com/coregx/ahocorasick v0.2.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/curioswitch/go-reassign v0.3.0 // indirect
@@ -189,6 +195,7 @@ require (
 	github.com/dominikbraun/graph v0.23.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240819160327-2d926c5d788a // indirect
+	github.com/elastic/elastic-transport-go/v8 v8.9.0 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/emicklei/proto v1.14.3 // indirect
@@ -206,6 +213,8 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/ghostiam/protogetter v0.3.20 // indirect
 	github.com/go-critic/go-critic v0.14.3 // indirect
+	github.com/go-faster/city v1.0.1 // indirect
+	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260505212615-e40f80bf6836 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -380,9 +389,10 @@ require (
 	github.com/openai/openai-go/v3 v3.32.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
+	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
-	github.com/pierrec/lz4/v4 v4.1.22 // indirect
+	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
@@ -419,6 +429,7 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/segmentio/go-camelcase v0.0.0-20160726192923-7085f1e3c734 // indirect
 	github.com/segmentio/go-snakecase v1.2.0 // indirect
+	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/sivchari/containedctx v1.0.3 // indirect
 	github.com/sonatard/noctx v0.5.1 // indirect

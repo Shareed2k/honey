@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 	"go.uber.org/zap"
@@ -32,8 +33,10 @@ import (
 )
 
 type feedbackWriter struct {
-	mu *sync.Mutex
-	w  io.Writer
+	mu       *sync.Mutex
+	w        io.Writer
+	rawCache *lru.Cache[string, bool] // Tier 1: Raw line bypass cache
+	written  *lru.Cache[string, bool] // Tier 2: Normalized uniqueness filter
 }
 
 type feedbackRecord struct {
@@ -46,6 +49,24 @@ type feedbackRecord struct {
 }
 
 func (f *feedbackWriter) write(source, line string, r anomaly.Result) {
+	// Tier 1 Fast Path: Check if we have already written this exact raw line recently.
+	// This takes < 50ns and performs zero string manipulations or regex runs!
+	if f.rawCache != nil {
+		ok, _ := f.rawCache.ContainsOrAdd(line, true)
+		if ok {
+			return // Already written! Bypassed regexes completely.
+		}
+	}
+
+	// Tier 2: New raw line pattern. We run Normalize only once.
+	norm := anomaly.Normalize(line)
+	if f.written != nil {
+		ok, _ := f.written.ContainsOrAdd(norm, true)
+		if ok {
+			return
+		}
+	}
+
 	rec := feedbackRecord{
 		Ts:      time.Now().UTC().Format(time.RFC3339),
 		Source:  source,
@@ -165,7 +186,15 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 			return fmt.Errorf("feedback file: %w", err)
 		}
 		defer f.Close()
-		fbw = &feedbackWriter{mu: &sync.Mutex{}, w: f}
+
+		raw, _ := lru.New[string, bool](10_000)
+		c, _ := lru.New[string, bool](10_000)
+		fbw = &feedbackWriter{
+			mu:       &sync.Mutex{},
+			w:        f,
+			rawCache: raw,
+			written:  c,
+		}
 	}
 
 	var disp *alerts.Dispatcher
