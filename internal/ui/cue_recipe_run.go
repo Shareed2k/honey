@@ -378,6 +378,8 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 
 	case cuetry.StepKindK8s:
 		stepErr = streamCueStepK8s(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
+	case cuetry.StepKindDocker:
+		stepErr = streamCueStepDocker(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
 	}
 
 	close(ch)
@@ -720,6 +722,8 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 		return runCueStepPluginDry(out, recipe, recipeDir, cliEnv, sshUser, secretResolver, pluginMgr, i, step, targets)
 	case cuetry.StepKindTunnel:
 		return runCueStepTunnelDry(out, recipe, i, step, targets)
+	case cuetry.StepKindDocker:
+		return runCueStepDockerDry(out, recipe, i, step, targets)
 	default:
 		return nil
 	}

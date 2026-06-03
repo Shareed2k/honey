@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -45,6 +46,7 @@ type Options struct {
 	NoCache            bool
 	Refresh            bool
 	AllowLogsCommand   bool
+	OnReady            func() // called after the listener is bound, before serving
 }
 
 // Server is the honey web UI HTTP server.
@@ -211,9 +213,16 @@ func (s *Server) Start(ctx context.Context) error {
 		}()
 	}
 
+	ln, err := net.Listen("tcp", s.opts.ListenAddr)
+	if err != nil {
+		return err
+	}
+	if s.opts.OnReady != nil {
+		s.opts.OnReady()
+	}
 	go func() {
 		zap.L().Info("honey web listening", zap.String("addr", s.opts.ListenAddr))
-		errCh <- srv.ListenAndServe()
+		errCh <- srv.Serve(ln)
 	}()
 
 	s.startRecordingRetention(ctx)

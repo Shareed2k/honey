@@ -149,6 +149,7 @@ type RecipeStep struct {
 	Template      *RecipeStepTemplate  `json:"template,omitempty"`
 	Plugin        *RecipeStepPlugin    `json:"plugin,omitempty"`
 	Tunnel        *RecipeStepTunnel    `json:"tunnel,omitempty"`
+	Docker        *RecipeStepDocker    `json:"docker,omitempty"`
 	K8s           *RecipeStepK8s       `json:"k8s,omitempty"`
 	Notify        *RecipeNotify        `json:"notify,omitempty"`
 	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`
@@ -240,4 +241,56 @@ type K8sCreateJob struct {
 	RestartPolicy string            `json:"restart_policy,omitempty"`
 	Wait          bool              `json:"wait,omitempty"`
 	TTLSeconds    int32             `json:"ttl_seconds,omitempty"`
+}
+
+// RecipeStepDocker configures a Docker engine API step.
+type RecipeStepDocker struct {
+	Action string       `json:"action"`
+	Output string       `json:"output,omitempty"`
+	Build  *DockerBuild `json:"build,omitempty"`
+	Push   *DockerPush  `json:"push,omitempty"`
+	Pull   *DockerPull  `json:"pull,omitempty"`
+	Run    *DockerRun   `json:"run,omitempty"`
+	Exec   *DockerExec  `json:"exec,omitempty"`
+	Stop   *DockerStop  `json:"stop,omitempty"`
+}
+
+// DockerBuild configures an image build operation.
+type DockerBuild struct {
+	Context    string            `json:"context"`
+	Dockerfile string            `json:"dockerfile,omitempty"`
+	Tags       []string          `json:"tags,omitempty"`
+	BuildArgs  map[string]string `json:"build_args,omitempty"`
+}
+
+// DockerPush configures pushing an image to a registry.
+type DockerPush struct {
+	Image string `json:"image"`
+}
+
+// DockerPull configures pulling an image from a registry.
+type DockerPull struct {
+	Image string `json:"image"`
+}
+
+// DockerRun configures running a command in a new container.
+type DockerRun struct {
+	Image   string            `json:"image"`
+	Name    string            `json:"name,omitempty"`
+	Command []string          `json:"command,omitempty"`
+	Ports   []string          `json:"ports,omitempty"`
+	Volumes []string          `json:"volumes,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Detach  bool              `json:"detach,omitempty"`
+}
+
+// DockerExec configures executing a command inside a running container.
+type DockerExec struct {
+	Container string   `json:"container"`
+	Command   []string `json:"command"`
+}
+
+// DockerStop configures stopping a running container.
+type DockerStop struct {
+	Container string `json:"container"`
 }

@@ -131,6 +131,38 @@ const schemaSource = `
 		tun_remote?: int
 		remote_socat?: bool
 	})
+	docker?: close({
+		action: "build" | "push" | "pull" | "run" | "exec" | "stop"
+		output?: string
+		build?: {
+			context:     string
+			dockerfile?: string
+			tags?: [...string]
+			build_args?: {[string]: string}
+		}
+		push?: {
+			image: string
+		}
+		pull?: {
+			image: string
+		}
+		run?: {
+			image:   string
+			name?:    string
+			command?: [...string]
+			ports?: [...string]
+			volumes?: [...string]
+			env?: {[string]: string}
+			detach?: bool
+		}
+		exec?: {
+			container: string
+			command: [...string]
+		}
+		stop?: {
+			container: string
+		}
+	})
 	k8s?: close({
 		namespace?: string
 		output?:    string

@@ -858,6 +858,12 @@ github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f h1:KUppIJq7/+
 github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/nakabonne/nestif v0.3.1 h1:wm28nZjhQY5HyYPx+weN3Q65k6ilSBxDb8v5S81B81U=
 github.com/nakabonne/nestif v0.3.1/go.mod h1:9EtoZochLn5iUprVDmDjqGKPofoUEBL8U4Ngq6aY7OE=
+github.com/ncruces/go-sqlite3 v0.34.3 h1:DYN5fylZd9C28Rgmo6ie8vbv1SB9/Ddy0kVBTEzM9nk=
+github.com/ncruces/go-sqlite3 v0.34.3/go.mod h1:+NodfP7QTkYGFUAlAcPVcStvlfVTiqMC3OLKTaYiQCM=
+github.com/ncruces/go-sqlite3-wasm/v2 v2.5.35301 h1:txZKZ0qUSPe63pzv6x0afpE4xUaqRbErCLd9gXvll+A=
+github.com/ncruces/go-sqlite3-wasm/v2 v2.5.35301/go.mod h1:PtJrZyZ+fUnI9yIcFxnUBFt2avGojqWeUkSrk10hh0I=
+github.com/ncruces/julianday v1.0.0 h1:fH0OKwa7NWvniGQtxdJRxAgkBMolni2BjDHaWTxqt7M=
+github.com/ncruces/julianday v1.0.0/go.mod h1:Dusn2KvZrrovOMJuOt0TNXL6tB7U2E8kvza5fFc9G7g=
 github.com/nikoksr/notify v1.5.0 h1:mzkCw8eb0P+qHwgmGQyPPGqz4GH+07FJDr44Bs16T9k=
 github.com/nikoksr/notify v1.5.0/go.mod h1:CEV9Bw9Y59K5oj7d8h83Xl32ATeL43ZEg9qTQsfwcCc=
 github.com/nishanths/exhaustive v0.12.0 h1:vIY9sALmw6T/yxiASewa4TQcFsVYZQQRUQJhKRf3Swg=

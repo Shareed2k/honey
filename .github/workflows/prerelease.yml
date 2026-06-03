@@ -35,10 +35,19 @@ jobs:
       - name: Build web UI
         run: task webui
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Run GoReleaser prerelease snapshot (cross)
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
             -w /workspace \
             ghcr.io/goreleaser/goreleaser-cross:v1.26.2-3 \
             release --clean --snapshot --skip=publish --config .goreleaser.prerelease.yaml
@@ -61,7 +70,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Select prerelease channel
         id: channel
@@ -90,7 +99,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "${TAG}" "${{ github.event.pull_request.merge_commit_sha }}"
+          git tag "${TAG}" "${{ github.event.pull_request.head.sha }}"
           git push origin "${TAG}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 

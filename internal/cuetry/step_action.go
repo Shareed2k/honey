@@ -20,6 +20,7 @@ const (
 	StepKindPlugin
 	StepKindTunnel
 	StepKindK8s
+	StepKindDocker
 )
 
 // StepKindLabel returns a short stable name for defaults and logging.
@@ -45,6 +46,8 @@ func StepKindLabel(k StepKind) string {
 		return "tunnel"
 	case StepKindK8s:
 		return "k8s"
+	case StepKindDocker:
+		return "docker"
 	default:
 		return "unknown"
 	}
@@ -52,99 +55,124 @@ func StepKindLabel(k StepKind) string {
 
 // ClassifyStep returns the step kind after validating exactly one of command / put / get / script / agent_transfer / ai / template / plugin / tunnel / k8s.
 func ClassifyStep(s RecipeStep) (StepKind, error) {
-	cmd := strings.TrimSpace(s.Command)
-	hasPut := s.Put != nil
-	hasGet := s.Get != nil
-	hasScript := s.Script != nil
-	hasAgent := s.AgentTransfer != nil
-	hasAI := s.AI != nil
-	hasTemplate := s.Template != nil
-	hasPlugin := s.Plugin != nil
-	hasTunnel := s.Tunnel != nil
-	hasK8s := s.K8s != nil
-	n := 0
-	if cmd != "" {
-		n++
-	}
-	if hasPut {
-		n++
-	}
-	if hasGet {
-		n++
-	}
-	if hasScript {
-		n++
-	}
-	if hasAgent {
-		n++
-	}
-	if hasAI {
-		n++
-	}
-	if hasTemplate {
-		n++
-	}
-	if hasPlugin {
-		n++
-	}
-	if hasTunnel {
-		n++
-	}
-	if hasK8s {
-		n++
-	}
-	if n == 0 {
-		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel, or k8s")
-	}
-	if n > 1 {
-		return 0, fmt.Errorf("only one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s allowed")
-	}
-	if hasPut {
-		if err := validateFileTransfer("put", s.Put); err != nil {
-			return 0, err
+	var kind StepKind
+	var found bool
+
+	check := func(k StepKind, ok bool, validate func() error) error {
+		if !ok {
+			return nil
 		}
-		return StepKindPut, nil
-	}
-	if hasGet {
-		if err := validateFileTransfer("get", s.Get); err != nil {
-			return 0, err
+		if found {
+			return fmt.Errorf("only one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, or docker allowed")
 		}
-		return StepKindGet, nil
-	}
-	if hasScript {
-		if err := validateFileTransfer("script", s.Script); err != nil {
-			return 0, err
+		if validate != nil {
+			if err := validate(); err != nil {
+				return err
+			}
 		}
-		return StepKindScript, nil
+		kind = k
+		found = true
+		return nil
 	}
-	if hasAgent {
-		return StepKindAgentTransfer, nil
+
+	if strings.TrimSpace(s.Command) != "" {
+		kind = StepKindCommand
+		found = true
 	}
-	if hasAI {
-		return StepKindAI, nil
+	if err := check(StepKindPut, s.Put != nil, func() error { return validateFileTransfer("put", s.Put) }); err != nil {
+		return 0, err
 	}
-	if hasTemplate {
-		return StepKindTemplate, nil
+	if err := check(StepKindGet, s.Get != nil, func() error { return validateFileTransfer("get", s.Get) }); err != nil {
+		return 0, err
 	}
-	if hasPlugin {
+	if err := check(StepKindScript, s.Script != nil, func() error { return validateFileTransfer("script", s.Script) }); err != nil {
+		return 0, err
+	}
+	if err := check(StepKindAgentTransfer, s.AgentTransfer != nil, nil); err != nil {
+		return 0, err
+	}
+	if err := check(StepKindAI, s.AI != nil, nil); err != nil {
+		return 0, err
+	}
+	if err := check(StepKindTemplate, s.Template != nil, nil); err != nil {
+		return 0, err
+	}
+	if err := check(StepKindPlugin, s.Plugin != nil, func() error {
 		if strings.TrimSpace(s.Plugin.ID) == "" {
-			return 0, fmt.Errorf("plugin.id is required")
+			return fmt.Errorf("plugin.id is required")
 		}
 		if strings.TrimSpace(s.Plugin.Action) == "" {
-			return 0, fmt.Errorf("plugin.action is required")
+			return fmt.Errorf("plugin.action is required")
 		}
-		return StepKindPlugin, nil
+		return nil
+	}); err != nil {
+		return 0, err
 	}
-	if hasTunnel {
-		return StepKindTunnel, nil
+	if err := check(StepKindTunnel, s.Tunnel != nil, nil); err != nil {
+		return 0, err
 	}
-	if hasK8s {
-		if err := validateK8sStep(s.K8s); err != nil {
-			return 0, err
+	if err := check(StepKindK8s, s.K8s != nil, func() error { return validateK8sStep(s.K8s) }); err != nil {
+		return 0, err
+	}
+	if err := check(StepKindDocker, s.Docker != nil, func() error { return validateDockerStep(s.Docker) }); err != nil {
+		return 0, err
+	}
+
+	if !found {
+		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, or docker")
+	}
+	return kind, nil
+}
+
+func validateDockerStep(d *RecipeStepDocker) error {
+	actions := 0
+	if d.Build != nil {
+		actions++
+		if strings.TrimSpace(d.Build.Context) == "" {
+			return fmt.Errorf("docker.build.context is required")
 		}
-		return StepKindK8s, nil
 	}
-	return StepKindCommand, nil
+	if d.Push != nil {
+		actions++
+		if strings.TrimSpace(d.Push.Image) == "" {
+			return fmt.Errorf("docker.push.image is required")
+		}
+	}
+	if d.Pull != nil {
+		actions++
+		if strings.TrimSpace(d.Pull.Image) == "" {
+			return fmt.Errorf("docker.pull.image is required")
+		}
+	}
+	if d.Run != nil {
+		actions++
+		if strings.TrimSpace(d.Run.Image) == "" {
+			return fmt.Errorf("docker.run.image is required")
+		}
+	}
+	if d.Exec != nil {
+		actions++
+		if strings.TrimSpace(d.Exec.Container) == "" {
+			return fmt.Errorf("docker.exec.container is required")
+		}
+		if len(d.Exec.Command) == 0 {
+			return fmt.Errorf("docker.exec.command is required")
+		}
+	}
+	if d.Stop != nil {
+		actions++
+		if strings.TrimSpace(d.Stop.Container) == "" {
+			return fmt.Errorf("docker.stop.container is required")
+		}
+	}
+
+	if actions == 0 {
+		return fmt.Errorf("docker step requires exactly one action (build, push, pull, run, exec, or stop)")
+	}
+	if actions > 1 {
+		return fmt.Errorf("docker step allows only one action per step")
+	}
+	return nil
 }
 
 func validateK8sStep(k *RecipeStepK8s) error {

@@ -58,6 +58,7 @@ Honey ships pre-built releases for the following plugins. Install any of them fr
 | `file` | `custom_step` | Read and write files on remote hosts |
 | `service` | `custom_step` | Manage systemd services on remote hosts |
 | `postgres` | `custom_step` | Run SQL against Postgres instances |
+| `sqlite` | `custom_step` | Run embedded SQLite queries inside WASM against mounted DB files |
 | `rclone` | `custom_step` | Transfer files via rclone |
 
 ## List installed plugins

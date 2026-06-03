@@ -1,0 +1,14 @@
+id: helm
+version: "0.1.0"
+capabilities:
+  - custom_step
+allow_host_exec: true
+allowed_env:
+  - KUBECONFIG
+  - HELM_CACHE_HOME
+  - HELM_CONFIG_HOME
+  - HELM_DATA_HOME
+  - HELM_PLUGINS
+  - HELM_REGISTRY_CONFIG
+  - HELM_REPOSITORY_CACHE
+  - HELM_REPOSITORY_CONFIG

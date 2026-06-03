@@ -53,6 +53,7 @@ require (
 	github.com/moby/moby/client v0.4.1
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/mr-karan/balance v0.0.0-20250317053523-d32c6ade6cf1
+	github.com/ncruces/go-sqlite3 v0.34.3
 	github.com/nikoksr/notify v1.5.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/pkg/sftp v1.13.10
@@ -376,6 +377,8 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f // indirect
 	github.com/nakabonne/nestif v0.3.1 // indirect
+	github.com/ncruces/go-sqlite3-wasm/v2 v2.5.35301 // indirect
+	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nishanths/exhaustive v0.12.0 // indirect
 	github.com/nishanths/predeclared v0.2.2 // indirect
 	github.com/nunnatsa/ginkgolinter v0.23.0 // indirect
