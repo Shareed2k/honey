@@ -1,7 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { Button, Flex, InputNumber, Input, Select, Typography } from 'antd';
+import { Button, Flex, InputNumber, Input, Popover, Select, Splitter, Typography } from 'antd';
 import { apiGet, apiPost, getToken } from './api';
 
 type HostRecord = {
@@ -53,6 +54,52 @@ type TabsProps = {
   onCloseTerminal: (id: string) => void;
   onCloseModal: () => void;
 };
+
+/** Split-screen layouts for the terminal modal (Rundeck-style tiling). */
+export type SplitLayout = 'none' | '2way' | '3way-v' | '3way-h' | '4way' | '5way' | '6way';
+
+const CELL_COUNT: Record<SplitLayout, number> = {
+  none: 1,
+  '2way': 2,
+  '3way-v': 3,
+  '3way-h': 3,
+  '4way': 4,
+  '5way': 5,
+  '6way': 6,
+};
+
+const LAYOUT_OPTIONS: { value: SplitLayout; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: '2way', label: '2-Way' },
+  { value: '3way-v', label: '3-Way (V)' },
+  { value: '3way-h', label: '3-Way (H)' },
+  { value: '4way', label: '4-Way' },
+  { value: '5way', label: '5-Way' },
+  { value: '6way', label: '6-Way' },
+];
+
+// Split-screen layout + pane assignments are persisted per-tab in sessionStorage so
+// they survive a refresh. sessionStorage matches the lifetime of the terminal records
+// (honey_term_<id>) that the assignments reference.
+const SPLIT_STORAGE_KEY = 'honey_terminal_split';
+
+function readSplitState(): { layout: SplitLayout; paneAssignments: string[] } {
+  try {
+    const raw = sessionStorage.getItem(SPLIT_STORAGE_KEY);
+    if (raw) {
+      const v = JSON.parse(raw) as { layout?: unknown; paneAssignments?: unknown };
+      const layout: SplitLayout =
+        typeof v.layout === 'string' && v.layout in CELL_COUNT ? (v.layout as SplitLayout) : 'none';
+      const paneAssignments = Array.isArray(v.paneAssignments)
+        ? v.paneAssignments.filter((x: unknown): x is string => typeof x === 'string')
+        : [];
+      return { layout, paneAssignments };
+    }
+  } catch {
+    /* corrupt/unavailable → defaults */
+  }
+  return { layout: 'none', paneAssignments: [] };
+}
 
 const defaultScrollbackLines = 200;
 
@@ -681,16 +728,280 @@ export function TerminalTabsModal({
     }
   };
 
+  // --- Split-screen state ---------------------------------------------------
+  // Sessions are mounted once in a hidden pool and portaled into layout slots,
+  // so changing layout / pane assignment never remounts a TerminalSession
+  // (which would drop its live WebSocket + xterm).
+  // Restored from sessionStorage so the layout survives a page refresh.
+  const [layout, setLayout] = useState<SplitLayout>(() => readSplitState().layout);
+  const [paneAssignments, setPaneAssignments] = useState<string[]>(() => readSplitState().paneAssignments);
+  const slotRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const holderRef = useRef<HTMLDivElement | null>(null);
+  const slotCbs = useRef(new Map<number, (el: HTMLDivElement | null) => void>());
+  const [slotVersion, setSlotVersion] = useState(0);
+
+  // getSlotRef returns a STABLE callback ref per cell index. An inline ref
+  // (`ref={(el) => ...}`) is recreated every render, so React re-invokes it on
+  // every render; the setState inside then loops forever (React error #185).
+  // A cached, identity-stable callback fires only on actual mount/unmount, and
+  // the equality guard skips redundant bumps.
+  const getSlotRef = useCallback((i: number) => {
+    let cb = slotCbs.current.get(i);
+    if (!cb) {
+      cb = (el: HTMLDivElement | null) => {
+        if (slotRefs.current[i] === el) return;
+        slotRefs.current[i] = el;
+        setSlotVersion((v) => v + 1); // re-render so portals pick up the slot element
+      };
+      slotCbs.current.set(i, cb);
+    }
+    return cb;
+  }, []);
+  const registerHolder = useCallback((el: HTMLDivElement | null) => {
+    if (holderRef.current === el) return;
+    holderRef.current = el;
+    setSlotVersion((v) => v + 1);
+  }, []);
+
+  // changeLayout rebuilds pane assignments to the new cell count: keep still-open
+  // assignments, fill the rest from unassigned terminals (active first).
+  const changeLayout = useCallback(
+    (next: SplitLayout) => {
+      setLayout(next);
+      setPaneAssignments((prev) => {
+        const count = CELL_COUNT[next];
+        const openIds = new Set(terminals.map((t) => t.id));
+        const cells: string[] = [];
+        for (let i = 0; i < count; i++) {
+          const id = prev[i];
+          cells.push(id && openIds.has(id) ? id : '');
+        }
+        const used = new Set(cells.filter(Boolean));
+        const ordered = [
+          ...terminals.filter((t) => t.id === activeTermId),
+          ...terminals.filter((t) => t.id !== activeTermId),
+        ]
+          .map((t) => t.id)
+          .filter((id) => !used.has(id));
+        let oi = 0;
+        for (let i = 0; i < cells.length; i++) {
+          if (!cells[i] && oi < ordered.length) {
+            cells[i] = ordered[oi++];
+          }
+        }
+        return cells;
+      });
+    },
+    [terminals, activeTermId],
+  );
+
+  // assignPane sets a cell to a terminal, vacating any other cell that held it
+  // (a terminal shows in at most one pane).
+  const assignPane = useCallback((cell: number, id: string) => {
+    setPaneAssignments((prev) => {
+      const next = [...prev];
+      if (id) {
+        for (let i = 0; i < next.length; i++) {
+          if (next[i] === id) next[i] = '';
+        }
+      }
+      next[cell] = id;
+      return next;
+    });
+  }, []);
+
+  // Prune assignments referencing closed terminals.
+  useEffect(() => {
+    const openIds = new Set(terminals.map((t) => t.id));
+    setPaneAssignments((prev) => {
+      if (!prev.some((id) => id && !openIds.has(id))) return prev;
+      return prev.map((id) => (id && openIds.has(id) ? id : ''));
+    });
+  }, [terminals]);
+
+  // Persist layout + assignments per-tab so a refresh restores the split.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify({ layout, paneAssignments }));
+    } catch {
+      /* ignore quota/availability errors */
+    }
+  }, [layout, paneAssignments]);
+
+  // Refit every visible pane after a layout / assignment / slot change.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const tid = window.setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+    return () => window.clearTimeout(tid);
+  }, [layout, paneAssignments, slotVersion, isOpen]);
+
+  const handleSplitResize = useCallback(() => {
+    window.dispatchEvent(new Event('resize'));
+  }, []);
+
   if (terminals.length === 0) {
     return null;
   }
 
   const activeTerm = terminals.find((t) => t.id === activeTermId) || terminals[terminals.length - 1];
   const isVnc = activeTerm.pve === 'vnc';
-  const showAssist = !!assistAvailable && !isVnc;
+  const splitActive = layout !== 'none';
+  const showAssist = !!assistAvailable && !isVnc && !splitActive;
 
   const modalClass =
-    `modal${showAssist ? ' modal-terminal-split' : ''}${isVnc ? ' modal-pve-vnc' : ''}${isMaximized ? ' modal-maximized' : ''}`.trim();
+    `modal${showAssist ? ' modal-terminal-split' : ''}${splitActive ? ' modal-terminal-split-active' : ''}${isVnc ? ' modal-pve-vnc' : ''}${isMaximized ? ' modal-maximized' : ''}`.trim();
+
+  const termOptions = terminals.map((t) => ({ value: t.id, label: t.record.name }));
+
+  // renderCell draws one split leaf: a borderless terminal picker strip + an
+  // empty slot that a TerminalSession portals into (placeholder when empty).
+  const renderCell = (i: number) => {
+    const assignedId = paneAssignments[i] || '';
+    return (
+      <div className="term-split-cell">
+        <div className="term-pane-strip">
+          <Select
+            size="small"
+            variant="borderless"
+            placeholder="Choose terminal"
+            style={{ flex: 1, minWidth: 0 }}
+            value={assignedId || undefined}
+            onChange={(id) => assignPane(i, id)}
+            options={termOptions}
+          />
+        </div>
+        <div className="term-split-slot-wrap">
+          <div className="term-split-slot" ref={getSlotRef(i)} />
+          {assignedId ? null : <div className="term-pane-placeholder">Select a terminal</div>}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSplit = () => {
+    const cell = (i: number) => <Splitter.Panel min="15%">{renderCell(i)}</Splitter.Panel>;
+    switch (layout) {
+      case '2way':
+        return (
+          <Splitter onResize={handleSplitResize}>
+            {cell(0)}
+            {cell(1)}
+          </Splitter>
+        );
+      case '3way-v':
+        return (
+          <Splitter onResize={handleSplitResize}>
+            {cell(0)}
+            <Splitter.Panel min="15%">
+              <Splitter orientation="vertical" onResize={handleSplitResize}>
+                {cell(1)}
+                {cell(2)}
+              </Splitter>
+            </Splitter.Panel>
+          </Splitter>
+        );
+      case '3way-h':
+        return (
+          <Splitter orientation="vertical" onResize={handleSplitResize}>
+            <Splitter.Panel min="15%">
+              <Splitter onResize={handleSplitResize}>
+                {cell(0)}
+                {cell(1)}
+              </Splitter>
+            </Splitter.Panel>
+            {cell(2)}
+          </Splitter>
+        );
+      case '4way':
+        return (
+          <Splitter orientation="vertical" onResize={handleSplitResize}>
+            <Splitter.Panel min="15%">
+              <Splitter onResize={handleSplitResize}>
+                {cell(0)}
+                {cell(1)}
+              </Splitter>
+            </Splitter.Panel>
+            <Splitter.Panel min="15%">
+              <Splitter onResize={handleSplitResize}>
+                {cell(2)}
+                {cell(3)}
+              </Splitter>
+            </Splitter.Panel>
+          </Splitter>
+        );
+      case '5way':
+        return (
+          <Splitter orientation="vertical" onResize={handleSplitResize}>
+            <Splitter.Panel min="15%">
+              <Splitter onResize={handleSplitResize}>
+                {cell(0)}
+                {cell(1)}
+                {cell(2)}
+              </Splitter>
+            </Splitter.Panel>
+            <Splitter.Panel min="15%">
+              <Splitter onResize={handleSplitResize}>
+                {cell(3)}
+                {cell(4)}
+              </Splitter>
+            </Splitter.Panel>
+          </Splitter>
+        );
+      case '6way':
+        return (
+          <Splitter orientation="vertical" onResize={handleSplitResize}>
+            <Splitter.Panel min="15%">
+              <Splitter onResize={handleSplitResize}>
+                {cell(0)}
+                {cell(1)}
+                {cell(2)}
+              </Splitter>
+            </Splitter.Panel>
+            <Splitter.Panel min="15%">
+              <Splitter onResize={handleSplitResize}>
+                {cell(3)}
+                {cell(4)}
+                {cell(5)}
+              </Splitter>
+            </Splitter.Panel>
+          </Splitter>
+        );
+      default:
+        return null;
+    }
+  };
+
+  // sessionTarget decides where a terminal's DOM is portaled and whether it is
+  // visible. Unassigned sessions go to the hidden holder (stay mounted).
+  const sessionTarget = (id: string): { el: HTMLDivElement | null; visible: boolean } => {
+    if (layout === 'none') {
+      const visible = id === activeTerm.id;
+      return { el: visible ? slotRefs.current[0] ?? null : null, visible };
+    }
+    const idx = paneAssignments.indexOf(id);
+    if (idx >= 0) return { el: slotRefs.current[idx] ?? null, visible: true };
+    return { el: null, visible: false };
+  };
+
+  const splitPopover = (
+    <div className="term-split-popover">
+      {LAYOUT_OPTIONS.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          className={`term-split-tile tile-${o.value}${layout === o.value ? ' active' : ''}`}
+          onClick={() => changeLayout(o.value)}
+        >
+          <span className="term-split-icon" aria-hidden="true">
+            {Array.from({ length: CELL_COUNT[o.value] }).map((_, k) => (
+              <i key={k} />
+            ))}
+          </span>
+          <span className="term-split-tile-label">{o.label}</span>
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div className="modal-backdrop" role="presentation" style={{ display: isOpen ? 'flex' : 'none' }}>
@@ -744,6 +1055,15 @@ export function TerminalTabsModal({
             )}
           </div>
           <div className="terminal-tabs-actions">
+            <Popover trigger="click" placement="bottomRight" content={splitPopover}>
+              <button
+                type="button"
+                className={`terminal-split-btn${splitActive ? ' active' : ''}`}
+                title="Split screen"
+              >
+                ⊞ Split
+              </button>
+            </Popover>
             <button
               type="button"
               className="terminal-maximize-btn"
@@ -771,20 +1091,43 @@ export function TerminalTabsModal({
         ) : null}
 
         <div className="modal-terminal-sessions-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0.5rem' }}>
-          {terminals.map((t) => (
-            <TerminalSession
-              key={t.id}
-              sessionId={t.id}
-              record={t.record}
-              sshUser={sshUser}
-              recordSession={recordSession}
-              assistAvailable={assistAvailable}
-              pveConsole={t.pve}
-              truenasConsole={t.truenasConsole ?? 'ssh'}
-              isActive={t.id === activeTermId}
-              registerCloseTabSender={registerCloseTabSender}
+          {/* Layout host: slot elements the sessions portal into. */}
+          {layout === 'none' ? (
+            <div
+              className="term-split-slot"
+              ref={getSlotRef(0)}
+              style={{ flex: 1, minHeight: 0, display: 'flex' }}
             />
-          ))}
+          ) : (
+            <div className="term-split-grid" style={{ flex: 1, minHeight: 0 }}>
+              {renderSplit()}
+            </div>
+          )}
+
+          {/* Hidden holder keeps unassigned sessions mounted (ws alive). */}
+          <div ref={registerHolder} style={{ display: 'none' }} />
+
+          {/* Pool: every session mounted once, portaled into its slot/holder. */}
+          {terminals.map((t) => {
+            const { el, visible } = sessionTarget(t.id);
+            const target = el ?? holderRef.current;
+            if (!target) return null;
+            return createPortal(
+              <TerminalSession
+                sessionId={t.id}
+                record={t.record}
+                sshUser={sshUser}
+                recordSession={recordSession}
+                assistAvailable={layout === 'none' ? assistAvailable : false}
+                pveConsole={t.pve}
+                truenasConsole={t.truenasConsole ?? 'ssh'}
+                isActive={visible}
+                registerCloseTabSender={registerCloseTabSender}
+              />,
+              target,
+              t.id,
+            );
+          })}
         </div>
       </div>
     </div>

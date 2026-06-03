@@ -150,7 +150,7 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null, backendErr
         for (const be of parsed) {
           if (typeof be.path === 'string' && typeof be.message === 'string') {
             const parts = be.path.split('.').reduce((acc: (string | number)[], part: string) => {
-              const match = part.match(/([^\[]+)(?:\[(\d+)\])?/);
+              const match = part.match(/([^[]+)(?:\[(\d+)\])?/);
               if (match) {
                 acc.push(match[1]);
                 if (match[2] !== undefined) {
@@ -167,7 +167,7 @@ function lintHoneyConfig(text: string, schema: ConfigUISchema | null, backendErr
       } else {
         pushDiag(diagnostics, `Backend Error: ${backendError}`, 'error', 0, 1, text.length);
       }
-    } catch (e) {
+    } catch {
       pushDiag(diagnostics, `Backend Error: ${backendError}`, 'error', 0, 1, text.length);
     }
   }

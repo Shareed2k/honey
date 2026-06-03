@@ -206,7 +206,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
     }
   };
 
-  const useTableSnippet = (schema: string, table: string) => {
+  const insertTableSnippet = (schema: string, table: string) => {
     setSql(`select *\nfrom "${schema}"."${table}"\nlimit 100;`);
   };
 
@@ -549,7 +549,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
                                           <span>{t.name}</span>
                                         </button>
                                         <div className="sql-table-actions">
-                                          <button onClick={() => useTableSnippet(schema, t.name)} title="Insert SELECT snippet">↦</button>
+                                          <button onClick={() => insertTableSnippet(schema, t.name)} title="Insert SELECT snippet">↦</button>
                                         </div>
                                       </div>
                                       {tableOpen && t.columns.length > 0 && (

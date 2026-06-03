@@ -29,6 +29,13 @@ tasks:
       - npm ci
       - npm run build
 
+  webui-lint:
+    desc: Lint the React web UI with ESLint
+    dir: webui
+    cmds:
+      - npm ci
+      - npm run lint
+
   build:
     desc: Build the honey binary
     dir: cmd/honey
