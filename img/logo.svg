@@ -1,8 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Honey">
-  <rect width="512" height="512" rx="96" fill="#1b1b1f"/>
-  <g fill="#ffb300">
-    <path d="M256 88c-44 0-80 36-80 80v48c0 8 7 15 15 15h10v176c0 26 21 48 48 48h14c26 0 48-22 48-48V231h10c8 0 15-7 15-15v-48c0-44-36-80-80-80zm0 48c18 0 32 14 32 32v32h-64v-32c0-18 14-32 32-32z"/>
-    <ellipse cx="256" cy="200" rx="88" ry="24" opacity=".35"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="honeyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFC107" /> <!-- Amber / Honey -->
+      <stop offset="100%" stop-color="#F57C00" /> <!-- Dark Orange -->
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Outer Honeycomb Hexagon -->
+  <polygon points="60,10 105,35 105,85 60,110 15,85 15,35" fill="url(#honeyGrad)" filter="url(#shadow)"/>
+  
+  <!-- Inner Terminal Background -->
+  <polygon points="60,20 95,40 95,80 60,100 25,80 25,40" fill="#14171c"/>
+  
+  <!-- CLI Prompt: >_ -->
+  <g transform="translate(38, 72)">
+    <text font-family="monospace, Consolas, 'Courier New'" font-size="36" font-weight="900" fill="#FFC107" letter-spacing="-2">&gt;_</text>
   </g>
-  <path fill="#ffc947" d="M168 320h176v8a72 72 0 01-72 72h-32a72 72 0 01-72-72v-8z" opacity=".9"/>
 </svg>
