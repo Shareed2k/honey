@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 var flagBackendsJSON bool
@@ -33,7 +32,7 @@ func runBackends(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("no config file found; run 'honey config' to create one")
 	}
 	cfg := resolvedCfg
-	rows := searchrun.ListBackendRows(cfg)
+	rows := getSearchRegistry().ListBackendRows(cfg)
 	if flagBackendsJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")

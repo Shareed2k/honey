@@ -54,7 +54,7 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 		recordDir = serverCfg.Defaults.RecordDir
 	}
 
-	rawResults, err := ui.ExecuteSSHParallel("", []hosts.Record{record}, func(_ hosts.Record) string { return cmd }, 8)
+	rawResults, err := ui.ExecuteSSHParallel("", []hosts.Record{record}, func(_ hosts.Record) string { return cmd }, 8, nil)
 	if err != nil {
 		return nil, execOnHostOutput{}, fmt.Errorf("ssh exec: %w", err)
 	}

@@ -138,7 +138,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.assistRL.allow(clientIP(r), assistRPM(), time.Minute) {
+	if !s.assistRL.allow(clientIP(r), assistRPM()) {
 		httpError(w, errors.New("rate limit exceeded; try again in a minute"), http.StatusTooManyRequests)
 		return
 	}
@@ -177,7 +177,20 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			if resErr != nil {
 				planNote = "secret resolver: " + resErr.Error()
 			} else {
-				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, recipe, recipeDir, jobs, user, false, nil, s.opts.ConfigPath, aiPrompt, secRes, pluginMgr, nil, s.metrics)
+				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, ui.CueRecipeRunParams{
+					Recipe:         recipe,
+					RecipeDir:      recipeDir,
+					Records:        jobs,
+					SSHUser:        user,
+					ConfigPath:     s.opts.ConfigPath,
+					AISystemPrompt: aiPrompt,
+					SecretResolver: secRes,
+					PluginMgr:      pluginMgr,
+					Execute:        false,
+					Obs:            s.metrics,
+					Reg:            s.opts.ExecRegistry,
+					Pools:          s.pgPools,
+				}, nil)
 				plan := buf.String()
 				if runErr != nil {
 					planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))

@@ -6,8 +6,9 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-func init() {
-	searchrun.Register(localFactory{})
+// NewFactory returns a new factory for this provider.
+func NewFactory() searchrun.ProviderFactory {
+	return localFactory{}
 }
 
 type localFactory struct{}

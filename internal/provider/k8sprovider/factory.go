@@ -19,11 +19,15 @@ func k8sOverride(overrides searchrun.ProviderOverrides) (o config.KubernetesBack
 	return o
 }
 
-func init() {
-	searchrun.Register(k8sFactory{})
+// NewFactory returns a new factory for this provider. interactive (implemented in
+// the ui package) is injected so resolver-created executors can run TTY sessions.
+func NewFactory(interactive InteractiveRunner) searchrun.ProviderFactory {
+	return k8sFactory{interactive: interactive}
 }
 
-type k8sFactory struct{}
+type k8sFactory struct {
+	interactive InteractiveRunner
+}
 
 func (k8sFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
 	o := k8sOverride(overrides)
@@ -63,9 +67,9 @@ func (k8sFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (k8sFactory) ProviderName() string { return "k8s" }
 
-func (k8sFactory) ExecutorFor(r hosts.Record) hostexec.Executor {
+func (k k8sFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
 	if r.Meta["kind"] == "pod" {
-		return &K8sPodExecutor{}
+		return &K8sPodExecutor{interactive: k.interactive}
 	}
 	return nil
 }

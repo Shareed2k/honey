@@ -12,18 +12,17 @@ type ExecutorProvider interface {
 	// ProviderName returns the r.Provider value this factory owns.
 	ProviderName() string
 	// ExecutorFor returns the executor for r, or nil to fall through to SSH.
-	ExecutorFor(r hosts.Record) hostexec.Executor
+	ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor
 }
 
-func init() {
-	hostexec.SetExecutorResolver(func(r hosts.Record) hostexec.Executor {
-		for _, f := range factories {
-			ep, ok := f.(ExecutorProvider)
-			if !ok || ep.ProviderName() != r.Provider {
-				continue
-			}
-			return ep.ExecutorFor(r)
+// ResolveExecutor dispatches records to provider executors.
+func (r *Registry) ResolveExecutor(rec hosts.Record, reg hostexec.Registry) hostexec.Executor {
+	for _, f := range r.Factories {
+		ep, ok := f.(ExecutorProvider)
+		if !ok || ep.ProviderName() != rec.Provider {
+			continue
 		}
-		return nil
-	})
+		return ep.ExecutorFor(rec, reg)
+	}
+	return nil
 }

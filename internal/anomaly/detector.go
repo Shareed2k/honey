@@ -37,6 +37,8 @@ type Options struct {
 	FreqWindow int
 	// FreqRatio is the short/long rate ratio that triggers a freq-spike score. Default 5.0.
 	FreqRatio float64
+	// Preprocessor configures a preprocessor to run before anomaly detection.
+	Preprocessor string
 }
 
 // Result holds the outcome of scoring a single log line.
@@ -127,7 +129,44 @@ func NewEmbeddedDetector(opts Options) (*EmbeddedDetector, error) {
 		}
 		d.impl = onnxDet
 	}
+	if strings.ToLower(opts.Preprocessor) == "lshd" {
+		preproc := NewLSHDDetector()
+		if d.impl != nil {
+			d.impl = &preprocessedDetector{preprocessor: preproc, inner: d.impl}
+		} else {
+			d.impl = &preprocessedDetector{
+				preprocessor: preproc,
+				inner: detectorFunc(func(_ context.Context, line string) (Result, error) {
+					return d.scoreHeuristic(line), nil
+				}),
+			}
+		}
+	}
 	return d, nil
+}
+
+type preprocessedDetector struct {
+	preprocessor LSHDDetector
+	inner        Detector
+}
+
+func (p *preprocessedDetector) Score(ctx context.Context, line string) (Result, error) {
+	tpl, err := p.preprocessor.Template(line)
+	if err != nil {
+		return Result{}, err
+	}
+	res, err := p.inner.Score(ctx, tpl)
+	if err != nil {
+		return Result{}, err
+	}
+	res.Original = line
+	return res, nil
+}
+
+type detectorFunc func(context.Context, string) (Result, error)
+
+func (f detectorFunc) Score(ctx context.Context, line string) (Result, error) {
+	return f(ctx, line)
 }
 
 var (

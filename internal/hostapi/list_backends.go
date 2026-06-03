@@ -15,7 +15,7 @@ type ListBackendsOutput struct {
 }
 
 // ListBackends resolves config the same way as honey backends / MCP list_backends.
-func ListBackends(configPath string) (ListBackendsOutput, error) {
+func ListBackends(configPath string, searchReg *searchrun.Registry) (ListBackendsOutput, error) {
 	var out ListBackendsOutput
 	cfgPath, err := config.ResolvePath(strings.TrimSpace(configPath))
 	if err != nil {
@@ -29,6 +29,6 @@ func ListBackends(configPath string) (ListBackendsOutput, error) {
 		return out, fmt.Errorf("config: %w", err)
 	}
 	out.ConfigPath = cfgPath
-	out.Backends = searchrun.ListBackendRows(cfg)
+	out.Backends = searchReg.ListBackendRows(cfg)
 	return out, nil
 }

@@ -81,22 +81,8 @@ func runCueStepTemplateOnHost(
 	}
 }
 
-func streamCueTemplateStep(
-	ctx context.Context,
-	recipe cuetry.Recipe,
-	recipeDir string,
-	stepIdx int,
-	step cuetry.RecipeStep,
-	records []hosts.Record,
-	outputStore *cuetry.StepOutputStore,
-	outputCapture *cuetry.RecipeOutputCapture,
-	recipeKV *RecipeKVCoordinator,
-	secretResolver cuetry.SecretResolver,
-	execute bool,
-	out chan<- HostExecResult,
-) ([]HostExecResult, error) {
-	_ = recipeDir
-	targets, err := cuetry.ExpandStepHosts(step.Host, records)
+func streamCueTemplateStep(ctx context.Context, run *cueRun, stepIdx int, step cuetry.RecipeStep, out chan<- HostExecResult) ([]HostExecResult, error) {
+	targets, err := cuetry.ExpandStepHosts(step.Host, run.Records)
 	if err != nil {
 		return nil, fmt.Errorf("step %d: %w", stepIdx, err)
 	}
@@ -104,12 +90,12 @@ func streamCueTemplateStep(
 	if err != nil {
 		return nil, err
 	}
-	kv := kvReaderFromCoordinator(recipeKV)
+	kv := kvReaderFromCoordinator(run.recipeKV)
 	var kept []hosts.Record
 	var skipped []HostExecResult
 	for _, t := range targets {
 		if prog != nil {
-			ok, err := evalStepWhen(ctx, prog, recipe, step, t, nil, outputStore, secretResolver, kv, nil, execute)
+			ok, err := evalStepWhen(ctx, prog, run.Recipe, step, t, nil, run.outputStore, run.SecretResolver, kv, nil, run.Execute)
 			if err != nil {
 				return nil, err
 			}
@@ -125,7 +111,7 @@ func streamCueTemplateStep(
 	if len(kept) == 0 {
 		return rows, nil
 	}
-	maxConc := recipeHostMaxConc(step, recipe.Defaults)
+	maxConc := recipeHostMaxConc(step, run.Recipe.Defaults)
 	if maxConc <= 0 {
 		maxConc = 8
 	}
@@ -140,7 +126,7 @@ func streamCueTemplateStep(
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runCueStepTemplateOnHost(ctx, recipe, stepIdx, step, target, outputStore, outputCapture, recipeKV, secretResolver, execute)
+			res := runCueStepTemplateOnHost(ctx, run.Recipe, stepIdx, step, target, run.outputStore, run.outputCapture, run.recipeKV, run.SecretResolver, run.Execute)
 			mu.Lock()
 			rows = append(rows, res)
 			if !res.Success && !res.Skipped {

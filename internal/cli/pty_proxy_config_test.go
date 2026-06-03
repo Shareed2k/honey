@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
@@ -23,7 +22,7 @@ backends:
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { hostexec.ReconfigureFromHoneyConfig(nil) })
+	t.Cleanup(func() { getSearchRegistry().ReconfigureFromConfig(nil) })
 
 	if err := loadHostexecFromHoneyConfig(cfgPath); err != nil {
 		t.Fatal(err)

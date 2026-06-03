@@ -18,8 +18,9 @@ func awsOverride(overrides searchrun.ProviderOverrides) (o config.AWSBackend) {
 	return o
 }
 
-func init() {
-	searchrun.Register(awsFactory{})
+// NewFactory returns a new factory for this provider.
+func NewFactory() searchrun.ProviderFactory {
+	return awsFactory{}
 }
 
 type awsFactory struct{}

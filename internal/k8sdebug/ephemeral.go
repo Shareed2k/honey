@@ -90,18 +90,23 @@ func waitForEphemeralContainer(ctx context.Context, clientset kubernetes.Interfa
 		}
 	}
 
-	for event := range watcher.ResultChan() {
-		p, ok := event.Object.(*corev1.Pod)
-		if !ok {
-			continue
-		}
-
-		if isContainerRunning(p, containerName) {
-			return nil
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return fmt.Errorf("waiting for ephemeral container %s: %w", containerName, timeoutCtx.Err())
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				return fmt.Errorf("ephemeral container %s did not become ready", containerName)
+			}
+			p, ok := event.Object.(*corev1.Pod)
+			if !ok {
+				continue
+			}
+			if isContainerRunning(p, containerName) {
+				return nil
+			}
 		}
 	}
-
-	return fmt.Errorf("ephemeral container %s did not become ready", containerName)
 }
 
 func isContainerRunning(pod *corev1.Pod, containerName string) bool {

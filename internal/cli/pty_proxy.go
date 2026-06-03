@@ -10,7 +10,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
@@ -34,12 +33,14 @@ var ptyProxyCmd = &cobra.Command{
 
 		payloadBytes, err := base64.StdEncoding.DecodeString(args[0])
 		if err != nil {
+			zap.L().Error("pty-proxy: decode payload failed", zap.Error(err))
 			fmt.Printf("\r\n\033[31m[honey] Error decoding payload: %v\033[0m\r\n", err)
 			return nil
 		}
 
 		var hello webserver.WSHello
 		if err := json.Unmarshal(payloadBytes, &hello); err != nil {
+			zap.L().Error("pty-proxy: unmarshal payload failed", zap.Error(err))
 			fmt.Printf("\r\n\033[31m[honey] Error unmarshaling payload: %v\033[0m\r\n", err)
 			return nil
 		}
@@ -60,7 +61,7 @@ var ptyProxyCmd = &cobra.Command{
 
 		// Run Terminal Interactive handles pure SSH, Proxmox Serial, and Kubernetes pods natively
 		// using os.Stdin/Stdout/Stderr and registers for SIGWINCH to handle resizes forwarded by tmux/zellij!
-		err = ui.RunTerminalInteractive(hello.SSHUser, hello.Record, hello.Console)
+		err = ui.RunTerminalInteractive(hello.SSHUser, hello.Record, hello.Console, buildHostExecRegistry())
 		if err != nil {
 			ptyProxyPauseOnError(err)
 		}
@@ -75,6 +76,7 @@ func init() {
 }
 
 func ptyProxyPauseOnError(err error) {
+	zap.L().Error("pty-proxy: connection error", zap.Error(err))
 	fmt.Printf("\r\n\033[31m[honey] Connection Error: %v\033[0m\r\n", err)
 	// Pause before returning so tmux keeps the pane open long enough for the browser to read the PTY.
 	fmt.Printf("\r\n[honey] Press ENTER to close this terminal...")
@@ -89,13 +91,13 @@ func loadHostexecFromHoneyConfig(explicit string) error {
 		return err
 	}
 	if cfgPath == "" {
-		hostexec.ReconfigureFromHoneyConfig(nil)
+		getSearchRegistry().ReconfigureFromConfig(nil)
 		return nil
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
 	}
-	hostexec.ReconfigureFromHoneyConfig(cfg)
+	getSearchRegistry().ReconfigureFromConfig(cfg)
 	return nil
 }

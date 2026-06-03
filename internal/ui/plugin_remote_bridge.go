@@ -26,6 +26,7 @@ type pluginRemoteBridge struct {
 	user         string
 	record       hosts.Record
 	cache        *ClientCache
+	reg          hostexec.Registry
 	recipeDir    string
 	runAs        string
 	env          map[string]string
@@ -34,12 +35,13 @@ type pluginRemoteBridge struct {
 
 var _ plugins.RemoteBridge = (*pluginRemoteBridge)(nil)
 
-// NewPluginRemoteBridge returns a RemoteBridge for one plugin host invocation.
-func NewPluginRemoteBridge(user string, record hosts.Record, cache *ClientCache, recipeDir, runAs string, env map[string]string, allowedPaths map[string]string) plugins.RemoteBridge {
+// NewRemoteBridge returns a RemoteBridge for one plugin host invocation.
+func NewRemoteBridge(user string, record hosts.Record, cache *ClientCache, reg hostexec.Registry, recipeDir, runAs string, env map[string]string, allowedPaths map[string]string) plugins.RemoteBridge {
 	return &pluginRemoteBridge{
 		user:         user,
 		record:       record,
 		cache:        cache,
+		reg:          reg,
 		recipeDir:    recipeDir,
 		runAs:        runAs,
 		env:          env,
@@ -268,7 +270,10 @@ func (b *pluginRemoteBridge) dial() (hostexec.HostClient, error) {
 	if b.cache != nil {
 		return b.cache.GetOrDial(b.user, b.record)
 	}
-	return GetExecutor(b.record).Dial(b.user, b.record)
+	if b.reg != nil {
+		return b.reg.ForRecord(b.record).Dial(b.user, b.record)
+	}
+	return nil, fmt.Errorf("no executor registry configured")
 }
 
 func readRemoteFile(client hostexec.HostClient, remotePath string, maxBytes int64) (string, int64, error) {

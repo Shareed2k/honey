@@ -19,6 +19,7 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/prometheus/alertmanager/notify/webhook"
 	amtemplate "github.com/prometheus/alertmanager/template"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
@@ -165,24 +166,24 @@ func (s *Server) isDuplicate(fingerprint string) bool {
 func (s *Server) investigate(ctx context.Context, alert amtemplate.Alert) {
 	mapping := resolveMapping(s.fileCfg, alert.Labels)
 	if mapping == nil {
-		fmt.Printf("[alert webhook] no mapping for alert labels: %v\n", alert.Labels)
+		zap.L().Warn("alert webhook: no mapping for alert", zap.Any("labels", alert.Labels))
 		return
 	}
 
 	hostQuery, err := evalHostQuery(mapping.HostQuery, alert.Labels)
 	if err != nil || hostQuery == "" {
-		fmt.Printf("[alert webhook] host_query error for %v: %v\n", alert.Labels, err)
+		zap.L().Warn("alert webhook: host_query failed", zap.Any("labels", alert.Labels), zap.Error(err))
 		return
 	}
 
-	records, err := hostapi.SearchHosts(ctx, &hostapi.SearchHostsInput{Name: hostQuery})
+	records, err := hostapi.SearchHosts(ctx, &hostapi.SearchHostsInput{Name: hostQuery}, nil, nil)
 	if err != nil || len(records.Records) == 0 {
-		fmt.Printf("[alert webhook] no hosts found for query %q: %v\n", hostQuery, err)
+		zap.L().Warn("alert webhook: no hosts found", zap.String("host_query", hostQuery), zap.Error(err))
 		return
 	}
 
 	if !s.cfg.AutoInvestigate || strings.TrimSpace(mapping.Command) == "" {
-		fmt.Printf("[alert webhook] alert matched host(s) %s — no command configured\n", hostQuery)
+		zap.L().Info("alert webhook: matched hosts, no command configured", zap.String("host_query", hostQuery))
 		return
 	}
 
@@ -192,7 +193,7 @@ func (s *Server) investigate(ctx context.Context, alert amtemplate.Alert) {
 		recordDir = strings.TrimSpace(s.fileCfg.Defaults.RecordDir)
 	}
 
-	results, _ := ui.ExecuteSSHParallel("", records.Records, func(_ hosts.Record) string { return cmd }, 8)
+	results, _ := ui.ExecuteSSHParallel("", records.Records, func(_ hosts.Record) string { return cmd }, 8, nil)
 	// Build notification body.
 	var sb strings.Builder
 	_, _ = fmt.Fprintf(&sb, "Alert: %s\nHost query: %s\n\n", alert.Labels["alertname"], hostQuery)
@@ -265,7 +266,7 @@ func sendHTTP(ctx context.Context, cfg *config.AlertNotifyHTTP, subject, body st
 	payload, _ := json.Marshal(map[string]string{"subject": subject, "body": body})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(payload))
 	if err != nil {
-		fmt.Printf("[alert notify HTTP] %v\n", err)
+		zap.L().Error("alert notify HTTP: build request failed", zap.Error(err))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -274,7 +275,7 @@ func sendHTTP(ctx context.Context, cfg *config.AlertNotifyHTTP, subject, body st
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Printf("[alert notify HTTP] %v\n", err)
+		zap.L().Error("alert notify HTTP: request failed", zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -289,13 +290,13 @@ func sendSlack(ctx context.Context, cfg *config.AlertNotifySlack, subject, body 
 	data, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.WebhookURL, bytes.NewReader(data))
 	if err != nil {
-		fmt.Printf("[alert notify Slack] %v\n", err)
+		zap.L().Error("alert notify Slack: build request failed", zap.Error(err))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Printf("[alert notify Slack] %v\n", err)
+		zap.L().Error("alert notify Slack: request failed", zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -317,7 +318,7 @@ func sendTelegram(ctx context.Context, cfg *config.AlertNotifyTelegram, subject,
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			fmt.Printf("[alert notify Telegram] %v\n", err)
+			zap.L().Error("alert notify Telegram: request failed", zap.Error(err))
 			continue
 		}
 		resp.Body.Close()

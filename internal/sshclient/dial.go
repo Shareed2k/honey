@@ -161,11 +161,11 @@ func buildHostKeyCallback(inner ssh.HostKeyCallback, knownHostsPaths []string, k
 			knownHostsAppendMu.Lock()
 			defer knownHostsAppendMu.Unlock()
 			if rerr := removeHostFromKnownHostsFiles(knownHostsPaths, hostname, remote); rerr != nil {
-				return fmt.Errorf("%w: key mismatch and auto-renew failed: %v", ke, rerr)
+				return fmt.Errorf("%w: key mismatch and auto-renew failed: %w", ke, rerr)
 			}
 			_ = os.MkdirAll(filepath.Dir(writeTo), 0o700)
 			if werr := goph.AddKnownHost(hostname, remote, key, writeTo); werr != nil {
-				return fmt.Errorf("%w: removed stale keys but could not append new key to %s: %v", ke, writeTo, werr)
+				return fmt.Errorf("%w: removed stale keys but could not append new key to %s: %w", ke, writeTo, werr)
 			}
 			return nil
 		}
@@ -175,7 +175,7 @@ func buildHostKeyCallback(inner ssh.HostKeyCallback, knownHostsPaths []string, k
 			werr := goph.AddKnownHost(hostname, remote, key, writeTo)
 			knownHostsAppendMu.Unlock()
 			if werr != nil {
-				return fmt.Errorf("%w: unknown host and could not append key to %s: %v", ke, writeTo, werr)
+				return fmt.Errorf("%w: unknown host and could not append key to %s: %w", ke, writeTo, werr)
 			}
 			return nil
 		}

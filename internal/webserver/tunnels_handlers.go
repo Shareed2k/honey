@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/ui"
 )
 
 type safeBuffer struct {
@@ -96,7 +96,7 @@ func (m *tunnelManager) list() []ActiveTunnel {
 	return res
 }
 
-func (m *tunnelManager) start(user string, r hosts.Record, mapping string) *ActiveTunnel {
+func (m *tunnelManager) start(user string, r hosts.Record, mapping string, reg hostexec.Registry) *ActiveTunnel {
 	id := uuid.New().String()
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -125,7 +125,7 @@ func (m *tunnelManager) start(user string, r hosts.Record, mapping string) *Acti
 	zap.L().Debug("starting background tunnel", zap.String("id", id), zap.String("host", hostName), zap.String("mapping", mapping))
 
 	go func() {
-		executor := ui.GetExecutor(r)
+		executor := reg.ForRecord(r)
 		err := executor.RunTunnel(ctx, user, r, mapping, logBuf)
 
 		m.mu.Lock()
@@ -236,7 +236,7 @@ func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := s.sshUser(req.SSHUser)
-	tunnel := s.tunnels.start(user, req.Record, req.Mapping)
+	tunnel := s.tunnels.start(user, req.Record, req.Mapping, s.opts.ExecRegistry)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(TunnelStartResponse{Tunnel: *tunnel})

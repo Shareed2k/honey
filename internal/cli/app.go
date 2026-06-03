@@ -17,7 +17,6 @@ import (
 	"github.com/shareed2k/honey/internal/appsecret"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/proxy"
-	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
@@ -71,7 +70,7 @@ func init() {
 	appOpenCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	appOpenCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	appOpenCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
-	searchrun.RegisterAllProviderFlags(appOpenCmd)
+	getSearchRegistry().RegisterAllProviderFlags(appOpenCmd)
 }
 
 func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, cache *ui.ClientCache) (proxy.Dialer, io.Closer, error) {
@@ -100,7 +99,7 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, c
 		Providers:  searchProviders,
 		Backends:   searchBackends,
 	}
-	out, err := hostapi.SearchHosts(ctx, &in)
+	out, err := hostapi.SearchHosts(ctx, &in, buildHostExecRegistry(), getSearchRegistry())
 	if err != nil {
 		if app.TargetRegex != "" {
 			return nil, nil, fmt.Errorf("resolve target (regex %q): %w", app.TargetRegex, err)
@@ -154,6 +153,9 @@ func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error 
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 	appProxyCache := ui.NewClientCache()
+	reg := buildHostExecRegistry()
+	reg.Reconfigure(cfg)
+	appProxyCache.SetRegistry(reg)
 	defer appProxyCache.CloseAll()
 
 	mgr := proxy.NewManager(proxy.NewLogger(zap.L()))

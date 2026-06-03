@@ -82,6 +82,7 @@ func TestSSHClientCacheKey_sameWhenNoMetaPort(t *testing.T) {
 
 func TestClientCacheAcquireLeaseReleasesWithoutClosingCachedClient(t *testing.T) {
 	c := NewClientCache()
+	c.SetRegistry(&hostexec.StandardRegistry{})
 	r := hosts.Record{Provider: "aws", Name: "x", PrimaryIP: "1.2.3.4"}
 	key := SSHClientCacheKey("u", r)
 	client := &fakeHostClient{}

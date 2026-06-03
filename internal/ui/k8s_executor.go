@@ -10,11 +10,16 @@ import (
 	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 )
 
-func init() {
-	k8sprovider.SetRunInteractive(func(user string, r hosts.Record) error {
-		return runK8sInteractiveWithRecorder(user, r, nil)
-	})
+// k8sInteractiveRunner is the ui implementation of k8sprovider.InteractiveRunner,
+// injected into the k8s provider factory by the composition root.
+type k8sInteractiveRunner struct{}
+
+func (k8sInteractiveRunner) RunInteractive(user string, r hosts.Record) error {
+	return runK8sInteractiveWithRecorder(user, r, nil)
 }
+
+// K8sInteractiveRunner returns the ui-backed k8s interactive session runner.
+func K8sInteractiveRunner() k8sprovider.InteractiveRunner { return k8sInteractiveRunner{} }
 
 func runK8sInteractiveWithRecorder(user string, r hosts.Record, recorder *SessionRecorder) error {
 	client, err := (&k8sPodExecutor{}).Dial(user, r)

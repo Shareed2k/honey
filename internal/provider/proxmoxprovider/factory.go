@@ -19,8 +19,9 @@ func proxmoxOverride(overrides searchrun.ProviderOverrides) (o config.ProxmoxBac
 	return o
 }
 
-func init() {
-	searchrun.Register(proxmoxFactory{})
+// NewFactory returns a new factory for this provider.
+func NewFactory() searchrun.ProviderFactory {
+	return proxmoxFactory{}
 }
 
 type proxmoxFactory struct{}
@@ -96,7 +97,7 @@ func (proxmoxFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (proxmoxFactory) ProviderName() string { return "proxmox" }
 
-func (proxmoxFactory) ExecutorFor(r hosts.Record) hostexec.Executor {
+func (proxmoxFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
 	return resolveProxmoxExecutor(r)
 }
 

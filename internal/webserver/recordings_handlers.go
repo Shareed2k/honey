@@ -303,7 +303,7 @@ func (s *Server) handleRecordingsSummarize(w http.ResponseWriter, r *http.Reques
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	if !s.assistRL.allow(clientIP(r), assistRPM(), time.Minute) {
+	if !s.assistRL.allow(clientIP(r), assistRPM()) {
 		httpError(w, errors.New("rate limit exceeded; try again in a minute"), http.StatusTooManyRequests)
 		return
 	}

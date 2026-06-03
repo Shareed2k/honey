@@ -47,6 +47,7 @@ var (
 	flagLogsAnomalyFreqWindow      int
 	flagLogsAnomalyFreqRatio       float64
 	flagLogsAnomalyFeedbackFile    string
+	flagLogsAnomalyPreprocessor    string
 	flagLogsAlert                  bool
 	flagLogsAlertSuppress          time.Duration
 )
@@ -91,6 +92,7 @@ func init() {
 	logsCmd.Flags().IntVar(&flagLogsAnomalyFreqWindow, "anomaly-freq-window", 100, "Short window size for rate-ratio burst detection (0=disabled)")
 	logsCmd.Flags().Float64Var(&flagLogsAnomalyFreqRatio, "anomaly-freq-ratio", 5.0, "Short/long rate ratio above which a log template is flagged as a frequency spike")
 	logsCmd.Flags().StringVar(&flagLogsAnomalyFeedbackFile, "anomaly-feedback-file", "", "Append scored log lines as JSONL to this file for review and threshold calibration")
+	logsCmd.Flags().StringVar(&flagLogsAnomalyPreprocessor, "anomaly-preprocessor", "", "Name of preprocessor to run before anomaly detection (e.g. lshd)")
 	logsCmd.Flags().BoolVar(&flagLogsAlert, "alert", false, "Send anomaly notifications via HONEY_NOTIFY_* env vars (auto-enables --anomaly)")
 	logsCmd.Flags().DurationVar(&flagLogsAlertSuppress, "alert-suppress", 5*time.Minute, "Suppress repeated alerts for the same source+reason pair for this duration (0=no dedup)")
 }
@@ -109,6 +111,9 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		flagLogsAnomaly = true
 	}
 	if flagLogsAlert {
+		flagLogsAnomaly = true
+	}
+	if flagLogsAnomalyPreprocessor != "" {
 		flagLogsAnomaly = true
 	}
 	if flagLogsAnomalyEndpoint != "" && flagLogsAnomalyModel != "" {
@@ -144,22 +149,34 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		AnomalyFreqWindow:      flagLogsAnomalyFreqWindow,
 		AnomalyFreqRatio:       flagLogsAnomalyFreqRatio,
 		AnomalyFeedbackFile:    flagLogsAnomalyFeedbackFile,
+		AnomalyPreprocessor:    flagLogsAnomalyPreprocessor,
 		AlertEnabled:           flagLogsAlert,
 		AlertSuppressDuration:  flagLogsAlertSuppress,
 	}
 
 	if flagLogsAnomalySelftest {
-		return runAnomalySelftest(opts)
+		return runAnomalySelftest(cmd.Context(), opts)
 	}
 
 	clientCache := ui.NewClientCache()
-	ui.SetDockerSSHBorrowCache(clientCache)
 	defer clientCache.CloseAll()
 
-	records, sshUser, _, _, err := runSearchCore(cmd, []string{target})
+	records, sshUser, cfg, _, err := runSearchCore(cmd, []string{target})
 	if err != nil {
 		return err
 	}
+
+	if flagLogsAnomalyPreprocessor == "" && cfg != nil {
+		flagLogsAnomalyPreprocessor = cfg.Defaults.Logs.AnomalyPreprocessor
+		if flagLogsAnomalyPreprocessor != "" {
+			opts.Anomaly = true
+			opts.AnomalyPreprocessor = flagLogsAnomalyPreprocessor
+		}
+	}
+
+	reg := buildHostExecRegistry()
+	reg.Reconfigure(cfg)
+	clientCache.SetRegistry(reg)
 	if len(records) == 0 {
 		return fmt.Errorf("no records match %q", target)
 	}
@@ -184,7 +201,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	return ui.StreamLogs(ctx, sshUser, records, opts, clientCache, out)
 }
 
-func runAnomalySelftest(opts ui.LogOptions) error {
+func runAnomalySelftest(ctx context.Context, opts ui.LogOptions) error {
 	if !opts.Anomaly {
 		return fmt.Errorf("--anomaly-selftest requires --anomaly")
 	}
@@ -203,7 +220,7 @@ func runAnomalySelftest(opts ui.LogOptions) error {
 	}
 	fmt.Fprintln(os.Stdout, "anomaly selftest ok: detector initialized")
 	for _, sample := range samples {
-		res, scoreErr := det.Score(context.Background(), sample)
+		res, scoreErr := det.Score(ctx, sample)
 		if scoreErr != nil {
 			return fmt.Errorf("anomaly selftest score: %w", scoreErr)
 		}
