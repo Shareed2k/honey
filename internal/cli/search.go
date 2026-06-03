@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
@@ -53,7 +52,7 @@ func addSearchCoreFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	cmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
 
-	searchrun.RegisterAllProviderFlags(cmd)
+	getSearchRegistry().RegisterAllProviderFlags(cmd)
 }
 
 // runSearchCore runs the same search pipeline as search (flags, config, cache,
@@ -69,7 +68,8 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 
 	cfgPath := resolvedCfgPath
 	cfg := resolvedCfg
-	hostexec.ReconfigureFromHoneyConfig(cfg)
+	reg := buildHostExecRegistry()
+	reg.Reconfigure(cfg)
 
 	cacheTTL := flagCacheTTL
 	cacheDir := flagCacheDir
@@ -117,13 +117,16 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 
 func runSearch(cmd *cobra.Command, args []string) error {
 	clientCache := ui.NewClientCache()
-	ui.SetDockerSSHBorrowCache(clientCache)
 
 	records, sshUser, cfg, cfgPath, err := runSearchCore(cmd, args)
 	if err != nil {
 		clientCache.CloseAll()
 		return err
 	}
+
+	reg := buildHostExecRegistry()
+	reg.Reconfigure(cfg)
+	clientCache.SetRegistry(reg)
 
 	if flagJSON || flagNoUI {
 		flagOutput = "json"
@@ -155,6 +158,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			Config:        cfg,
 			ConfigPath:    cfgPath,
 			ClientCache:   clientCache,
+			ExecRegistry:  reg,
 		})
 	}
 }

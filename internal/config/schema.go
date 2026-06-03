@@ -18,6 +18,7 @@ const (
 	SchemaFieldTypeString  SchemaFieldType = "string"
 	SchemaFieldTypeBoolean SchemaFieldType = "boolean"
 	SchemaFieldTypeInteger SchemaFieldType = "integer"
+	SchemaFieldTypeNumber  SchemaFieldType = "number"
 	SchemaFieldTypeArray   SchemaFieldType = "array"
 	SchemaFieldTypeObject  SchemaFieldType = "object"
 )
@@ -307,6 +308,8 @@ func schemaTypeForGoType(t reflect.Type) (SchemaFieldType, bool) {
 		return SchemaFieldTypeBoolean, true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return SchemaFieldTypeInteger, true
+	case reflect.Float32, reflect.Float64:
+		return SchemaFieldTypeNumber, true
 	default:
 		return "", false
 	}
@@ -365,6 +368,12 @@ func parseDefaultValue(raw string, fieldType SchemaFieldType) (any, bool) {
 		return v, true
 	case SchemaFieldTypeInteger:
 		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, false
+		}
+		return v, true
+	case SchemaFieldTypeNumber:
+		v, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
 			return nil, false
 		}

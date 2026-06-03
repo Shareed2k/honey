@@ -262,6 +262,13 @@ func runAgentSessionWithRetries(
 		stageEvent(out, emit, redactions, stage+"_start", host, true, "starting", nil, i)
 		errCh := make(chan error, 1)
 		go func() {
+			// Recover so a panic in fn surfaces as an error instead of leaving
+			// the progress-ticker select loop below spinning forever.
+			defer func() {
+				if r := recover(); r != nil {
+					errCh <- fmt.Errorf("%s panicked: %v", stage, r)
+				}
+			}()
 			errCh <- fn()
 		}()
 		ticker := time.NewTicker(5 * time.Second)

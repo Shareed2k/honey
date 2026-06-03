@@ -28,16 +28,12 @@ func (s stubBackend) Search(_ context.Context, _ hosts.Query) ([]hosts.Record, e
 }
 
 func TestBuildProviders_ReturnsOnePerFactory(t *testing.T) {
-	// Snapshot the current factories list, append a known stub, then restore.
-	before := factories
-	t.Cleanup(func() { factories = before })
-
 	stub := stubFactory{id: "test-stub"}
-	factories = append(factories, stub)
+	reg := NewRegistry([]ProviderFactory{stub})
 
-	backends := BuildProviders(nil, ProviderOverrides{})
+	backends := reg.BuildProviders(nil, ProviderOverrides{})
 
-	if len(backends) != len(factories) {
-		t.Errorf("expected %d backends (one per factory), got %d", len(factories), len(backends))
+	if len(backends) != 1 {
+		t.Errorf("expected 1 backends (one per factory), got %d", len(backends))
 	}
 }

@@ -118,8 +118,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("command is required")
 	}
 
+	reg := buildHostExecRegistry()
+	cfg := resolvedCfg
+	reg.Reconfigure(cfg)
 	clientCache := ui.NewClientCache()
-	ui.SetDockerSSHBorrowCache(clientCache)
+	clientCache.SetRegistry(reg)
 	defer clientCache.CloseAll()
 
 	records, sshUser, _, _, err := runSearchCore(cmd, []string{target})
@@ -152,7 +155,13 @@ func runExec(cmd *cobra.Command, args []string) error {
 		defer close(out)
 		_ = ui.StreamSSHParallel(context.Background(), sshUser, jobs, false,
 			func(_ hosts.Record, _ map[string]string) string { return finalCmd },
-			flagExecParallel, out, clientCache, nil, false, nil, retryCfg, nil, new(atomic.Int32),
+			out, ui.BatchOptions{
+				MaxConc:    flagExecParallel,
+				Cache:      clientCache,
+				RetryCfg:   retryCfg,
+				AttemptMax: new(atomic.Int32),
+				Reg:        reg,
+			},
 		)
 	}()
 

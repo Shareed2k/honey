@@ -174,5 +174,17 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records, sshUser, flagCueExecExecute, cliEnv, cfgPath, aiPrompt, secRes, pluginMgr, rec, nil)
+	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), ui.CueRecipeRunParams{
+		Recipe:         recipe,
+		RecipeDir:      recipeDir,
+		Records:        records,
+		SSHUser:        sshUser,
+		CLIEnv:         cliEnv,
+		ConfigPath:     cfgPath,
+		AISystemPrompt: aiPrompt,
+		SecretResolver: secRes,
+		PluginMgr:      pluginMgr,
+		Execute:        flagCueExecExecute,
+		Reg:            buildHostExecRegistry(),
+	}, rec)
 }

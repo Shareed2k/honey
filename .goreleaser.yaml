@@ -98,6 +98,8 @@ homebrew_casks:
       - formula: openssh
       - formula: tmux
       - formula: tun2proxy
+      - formula: shellcheck
+      - formula: flake8
     completions:
       bash: completions/honey.bash
       zsh: completions/honey.zsh

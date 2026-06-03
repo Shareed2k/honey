@@ -21,41 +21,49 @@ type ProviderFactory interface {
 	BackendRows(cfg *config.File) []config.BackendRow
 }
 
-var factories []ProviderFactory
-
-// Register adds a new provider factory to the registry.
-// This is typically called from an init() function within each provider package.
-func Register(f ProviderFactory) {
-	factories = append(factories, f)
-	if r, ok := f.(BackendConfigRegistry); ok {
-		registerBackendSlice(r.BackendKind(), func(cfg *config.File) reflect.Value {
-			ptr := r.BackendSlicePtr(cfg)
-			v := reflect.ValueOf(ptr)
-			if !v.IsValid() || v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Slice {
-				return reflect.Value{}
-			}
-			return v.Elem()
-		})
-	}
+// Registry provides access to registered provider factories.
+type Registry struct {
+	Factories          []ProviderFactory
+	backendSliceByKind map[string]func(cfg *config.File) reflect.Value
 }
 
-// ListSearchProviderIDs returns hosts.Backend.ID() for each registered factory's default backend,
-// in registration order (matches implicit providers when config has no backend entries).
-func ListSearchProviderIDs(overrides ProviderOverrides) []string {
-	ids := make([]string, 0, len(factories))
-	for _, factory := range factories {
+// NewRegistry initializes a registry with given factories and registers backend slices.
+func NewRegistry(factories []ProviderFactory) *Registry {
+	r := &Registry{
+		Factories:          factories,
+		backendSliceByKind: make(map[string]func(cfg *config.File) reflect.Value),
+	}
+	for _, f := range factories {
+		if bc, ok := f.(BackendConfigRegistry); ok {
+			r.registerBackendSlice(bc.BackendKind(), func(cfg *config.File) reflect.Value {
+				ptr := bc.BackendSlicePtr(cfg)
+				v := reflect.ValueOf(ptr)
+				if !v.IsValid() || v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Slice {
+					return reflect.Value{}
+				}
+				return v.Elem()
+			})
+		}
+	}
+	return r
+}
+
+// ListSearchProviderIDs returns hosts.Backend.ID() for each registered factory's default backend.
+func (r *Registry) ListSearchProviderIDs(overrides ProviderOverrides) []string {
+	ids := make([]string, 0, len(r.Factories))
+	for _, factory := range r.Factories {
 		ids = append(ids, factory.Default(overrides).ID())
 	}
 	return ids
 }
 
 // ListBackendRows queries all registered providers to build a list of configured backends.
-func ListBackendRows(cfg *config.File) []config.BackendRow {
+func (r *Registry) ListBackendRows(cfg *config.File) []config.BackendRow {
 	var rows []config.BackendRow
 	if cfg == nil {
 		return rows
 	}
-	for _, factory := range factories {
+	for _, factory := range r.Factories {
 		rows = append(rows, factory.BackendRows(cfg)...)
 	}
 	return rows
@@ -67,8 +75,8 @@ type FlagRegistrar interface {
 }
 
 // RegisterAllProviderFlags calls RegisterFlags on each factory that implements FlagRegistrar.
-func RegisterAllProviderFlags(cmd *cobra.Command) {
-	for _, f := range factories {
+func (r *Registry) RegisterAllProviderFlags(cmd *cobra.Command) {
+	for _, f := range r.Factories {
 		if r, ok := f.(FlagRegistrar); ok {
 			r.RegisterFlags(cmd)
 		}

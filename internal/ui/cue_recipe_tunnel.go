@@ -13,32 +13,17 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
 
-func streamCueStepTunnel(
-	ctx context.Context,
-	recipe cuetry.Recipe,
-	stepIdx int,
-	step cuetry.RecipeStep,
-	sshUser string,
-	targets []hosts.Record,
-	ch chan<- HostExecResult,
-	cache *ClientCache,
-	tunnelCoord *RecipeTunnelCoordinator,
-	execute bool,
-	retryCfg cuetry.RecipeStepRetry,
-	_ metrics.Observer,
-	attemptMax *atomic.Int32,
-) error {
+func streamCueStepTunnel(ctx context.Context, run *cueRun, stepIdx int, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	if step.Tunnel == nil {
 		return fmt.Errorf("internal tunnel step")
 	}
-	maxConc := recipeHostMaxConc(step, recipe.Defaults)
+	maxConc := recipeHostMaxConc(step, run.Recipe.Defaults)
 	if maxConc <= 0 {
 		maxConc = 8
 	}
@@ -52,7 +37,7 @@ func streamCueStepTunnel(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			outcome := runHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
-				return runCueTunnelOnHost(ctx, step, target, sshUser, stepIdx, cache, tunnelCoord, execute)
+				return runCueTunnelOnHost(ctx, step, target, run.SSHUser, stepIdx, run.cache, run.tunnelCoord, run.Execute)
 			})
 			recordMaxAttempts(attemptMax, outcome.Attempts)
 			ch <- outcome.Result

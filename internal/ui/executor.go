@@ -19,11 +19,6 @@ type Executor = hostexec.Executor
 // RemoteFileEntry aliases remote file metadata for JSON APIs.
 type RemoteFileEntry = hostexec.RemoteFileEntry
 
-// GetExecutor returns the appropriate Executor for a host record.
-func GetExecutor(r hosts.Record) hostexec.Executor {
-	return hostexec.ForRecord(r)
-}
-
 // FormatTargetForDryRun returns a string describing how the target will be connected to.
 func FormatTargetForDryRun(r hosts.Record) string {
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
@@ -47,6 +42,5 @@ func FormatTargetForDryRun(r hosts.Record) string {
 type (
 	k8sPodExecutor     = k8sprovider.K8sPodExecutor
 	k8sNativeClient    = k8sprovider.K8sNativeClient
-	dockerExecutor     = dockerprovider.DockerExecutor
 	dockerNativeClient = dockerprovider.DockerNativeClient
 )

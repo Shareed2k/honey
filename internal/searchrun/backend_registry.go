@@ -16,20 +16,18 @@ type BackendConfigRegistry interface {
 	BackendSlicePtr(cfg *config.File) any
 }
 
-var backendSliceByKind = map[string]func(cfg *config.File) reflect.Value{}
-
-func registerBackendSlice(kind string, getter func(cfg *config.File) reflect.Value) {
+func (r *Registry) registerBackendSlice(kind string, getter func(cfg *config.File) reflect.Value) {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	if kind == "" || getter == nil {
 		return
 	}
-	backendSliceByKind[kind] = getter
+	r.backendSliceByKind[kind] = getter
 }
 
 // RegisteredBackendKinds returns registered backend YAML kind names, sorted.
-func RegisteredBackendKinds() []string {
-	kinds := make([]string, 0, len(backendSliceByKind))
-	for kind := range backendSliceByKind {
+func (r *Registry) RegisteredBackendKinds() []string {
+	kinds := make([]string, 0, len(r.backendSliceByKind))
+	for kind := range r.backendSliceByKind {
 		kinds = append(kinds, kind)
 	}
 	sort.Strings(kinds)
@@ -37,14 +35,14 @@ func RegisteredBackendKinds() []string {
 }
 
 // GetBackendSliceByKind resolves cfg.Backends.<kind> as a reflect.Value slice.
-func GetBackendSliceByKind(cfg *config.File, kind string) (reflect.Value, error) {
+func (r *Registry) GetBackendSliceByKind(cfg *config.File, kind string) (reflect.Value, error) {
 	if cfg == nil {
 		return reflect.Value{}, fmt.Errorf("nil config")
 	}
 	kind = strings.ToLower(strings.TrimSpace(kind))
-	getter, ok := backendSliceByKind[kind]
+	getter, ok := r.backendSliceByKind[kind]
 	if !ok {
-		return reflect.Value{}, fmt.Errorf("unknown backend kind %q (use %s)", kind, strings.Join(RegisteredBackendKinds(), ", "))
+		return reflect.Value{}, fmt.Errorf("unknown backend kind %q (use %s)", kind, strings.Join(r.RegisteredBackendKinds(), ", "))
 	}
 	slice := getter(cfg)
 	if !slice.IsValid() || slice.Kind() != reflect.Slice {

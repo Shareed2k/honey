@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
@@ -16,7 +15,9 @@ import (
 func (s *Server) applyInMemoryConfig(cfgPath string, cfg *config.File) {
 	s.opts.ConfigPath = strings.TrimSpace(cfgPath)
 	s.opts.Config = cfg
-	hostexec.ReconfigureFromHoneyConfig(cfg)
+	if s.opts.ExecRegistry != nil {
+		s.opts.ExecRegistry.Reconfigure(cfg)
+	}
 }
 
 // handleConfigSchema returns JSON Schema and UI schema for the config editor.

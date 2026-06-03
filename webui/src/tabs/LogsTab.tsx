@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, AutoComplete, Button, Checkbox, Collapse, Input, InputNumber, Space, Spin, Typography,
+  Alert, AutoComplete, Button, Checkbox, Collapse, Drawer, Input, InputNumber, Modal, Select, Space, Spin, Typography,
 } from 'antd';
-import { PlayCircleOutlined, StopOutlined, ClearOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, StopOutlined, ClearOutlined, BulbOutlined } from '@ant-design/icons';
 import type { HostRecord } from '../HostPicker';
-import { apiPost, fetchLogsDefaults, streamLogs } from '../api';
-import type { LogsStreamRequest } from '../api';
+import { apiPost, fetchLogsDefaults, streamLogs, fetchRcaDiagnosis, fetchLogSummary } from '../api';
+import type { LogsStreamRequest, LogTemplateStat } from '../api';
+
+const AiMarkdown = lazy(async () => import('../AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
 const ANOM_RE = /^\[ANOM /;
 const LS_KEY = 'hostctl_logs_filters';
@@ -40,6 +42,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
   const [tail, setTail] = useState<number>((saved.tail as number) ?? 100);
 
   const [anomaly, setAnomaly] = useState<boolean>((saved.anomaly as boolean) ?? false);
+  const [anomalyPreprocessor, setAnomalyPreprocessor] = useState<string>((saved.anomalyPreprocessor as string) ?? '');
   const [anomalyThreshold, setAnomalyThreshold] = useState<number>((saved.anomalyThreshold as number) ?? 0.90);
   const [anomalyOnly, setAnomalyOnly] = useState<boolean>((saved.anomalyOnly as boolean) ?? false);
   const [anomalyEndpoint, setAnomalyEndpoint] = useState<string>((saved.anomalyEndpoint as string) ?? '');
@@ -54,6 +57,14 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
   const [error, setError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
+  const [rcaOpen, setRcaOpen] = useState(false);
+  const [rcaLine, setRcaLine] = useState('');
+  const [rcaDiag, setRcaDiag] = useState('');
+  const [rcaLoading, setRcaLoading] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryText, setSummaryText] = useState('');
+  const [summarizing, setSummarizing] = useState(false);
+
   const [searchOptions, setSearchOptions] = useState<{ value: string; label: React.ReactNode }[]>([]);
   const [searching, setSearching] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,12 +77,12 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
   useEffect(() => {
     localStorage.setItem(LS_KEY, JSON.stringify({
       target, source, grep, since, container, unit, command, runAs, follow, tail,
-      anomaly, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
+      anomaly, anomalyPreprocessor, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
       anomalyContext, anomalyFilterThresh, anomalyFreqWindow, anomalyFreqRatio,
     }));
   }, [
     target, source, grep, since, container, unit, command, runAs, follow, tail,
-    anomaly, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
+    anomaly, anomalyPreprocessor, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
     anomalyContext, anomalyFilterThresh, anomalyFreqWindow, anomalyFreqRatio,
   ]);
 
@@ -91,6 +102,9 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
         }
         if (!hasSavedField(saved, 'anomaly')) {
           setAnomaly(defaults.anomaly);
+        }
+        if (!hasSavedField(saved, 'anomalyPreprocessor')) {
+          setAnomalyPreprocessor(defaults.anomaly_preprocessor || '');
         }
         if (!hasSavedField(saved, 'anomalyThreshold')) {
           setAnomalyThreshold(defaults.anomaly_threshold);
@@ -209,6 +223,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
         run_as: runAs || undefined,
         grep: grep || undefined,
         anomaly,
+        anomaly_preprocessor: anomalyPreprocessor || undefined,
         anomaly_threshold: anomalyThreshold,
         anomaly_only: anomalyOnly,
         anomaly_endpoint: anomalyEndpoint || undefined,
@@ -233,7 +248,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
     }
   }, [
     target, source, grep, since, container, unit, command, runAs, follow, tail,
-    anomaly, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
+    anomaly, anomalyPreprocessor, anomalyThreshold, anomalyOnly, anomalyEndpoint, anomalyLLMModel,
     anomalyContext, anomalyFilterThresh, anomalyFreqWindow, anomalyFreqRatio,
     sshUser, providers, backends,
   ]);
@@ -245,6 +260,74 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
   const handleClear = useCallback(() => {
     setLines([]);
   }, []);
+
+  const handleRca = useCallback(async (line: string, index: number) => {
+    const ctxLines = lines.slice(Math.max(0, index - 10), index);
+    setRcaLine(line);
+    setRcaDiag('');
+    setRcaOpen(true);
+    setRcaLoading(true);
+    try {
+      const diag = await fetchRcaDiagnosis(line, ctxLines, source || 'console');
+      setRcaDiag(diag);
+    } catch (err: unknown) {
+      setRcaDiag(`### Error Running Root Cause Analysis\n\n${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRcaLoading(false);
+    }
+  }, [lines, source]);
+
+  const handleSummarize = useCallback(async () => {
+    setSummarizing(true);
+    setSummaryText('');
+    setSummaryOpen(true);
+
+    try {
+      const frontendClean = (logLines: string[]): LogTemplateStat[] => {
+        const groups: Record<string, { count: number; maxScore: number }> = {};
+        for (const logLine of logLines) {
+          let template = logLine;
+          let score = 0;
+          if (ANOM_RE.test(logLine)) {
+            const match = logLine.match(/^\[ANOM\s+score=([\d.]+)[^\]]*\]\s*(.*)$/);
+            if (match) {
+              score = parseFloat(match[1]) || 0.9;
+              template = match[2];
+            } else {
+              const cleanLine = logLine.replace(/^\[ANOM[^\]]*\]\s*/, '');
+              score = 0.9;
+              template = cleanLine;
+            }
+          }
+          
+          let cleaned = template.trim();
+          cleaned = cleaned.replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/, '<TIMESTAMP>');
+          cleaned = cleaned.replace(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/, '<UUID>');
+          cleaned = cleaned.replace(/\b\d+\b/g, '<NUM>');
+
+          if (!groups[cleaned]) {
+            groups[cleaned] = { count: 0, maxScore: 0 };
+          }
+          groups[cleaned].count += 1;
+          groups[cleaned].maxScore = Math.max(groups[cleaned].maxScore, score);
+        }
+
+        return Object.entries(groups).map(([tpl, info]) => ({
+          template: tpl,
+          count: info.count,
+          score: info.maxScore,
+        }));
+      };
+
+      const stats = frontendClean(lines);
+      const summary = await fetchLogSummary(stats);
+      setSummaryText(summary);
+    } catch (err: unknown) {
+      setSummaryText(`### Error Fetching Log Summary\n\n${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSummarizing(false);
+    }
+  }, [lines]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '16px', gap: '12px' }}>
@@ -333,6 +416,19 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
                   <Checkbox checked={anomalyOnly} onChange={(e) => setAnomalyOnly(e.target.checked)} disabled={!anomaly}>
                     Anomaly-only
                   </Checkbox>
+                  <Space>
+                    <Typography.Text type="secondary">Preprocessor</Typography.Text>
+                    <Select
+                      value={anomalyPreprocessor}
+                      onChange={(val) => setAnomalyPreprocessor(val)}
+                      style={{ width: 120 }}
+                      disabled={!anomaly}
+                      options={[
+                        { value: '', label: 'None' },
+                        { value: 'lshd', label: 'LSHD' },
+                      ]}
+                    />
+                  </Space>
                 </Space>
                 <Space wrap>
                   <Space>
@@ -401,7 +497,12 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
       {/* Log viewer */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography.Text type="secondary">{lines.length} line{lines.length !== 1 ? 's' : ''}</Typography.Text>
-        <Button size="small" icon={<ClearOutlined />} onClick={handleClear}>Clear</Button>
+        <Space>
+          <Button size="small" icon={<BulbOutlined />} onClick={handleSummarize} disabled={lines.length === 0} loading={summarizing}>
+            Summarize
+          </Button>
+          <Button size="small" icon={<ClearOutlined />} onClick={handleClear}>Clear</Button>
+        </Space>
       </div>
 
       <div
@@ -435,11 +536,55 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
               }}
             >
               {line}
+              {isAnom && (
+                <Button
+                  size="small"
+                  type="link"
+                  icon={<BulbOutlined />}
+                  style={{ color: '#fca5a5', padding: '0 4px', fontSize: '0.7rem', height: 'auto', border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', marginLeft: 8 }}
+                  onClick={() => void handleRca(line, i)}
+                >
+                  RCA
+                </Button>
+              )}
             </div>
           );
         })}
         <div ref={logEndRef} />
       </div>
+
+      <Suspense fallback={<Spin size="large" style={{ display: 'block', margin: '40px auto' }} />}>
+        <Modal
+          title="Root Cause Analysis Diagnosis"
+          open={rcaOpen}
+          onCancel={() => setRcaOpen(false)}
+          footer={null}
+          width="min(720px, 94vw)"
+        >
+          {rcaLoading ? (
+            <div style={{ textAlign: 'center', padding: '40px 0' }}>
+              <Spin size="large" tip="Analyzing anomaly..." />
+            </div>
+          ) : (
+            <AiMarkdown content={rcaDiag} />
+          )}
+        </Modal>
+
+        <Drawer
+          title="logSage Stream Summary"
+          open={summaryOpen}
+          onClose={() => setSummaryOpen(false)}
+          width={600}
+        >
+          {summarizing ? (
+            <div style={{ textAlign: 'center', padding: '40px 0' }}>
+              <Spin size="large" tip="Summarizing logs..." />
+            </div>
+          ) : (
+            <AiMarkdown content={summaryText} />
+          )}
+        </Drawer>
+      </Suspense>
     </div>
   );
 }

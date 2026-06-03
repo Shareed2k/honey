@@ -122,11 +122,12 @@ func newSlidingRL() *slidingRL {
 	return &slidingRL{m: make(map[string][]time.Time)}
 }
 
-func (r *slidingRL) allow(key string, limit int, window time.Duration) bool {
+// allow reports whether key is under limit within a fixed one-minute window.
+func (r *slidingRL) allow(key string, limit int) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
-	cutoff := now.Add(-window)
+	cutoff := now.Add(-time.Minute)
 	times := r.m[key]
 	i := 0
 	for i < len(times) && times[i].Before(cutoff) {
@@ -284,7 +285,7 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	zap.L().Debug("terminal assist model resolved", zap.String("chat_model", chatModel))
-	if !s.assistRL.allow(clientIP(r), assistRPM(), time.Minute) {
+	if !s.assistRL.allow(clientIP(r), assistRPM()) {
 		zap.L().Debug("terminal assist rate limited", zap.String("client_ip", clientIP(r)))
 		httpError(w, errors.New("rate limit exceeded; try again in a minute"), http.StatusTooManyRequests)
 		return

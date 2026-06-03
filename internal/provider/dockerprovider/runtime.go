@@ -4,10 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/crypto/ssh"
-
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // DockerBackendRuntime holds Docker API connection settings.
@@ -27,13 +24,9 @@ type DockerBackendRuntime struct {
 	Key           string
 }
 
-// DockerSSHBorrower returns a shared SSH client for a hop record when available.
-type DockerSSHBorrower func(user string, hop hosts.Record) (*ssh.Client, bool)
-
 var (
-	rtMu        sync.RWMutex
-	dockerBack  []DockerBackendRuntime
-	sshBorrower DockerSSHBorrower
+	rtMu       sync.RWMutex
+	dockerBack []DockerBackendRuntime
 )
 
 func reconfigureDocker(cfg *config.File) {
@@ -83,22 +76,4 @@ func BackendByName(name string) (DockerBackendRuntime, bool) {
 		}
 	}
 	return DockerBackendRuntime{}, false
-}
-
-// RegisterDockerSSHBorrower registers an optional SSH client borrower for honey-ssh Docker transport.
-func RegisterDockerSSHBorrower(fn DockerSSHBorrower) {
-	rtMu.Lock()
-	defer rtMu.Unlock()
-	sshBorrower = fn
-}
-
-// BorrowDockerSSH returns a shared SSH client when a borrower is registered and has a match.
-func BorrowDockerSSH(user string, hop hosts.Record) (*ssh.Client, bool) {
-	rtMu.RLock()
-	fn := sshBorrower
-	rtMu.RUnlock()
-	if fn == nil {
-		return nil, false
-	}
-	return fn(user, hop)
 }

@@ -772,6 +772,53 @@
                 }
             }
         },
+        "/api/v1/lint": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "exec"
+                ],
+                "summary": "Lint a script (syntax check, non-executing)",
+                "parameters": [
+                    {
+                        "description": "lint request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/webserver.LintRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/webserver.LintResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/logs/default": {
             "get": {
                 "security": [
@@ -1432,6 +1479,147 @@
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/snippets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "snippets"
+                ],
+                "summary": "List exec snippets",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/snippets.ExecSnippet"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "snippets"
+                ],
+                "summary": "Save exec snippet",
+                "parameters": [
+                    {
+                        "description": "snippet",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/snippets.ExecSnippet"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/snippets.ExecSnippet"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/snippets/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "snippets"
+                ],
+                "summary": "Delete exec snippet",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "snippet id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/webserver.StatusResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2403,6 +2591,33 @@
                 }
             }
         },
+        "snippets.ExecSnippet": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "interpreter_args_quoted": {
+                    "type": "boolean"
+                },
+                "mode": {
+                    "description": "command | script",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "run_as": {
+                    "type": "string"
+                },
+                "script_interpreter": {
+                    "type": "string"
+                }
+            }
+        },
         "ui.AgentCloudBackend": {
             "type": "object",
             "properties": {
@@ -2646,6 +2861,15 @@
                 "command": {
                     "type": "string"
                 },
+                "exec_mode": {
+                    "type": "string"
+                },
+                "file_extension": {
+                    "type": "string"
+                },
+                "interpreter_args_quoted": {
+                    "type": "boolean"
+                },
                 "record_session": {
                     "type": "boolean"
                 },
@@ -2654,6 +2878,21 @@
                     "items": {
                         "$ref": "#/definitions/hosts.Record"
                     }
+                },
+                "remove_tmp_file": {
+                    "type": "boolean"
+                },
+                "run_as": {
+                    "type": "string"
+                },
+                "script_args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "script_interpreter": {
+                    "type": "string"
                 },
                 "ssh_user": {
                     "type": "string"
@@ -2844,6 +3083,53 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "webserver.LintDiagnostic": {
+            "type": "object",
+            "properties": {
+                "col": {
+                    "type": "integer"
+                },
+                "line": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "severity": {
+                    "description": "\"error\" | \"warning\"",
+                    "type": "string"
+                }
+            }
+        },
+        "webserver.LintRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "language": {
+                    "description": "\"bash\" or \"python\"",
+                    "type": "string"
+                }
+            }
+        },
+        "webserver.LintResponse": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "diagnostics": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/webserver.LintDiagnostic"
+                    }
+                },
+                "tool": {
+                    "type": "string"
                 }
             }
         },

@@ -101,13 +101,9 @@ func StartHTTPProxy(ctx context.Context, app apps.AppConfig, dialer Dialer, sess
 			// Assume started
 		}
 		sess.LocalAddr = srv.Addr
-	} else {
-		// When LocalPort is 0 (dynamic web proxy), we do not bind a listener,
-		// but we still want to auto-cancel if the context closes.
-		go func() {
-			<-sessionCtx.Done()
-		}()
 	}
+	// When LocalPort is 0 (dynamic web proxy) there is no listener to close;
+	// session teardown on ctx cancellation is handled by Manager.Start.
 
 	return sess, nil
 }

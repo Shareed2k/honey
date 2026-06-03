@@ -6,6 +6,7 @@ import type { MenuProps } from 'antd';
 import {
   SearchOutlined, FileOutlined, CloudOutlined, SettingOutlined,
   PlayCircleOutlined, ApiOutlined, AppstoreOutlined, DatabaseOutlined, UnorderedListOutlined,
+  CommentOutlined,
 } from '@ant-design/icons';
 import {
   apiGet,
@@ -29,6 +30,7 @@ import { LogsTab } from './tabs/LogsTab';
 import { ConfigTab } from './tabs/ConfigTab';
 import { ApiDocsTab } from './tabs/ApiDocsTab';
 import { SearchTab } from './tabs/SearchTab';
+import { FeedbackTab } from './tabs/FeedbackTab';
 import { SessionReplayModal } from './SessionReplayModal';
 import {
   TerminalTabsModal,
@@ -40,7 +42,7 @@ import {
 type BackendRow = { kind: string; name: string; hint: string };
 
 
-type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
@@ -86,7 +88,8 @@ export function App() {
       val === 'tunnels' ||
       val === 'apps' ||
       val === 'logs' ||
-      val === 'api-docs'
+      val === 'api-docs' ||
+      val === 'feedback'
     ) {
       return val as Tab;
     }
@@ -303,6 +306,7 @@ export function App() {
     { key: 'tunnels',  icon: <ApiOutlined />,        label: 'Tunnels' },
     { key: 'apps',     icon: <DatabaseOutlined />,      label: 'Apps & Proxies' },
     { key: 'logs',     icon: <UnorderedListOutlined />, label: 'Logs' },
+    { key: 'feedback', icon: <CommentOutlined />,       label: 'Logs Feedback' },
     { key: 'api-docs', icon: <AppstoreOutlined />,      label: 'API Docs' },
   ];
 
@@ -510,7 +514,20 @@ export function App() {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Layout.Sider collapsible width={200} theme="dark">
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid #1d2535' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #1d2535', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <svg viewBox="0 0 120 120" width="18" height="18" style={{ flexShrink: 0 }}>
+            <defs>
+              <linearGradient id="honeyGradSider" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#FFC107" />
+                <stop offset="100%" stopColor="#F57C00" />
+              </linearGradient>
+            </defs>
+            <polygon points="60,10 105,35 105,85 60,110 15,85 15,35" fill="url(#honeyGradSider)" />
+            <polygon points="60,20 95,40 95,80 60,100 25,80 25,40" fill="#14171c" />
+            <g transform="translate(38, 72)">
+              <text fontFamily="monospace, Consolas, 'Courier New'" fontSize="36" fontWeight="900" fill="#FFC107" letterSpacing="-2">&gt;_</text>
+            </g>
+          </svg>
           <Typography.Text strong style={{ color: '#e6e6e6', fontSize: 14 }}>
             honey
           </Typography.Text>
@@ -589,6 +606,8 @@ export function App() {
           </div>
 
           {tab === 'api-docs' ? <ApiDocsTab /> : null}
+
+          {tab === 'feedback' ? <FeedbackTab /> : null}
         </Layout.Content>
       </Layout>
 

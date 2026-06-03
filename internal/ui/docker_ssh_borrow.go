@@ -1,38 +1,12 @@
 package ui
 
 import (
-	"sync"
-
-	"golang.org/x/crypto/ssh"
-
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 )
 
-var (
-	dockerBorrowMu    sync.RWMutex
-	dockerBorrowCache *ClientCache
-)
-
-// SetDockerSSHBorrowCache sets the TUI client cache used to reuse SSH for honey-ssh Docker transport.
-func SetDockerSSHBorrowCache(c *ClientCache) {
-	dockerBorrowMu.Lock()
-	dockerBorrowCache = c
-	dockerBorrowMu.Unlock()
-}
-
-func init() {
-	dockerprovider.RegisterDockerSSHBorrower(borrowDockerSSHFromCache)
-}
-
-func borrowDockerSSHFromCache(user string, hop hosts.Record) (*ssh.Client, bool) {
-	dockerBorrowMu.RLock()
-	c := dockerBorrowCache
-	dockerBorrowMu.RUnlock()
-	if c == nil {
-		return nil, false
-	}
+// BorrowSSH is used to wire up the ExecRegistry SSHBorrower.
+func (c *ClientCache) BorrowSSH(user string, hop hosts.Record) (interface{}, bool) {
 	hc, err := c.GetOrDial(user, hop)
 	if err != nil {
 		return nil, false

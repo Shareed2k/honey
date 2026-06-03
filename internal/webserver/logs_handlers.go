@@ -40,6 +40,7 @@ type logsStreamRequest struct {
 	AnomalyFreqRatio      float64        `json:"anomaly_freq_ratio"`
 	AlertEnabled          bool           `json:"alert_enabled"`
 	AlertSuppressDuration string         `json:"alert_suppress_duration"`
+	AnomalyPreprocessor   string         `json:"anomaly_preprocessor"`
 }
 
 func (s *Server) handleLogsStream(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +121,7 @@ func (s *Server) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 		AnomalyFilterThreshold: req.AnomalyFilterThresh,
 		AnomalyFreqWindow:      freqWindow,
 		AnomalyFreqRatio:       freqRatio,
+		AnomalyPreprocessor:    req.AnomalyPreprocessor,
 		AlertEnabled:           req.AlertEnabled,
 		AlertSuppressDuration: func() time.Duration {
 			d, _ := time.ParseDuration(req.AlertSuppressDuration)

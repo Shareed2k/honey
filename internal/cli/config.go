@@ -94,7 +94,7 @@ func runConfig(_ *cobra.Command, _ []string) error {
 }
 
 func runAddBackend(cfgPath string, cfg *config.File) error {
-	handlers := searchrun.GetCRUDHandlers()
+	handlers := searchrun.CRUDHandlers()
 	opts := make([]huh.Option[string], 0, len(handlers))
 	for _, h := range handlers {
 		opts = append(opts, huh.NewOption(h.Name(), h.ID()))
@@ -112,7 +112,7 @@ func runAddBackend(cfgPath string, cfg *config.File) error {
 		return err
 	}
 
-	handler := searchrun.GetCRUDHandler(providerID)
+	handler := searchrun.CRUDHandler(providerID)
 	if handler == nil {
 		return fmt.Errorf("unknown provider %s", providerID)
 	}
@@ -130,7 +130,7 @@ func runAddBackend(cfgPath string, cfg *config.File) error {
 }
 
 func runEditBackend(cfgPath string, cfg *config.File) error {
-	handlers := searchrun.GetCRUDHandlers()
+	handlers := searchrun.CRUDHandlers()
 
 	var totalOpts int
 	for _, h := range handlers {
@@ -160,7 +160,7 @@ func runEditBackend(cfgPath string, cfg *config.File) error {
 	}
 
 	providerID, idx := parseSelection(selection)
-	handler := searchrun.GetCRUDHandler(providerID)
+	handler := searchrun.CRUDHandler(providerID)
 	if handler == nil {
 		return fmt.Errorf("unknown provider %s", providerID)
 	}
@@ -178,7 +178,7 @@ func runEditBackend(cfgPath string, cfg *config.File) error {
 }
 
 func runDeleteBackend(cfgPath string, cfg *config.File) error {
-	handlers := searchrun.GetCRUDHandlers()
+	handlers := searchrun.CRUDHandlers()
 
 	var totalOpts int
 	for _, h := range handlers {
@@ -208,7 +208,7 @@ func runDeleteBackend(cfgPath string, cfg *config.File) error {
 	}
 
 	providerID, idx := parseSelection(selection)
-	handler := searchrun.GetCRUDHandler(providerID)
+	handler := searchrun.CRUDHandler(providerID)
 	if handler == nil {
 		return fmt.Errorf("unknown provider %s", providerID)
 	}

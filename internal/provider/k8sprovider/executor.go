@@ -38,12 +38,11 @@ import (
 // k8sPortForwardRequestID provides unique request IDs for concurrent DialUpstream calls.
 var k8sPortForwardRequestID atomic.Uint32
 
-// k8sRunInteractiveHook is wired by ui.init() to avoid an import cycle (ui imports k8sprovider, not vice versa).
-var k8sRunInteractiveHook func(user string, r hosts.Record) error
-
-// SetRunInteractive is called from ui.init() to wire the TTY session runner.
-func SetRunInteractive(fn func(string, hosts.Record) error) {
-	k8sRunInteractiveHook = fn
+// InteractiveRunner runs an interactive TTY session against a Kubernetes pod.
+// It is implemented in the ui package and injected via NewFactory to keep
+// k8sprovider a leaf package (ui imports k8sprovider, not vice versa).
+type InteractiveRunner interface {
+	RunInteractive(user string, r hosts.Record) error
 }
 
 // K8sNativeClient implements hostexec.HostClient via kubectl exec / SPDY streaming.
@@ -56,7 +55,11 @@ type K8sNativeClient struct {
 }
 
 // K8sPodExecutor implements hostexec.Executor for Kubernetes pods.
-type K8sPodExecutor struct{}
+// interactive is injected by the factory for resolver-created executors; it is
+// nil for executors built ad-hoc only to Dial (which never call RunInteractive).
+type K8sPodExecutor struct {
+	interactive InteractiveRunner
+}
 
 // k8sClientConfigFromRecord builds a *rest.Config from kubeconfig/context stored in r.Meta.
 func k8sClientConfigFromRecord(r hosts.Record) (*rest.Config, error) {
@@ -330,12 +333,12 @@ func (k *K8sPodExecutor) Dial(_ string, r hosts.Record) (hostexec.HostClient, er
 	}, nil
 }
 
-// RunInteractive delegates to the hook registered by ui.init().
+// RunInteractive delegates to the injected InteractiveRunner.
 func (k *K8sPodExecutor) RunInteractive(user string, r hosts.Record) error {
-	if k8sRunInteractiveHook == nil {
-		return fmt.Errorf("k8s interactive session not configured (ui not initialized)")
+	if k.interactive == nil {
+		return fmt.Errorf("k8s interactive session not configured")
 	}
-	return k8sRunInteractiveHook(user, r)
+	return k.interactive.RunInteractive(user, r)
 }
 
 // RunTunnel performs k8s port-forwarding via the SPDY API.

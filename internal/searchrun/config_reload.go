@@ -2,7 +2,6 @@ package searchrun
 
 import (
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/hostexec"
 )
 
 // ConfigReloader is optionally implemented by factories that hold provider-specific runtime state.
@@ -11,12 +10,11 @@ type ConfigReloader interface {
 	ReconfigureFromConfig(cfg *config.File)
 }
 
-func init() {
-	hostexec.SetConfigReloader(func(cfg *config.File) {
-		for _, f := range factories {
-			if r, ok := f.(ConfigReloader); ok {
-				r.ReconfigureFromConfig(cfg)
-			}
+// ReconfigureFromConfig propagates config to all registered provider factories.
+func (r *Registry) ReconfigureFromConfig(cfg *config.File) {
+	for _, f := range r.Factories {
+		if reloader, ok := f.(ConfigReloader); ok {
+			reloader.ReconfigureFromConfig(cfg)
 		}
-	})
+	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/snippets"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
@@ -29,6 +30,8 @@ type Options struct {
 	Token              string
 	ConfigPath         string // optional explicit --config
 	Config             *config.File
+	ExecRegistry       hostexec.Registry
+	SearchRegistry     *searchrun.Registry
 	RecordDir          string // optional session recording output dir
 	LocalFilesRoot     string // optional root for local file browser/upload/download
 	AgentBinaryPath    string // optional explicit honey-transfer-agent binary path
@@ -60,6 +63,8 @@ type Server struct {
 
 	fileClientCache *ui.ClientCache
 
+	snippetStore snippets.Store
+
 	retentionState recordingRetentionState
 
 	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
@@ -75,7 +80,9 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.MaxUploadSize <= 0 {
 		opts.MaxUploadSize = 100 << 20
 	}
-	hostexec.ReconfigureFromHoneyConfig(opts.Config)
+	if opts.ExecRegistry != nil {
+		opts.ExecRegistry.Reconfigure(opts.Config)
+	}
 
 	s := &Server{
 		opts:            opts,
@@ -87,12 +94,15 @@ func NewServer(opts Options) (*Server, error) {
 		pgPools:         postgres.NewPoolManager(),
 		fileClientCache: ui.NewClientCache(),
 	}
-	ui.SetDockerSSHBorrowCache(s.fileClientCache)
-	s.routes()
+	s.fileClientCache.SetRegistry(opts.ExecRegistry)
+	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
+	if err := s.routes(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
-func (s *Server) routes() {
+func (s *Server) routes() error {
 	s.mux.HandleFunc("GET /api/v1/meta", s.withAuth(s.handleMeta))
 	s.mux.HandleFunc("GET /api/v1/openapi.json", s.withAuth(s.handleOpenAPIJSON))
 	s.mux.HandleFunc("GET /api/v1/providers", s.withAuth(s.handleProviders))
@@ -128,6 +138,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/v1/recordings/{file_name}", s.withAuth(s.handleRecordingsDelete))
 	s.mux.HandleFunc("POST /api/v1/recordings/summarize", s.withAuth(s.handleRecordingsSummarize))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
+	s.mux.HandleFunc("POST /api/v1/lint", s.withAuth(s.handleLint))
+	s.mux.HandleFunc("GET /api/v1/snippets", s.withAuth(s.handleSnippetsList))
+	s.mux.HandleFunc("POST /api/v1/snippets", s.withAuth(s.handleSnippetsSave))
+	s.mux.HandleFunc("DELETE /api/v1/snippets/{id}", s.withAuth(s.handleSnippetsDelete))
 	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
 	s.mux.HandleFunc("POST /api/v1/terminal-assist", s.withAuth(s.handleTerminalAssist))
 	s.mux.HandleFunc("GET /api/v1/terminal-assist/models", s.withAuth(s.handleTerminalAssistModels))
@@ -143,12 +157,18 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/postgres/query", s.withAuth(s.handlePostgresQuery))
 
 	s.mux.HandleFunc("POST /api/v1/logs/stream", s.withAuth(s.handleLogsStream))
+	s.mux.HandleFunc("GET /api/v1/logs/feedback", s.withAuth(s.handleLogsFeedbackGet))
+	s.mux.HandleFunc("POST /api/v1/logs/feedback", s.withAuth(s.handleLogsFeedbackSave))
+	s.mux.HandleFunc("POST /api/v1/logs/feedback/suggest", s.withAuth(s.handleLogsFeedbackSuggest))
+	s.mux.HandleFunc("POST /api/v1/logs/rca", s.withAuth(s.handleLogsRCA))
+	s.mux.HandleFunc("POST /api/v1/logs/summary", s.withAuth(s.handleLogsSummary))
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("mount embedded static assets: %w", err)
 	}
 	s.mux.Handle("/", http.FileServer(http.FS(static)))
+	return nil
 }
 
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -277,7 +297,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ProvidersResponse{
-		Providers: searchrun.ListSearchProviderIDs(searchrun.ProviderOverrides{}),
+		Providers: s.opts.SearchRegistry.ListSearchProviderIDs(searchrun.ProviderOverrides{}),
 	})
 }
 
@@ -290,7 +310,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 // @Router /api/v1/backends [get]
 // @Security BearerAuth
 func (s *Server) handleBackends(w http.ResponseWriter, _ *http.Request) {
-	out, err := hostapi.ListBackends(strings.TrimSpace(s.opts.ConfigPath))
+	out, err := hostapi.ListBackends(strings.TrimSpace(s.opts.ConfigPath), s.opts.SearchRegistry)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -327,7 +347,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	in.SSHUser = s.sshUser(in.SSHUser)
 	ctx := r.Context()
 	start := time.Now()
-	out, err := hostapi.SearchHosts(ctx, &in)
+	out, err := hostapi.SearchHosts(ctx, &in, s.opts.ExecRegistry, s.opts.SearchRegistry)
 	if s.metrics != nil {
 		n := 0
 		if err == nil {

@@ -31,13 +31,13 @@ func RegisterCRUD(c ProviderCRUD) {
 	crudHandlers = append(crudHandlers, c)
 }
 
-// GetCRUDHandlers returns all registered ProviderCRUD implementations.
-func GetCRUDHandlers() []ProviderCRUD {
+// CRUDHandlers returns all registered ProviderCRUD implementations.
+func CRUDHandlers() []ProviderCRUD {
 	return crudHandlers
 }
 
-// GetCRUDHandler returns a specific ProviderCRUD implementation by ID.
-func GetCRUDHandler(id string) ProviderCRUD {
+// CRUDHandler returns a specific ProviderCRUD implementation by ID.
+func CRUDHandler(id string) ProviderCRUD {
 	for _, c := range crudHandlers {
 		if c.ID() == id {
 			return c

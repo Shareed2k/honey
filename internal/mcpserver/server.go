@@ -58,7 +58,7 @@ func handleSearchHosts(ctx context.Context, _ *mcp.CallToolRequest, in searchHos
 	if err := validate.Struct(in); err != nil {
 		return nil, searchHostsOutput{}, err
 	}
-	out, err := hostapi.SearchHosts(ctx, &in)
+	out, err := hostapi.SearchHosts(ctx, &in, nil, nil)
 	if err != nil {
 		return nil, searchHostsOutput{}, err
 	}
@@ -86,7 +86,7 @@ func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBack
 	if err := conform.Struct(ctx, &in); err != nil {
 		return nil, listBackendsOutput{}, err
 	}
-	lb, err := hostapi.ListBackends(in.ConfigPath)
+	lb, err := hostapi.ListBackends(in.ConfigPath, nil)
 	if err != nil {
 		return nil, listBackendsOutput{}, err
 	}

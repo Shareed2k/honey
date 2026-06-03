@@ -32,26 +32,27 @@ func TestTruenasTunnelUsesAPIShell(t *testing.T) {
 }
 
 func TestAPIShellExecutorType(t *testing.T) {
-	ex := APIShellExecutor()
+	ex := NewAPIShellExecutor(nil, nil)
 	if _, ok := ex.(truenasExecutor); !ok {
 		t.Fatalf("expected truenasExecutor, got %T", ex)
 	}
 }
 
 func TestForRecord_TruenasGuestUsesAPIShellExecutor(t *testing.T) {
-	hostexec.SetExecutorResolver(func(r hosts.Record) hostexec.Executor {
-		if TruenasTunnelUsesAPIShell(r) {
-			return apiShellExecutor
-		}
-		return nil
-	})
-	t.Cleanup(func() { hostexec.SetExecutorResolver(nil) })
+	reg := &hostexec.StandardRegistry{
+		Resolver: hostexec.ExecutorResolverFunc(func(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
+			if TruenasTunnelUsesAPIShell(r) {
+				return NewAPIShellExecutor(nil, nil)
+			}
+			return nil
+		}),
+	}
 
 	r := hosts.Record{
 		Provider: "truenas",
 		Meta:     map[string]string{"kind": "virt_instance", "id": "x"},
 	}
-	ex := hostexec.ForRecord(r)
+	ex := reg.ForRecord(r)
 	if _, ok := ex.(truenasExecutor); !ok {
 		t.Fatalf("expected truenasExecutor, got %T", ex)
 	}

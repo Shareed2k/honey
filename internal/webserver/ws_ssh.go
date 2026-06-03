@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
@@ -145,7 +146,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 
 	if hosts.IsDockerRecord(hello.Record) {
 		defer s.trackWSConnection("docker")()
-		handleWebDockerTTY(context.Background(), conn, user, hello.Record, cols, rows, recorder)
+		handleWebDockerTTY(context.Background(), conn, user, hello.Record, cols, rows, recorder, s.opts.ExecRegistry)
 		return
 	}
 
@@ -250,7 +251,7 @@ func isK8sPodWebTerminal(rec hosts.Record) bool {
 	return true
 }
 
-func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, rec hosts.Record, cols, rows int, recorder *ui.SessionRecorder) {
+func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, rec hosts.Record, cols, rows int, recorder *ui.SessionRecorder, reg hostexec.Registry) {
 	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
 	if strings.TrimSpace(rec.Meta["container_id"]) == "" {
 		err := fmt.Errorf("docker record missing container_id")
@@ -258,7 +259,7 @@ func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, 
 		_ = wsOut.writeText(`{"error":"` + escapeJSON(err.Error()) + `"}`)
 		return
 	}
-	if err := ui.DialDockerCheck(user, rec); err != nil {
+	if err := ui.DialDockerCheck(user, rec, reg); err != nil {
 		recorder.RecordError(err)
 		_ = wsOut.writeText(`{"error":"` + escapeJSON(err.Error()) + `"}`)
 		return
@@ -269,7 +270,7 @@ func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, 
 
 	waitDone := make(chan error, 1)
 	go func() {
-		waitDone <- ui.RunDockerWebTTY(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh)
+		waitDone <- ui.RunDockerWebTTY(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh, reg)
 	}()
 
 	go pumpWebSocketToStdinDocker(conn, stdinPipeW, resizeCh, recorder)

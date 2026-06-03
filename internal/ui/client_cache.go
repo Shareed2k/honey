@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"go.uber.org/zap"
 )
@@ -14,6 +16,7 @@ type ClientCache struct {
 	mu      sync.Mutex
 	clients map[string]HostClient
 	leases  map[string]int
+	reg     hostexec.Registry
 
 	hits         int64
 	misses       int64
@@ -22,12 +25,18 @@ type ClientCache struct {
 	dialErrors   int64
 }
 
-// NewClientCache creates a new initialized ClientCache.
+// NewClientCache creates a new uninitialized cache.
+// You must call SetRegistry on it before it can dial properly.
 func NewClientCache() *ClientCache {
 	return &ClientCache{
 		clients: make(map[string]HostClient),
 		leases:  make(map[string]int),
 	}
+}
+
+// SetRegistry configures the executor registry.
+func (c *ClientCache) SetRegistry(reg hostexec.Registry) {
+	c.reg = reg
 }
 
 // ClientLease is a borrowed cached host connection. Close releases the borrow without
@@ -81,8 +90,8 @@ func SSHClientCacheKey(user string, r hosts.Record) string {
 
 // GetOrDial returns an existing connection or dials a new one and stores it.
 func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error) {
-	if c == nil {
-		return GetExecutor(r).Dial(user, r)
+	if c == nil || c.reg == nil {
+		return nil, fmt.Errorf("no executor registry configured for client cache") // Safe fallback
 	}
 
 	key := SSHClientCacheKey(user, r)
@@ -111,7 +120,7 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	)
 
 	// Dial outside the lock so parallel connections don't block each other
-	client, err := GetExecutor(r).Dial(user, r)
+	client, err := c.reg.ForRecord(r).Dial(user, r)
 	if err != nil {
 		atomic.AddInt64(&c.dialErrors, 1)
 		return nil, err
@@ -146,7 +155,7 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 // AcquireLease returns a cached client and tracks a lightweight borrow for app proxy sessions.
 func (c *ClientCache) AcquireLease(user string, r hosts.Record) (*ClientLease, error) {
 	if c == nil {
-		client, err := GetExecutor(r).Dial(user, r)
+		client, err := c.reg.ForRecord(r).Dial(user, r)
 		if err != nil {
 			return nil, err
 		}

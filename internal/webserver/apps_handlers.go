@@ -11,7 +11,9 @@ import (
 	"github.com/shareed2k/honey/internal/appsecret"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/proxy"
+	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
@@ -42,7 +44,7 @@ type proxyStartRequest struct {
 	Backends  string `json:"backends,omitempty"`
 }
 
-func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest, cache *ui.ClientCache) (proxy.Dialer, io.Closer, error) {
+func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest, cache *ui.ClientCache, reg hostexec.Registry, searchReg *searchrun.Registry) (proxy.Dialer, io.Closer, error) {
 	// First run a search to find the record for this target
 	in := hostapi.SearchHostsInput{
 		Name:       app.Target,
@@ -53,7 +55,7 @@ func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, ap
 		Backends:   req.Backends,
 	}
 
-	out, err := hostapi.SearchHosts(ctx, &in)
+	out, err := hostapi.SearchHosts(ctx, &in, reg, searchReg)
 	if err != nil {
 		if app.TargetRegex != "" {
 			return nil, nil, fmt.Errorf("resolve target (regex %q): %w", app.TargetRegex, err)
@@ -164,7 +166,7 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Resolve the target for SSH Dialing
-	dialer, closer, err := resolveAppDialer(r.Context(), s.opts.Config, s.opts.ConfigPath, app, req.SSHUser, req, s.fileClientCache)
+	dialer, closer, err := resolveAppDialer(r.Context(), s.opts.Config, s.opts.ConfigPath, app, req.SSHUser, req, s.fileClientCache, s.opts.ExecRegistry, s.opts.SearchRegistry)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 		return
