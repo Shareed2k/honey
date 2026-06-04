@@ -11,12 +11,15 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/cenkalti/backoff/v5"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
-	"golang.org/x/crypto/ssh"
 )
 
 func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
@@ -33,7 +36,13 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 			var mCli *client.Client
 			var err error
 
-			if r.PrimaryIP == "127.0.0.1" || r.PrimaryIP == "localhost" {
+			zap.L().Debug("docker step starting",
+				zap.String("action", step.Docker.Action),
+				zap.String("host_name", r.Name),
+				zap.String("primary_ip", r.PrimaryIP),
+			)
+
+			if r.PrimaryIP == "-" || r.PrimaryIP == "127.0.0.1" || r.PrimaryIP == "localhost" {
 				mCli, err = client.New(client.FromEnv)
 			} else {
 				sshUser := run.SSHUser
@@ -44,6 +53,7 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 				if dialErr != nil {
 					res.Success = false
 					res.ErrMsg = fmt.Sprintf("ssh dial error: %s", dialErr.Error())
+					zap.L().Debug("docker step failed (ssh dial)", zap.Error(dialErr), zap.String("host_name", r.Name))
 					return res
 				}
 				var sshClient *ssh.Client
@@ -51,12 +61,14 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 				if err != nil {
 					res.Success = false
 					res.ErrMsg = err.Error()
+					zap.L().Debug("docker step failed (leaf ssh)", zap.Error(err), zap.String("host_name", r.Name))
 					return res
 				}
 
 				bc := dockerprovider.BackendConfig{
 					SSHUser: sshUser,
 					Socket:  "/var/run/docker.sock",
+					RunAs:   cuetry.EffectiveRunAs(step, run.Recipe.Defaults),
 				}
 				opts := dockerprovider.APIClientOptions{
 					SSHUser:     sshUser,
@@ -69,6 +81,7 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 			if err != nil {
 				res.Success = false
 				res.ErrMsg = fmt.Sprintf("moby client error: %s", err.Error())
+				zap.L().Debug("docker step failed (moby client init)", zap.Error(err), zap.String("host_name", r.Name))
 				return res
 			}
 			defer mCli.Close()
@@ -77,9 +90,11 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 			if execErr != nil {
 				res.Success = false
 				res.ErrMsg = execErr.Error()
+				zap.L().Debug("docker step failed (sdk action)", zap.Error(execErr), zap.String("host_name", r.Name))
 				return res
 			}
 
+			zap.L().Debug("docker step finished", zap.String("action", step.Docker.Action), zap.String("host_name", r.Name))
 			res.Success = true
 			res.Output = outputStr
 			return res
@@ -98,130 +113,167 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 func executeDockerSDKAction(ctx context.Context, cli *client.Client, d *cuetry.RecipeStepDocker, recipeDir string) (string, error) {
 	switch d.Action {
 	case "build":
-		tarReader, err := createTarArchive(filepath.Join(recipeDir, d.Build.Context))
-		if err != nil {
-			return "", fmt.Errorf("tar build context: %w", err)
-		}
-		dockerfile := d.Build.Dockerfile
-		if dockerfile == "" {
-			dockerfile = "Dockerfile"
-		}
-		opts := client.ImageBuildOptions{
-			Dockerfile: dockerfile,
-			Tags:       d.Build.Tags,
-			Remove:     true,
-		}
-		resp, err := cli.ImageBuild(ctx, tarReader, opts)
-		if err != nil {
-			return "", err
-		}
-		defer resp.Body.Close()
-
-		logBytes, _ := io.ReadAll(resp.Body)
-		resultMap := map[string]any{
-			"logs":     string(logBytes),
-			"image_id": "completed",
-		}
-		b, _ := json.Marshal(resultMap)
-		return string(b), nil
-
+		return executeDockerBuild(ctx, cli, d.Build, recipeDir)
 	case "push":
-		resp, err := cli.ImagePush(ctx, d.Push.Image, client.ImagePushOptions{})
-		if err != nil {
-			return "", err
-		}
-		defer resp.Close()
-		logBytes, _ := io.ReadAll(resp)
-		resultMap := map[string]any{
-			"logs":   string(logBytes),
-			"status": "pushed",
-		}
-		b, _ := json.Marshal(resultMap)
-		return string(b), nil
-
+		return executeDockerPush(ctx, cli, d.Push)
 	case "pull":
-		resp, err := cli.ImagePull(ctx, d.Pull.Image, client.ImagePullOptions{})
-		if err != nil {
-			return "", err
-		}
-		defer resp.Close()
-		logBytes, _ := io.ReadAll(resp)
-		resultMap := map[string]any{
-			"logs":   string(logBytes),
-			"status": "pulled",
-		}
-		b, _ := json.Marshal(resultMap)
-		return string(b), nil
-
+		return executeDockerPull(ctx, cli, d.Pull)
 	case "run":
-		config := &container.Config{
-			Image: d.Run.Image,
-			Cmd:   d.Run.Command,
-		}
-		for k, v := range d.Run.Env {
-			config.Env = append(config.Env, fmt.Sprintf("%s=%s", k, v))
-		}
-		hostConfig := &container.HostConfig{}
-		resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
-			Config:     config,
-			HostConfig: hostConfig,
-			Name:       d.Run.Name,
-		})
-		if err != nil {
-			return "", err
-		}
-		if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
-			return "", err
-		}
-
-		resultMap := map[string]any{
-			"container_id": resp.ID,
-		}
-		if !d.Run.Detach {
-			out, err := cli.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: true})
-			if err == nil {
-				defer out.Close()
-				logBytes, _ := io.ReadAll(out)
-				resultMap["logs"] = string(logBytes)
-			}
-		}
-		b, _ := json.Marshal(resultMap)
-		return string(b), nil
-
+		return executeDockerRun(ctx, cli, d.Run)
 	case "exec":
-		idResp, err := cli.ExecCreate(ctx, d.Exec.Container, client.ExecCreateOptions{
-			Cmd:          d.Exec.Command,
-			AttachStdout: true,
-			AttachStderr: true,
-		})
-		if err != nil {
-			return "", err
-		}
-		resp, err := cli.ExecAttach(ctx, idResp.ID, client.ExecAttachOptions{})
-		if err != nil {
-			return "", err
-		}
-		defer resp.Close()
-		outBytes, _ := io.ReadAll(resp.Reader)
-		resultMap := map[string]any{
-			"container": d.Exec.Container,
-			"output":    string(outBytes),
-		}
-		b, _ := json.Marshal(resultMap)
-		return string(b), nil
-
+		return executeDockerExec(ctx, cli, d.Exec)
 	case "stop":
-		if _, err := cli.ContainerStop(ctx, d.Stop.Container, client.ContainerStopOptions{}); err != nil {
-			return "", err
-		}
-		resultMap := map[string]any{
-			"container_id": d.Stop.Container,
-			"status":       "stopped",
-		}
-		b, _ := json.Marshal(resultMap)
-		return string(b), nil
+		return executeDockerStop(ctx, cli, d.Stop)
 	}
-	return "", fmt.Errorf("unsupported action")
+	return "", fmt.Errorf("unsupported docker action: %s", d.Action)
+}
+
+func executeDockerBuild(ctx context.Context, cli *client.Client, b *cuetry.DockerBuild, recipeDir string) (string, error) {
+	tarReader, err := createTarArchive(filepath.Join(recipeDir, b.Context))
+	if err != nil {
+		return "", fmt.Errorf("tar build context: %w", err)
+	}
+	dockerfile := b.Dockerfile
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	opts := client.ImageBuildOptions{
+		Dockerfile: dockerfile,
+		Tags:       b.Tags,
+		Remove:     true,
+	}
+	resp, err := cli.ImageBuild(ctx, tarReader, opts)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	logBytes, _ := io.ReadAll(resp.Body)
+	resultMap := map[string]any{
+		"logs":     string(logBytes),
+		"image_id": "completed",
+	}
+	res, _ := json.Marshal(resultMap)
+	return string(res), nil
+}
+
+func executeDockerPush(ctx context.Context, cli *client.Client, p *cuetry.DockerPush) (string, error) {
+	resp, err := cli.ImagePush(ctx, p.Image, client.ImagePushOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Close()
+	logBytes, _ := io.ReadAll(resp)
+	resultMap := map[string]any{
+		"logs":   string(logBytes),
+		"status": "pushed",
+	}
+	res, _ := json.Marshal(resultMap)
+	return string(res), nil
+}
+
+func executeDockerPull(ctx context.Context, cli *client.Client, p *cuetry.DockerPull) (string, error) {
+	resp, err := cli.ImagePull(ctx, p.Image, client.ImagePullOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Close()
+	logBytes, _ := io.ReadAll(resp)
+	resultMap := map[string]any{
+		"logs":   string(logBytes),
+		"status": "pulled",
+	}
+	res, _ := json.Marshal(resultMap)
+	return string(res), nil
+}
+
+func executeDockerRun(ctx context.Context, cli *client.Client, r *cuetry.DockerRun) (string, error) {
+	config := &container.Config{
+		Image: r.Image,
+		Cmd:   r.Command,
+	}
+	for k, v := range r.Env {
+		config.Env = append(config.Env, fmt.Sprintf("%s=%s", k, v))
+	}
+	hostConfig := &container.HostConfig{}
+	createOpts := client.ContainerCreateOptions{
+		Config:     config,
+		HostConfig: hostConfig,
+		Name:       r.Name,
+	}
+
+	resp, err := backoff.Retry(ctx, func() (client.ContainerCreateResult, error) {
+		res, innerErr := cli.ContainerCreate(ctx, createOpts)
+		if innerErr != nil {
+			if strings.Contains(innerErr.Error(), "No such image") {
+				pullResp, pullErr := cli.ImagePull(ctx, r.Image, client.ImagePullOptions{})
+				if pullErr != nil {
+					return client.ContainerCreateResult{}, fmt.Errorf("auto-pull failed for %q: %w", r.Image, pullErr)
+				}
+				// Drain the response to block until the image pull completes
+				_, _ = io.Copy(io.Discard, pullResp)
+				pullResp.Close()
+				return client.ContainerCreateResult{}, innerErr // Retry ContainerCreate on next tick
+			}
+			return client.ContainerCreateResult{}, backoff.Permanent(innerErr)
+		}
+		return res, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
+		return "", err
+	}
+
+	resultMap := map[string]any{
+		"container_id": resp.ID,
+	}
+	if !r.Detach {
+		out, err := cli.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: true})
+		if err == nil {
+			defer out.Close()
+			logBytes, _ := io.ReadAll(out)
+			resultMap["logs"] = string(logBytes)
+		}
+	}
+	res, _ := json.Marshal(resultMap)
+	return string(res), nil
+}
+
+func executeDockerExec(ctx context.Context, cli *client.Client, e *cuetry.DockerExec) (string, error) {
+	idResp, err := cli.ExecCreate(ctx, e.Container, client.ExecCreateOptions{
+		Cmd:          e.Command,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	resp, err := cli.ExecAttach(ctx, idResp.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Close()
+	outBytes, _ := io.ReadAll(resp.Reader)
+	resultMap := map[string]any{
+		"container": e.Container,
+		"output":    string(outBytes),
+	}
+	res, _ := json.Marshal(resultMap)
+	return string(res), nil
+}
+
+func executeDockerStop(ctx context.Context, cli *client.Client, s *cuetry.DockerStop) (string, error) {
+	if _, err := cli.ContainerStop(ctx, s.Container, client.ContainerStopOptions{}); err != nil {
+		return "", err
+	}
+	resultMap := map[string]any{
+		"container_id": s.Container,
+		"status":       "stopped",
+	}
+	res, _ := json.Marshal(resultMap)
+	return string(res), nil
 }
 
 func runCueStepDockerDry(out io.Writer, recipe cuetry.Recipe, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
