@@ -155,6 +155,13 @@ func graphRunOneStep(ctx context.Context, run *cueRun, out chan<- HostExecResult
 		}
 	}
 
+	if failed && step.IgnoreErrors {
+		zap.L().Warn("Step failed but ignore_errors is true. Marking as succeeded to let descendants run.",
+			zap.String("step_id", stepID),
+		)
+		failed = false
+	}
+
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if len(rows) > 0 {

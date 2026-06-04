@@ -61,6 +61,7 @@ type HostExecResult struct {
 	Provider string
 	Success  bool
 	Skipped  bool // when CEL was false; no SSH/SFTP ran
+	Changed  bool // true if mutation occurred (e.g. check_cmd was absent, or check_cmd failed)
 	ExitCode int
 	Output   string
 	ErrMsg   string // transport / spawn failure (not remote stderr)

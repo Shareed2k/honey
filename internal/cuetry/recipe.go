@@ -227,6 +227,13 @@ const schemaSource = `
 	secrets?: {[string]: string}
 	when?: string
 	retry?: #Retry
+	ignore_errors?: bool
+	check_cmd?:     string
+	loop_from?: close({
+		step:    string
+		extract: string
+	})
+	notify_handler?: [...string]
 })
 #Recipe: close({
 	name:  string
@@ -241,8 +248,10 @@ const schemaSource = `
 		ssh_port?: int
 		ssh_private_key?: string
 		retry?: #Retry
+		gather_facts?: bool
 	})
 	steps: [...#Step]
+	handlers?: [...#Step]
 })
 `
 

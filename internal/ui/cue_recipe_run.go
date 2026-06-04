@@ -204,12 +204,26 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 			history = append(history, rows)
 		}
 		if err != nil {
-			runErr = err
-			return err
+			if step.IgnoreErrors {
+				zap.L().Warn("Step failed but ignore_errors is true. Continuing.",
+					zap.Int("step_index", i+1),
+					zap.Error(err),
+				)
+				err = nil
+			} else {
+				runErr = err
+				return err
+			}
 		}
 		if len(rows) > 0 && cueStepAllTargetsTransientTransportFailed(rows) {
-			runErr = fmt.Errorf("step %d: all %d targets failed with transient transport errors; aborting recipe", i+1, len(rows))
-			return runErr
+			if step.IgnoreErrors {
+				zap.L().Warn("Step failed with transport errors but ignore_errors is true. Continuing.",
+					zap.Int("step_index", i+1),
+				)
+			} else {
+				runErr = fmt.Errorf("step %d: all %d targets failed with transient transport errors; aborting recipe", i+1, len(rows))
+				return runErr
+			}
 		}
 		if step.NotifyEnabled() && err == nil && len(rows) > 0 {
 			body := FormatCueStepHostResultsForNotify(i+1, rows)
@@ -452,7 +466,14 @@ func streamCueStepCommand(ctx context.Context, run *cueRun, stepIdx int, kind cu
 		for k, v := range kv {
 			env[k] = v
 		}
-		inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(step.Command))
+		mainCmd := strings.TrimSpace(step.Command)
+		var combined string
+		if step.CheckCmd != "" {
+			combined = fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(step.CheckCmd), mainCmd)
+		} else {
+			combined = mainCmd
+		}
+		inner, err := cuetry.ShellExportPrefixForRemote(env, combined)
 		if err != nil {
 			return fmt.Sprintf("echo 'export err: %s'", err.Error())
 		}
@@ -568,6 +589,9 @@ func streamCueStepScript(ctx context.Context, run *cueRun, stepIdx int, kind cue
 		remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
 		if err != nil {
 			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
+		}
+		if step.CheckCmd != "" {
+			return fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(step.CheckCmd), remoteCmd)
 		}
 		return remoteCmd
 	}

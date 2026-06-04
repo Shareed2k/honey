@@ -618,3 +618,62 @@ func TestWrapRemoteShell(t *testing.T) {
 		t.Fatalf("%q", out)
 	}
 }
+
+func TestParseRemoteRecipe_dynamicFeatures(t *testing.T) {
+	const src = `
+recipe: {
+	name: "dynamic-demo"
+	type: "graph"
+	defaults: {
+		gather_facts: true
+	}
+	steps: [
+		{
+			id: "step1"
+			host: "10.0.0.1"
+			command: "echo hello"
+			ignore_errors: true
+			check_cmd: "test -f /etc/ready"
+			loop_from: {
+				step: "other"
+				extract: ".items"
+			}
+			notify_handler: ["restart-service"]
+		}
+	]
+	handlers: [
+		{
+			id: "restart-service"
+			host: "10.0.0.1"
+			command: "systemctl restart app"
+		}
+	]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Defaults == nil || r.Defaults.GatherFacts == nil || !*r.Defaults.GatherFacts {
+		t.Fatal("expected gather_facts to be true")
+	}
+	if len(r.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(r.Steps))
+	}
+	step := r.Steps[0]
+	if !step.IgnoreErrors {
+		t.Error("expected ignore_errors to be true")
+	}
+	if step.CheckCmd != "test -f /etc/ready" {
+		t.Errorf("expected check_cmd, got %q", step.CheckCmd)
+	}
+	if step.LoopFrom == nil || step.LoopFrom.Step != "other" || step.LoopFrom.Extract != ".items" {
+		t.Errorf("expected loop_from, got %+v", step.LoopFrom)
+	}
+	if len(step.NotifyHandler) != 1 || step.NotifyHandler[0] != "restart-service" {
+		t.Errorf("expected notify_handler, got %+v", step.NotifyHandler)
+	}
+	if len(r.Handlers) != 1 || r.Handlers[0].ID != "restart-service" {
+		t.Fatalf("expected 1 handler, got %+v", r.Handlers)
+	}
+}

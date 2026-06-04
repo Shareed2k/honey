@@ -9,6 +9,7 @@ type Recipe struct {
 	Type     string          `json:"type,omitempty"`
 	Defaults *RecipeDefaults `json:"defaults,omitempty"`
 	Steps    []RecipeStep    `json:"steps"`
+	Handlers []RecipeStep    `json:"handlers,omitempty"`
 }
 
 // RecipeDefaults holds recipe-level defaults (optional fields).
@@ -22,6 +23,7 @@ type RecipeDefaults struct {
 	SSHPort       int               `json:"ssh_port,omitempty"`
 	SSHPrivateKey string            `json:"ssh_private_key,omitempty"`
 	Retry         *RecipeStepRetry  `json:"retry,omitempty"`
+	GatherFacts   *bool             `json:"gather_facts,omitempty"`
 }
 
 // RecipeFileTransfer is a local ↔ remote path pair for SFTP put/get steps.
@@ -131,6 +133,12 @@ type RecipeStepPlugin struct {
 	Config json.RawMessage `json:"config,omitempty"`
 }
 
+// RecipeLoop configures dynamic runtime fan-out based on a previous step's captured output.
+type RecipeLoop struct {
+	Step    string `json:"step"`
+	Extract string `json:"extract"` // jq expression to extract a JSON array
+}
+
 // RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, template, plugin, or tunnel.
 // Host selects targets: literal IP, exact name, "*", "re:…", or "_" for ai only (see resolve.go). For agent_transfer,
 // host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
@@ -161,6 +169,10 @@ type RecipeStep struct {
 	Secrets       map[string]string    `json:"secrets,omitempty"`
 	When          string               `json:"when,omitempty"`
 	Retry         *RecipeStepRetry     `json:"retry,omitempty"`
+	IgnoreErrors  bool                 `json:"ignore_errors,omitempty"`
+	CheckCmd      string               `json:"check_cmd,omitempty"`
+	LoopFrom      *RecipeLoop          `json:"loop_from,omitempty"`
+	NotifyHandler []string             `json:"notify_handler,omitempty"`
 }
 
 // NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).

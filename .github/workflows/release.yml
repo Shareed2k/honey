@@ -44,7 +44,7 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -w /workspace \
             -e GITHUB_TOKEN \
-            ghcr.io/goreleaser/goreleaser-cross:v1.26.2-3 \
+            ghcr.io/goreleaser/goreleaser-cross:v1.26.3 \
             release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

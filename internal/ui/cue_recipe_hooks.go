@@ -29,6 +29,14 @@ const (
 
 func cueRecipeSSHPostHostResult(_ context.Context, run *cueRun, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeScopedKV bool) SSHPostHostResultFunc {
 	return func(hctx context.Context, r hosts.Record, res *HostExecResult) {
+		if step.CheckCmd != "" && strings.Contains(res.Output, "HONEY_CHECK_CMD_OK") {
+			res.Changed = false
+			res.Success = true
+			res.ExitCode = 0
+			res.Output = "Skipped: check_cmd passed"
+		} else {
+			res.Changed = true
+		}
 		runCueStepHooks(hctx, run, stepIdx, kind, step, r, res, recipeScopedKV)
 	}
 }
