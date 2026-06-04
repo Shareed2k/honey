@@ -42,6 +42,7 @@ jobs:
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $HOME/.docker:/root/.docker \
             -w /workspace \
             -e GITHUB_TOKEN \
             ghcr.io/goreleaser/goreleaser-cross:v1.26.3 \
