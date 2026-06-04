@@ -46,6 +46,18 @@ func streamCueRecipeStepsGraph(ctx context.Context, run *cueRun, out chan<- Host
 			return fmt.Errorf("recipe graph finished with failed step %q", sg.IndexToID[i])
 		}
 	}
+
+	// Run triggered handlers
+	if len(run.triggeredHandlers) > 0 && len(run.Recipe.Handlers) > 0 {
+		zap.L().Debug("executing triggered handlers", zap.Any("triggered", run.triggeredHandlers))
+		for _, handler := range run.Recipe.Handlers {
+			if run.triggeredHandlers[handler.ID] {
+				zap.L().Info("running handler", zap.String("id", handler.ID))
+				_, _ = streamCueRecipeStep(ctx, run, -1, handler, out)
+			}
+		}
+	}
+
 	return nil
 }
 

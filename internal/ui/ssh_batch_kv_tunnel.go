@@ -9,10 +9,20 @@ import (
 
 var errMissingRecipeKVCoordinator = errors.New("recipe-scoped coordinator is missing")
 
+// KVTunnelProvider is an optional interface that HostClients can implement
+// if they natively support or explicitly reject bootstrapping KV tunnels.
+type KVTunnelProvider interface {
+	SupportsKVTunnel() bool
+}
+
 // attachHostKVTunnel resolves HONEY_KV_* for kv_tunnel on this pooled client. stopKV is non-nil only for
 // non–recipe-scoped SSH (per-exec stepkv forward); recipe-scoped SSH/k8s use the coordinator and return stopKV nil.
 // The error is unprefixed; callers are expected to wrap with %q semantics if they want.
 func attachHostKVTunnel(client HostClient, user string, r hosts.Record, recipeScopedKV bool, recipeKV *RecipeKVCoordinator) (kv map[string]string, stopKV func(), err error) {
+	if provider, ok := client.(KVTunnelProvider); ok && !provider.SupportsKVTunnel() {
+		return nil, nil, nil
+	}
+
 	switch c := client.(type) {
 	case *sshclient.HoneyClient:
 		if !recipeScopedKV {

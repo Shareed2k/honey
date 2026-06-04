@@ -37,6 +37,14 @@ func cueRecipeSSHPostHostResult(_ context.Context, run *cueRun, stepIdx int, kin
 		} else {
 			res.Changed = true
 		}
+		if res.Success && res.Changed && len(step.NotifyHandler) > 0 {
+			if run.triggeredHandlers == nil {
+				run.triggeredHandlers = make(map[string]bool)
+			}
+			for _, handlerName := range step.NotifyHandler {
+				run.triggeredHandlers[handlerName] = true
+			}
+		}
 		runCueStepHooks(hctx, run, stepIdx, kind, step, r, res, recipeScopedKV)
 	}
 }

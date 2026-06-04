@@ -91,3 +91,56 @@ func ValidateJQQuery(query string) error {
 	}
 	return nil
 }
+
+// EvalJQArray runs a jq query against a JSON document string, returning a list of strings.
+// If the result is a JSON array, it returns each element formatted as a string.
+// If it's a single value, it returns a single-element list.
+func EvalJQArray(jsonDoc, query string) ([]string, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("cuetry: jq query is empty")
+	}
+	doc := strings.TrimSpace(jsonDoc)
+	if doc == "" {
+		return nil, fmt.Errorf("cuetry: jq input is empty")
+	}
+	var input any
+	if err := json.Unmarshal([]byte(doc), &input); err != nil {
+		return nil, fmt.Errorf("cuetry: jq input parse: %w", err)
+	}
+	q, err := gojq.Parse(query)
+	if err != nil {
+		return nil, fmt.Errorf("cuetry: jq parse: %w", err)
+	}
+	iter := q.Run(input)
+	var results []any
+	for {
+		v, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if err, isErr := v.(error); isErr {
+			if halt, ok := err.(*gojq.HaltError); ok && halt.Value() == nil {
+				break
+			}
+			return nil, fmt.Errorf("cuetry: jq eval: %w", err)
+		}
+		results = append(results, v)
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	var out []string
+	if len(results) == 1 {
+		if slice, ok := results[0].([]any); ok {
+			for _, item := range slice {
+				out = append(out, formatJQValue(item))
+			}
+			return out, nil
+		}
+	}
+	for _, res := range results {
+		out = append(out, formatJQValue(res))
+	}
+	return out, nil
+}

@@ -117,11 +117,18 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kv
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			effUser := strings.TrimSpace(user)
+			if effUser == "" {
+				if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+					effUser = u
+				}
+			}
+
 			run := func() HostExecResult {
 				if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
-					return runOneRemoteTrueNAS(ctx, user, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+					return runOneRemoteTrueNAS(ctx, effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
 				}
-				return runOneRemoteSSH(user, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+				return runOneRemoteSSH(effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
 			}
 			outcome := runHostExecWithRetry(ctx, opts.RetryCfg, run)
 			recordMaxAttempts(opts.AttemptMax, outcome.Attempts)

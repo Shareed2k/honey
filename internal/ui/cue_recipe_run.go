@@ -3,6 +3,9 @@ package ui
 import (
 	"bytes"
 	"context"
+	_ "embed"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -108,11 +111,66 @@ type CueRecipeRunParams struct {
 // outputStore/outputCapture are set per execution mode (sequential vs graph).
 type cueRun struct {
 	CueRecipeRunParams
-	cache         *ClientCache
-	recipeKV      *RecipeKVCoordinator
-	tunnelCoord   *RecipeTunnelCoordinator
-	outputStore   *cuetry.StepOutputStore
-	outputCapture *cuetry.RecipeOutputCapture
+	cache             *ClientCache
+	recipeKV          *RecipeKVCoordinator
+	tunnelCoord       *RecipeTunnelCoordinator
+	outputStore       *cuetry.StepOutputStore
+	outputCapture     *cuetry.RecipeOutputCapture
+	facts             map[string]map[string]any
+	triggeredHandlers map[string]bool
+}
+
+//go:embed facts.sh
+var factsScript string
+
+func (run *cueRun) gatherFacts(ctx context.Context) {
+	if run.Recipe.Defaults == nil || run.Recipe.Defaults.GatherFacts == nil || !*run.Recipe.Defaults.GatherFacts {
+		return
+	}
+	zap.L().Debug("gathering host facts")
+	ch := make(chan HostExecResult, len(run.Records))
+	encodedScript := base64.StdEncoding.EncodeToString([]byte(factsScript))
+	cmdFunc := func(_ hosts.Record, _ map[string]string) string {
+		return fmt.Sprintf("echo %s | base64 -d | sh", encodedScript)
+	}
+	var targets []hosts.Record
+	for _, r := range run.Records {
+		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+			targets = append(targets, r)
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+
+	targets = cueApplyRecipeSSHDialOptions(run.Recipe, cuetry.RecipeStep{}, targets)
+
+	for _, r := range targets {
+		run.facts[r.Name] = cuetry.DefaultFacts()
+	}
+
+	err := StreamSSHParallel(ctx, run.SSHUser, targets, false, cmdFunc, ch, BatchOptions{
+		MaxConc:    8,
+		Cache:      run.cache,
+		AttemptMax: nil,
+		Obs:        nil,
+	})
+	close(ch)
+	if err != nil {
+		zap.L().Warn("failed to gather facts", zap.Error(err))
+	}
+	for res := range ch {
+		if res.Success {
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+				zap.L().Warn("failed to parse host facts JSON", zap.String("host", res.Name), zap.Error(err))
+				continue
+			}
+			run.facts[res.Name] = parsed
+		} else {
+			zap.L().Warn("failed to gather facts on host", zap.String("host", res.Name), zap.String("err", res.ErrMsg))
+		}
+	}
 }
 
 // StreamCueRecipeSteps executes a CUE recipe step-by-step, streaming results.
@@ -139,6 +197,11 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	if err := ensureKVSessionForRecipe(p.Recipe, run.recipeKV, p.Execute); err != nil {
 		return err
 	}
+
+	run.facts = make(map[string]map[string]any)
+	run.gatherFacts(ctx)
+	ctx = withHostFacts(ctx, run.facts)
+	run.triggeredHandlers = make(map[string]bool)
 
 	mode, modeErr := cuetry.RecipeExecutionMode(p.Recipe)
 	if modeErr != nil {
@@ -230,6 +293,19 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 			CueStepNotifyRemote(ctx, p.Recipe, i+1, kind, step.Notify, body)
 		}
 	}
+
+	// Run triggered handlers
+	if len(run.triggeredHandlers) > 0 && len(p.Recipe.Handlers) > 0 {
+		zap.L().Debug("executing triggered handlers", zap.Any("triggered", run.triggeredHandlers))
+		for _, handler := range p.Recipe.Handlers {
+			if run.triggeredHandlers[handler.ID] {
+				zap.L().Info("running handler", zap.String("id", handler.ID))
+				// Execute the handler step. Use step index -1 to indicate it is a handler.
+				_, _ = streamCueRecipeStep(ctx, run, -1, handler, out)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -310,6 +386,17 @@ func hostNameFromExecResult(name string) string {
 	return strings.TrimSpace(name)
 }
 
+func cloneMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.RecipeStep, out chan<- HostExecResult) ([]HostExecResult, error) {
 	stepStart := time.Now()
 	var attemptMax atomic.Int32
@@ -332,6 +419,58 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 		return nil, fmt.Errorf("step %d: %w", i, err)
 	}
 	targets = cueApplyRecipeSSHDialOptions(run.Recipe, step, targets)
+
+	if step.LoopFrom != nil {
+		var stepResults []HostExecResult
+		for _, t := range targets {
+			raw, ok := run.outputStore.Get(step.LoopFrom.Step, t.Name)
+			if !ok {
+				raw, ok = run.outputStore.FirstStdout(step.LoopFrom.Step)
+			}
+			if !ok {
+				zap.L().Warn("loop_from: no raw output found for step", zap.String("step", step.LoopFrom.Step))
+				continue
+			}
+			items, err := cuetry.EvalJQArray(raw, step.LoopFrom.Extract)
+			if err != nil {
+				return nil, fmt.Errorf("loop_from extraction failed: %w", err)
+			}
+			for _, item := range items {
+				loopStep := step
+				if loopStep.Env == nil {
+					loopStep.Env = make(map[string]string)
+				} else {
+					loopStep.Env = cloneMap(loopStep.Env)
+				}
+				loopStep.Env["item"] = item
+				loopStep.LoopFrom = nil
+
+				runParams := run.CueRecipeRunParams
+				runParams.Records = []hosts.Record{t}
+				loopRun := &cueRun{
+					CueRecipeRunParams: runParams,
+					cache:              run.cache,
+					recipeKV:           run.recipeKV,
+					tunnelCoord:        run.tunnelCoord,
+					outputStore:        run.outputStore,
+					outputCapture:      run.outputCapture,
+					facts:              run.facts,
+					triggeredHandlers:  run.triggeredHandlers,
+				}
+
+				subResults, err := streamCueRecipeStep(ctx, loopRun, i, loopStep, out)
+				if err != nil {
+					if step.IgnoreErrors {
+						zap.L().Warn("loop step failed but ignore_errors is true. Continuing.", zap.Error(err))
+					} else {
+						return stepResults, err
+					}
+				}
+				stepResults = append(stepResults, subResults...)
+			}
+		}
+		return stepResults, nil
+	}
 
 	kv := kvReaderFromCoordinator(run.recipeKV)
 	var whenSkipped []HostExecResult
