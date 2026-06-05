@@ -1,7 +1,10 @@
 // Package cuetry parses, validates, and resolves CUE remote recipes for honey.
 package cuetry
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Recipe is the decoded "recipe" block from a CUE document.
 type Recipe struct {
@@ -126,6 +129,29 @@ type RecipeStepHook struct {
 	Notify  *RecipeNotify     `json:"notify,omitempty"`
 }
 
+// EffectiveHookWhere returns the hook execution location. Empty defaults to remote.
+func EffectiveHookWhere(hook *RecipeStepHook) string {
+	if hook == nil {
+		return "remote"
+	}
+	where := strings.TrimSpace(hook.Where)
+	if where == "" {
+		return "remote"
+	}
+	return where
+}
+
+// StepOutputName returns the step-level or legacy nested capture name.
+func StepOutputName(s RecipeStep) string {
+	if out := strings.TrimSpace(s.Output); out != "" {
+		return out
+	}
+	if s.Template != nil {
+		return strings.TrimSpace(s.Template.Output)
+	}
+	return ""
+}
+
 // RecipeStepPlugin configures a WASM custom_step plugin action.
 type RecipeStepPlugin struct {
 	ID     string          `json:"id"`
@@ -149,6 +175,7 @@ type RecipeStep struct {
 	SSHPort       int                  `json:"ssh_port,omitempty"`
 	SSHPrivateKey string               `json:"ssh_private_key,omitempty"`
 	Command       string               `json:"command,omitempty"`
+	Render        string               `json:"render,omitempty"`
 	Put           *RecipeFileTransfer  `json:"put,omitempty"`
 	Get           *RecipeFileTransfer  `json:"get,omitempty"`
 	Script        *RecipeFileTransfer  `json:"script,omitempty"`
@@ -163,14 +190,20 @@ type RecipeStep struct {
 	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`
 	KVTunnel      *bool                `json:"kv_tunnel,omitempty"`
 	MaxParallel   int                  `json:"max_parallel,omitempty"`
+	Serial        int                  `json:"serial,omitempty"`
 	EnvFrom       []EnvFromRef         `json:"env_from,omitempty"`
 	RunAs         string               `json:"run_as,omitempty"`
 	Env           map[string]string    `json:"env,omitempty"`
 	Secrets       map[string]string    `json:"secrets,omitempty"`
 	When          string               `json:"when,omitempty"`
+	ChangedWhen   string               `json:"changed_when,omitempty"`
+	FailedWhen    string               `json:"failed_when,omitempty"`
 	Retry         *RecipeStepRetry     `json:"retry,omitempty"`
+	Timeout       string               `json:"timeout,omitempty"`
 	IgnoreErrors  bool                 `json:"ignore_errors,omitempty"`
 	CheckCmd      string               `json:"check_cmd,omitempty"`
+	Output        string               `json:"output,omitempty"`
+	Loop          string               `json:"loop,omitempty"`
 	LoopFrom      *RecipeLoop          `json:"loop_from,omitempty"`
 	NotifyHandler []string             `json:"notify_handler,omitempty"`
 }

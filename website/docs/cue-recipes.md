@@ -701,6 +701,17 @@ Example: [`kafka_controller_rolling_restart.cue`](https://github.com/shareed2k/h
 - **`notify`:** optional per-step notifications after success ([nikoksr/notify](https://github.com/nikoksr/notify)).
 - **`ai`:** terminal summarizer after prior steps; optional `notify` and `when` (aggregated `steps` view).
 
+## Loops (dynamic fan-out)
+
+Steps can be repeated dynamically over a list of items using the `loop` or `loop_from` fields:
+
+- **`loop`:** A Go text/template string (e.g. evaluating prior step stdout as a JSON array using `stepStdoutLines`) or a JQ expression.
+- **`loop_from`:** Selects a prior step and extracts a JSON array using a JQ path.
+
+### Hook Failures in Loops
+
+By default, step hooks (`on_success` or `on_failure`) run as side-car post-facto tasks and their outcome does not affect the main step's success status. However, **if a step hook fails within a loop**, the loop execution immediately **aborts** and the parent step **fails** (unless `ignore_errors` is set to `true`). This prevents subsequent loop iterations from running after a deployment or verification hook encounters an error.
+
 ## Template functions
 
 `template` steps use Go [`text/template`](https://pkg.go.dev/text/template) with the full [slim-sprig](https://go-task.github.io/slim-sprig/) function library (string, math, date, crypto, etc.) plus two recipe-specific functions:

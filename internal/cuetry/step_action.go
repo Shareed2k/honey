@@ -53,7 +53,7 @@ func StepKindLabel(k StepKind) string {
 	}
 }
 
-// ClassifyStep returns the step kind after validating exactly one of command / put / get / script / agent_transfer / ai / template / plugin / tunnel / k8s.
+// ClassifyStep returns the step kind after validating exactly one action field.
 func ClassifyStep(s RecipeStep) (StepKind, error) {
 	var kind StepKind
 	var found bool
@@ -78,6 +78,9 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	if strings.TrimSpace(s.Command) != "" {
 		kind = StepKindCommand
 		found = true
+	}
+	if err := check(StepKindTemplate, strings.TrimSpace(s.Render) != "", nil); err != nil {
+		return 0, err
 	}
 	if err := check(StepKindPut, s.Put != nil, func() error { return validateFileTransfer("put", s.Put) }); err != nil {
 		return 0, err

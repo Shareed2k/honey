@@ -100,6 +100,7 @@ type CueRecipeRunParams struct {
 	SecretResolver cuetry.SecretResolver
 	PluginMgr      *plugins.Manager
 	Execute        bool
+	JSON           bool
 	Obs            metrics.Observer
 	Reg            hostexec.Registry
 	Pools          *postgres.PoolManager
@@ -334,6 +335,9 @@ func cueStepAllTargetsTransientTransportFailed(results []HostExecResult) bool {
 }
 
 func recipeHostMaxConc(step cuetry.RecipeStep, defaults *cuetry.RecipeDefaults) int {
+	if step.Serial > 0 {
+		return step.Serial
+	}
 	return cuetry.EffectiveMaxParallel(step, defaults)
 }
 
@@ -397,6 +401,104 @@ func cloneMap(m map[string]string) map[string]string {
 	return out
 }
 
+func cueRecipeLoopUsesItemHost(step cuetry.RecipeStep) bool {
+	if strings.TrimSpace(step.Loop) == "" && step.LoopFrom == nil {
+		return false
+	}
+	return strings.TrimSpace(step.Host) == "${item}"
+}
+
+func cueRecipeLoopItems(run *cueRun, step cuetry.RecipeStep, target hosts.Record) ([]string, error) {
+	if strings.TrimSpace(step.Loop) != "" {
+		items, err := cuetry.RenderLoopTemplate(cuetry.RenderLoopTemplateOpts{
+			Template: step.Loop,
+			Store:    run.outputStore,
+			Capture:  run.outputCapture,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("loop template failed: %w", err)
+		}
+		return items, nil
+	}
+
+	raw, ok := run.outputStore.Get(step.LoopFrom.Step, target.Name)
+	if !ok {
+		raw, ok = run.outputStore.FirstStdout(step.LoopFrom.Step)
+	}
+	if !ok {
+		zap.L().Warn("loop_from: no raw output found for step", zap.String("step", step.LoopFrom.Step))
+		return nil, nil
+	}
+	items, err := cuetry.EvalJQArray(raw, step.LoopFrom.Extract)
+	if err != nil {
+		return nil, fmt.Errorf("loop_from extraction failed: %w", err)
+	}
+	return items, nil
+}
+
+func streamCueLoopStep(ctx context.Context, run *cueRun, i int, step cuetry.RecipeStep, targets []hosts.Record, out chan<- HostExecResult) ([]HostExecResult, error) {
+	var stepResults []HostExecResult
+	for _, t := range targets {
+		items, err := cueRecipeLoopItems(run, step, t)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			continue
+		}
+		for _, item := range items {
+			loopStep := step
+			if cueRecipeLoopUsesItemHost(step) {
+				loopStep.Host = item
+			}
+			if loopStep.Env == nil {
+				loopStep.Env = make(map[string]string)
+			} else {
+				loopStep.Env = cloneMap(loopStep.Env)
+			}
+			loopStep.Env["item"] = item
+			loopStep.Loop = ""
+			loopStep.LoopFrom = nil
+
+			runParams := run.CueRecipeRunParams
+			if cueRecipeLoopUsesItemHost(step) {
+				runParams.Records = run.Records
+			} else {
+				runParams.Records = []hosts.Record{t}
+			}
+			loopRun := &cueRun{
+				CueRecipeRunParams: runParams,
+				cache:              run.cache,
+				recipeKV:           run.recipeKV,
+				tunnelCoord:        run.tunnelCoord,
+				outputStore:        run.outputStore,
+				outputCapture:      run.outputCapture,
+				facts:              run.facts,
+				triggeredHandlers:  run.triggeredHandlers,
+			}
+
+			subResults, err := streamCueRecipeStep(ctx, loopRun, i, loopStep, out)
+			if err == nil {
+				for _, r := range subResults {
+					if r.HookFailed {
+						err = fmt.Errorf("loop step %d: hook failed on host %s: %s", i+1, r.Name, r.HookOutput)
+						break
+					}
+				}
+			}
+			stepResults = append(stepResults, subResults...)
+			if err != nil {
+				if step.IgnoreErrors {
+					zap.L().Warn("loop step failed but ignore_errors is true. Continuing.", zap.Error(err))
+				} else {
+					return stepResults, err
+				}
+			}
+		}
+	}
+	return stepResults, nil
+}
+
 func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.RecipeStep, out chan<- HostExecResult) ([]HostExecResult, error) {
 	stepStart := time.Now()
 	var attemptMax atomic.Int32
@@ -414,62 +516,20 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 		return rows, err
 	}
 
-	targets, err := cuetry.ExpandStepHosts(step.Host, run.Records)
-	if err != nil {
-		return nil, fmt.Errorf("step %d: %w", i, err)
+	var targets []hosts.Record
+	var err error
+	if cueRecipeLoopUsesItemHost(step) {
+		targets = []hosts.Record{cuetry.MatchLocalAIHostRecord()}
+	} else {
+		targets, err = cuetry.ExpandStepHosts(step.Host, run.Records)
+		if err != nil {
+			return nil, fmt.Errorf("step %d: %w", i, err)
+		}
 	}
 	targets = cueApplyRecipeSSHDialOptions(run.Recipe, step, targets)
 
-	if step.LoopFrom != nil {
-		var stepResults []HostExecResult
-		for _, t := range targets {
-			raw, ok := run.outputStore.Get(step.LoopFrom.Step, t.Name)
-			if !ok {
-				raw, ok = run.outputStore.FirstStdout(step.LoopFrom.Step)
-			}
-			if !ok {
-				zap.L().Warn("loop_from: no raw output found for step", zap.String("step", step.LoopFrom.Step))
-				continue
-			}
-			items, err := cuetry.EvalJQArray(raw, step.LoopFrom.Extract)
-			if err != nil {
-				return nil, fmt.Errorf("loop_from extraction failed: %w", err)
-			}
-			for _, item := range items {
-				loopStep := step
-				if loopStep.Env == nil {
-					loopStep.Env = make(map[string]string)
-				} else {
-					loopStep.Env = cloneMap(loopStep.Env)
-				}
-				loopStep.Env["item"] = item
-				loopStep.LoopFrom = nil
-
-				runParams := run.CueRecipeRunParams
-				runParams.Records = []hosts.Record{t}
-				loopRun := &cueRun{
-					CueRecipeRunParams: runParams,
-					cache:              run.cache,
-					recipeKV:           run.recipeKV,
-					tunnelCoord:        run.tunnelCoord,
-					outputStore:        run.outputStore,
-					outputCapture:      run.outputCapture,
-					facts:              run.facts,
-					triggeredHandlers:  run.triggeredHandlers,
-				}
-
-				subResults, err := streamCueRecipeStep(ctx, loopRun, i, loopStep, out)
-				if err != nil {
-					if step.IgnoreErrors {
-						zap.L().Warn("loop step failed but ignore_errors is true. Continuing.", zap.Error(err))
-					} else {
-						return stepResults, err
-					}
-				}
-				stepResults = append(stepResults, subResults...)
-			}
-		}
-		return stepResults, nil
+	if strings.TrimSpace(step.Loop) != "" || step.LoopFrom != nil {
+		return streamCueLoopStep(ctx, run, i, step, targets, out)
 	}
 
 	kv := kvReaderFromCoordinator(run.recipeKV)
@@ -486,12 +546,14 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 	var stepResults []HostExecResult
 	go func() {
 		for _, sk := range whenSkipped {
+			sk.OutputCapture = cuetry.StepOutputName(step)
 			stepResults = append(stepResults, sk)
 			res := sk
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 			out <- res
 		}
 		for res := range ch {
+			res.OutputCapture = cuetry.StepOutputName(step)
 			stepResults = append(stepResults, res)
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 			out <- res
@@ -533,11 +595,21 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 		stepErr = streamCueStepK8s(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
 	case cuetry.StepKindDocker:
 		stepErr = streamCueStepDocker(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
+	case cuetry.StepKindTemplate:
+		_, stepErr = streamCueTemplateStep(ctx, run, i, step, ch)
 	}
 
 	close(ch)
 	<-done
 	recordGraphStepStdout(run.Recipe, step, kind, run.outputStore, stepResults)
+	if name := cuetry.StepOutputName(step); name != "" && run.outputCapture != nil {
+		for _, row := range stepResults {
+			if row.Success && !row.Skipped {
+				run.outputCapture.Set(name, row.Output)
+				break
+			}
+		}
+	}
 	maxAttempts := int(attemptMax.Load())
 	if maxAttempts == 0 {
 		maxAttempts = 1
@@ -611,6 +683,15 @@ func streamCueStepCommand(ctx context.Context, run *cueRun, stepIdx int, kind cu
 			combined = fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(step.CheckCmd), mainCmd)
 		} else {
 			combined = mainCmd
+		}
+		if strings.TrimSpace(step.Timeout) != "" {
+			d, err := time.ParseDuration(strings.TrimSpace(step.Timeout))
+			if err == nil && d > 0 {
+				combined = fmt.Sprintf("command -v timeout >/dev/null 2>&1 || { echo '__HONEY_TIMEOUT_MISSING__' >&2; exit 124; }; timeout %s sh -c %s",
+					d.String(),
+					shellSingleQuote(combined),
+				)
+			}
 		}
 		inner, err := cuetry.ShellExportPrefixForRemote(env, combined)
 		if err != nil {
@@ -729,10 +810,20 @@ func streamCueStepScript(ctx context.Context, run *cueRun, stepIdx int, kind cue
 		if err != nil {
 			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
 		}
+		finalCmd := remoteCmd
 		if step.CheckCmd != "" {
-			return fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(step.CheckCmd), remoteCmd)
+			finalCmd = fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(step.CheckCmd), remoteCmd)
 		}
-		return remoteCmd
+		if strings.TrimSpace(step.Timeout) != "" {
+			d, err := time.ParseDuration(strings.TrimSpace(step.Timeout))
+			if err == nil && d > 0 {
+				finalCmd = fmt.Sprintf("command -v timeout >/dev/null 2>&1 || { echo '__HONEY_TIMEOUT_MISSING__' >&2; exit 124; }; timeout %s sh -c %s",
+					d.String(),
+					shellSingleQuote(finalCmd),
+				)
+			}
+		}
+		return finalCmd
 	}
 
 	recipeScoped := kvTunnel
@@ -753,56 +844,74 @@ func streamCueStepScript(ctx context.Context, run *cueRun, stepIdx int, kind cue
 // cliEnv is merged into each command/script step's remote env (overrides recipe env on duplicate keys); nil is treated as empty.
 // configPath is the resolved honey YAML path (may be empty); agent_transfer with cloud_backend_ref requires it.
 // rec, when non-nil, records a batch .hrec.jsonl (plan on dry-run, result rows on execute). Caller must Close(rec).
-func RunCueRecipeSteps(ctx context.Context, out io.Writer, p CueRecipeRunParams, rec *SessionRecorder) error {
+func RunCueRecipeSteps(ctx context.Context, out io.Writer, p CueRecipeRunParams, rec *SessionRecorder) (runErr error) {
 	if len(p.Records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
 
 	runStart := time.Now()
-	var runErr error
 	if !p.Execute {
 		defer func() { observeRecipeRun(p.Obs, p.Recipe, false, runStart, runErr) }()
 	}
 
 	if !p.Execute {
-		outWrite := out
-		var capture bytes.Buffer
+		runErr = runCueRecipeStepsDry(out, p, rec)
+		return runErr
+	}
+	runErr = runCueRecipeStepsExecute(ctx, out, p, rec)
+	return runErr
+}
+
+func runCueRecipeStepsDry(out io.Writer, p CueRecipeRunParams, rec *SessionRecorder) error {
+	var capture bytes.Buffer
+	outWrite := io.Writer(&capture)
+	if !p.JSON {
 		if rec != nil {
 			outWrite = io.MultiWriter(out, &capture)
+		} else {
+			outWrite = out
 		}
-		mode, modeErr := cuetry.RecipeExecutionMode(p.Recipe)
-		if modeErr != nil {
-			runErr = modeErr
-			return modeErr
-		}
-		if mode == cuetry.ExecutionModeGraph {
-			text, err := cuetry.FormatGraphWavesText(p.Recipe)
-			if err != nil {
-				return err
-			}
-			_, _ = fmt.Fprint(outWrite, text)
-		}
-		for i, step := range p.Recipe.Steps {
-			if err := runCueRecipeStep(outWrite, p.Recipe, p.RecipeDir, p.Records, p.SSHUser, false, p.CLIEnv, p.ConfigPath, i, step, p.SecretResolver, p.PluginMgr); err != nil {
-				if rec != nil {
-					rec.RecordError(err)
-				}
-				runErr = err
-				return err
-			}
-		}
-		_, _ = fmt.Fprintln(outWrite, "\nDry-run only. Append ! to the path in the TUI to execute, or use honey cue-exec --execute.")
-		if rec != nil {
-			plan := capture.String()
-			if strings.TrimSpace(plan) == "" {
-				rec.RecordData("plan", []byte("(empty plan)"))
-			} else {
-				rec.RecordData("plan", []byte(plan))
-			}
-		}
-		return nil
 	}
+	mode, modeErr := cuetry.RecipeExecutionMode(p.Recipe)
+	if modeErr != nil {
+		return modeErr
+	}
+	if mode == cuetry.ExecutionModeGraph {
+		text, err := cuetry.FormatGraphWavesText(p.Recipe)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprint(outWrite, text)
+	}
+	for i, step := range p.Recipe.Steps {
+		if i > 0 {
+			_, _ = fmt.Fprintln(outWrite)
+		}
+		if err := runCueRecipeStep(outWrite, p.Recipe, p.RecipeDir, p.Records, p.SSHUser, false, p.CLIEnv, p.ConfigPath, i, step, p.SecretResolver, p.PluginMgr); err != nil {
+			if rec != nil {
+				rec.RecordError(err)
+			}
+			return err
+		}
+	}
+	_, _ = fmt.Fprintln(outWrite, "\nDry-run only. Append ! to the path in the TUI to execute, or use honey cue-exec --execute.")
+	if rec != nil {
+		plan := capture.String()
+		if strings.TrimSpace(plan) == "" {
+			rec.RecordData("plan", []byte("(empty plan)"))
+		} else {
+			rec.RecordData("plan", []byte(plan))
+		}
+	}
+	if p.JSON {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]string{"plan": capture.String()})
+	}
+	return nil
+}
 
+func runCueRecipeStepsExecute(ctx context.Context, out io.Writer, p CueRecipeRunParams, rec *SessionRecorder) error {
 	// Second execution path: actual execution via streaming logic
 	ch := make(chan HostExecResult)
 	errCh := make(chan error, 1)
@@ -811,10 +920,26 @@ func RunCueRecipeSteps(ctx context.Context, out io.Writer, p CueRecipeRunParams,
 		errCh <- StreamCueRecipeSteps(ctx, p, ch)
 	}()
 
+	results := []HostExecResult{}
+	lastStep := ""
 	for res := range ch {
 		if rec != nil {
 			rec.RecordHostExecResult(res)
 		}
+		if p.JSON {
+			results = append(results, res)
+			continue
+		}
+
+		currentStep := ""
+		if parts := strings.SplitN(res.Name, "|", 2); len(parts) > 0 {
+			currentStep = strings.TrimSpace(parts[0])
+		}
+		if lastStep != "" && currentStep != lastStep {
+			_, _ = fmt.Fprintln(out)
+		}
+		lastStep = currentStep
+
 		status := "ok"
 		if !res.Success {
 			status = "FAILED"
@@ -825,8 +950,8 @@ func RunCueRecipeSteps(ctx context.Context, out io.Writer, p CueRecipeRunParams,
 			_, _ = fmt.Fprintf(out, " — %s", res.ErrMsg)
 		}
 		_, _ = fmt.Fprintln(out)
-		if strings.TrimSpace(res.Output) != "" {
-			_, _ = fmt.Fprintln(out, strings.TrimSpace(res.Output))
+		if display := cueRecipeDisplayOutput(res); strings.TrimSpace(display) != "" {
+			_, _ = fmt.Fprintln(out, display)
 		}
 		if strings.TrimSpace(res.HookPhase) != "" || strings.TrimSpace(res.HookOutput) != "" {
 			if strings.TrimSpace(res.HookOutput) != "" {
@@ -837,14 +962,27 @@ func RunCueRecipeSteps(ctx context.Context, out io.Writer, p CueRecipeRunParams,
 		}
 	}
 	streamErr := <-errCh
+	if streamErr != nil && rec != nil {
+		rec.RecordError(streamErr)
+	}
+
+	if p.JSON {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string][]HostExecResult{"results": results})
+	}
+
 	if streamErr != nil {
-		if rec != nil {
-			rec.RecordError(streamErr)
-		}
-		runErr = streamErr
 		return streamErr
 	}
 	return nil
+}
+
+func cueRecipeDisplayOutput(res HostExecResult) string {
+	if res.Success && res.OutputCapture != "" {
+		return "[captured output: " + res.OutputCapture + "]"
+	}
+	return res.Output
 }
 
 func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, configPath string, i int, step cuetry.RecipeStep, secretResolver cuetry.SecretResolver, pluginMgr *plugins.Manager) error {
@@ -862,9 +1000,18 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 	if kind == cuetry.StepKindTemplate {
 		return runCueStepTemplateDry(out, execute, i, step)
 	}
-	targets, err := cuetry.ExpandStepHosts(step.Host, records)
-	if err != nil {
-		return fmt.Errorf("step %d: %w", i, err)
+	var targets []hosts.Record
+	if cueRecipeLoopUsesItemHost(step) && !execute {
+		targets = []hosts.Record{{
+			Provider:  "dynamic",
+			Name:      "${item}",
+			PrimaryIP: "${item}",
+		}}
+	} else {
+		targets, err = cuetry.ExpandStepHosts(step.Host, records)
+		if err != nil {
+			return fmt.Errorf("step %d: %w", i, err)
+		}
 	}
 	targets = cueApplyRecipeSSHDialOptions(recipe, step, targets)
 	if !execute && strings.TrimSpace(step.When) != "" {

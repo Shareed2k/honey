@@ -30,10 +30,15 @@ func runCueStepTemplateOnHost(
 	}
 	prefix := fmt.Sprintf("Step %d | template | %s", stepNo, hostLabel)
 	tpl := step.Template
-	if tpl == nil {
+	if tpl == nil && strings.TrimSpace(step.Render) == "" {
 		return HostExecResult{Name: prefix, Provider: target.Provider, IP: target.PrimaryIP, Success: false, ErrMsg: "internal: missing template block"}
 	}
-	data := cloneTemplateData(tpl.Data)
+	templateBody := strings.TrimSpace(step.Render)
+	data := map[string]any{}
+	if tpl != nil {
+		templateBody = tpl.Template
+		data = cloneTemplateData(tpl.Data)
+	}
 	mode, _ := cuetry.RecipeExecutionMode(recipe)
 	hostName := hostLabel
 	extraEnv := make(map[string]string)
@@ -59,10 +64,14 @@ func runCueStepTemplateOnHost(
 			}
 		}
 	}
+	if outputCapture != nil {
+		data["outputs"] = outputCapture.View()
+	}
 	rendered, err := cuetry.RenderTemplate(cuetry.RenderTemplateOpts{
-		Template: tpl.Template,
+		Template: templateBody,
 		Data:     data,
 		KV:       kvReaderFromCoordinator(recipeKV),
+		Funcs:    cuetry.OutputTemplateFuncMap(outputCapture),
 	})
 	if err != nil {
 		return HostExecResult{Name: prefix, Provider: target.Provider, IP: target.PrimaryIP, Success: false, ErrMsg: err.Error()}
@@ -73,11 +82,12 @@ func runCueStepTemplateOnHost(
 		out += CueStepNotifyAppendSuffix(ctx, recipe, stepNo, cuetry.StepKindTemplate, step.Notify, rendered)
 	}
 	return HostExecResult{
-		Name:     prefix,
-		Provider: target.Provider,
-		IP:       target.PrimaryIP,
-		Success:  true,
-		Output:   out,
+		Name:          prefix,
+		Provider:      target.Provider,
+		IP:            target.PrimaryIP,
+		Success:       true,
+		Output:        out,
+		OutputCapture: cuetry.StepOutputName(step),
 	}
 }
 
@@ -149,7 +159,12 @@ func runCueStepTemplateDry(out io.Writer, execute bool, i int, step cuetry.Recip
 	tpl := step.Template
 	preview := ""
 	capture := ""
-	if tpl != nil {
+	if strings.TrimSpace(step.Render) != "" {
+		preview = strings.TrimSpace(step.Render)
+		if outName := strings.TrimSpace(step.Output); outName != "" {
+			capture = fmt.Sprintf(" capture=%q", outName)
+		}
+	} else if tpl != nil {
 		preview = strings.TrimSpace(tpl.Template)
 		if len(preview) > 120 {
 			preview = preview[:119] + "…"
@@ -184,8 +199,8 @@ func recordTemplateCapture(
 	if id != "" && outputStore != nil {
 		outputStore.Record(id, hostName, stdout)
 	}
-	if step.Template != nil && strings.TrimSpace(step.Host) == cuetry.MatchLocalAIHost {
-		if name := strings.TrimSpace(step.Template.Output); name != "" && outputCapture != nil {
+	if strings.TrimSpace(step.Host) == cuetry.MatchLocalAIHost && outputCapture != nil {
+		if name := cuetry.StepOutputName(step); name != "" {
 			outputCapture.Set(name, stdout)
 		}
 	}

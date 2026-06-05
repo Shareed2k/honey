@@ -41,6 +41,10 @@ With global --record-dir or defaults.record_dir in config, writes one batch .hre
 invocation when recording is enabled: explicit --record-dir, or record_dir set in honey YAML
 (built-in default records/ alone does not enable cue-exec batch logs). Dry-run records the plan text; --execute records each step result.
 
+Supports `-o json` / `--output json` and `--json` to output structured, machine-readable JSON responses:
+- **Dry-run mode** (`--execute=false`) outputs `{"plan": "<raw-plan-text>"}`.
+- **Actual execution mode** (`--execute`) outputs `{"results": [<list-of-HostExecResult>]}`.
+
 ```
 honey cue-exec &lt;recipe.cue&gt; [name] [flags]
 ```

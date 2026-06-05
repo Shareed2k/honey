@@ -11,6 +11,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/recordings"
 	"github.com/shareed2k/honey/internal/safepath"
@@ -91,22 +92,9 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if flagRetryFailed != "" {
-		dir := resolveRecordingsDir(cmd)
-		prevEvents, err := recordings.LoadEvents(dir, flagRetryFailed)
-		if err != nil {
-			return fmt.Errorf("--retry-failed: %w", err)
-		}
-		succeeded := recordings.SucceededHosts(prevEvents)
-		filtered := records[:0]
-		for _, r := range records {
-			if _, ok := succeeded[r.Name+"@"+r.PrimaryIP]; !ok {
-				filtered = append(filtered, r)
-			}
-		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "retry-failed: %d succeeded host(s) skipped, retrying %d\n",
-			len(succeeded), len(filtered))
-		records = filtered
+	records, err = filterRetryFailedRecords(cmd, records)
+	if err != nil {
+		return err
 	}
 
 	if len(records) == 0 {
@@ -185,6 +173,28 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		SecretResolver: secRes,
 		PluginMgr:      pluginMgr,
 		Execute:        flagCueExecExecute,
+		JSON:           flagOutput == "json" || flagJSON,
 		Reg:            buildHostExecRegistry(),
 	}, rec)
+}
+
+func filterRetryFailedRecords(cmd *cobra.Command, records []hosts.Record) ([]hosts.Record, error) {
+	if flagRetryFailed == "" {
+		return records, nil
+	}
+	dir := resolveRecordingsDir(cmd)
+	prevEvents, err := recordings.LoadEvents(dir, flagRetryFailed)
+	if err != nil {
+		return nil, fmt.Errorf("--retry-failed: %w", err)
+	}
+	succeeded := recordings.SucceededHosts(prevEvents)
+	filtered := records[:0]
+	for _, r := range records {
+		if _, ok := succeeded[r.Name+"@"+r.PrimaryIP]; !ok {
+			filtered = append(filtered, r)
+		}
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "retry-failed: %d succeeded host(s) skipped, retrying %d\n",
+		len(succeeded), len(filtered))
+	return filtered, nil
 }

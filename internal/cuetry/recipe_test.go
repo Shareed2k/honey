@@ -506,6 +506,31 @@ recipe: {
 	}
 }
 
+func TestParseRemoteRecipe_stepHooks_defaultWhereRemote(t *testing.T) {
+	const src = `
+recipe: {
+	name: "hooks-default-remote"
+	steps: [{
+		host: "10.0.0.1"
+		command: "true"
+		hooks: {
+			on_success: {command: "echo ok"}
+		}
+	}]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Steps[0].Hooks == nil || r.Steps[0].Hooks.OnSuccess == nil {
+		t.Fatalf("hooks missing: %+v", r.Steps[0].Hooks)
+	}
+	if r.Steps[0].Hooks.OnSuccess.Where != "" {
+		t.Fatalf("where = %q, want empty default", r.Steps[0].Hooks.OnSuccess.Where)
+	}
+}
+
 func TestParseRemoteRecipe_stepHooks_localRunAsRejected(t *testing.T) {
 	const src = `
 recipe: {
@@ -675,5 +700,125 @@ recipe: {
 	}
 	if len(r.Handlers) != 1 || r.Handlers[0].ID != "restart-service" {
 		t.Fatalf("expected 1 handler, got %+v", r.Handlers)
+	}
+}
+
+func TestParseRemoteRecipe_loopTemplate(t *testing.T) {
+	const src = `
+recipe: {
+	name: "loop-template"
+	type: "graph"
+	steps: [
+		{
+			id: "fetch"
+			host: "*"
+			command: "printf 'a\\nb\\n'"
+		},
+		{
+			id: "use"
+			host: "${item}"
+			depends: ["fetch"]
+			loop: "{{ stepStdoutLines \"fetch\" | compact | toJson }}"
+			command: "echo ${item}"
+		},
+	]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Steps[1].Loop; got != `{{ stepStdoutLines "fetch" | compact | toJson }}` {
+		t.Fatalf("loop = %q", got)
+	}
+}
+
+func TestValidateRemoteRecipe_loopAndLoopFromConflict(t *testing.T) {
+	const src = `
+recipe: {
+	name: "loop-conflict"
+	type: "graph"
+	steps: [{
+		id: "use"
+		host: "${item}"
+		command: "echo ${item}"
+		loop: "{{ stepStdoutLines \"fetch\" | compact | toJson }}"
+		loop_from: {
+			step: "fetch"
+			extract: ".[]"
+		}
+	}]
+}
+`
+	err := ValidateRemoteRecipe([]byte(src))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "only one of loop or loop_from may be set") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRemoteRecipe_powerFields(t *testing.T) {
+	const src = `
+recipe: {
+	name: "power-fields"
+	type: "graph"
+	steps: [
+		{
+			id: "list_nodes"
+			host: "*"
+			command: "printf 'a\\nb\\n'"
+			output: "controllers_raw"
+		},
+		{
+			id: "controllers"
+			depends: ["list_nodes"]
+			render: "{{ outputStdoutLines \"controllers_raw\" | compact | toJson }}"
+			output: "controllers"
+		},
+		{
+			id: "restart"
+			depends: ["controllers"]
+			host: "${item}"
+			serial: 1
+			loop: "{{ outputStdout \"controllers\" }}"
+			command: "systemctl restart kafka.service"
+			changed_when: "true"
+			failed_when: "exit_code != 0"
+		},
+	]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Steps[0].Output; got != "controllers_raw" {
+		t.Fatalf("output = %q", got)
+	}
+	render := r.Steps[1]
+	if render.Render == "" || render.Output != "controllers" || render.Host != MatchLocalAIHost {
+		t.Fatalf("render step = %+v", render)
+	}
+	restart := r.Steps[2]
+	if restart.Serial != 1 || restart.ChangedWhen != "true" || restart.FailedWhen != "exit_code != 0" {
+		t.Fatalf("restart step = %+v", restart)
+	}
+}
+
+func TestParseRemoteRecipe_missingHostRejectedForCommand(t *testing.T) {
+	const src = `
+recipe: {
+	name: "missing-host"
+	steps: [{command: "true"}]
+}
+`
+	_, err := ParseRemoteRecipe([]byte(src), nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "host") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
