@@ -159,6 +159,12 @@ func (e *sshExecutor) Dial(user string, r hosts.Record) (HostClient, error) {
 	if e.reg == nil || e.reg.Dialer == nil {
 		return nil, errDialNotConfigured
 	}
+	user = strings.TrimSpace(user)
+	if user == "" {
+		if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+			user = u
+		}
+	}
 	host := strings.TrimSpace(r.PrimaryIP)
 	if host == "" {
 		return nil, errNoHostIP
@@ -178,12 +184,24 @@ func (e *sshExecutor) RunInteractive(user string, r hosts.Record) error {
 	if e.reg == nil || e.reg.Interactive == nil {
 		return errInteractiveNotConfigured
 	}
+	user = strings.TrimSpace(user)
+	if user == "" {
+		if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+			user = u
+		}
+	}
 	return e.reg.Interactive.RunInteractive(user, r, nil)
 }
 
 func (e *sshExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
 	if e.reg == nil || e.reg.Tunnel == nil {
 		return errTunnelNotConfigured
+	}
+	user = strings.TrimSpace(user)
+	if user == "" {
+		if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+			user = u
+		}
 	}
 	host := strings.TrimSpace(r.PrimaryIP)
 	if host == "" {

@@ -1,0 +1,44 @@
+FROM debian:bookworm-slim
+
+ARG TARGETARCH
+ARG TARGETPLATFORM
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        unzip \
+        openssh-client \
+        tmux \
+        shellcheck \
+        python3-flake8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# helm
+RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# tun2proxy binary from GitHub releases
+RUN case "$TARGETARCH" in \
+      amd64) arch=x86_64 ;; \
+      arm64) arch=aarch64 ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /tmp/tun2proxy.zip \
+      "https://github.com/tun2proxy/tun2proxy/releases/download/v0.8.1/tun2proxy-${arch}-unknown-linux-gnu.zip" \
+    && unzip -p /tmp/tun2proxy.zip tun2proxy-bin > /usr/local/bin/tun2proxy-bin \
+    && chmod +x /usr/local/bin/tun2proxy-bin \
+    && mkdir -p /data
+
+# ONNX runtime — copied from runtime/onnx/linux/{amd64,arm64}/ via goreleaser extra_files
+COPY runtime/onnx/linux/${TARGETARCH}/ /usr/lib/honey/onnx/
+COPY contrib/docker/config.yaml /data/config.yaml
+COPY ${TARGETPLATFORM}/honey /usr/local/bin/
+
+ENV HONEY_ONNXRUNTIME_LIB_DIR=/usr/lib/honey/onnx
+ENV HONEY_CONFIG=/data/config.yaml
+ENV XDG_CONFIG_HOME=/data
+ENV XDG_STATE_HOME=/data/state
+
+EXPOSE 8765
+
+ENTRYPOINT ["/usr/local/bin/honey"]
+CMD ["web", "--listen", "0.0.0.0:8765", "--browser=false"]

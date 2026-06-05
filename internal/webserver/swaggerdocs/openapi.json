@@ -310,6 +310,7 @@
             "type": "integer"
           },
           "anomaly_endpoint": {
+            "default": "http://localhost:11434/v1",
             "type": "string"
           },
           "anomaly_feedback_file": {
@@ -335,6 +336,9 @@
           },
           "anomaly_only": {
             "type": "boolean"
+          },
+          "anomaly_preprocessor": {
+            "type": "string"
           },
           "anomaly_strict": {
             "type": "boolean"

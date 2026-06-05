@@ -35,6 +35,22 @@ func whenSkippedResult(r hosts.Record) HostExecResult {
 	}
 }
 
+type contextKey string
+
+const hostFactsKey contextKey = "host_facts"
+
+func withHostFacts(ctx context.Context, facts map[string]map[string]any) context.Context {
+	return context.WithValue(ctx, hostFactsKey, facts)
+}
+
+func hostFactsFromContext(ctx context.Context) map[string]map[string]any {
+	val, ok := ctx.Value(hostFactsKey).(map[string]map[string]any)
+	if !ok {
+		return nil
+	}
+	return val
+}
+
 func compileStepWhen(step cuetry.RecipeStep) (*cuetry.WhenProgram, error) {
 	w := strings.TrimSpace(step.When)
 	if w == "" {
@@ -62,6 +78,10 @@ func buildWhenEvalOpts(ctx context.Context, recipe cuetry.Recipe, step cuetry.Re
 	} else {
 		steps = map[string]cuetry.StepView{}
 	}
+	var facts map[string]any
+	if hf := hostFactsFromContext(ctx); hf != nil {
+		facts = hf[host.Name]
+	}
 	return cuetry.WhenEvalOpts{
 		RecipeName: recipe.Name,
 		Execute:    execute,
@@ -71,6 +91,7 @@ func buildWhenEvalOpts(ctx context.Context, recipe cuetry.Recipe, step cuetry.Re
 		Secrets:    secrets,
 		Env:        env,
 		KV:         kv,
+		Facts:      facts,
 	}, nil
 }
 

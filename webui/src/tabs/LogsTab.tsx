@@ -58,7 +58,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
   const [autoScroll, setAutoScroll] = useState(true);
 
   const [rcaOpen, setRcaOpen] = useState(false);
-  const [rcaLine, setRcaLine] = useState('');
+  const [_rcaLine, setRcaLine] = useState('');
   const [rcaDiag, setRcaDiag] = useState('');
   const [rcaLoading, setRcaLoading] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -426,6 +426,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
                       options={[
                         { value: '', label: 'None' },
                         { value: 'lshd', label: 'LSHD' },
+                        { value: 'lff', label: 'LFF' },
                       ]}
                     />
                   </Space>

@@ -212,7 +212,7 @@ export function App() {
     // Terminals
     if (terminals.length > 0) {
       const joined = terminals.map(t => {
-        const rKey = (t.record as any)._key || recordKey(t.record);
+        const rKey = (t.record as { _key?: string })._key || recordKey(t.record);
         return `${t.id}|${rKey}|${t.pve || 'serial'}|${t.truenasConsole || 'ssh'}`;
       }).join(',');
       params.set('terminals', joined);

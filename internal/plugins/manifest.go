@@ -26,6 +26,7 @@ type Manifest struct {
 	Version              string            `yaml:"version"`
 	Capabilities         []string          `yaml:"capabilities"`
 	SecretRefPrefixes    []string          `yaml:"secret_ref_prefixes,omitempty"`
+	AllowK8sHTTP         bool              `yaml:"allow_k8s_http,omitempty"`
 	AllowHostExec        bool              `yaml:"allow_host_exec,omitempty"`
 	AllowRemoteExec      bool              `yaml:"allow_remote_exec,omitempty"`
 	AllowSFTP            bool              `yaml:"allow_sftp,omitempty"`

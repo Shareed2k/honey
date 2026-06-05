@@ -73,6 +73,7 @@ func newWhenEnv() (*cel.Env, error) {
 		cel.Variable("env", cel.MapType(cel.StringType, cel.StringType)),
 		cel.Variable("execute", cel.BoolType),
 		cel.Variable("recipe_name", cel.StringType),
+		cel.Variable("facts", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Function("kv_get",
 			cel.Overload("kv_get_string", []*cel.Type{cel.StringType}, cel.StringType,
 				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
@@ -114,6 +115,19 @@ type WhenEvalOpts struct {
 	Secrets    map[string]string
 	Env        map[string]string
 	KV         KVReader
+	Facts      map[string]any
+}
+
+// DefaultFacts returns the default fallback facts map with unknown values.
+func DefaultFacts() map[string]any {
+	return map[string]any{
+		"os":      "unknown",
+		"arch":    "unknown",
+		"id":      "unknown",
+		"version": "unknown",
+		"init":    "unknown",
+		"pkg_mgr": "unknown",
+	}
 }
 
 // EvalWhen evaluates a compiled when program; false means skip the host/step.
@@ -157,6 +171,11 @@ func EvalWhen(prog *WhenProgram, opts WhenEvalOpts) (bool, error) {
 		return err == nil && found
 	}
 
+	facts := opts.Facts
+	if facts == nil {
+		facts = make(map[string]any)
+	}
+
 	act := map[string]any{
 		"host":        hostToCELMap(opts.Host),
 		"steps":       stepsToCELMap(opts.Steps),
@@ -164,6 +183,7 @@ func EvalWhen(prog *WhenProgram, opts WhenEvalOpts) (bool, error) {
 		"env":         opts.Env,
 		"execute":     opts.Execute,
 		"recipe_name": opts.RecipeName,
+		"facts":       facts,
 	}
 	if opts.Dest != nil {
 		act["dest"] = hostToCELMap(*opts.Dest)

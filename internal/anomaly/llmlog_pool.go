@@ -8,12 +8,12 @@ package anomaly
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
 	"os"
 	"strings"
 	"sync"
 
+	"github.com/shareed2k/honey/internal/jsonutil"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
@@ -166,7 +166,7 @@ func LoadFeedbackDemos(filePath string) error {
 		}
 
 		var rec feedbackJSON
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		if err := jsonutil.Unmarshal([]byte(line), &rec); err != nil {
 			return err
 		}
 

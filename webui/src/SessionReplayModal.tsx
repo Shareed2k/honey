@@ -161,7 +161,7 @@ export function SessionReplayModal({
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [cursor, setCursor] = useState(0);
+  const [_cursor, setCursor] = useState(0);
   const [elapsedBase, setElapsedBase] = useState(0);
   const startTsRef = useRef(0);
   const elapsedRef = useRef(0);

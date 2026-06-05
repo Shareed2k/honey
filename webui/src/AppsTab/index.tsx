@@ -206,7 +206,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
     }
   };
 
-  const useTableSnippet = (schema: string, table: string) => {
+  const insertTableSnippet = (schema: string, table: string) => {
     setSql(`select *\nfrom "${schema}"."${table}"\nlimit 100;`);
   };
 
@@ -292,7 +292,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
       title: 'Local Address',
       key: 'local_addr',
       render: (_: unknown, sess: ProxySession) => sess.app.type === 'http' ? (
-        <a href={`${window.location.protocol}//${sess.app.name}.localhost${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} target="_blank" rel="noreferrer" title={`Internal Proxy -> ${sess.app.upstream}`}>
+        <a href={`${window.location.protocol}//${sess.app.name}.${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`} target="_blank" rel="noreferrer" title={`Internal Proxy -> ${sess.app.upstream}`}>
           Open Web App ↗
         </a>
       ) : (
@@ -416,7 +416,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
                           {app.type === 'http' && (
                             <Button
                               type="primary"
-                              href={`${window.location.protocol}//${app.name}.localhost${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`}
+                              href={`${window.location.protocol}//${app.name}.${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}/?token=${getToken()}`}
                               target="_blank"
                               rel="noreferrer"
                               style={{ flex: 1 }}
@@ -549,7 +549,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
                                           <span>{t.name}</span>
                                         </button>
                                         <div className="sql-table-actions">
-                                          <button onClick={() => useTableSnippet(schema, t.name)} title="Insert SELECT snippet">↦</button>
+                                          <button onClick={() => insertTableSnippet(schema, t.name)} title="Insert SELECT snippet">↦</button>
                                         </div>
                                       </div>
                                       {tableOpen && t.columns.length > 0 && (

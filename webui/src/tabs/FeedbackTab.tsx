@@ -178,8 +178,6 @@ export function FeedbackTab() {
           style={{
             margin: 0,
             padding: '4px 8px',
-            background: '#fafafa',
-            border: '1px solid #e8e8e8',
             borderRadius: 4,
             maxHeight: 100,
             overflowY: 'auto',

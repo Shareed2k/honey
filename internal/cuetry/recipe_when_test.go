@@ -213,3 +213,25 @@ func TestValidateRecipeGraph_linearWhenID(t *testing.T) {
 		t.Fatal("expected id required")
 	}
 }
+
+func TestEvalWhen_withFacts(t *testing.T) {
+	t.Parallel()
+	prog, err := CompileWhen("facts.os == 'linux' && facts.pkg_mgr == 'apt'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := WhenEvalOpts{
+		Host:    hosts.Record{Name: "web-1"},
+		Execute: true,
+		Steps:   map[string]StepView{},
+		Secrets: map[string]string{},
+		Facts:   map[string]any{"os": "linux", "pkg_mgr": "apt"},
+	}
+	ok, err := EvalWhen(prog, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected true")
+	}
+}

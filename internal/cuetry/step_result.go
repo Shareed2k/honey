@@ -111,6 +111,35 @@ func (s *StepResultStore) HostResult(stepID, hostName string) (HostStepResult, b
 	return v, ok
 }
 
+// StepsTemplateData builds a template-facing aggregate view of prior step results.
+func (s *StepResultStore) StepsTemplateData() map[string]any {
+	out := make(map[string]any)
+	if s == nil || s.byStep == nil {
+		return out
+	}
+	for stepID, hosts := range s.byStep {
+		var view HostStepResult
+		for _, r := range hosts {
+			if r.Succeeded && strings.TrimSpace(r.Stdout) != "" {
+				view = r
+				break
+			}
+			if view.Stdout == "" {
+				view = r
+			}
+		}
+		stdout := strings.TrimSpace(view.Stdout)
+		out[stepID] = map[string]any{
+			"succeeded":    view.Succeeded,
+			"skipped":      view.Skipped,
+			"exit_code":    view.ExitCode,
+			"stdout":       stdout,
+			"stdout_lines": strings.Split(stdout, "\n"),
+		}
+	}
+	return out
+}
+
 // StepsViewAggregated builds a per-step view across all hosts (any succeeded, first stdout).
 func (s *StepResultStore) StepsViewAggregated() map[string]StepView {
 	out := make(map[string]StepView)

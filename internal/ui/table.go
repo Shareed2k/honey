@@ -748,10 +748,10 @@ func (m *model) popupResultLines() []string {
 	lines = append(lines, "")
 	lines = append(lines, "--- Output ---")
 
-	if strings.TrimSpace(r.Output) == "" {
+	if display := cueRecipeDisplayOutput(r); strings.TrimSpace(display) == "" {
 		lines = append(lines, "(no output)")
 	} else {
-		lines = append(lines, strings.Split(r.Output, "\n")...)
+		lines = append(lines, strings.Split(display, "\n")...)
 	}
 
 	if strings.TrimSpace(r.HookPhase) != "" || strings.TrimSpace(r.HookOutput) != "" {

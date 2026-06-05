@@ -1,0 +1,5 @@
+id: sqlite
+version: "0.1.0"
+capabilities:
+  - custom_step
+allow_kv: true
