@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/postgres"
 )
 
 func TestCueStepAllTargetsTransientTransportFailed(t *testing.T) {
@@ -649,4 +653,132 @@ func TestCueRun_loopAbortedOnHookFailure(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected only 1 result, got: %d", len(results))
 	}
+}
+
+func TestCueRun_opensearchStep(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" && r.URL.Path == "/my-index/_doc/doc1" {
+			_, _ = w.Write([]byte(`{"_index":"my-index","_id":"doc1","found":true,"_source":{"message":"hello"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cache := NewClientCache()
+	cache.SetRegistry(&hostexec.StandardRegistry{})
+
+	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
+	run := &cueRun{
+		CueRecipeRunParams: CueRecipeRunParams{
+			Recipe:  cuetry.Recipe{},
+			Records: []hosts.Record{rec},
+			SSHUser: "root",
+		},
+		cache:         cache,
+		outputStore:   cuetry.NewStepOutputStore(),
+		outputCapture: cuetry.NewRecipeOutputCapture(),
+	}
+
+	step := cuetry.RecipeStep{
+		ID:   "get_doc",
+		Host: "h1",
+		Opensearch: &cuetry.RecipeStepOpensearch{
+			Addresses: []string{server.URL},
+			Index:     "my-index",
+			Action:    "get",
+			DocID:     "doc1",
+			Output:    "doc_result",
+		},
+	}
+
+	ch := make(chan HostExecResult, 10)
+	results, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(ch)
+
+	if len(results) != 1 || !results[0].Success {
+		t.Fatalf("unexpected step outcome: %+v", results)
+	}
+
+	captured, ok := run.outputCapture.Get("doc_result")
+	if !ok {
+		t.Fatal("missing captured output 'doc_result'")
+	}
+	if !strings.Contains(captured, "hello") {
+		t.Errorf("unexpected captured value: %q", captured)
+	}
+}
+
+func TestCueRun_postgresStep(t *testing.T) {
+	cache := NewClientCache()
+	cache.SetRegistry(&hostexec.StandardRegistry{})
+
+	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
+
+	// Create mock secret resolver
+	mockResolver := &mockSecretResolver{
+		resolveFunc: func(ref string) (string, error) {
+			if strings.Contains(ref, "PG_DSN") || strings.Contains(ref, "secure:v1:test") {
+				return "postgresql://postgres:password@localhost:5432/postgres", nil
+			}
+			return "", fmt.Errorf("not found")
+		},
+	}
+
+	run := &cueRun{
+		CueRecipeRunParams: CueRecipeRunParams{
+			Recipe: cuetry.Recipe{
+				Defaults: &cuetry.RecipeDefaults{
+					Secrets: map[string]string{
+						"PG_DSN": "secure:v1:test",
+					},
+				},
+			},
+			Records:        []hosts.Record{rec},
+			SSHUser:        "root",
+			SecretResolver: mockResolver,
+			Pools:          postgres.NewPoolManager(),
+		},
+		cache:         cache,
+		outputStore:   cuetry.NewStepOutputStore(),
+		outputCapture: cuetry.NewRecipeOutputCapture(),
+	}
+
+	step := cuetry.RecipeStep{
+		ID:   "query_pg",
+		Host: "h1",
+		Postgres: &cuetry.RecipeStepPostgres{
+			DSNSecret: "PG_DSN",
+			Action:    "query",
+			SQL:       "SELECT 1 AS ok",
+		},
+	}
+
+	run.Execute = false
+
+	ch := make(chan HostExecResult, 10)
+	results, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(ch)
+
+	if len(results) != 1 || !results[0].Success {
+		t.Fatalf("unexpected step outcome: %+v", results)
+	}
+}
+
+type mockSecretResolver struct {
+	resolveFunc func(ref string) (string, error)
+}
+
+func (m *mockSecretResolver) Resolve(_ context.Context, ref string) (string, error) {
+	if m.resolveFunc != nil {
+		return m.resolveFunc(ref)
+	}
+	return "", fmt.Errorf("not implemented")
 }

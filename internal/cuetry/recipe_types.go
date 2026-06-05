@@ -169,43 +169,45 @@ type RecipeLoop struct {
 // Host selects targets: literal IP, exact name, "*", "re:…", or "_" for ai only (see resolve.go). For agent_transfer,
 // host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
 type RecipeStep struct {
-	ID            string               `json:"id,omitempty"`
-	Depends       []string             `json:"depends,omitempty"`
-	Host          string               `json:"host"`
-	SSHPort       int                  `json:"ssh_port,omitempty"`
-	SSHPrivateKey string               `json:"ssh_private_key,omitempty"`
-	Command       string               `json:"command,omitempty"`
-	Render        string               `json:"render,omitempty"`
-	Put           *RecipeFileTransfer  `json:"put,omitempty"`
-	Get           *RecipeFileTransfer  `json:"get,omitempty"`
-	Script        *RecipeFileTransfer  `json:"script,omitempty"`
-	AgentTransfer *RecipeAgentTransfer `json:"agent_transfer,omitempty"`
-	AI            *RecipeAI            `json:"ai,omitempty"`
-	Template      *RecipeStepTemplate  `json:"template,omitempty"`
-	Plugin        *RecipeStepPlugin    `json:"plugin,omitempty"`
-	Tunnel        *RecipeStepTunnel    `json:"tunnel,omitempty"`
-	Docker        *RecipeStepDocker    `json:"docker,omitempty"`
-	K8s           *RecipeStepK8s       `json:"k8s,omitempty"`
-	Notify        *RecipeNotify        `json:"notify,omitempty"`
-	Hooks         *RecipeStepHooks     `json:"hooks,omitempty"`
-	KVTunnel      *bool                `json:"kv_tunnel,omitempty"`
-	MaxParallel   int                  `json:"max_parallel,omitempty"`
-	Serial        int                  `json:"serial,omitempty"`
-	EnvFrom       []EnvFromRef         `json:"env_from,omitempty"`
-	RunAs         string               `json:"run_as,omitempty"`
-	Env           map[string]string    `json:"env,omitempty"`
-	Secrets       map[string]string    `json:"secrets,omitempty"`
-	When          string               `json:"when,omitempty"`
-	ChangedWhen   string               `json:"changed_when,omitempty"`
-	FailedWhen    string               `json:"failed_when,omitempty"`
-	Retry         *RecipeStepRetry     `json:"retry,omitempty"`
-	Timeout       string               `json:"timeout,omitempty"`
-	IgnoreErrors  bool                 `json:"ignore_errors,omitempty"`
-	CheckCmd      string               `json:"check_cmd,omitempty"`
-	Output        string               `json:"output,omitempty"`
-	Loop          string               `json:"loop,omitempty"`
-	LoopFrom      *RecipeLoop          `json:"loop_from,omitempty"`
-	NotifyHandler []string             `json:"notify_handler,omitempty"`
+	ID            string                `json:"id,omitempty"`
+	Depends       []string              `json:"depends,omitempty"`
+	Host          string                `json:"host"`
+	SSHPort       int                   `json:"ssh_port,omitempty"`
+	SSHPrivateKey string                `json:"ssh_private_key,omitempty"`
+	Command       string                `json:"command,omitempty"`
+	Render        string                `json:"render,omitempty"`
+	Put           *RecipeFileTransfer   `json:"put,omitempty"`
+	Get           *RecipeFileTransfer   `json:"get,omitempty"`
+	Script        *RecipeFileTransfer   `json:"script,omitempty"`
+	AgentTransfer *RecipeAgentTransfer  `json:"agent_transfer,omitempty"`
+	AI            *RecipeAI             `json:"ai,omitempty"`
+	Template      *RecipeStepTemplate   `json:"template,omitempty"`
+	Plugin        *RecipeStepPlugin     `json:"plugin,omitempty"`
+	Tunnel        *RecipeStepTunnel     `json:"tunnel,omitempty"`
+	Docker        *RecipeStepDocker     `json:"docker,omitempty"`
+	K8s           *RecipeStepK8s        `json:"k8s,omitempty"`
+	Opensearch    *RecipeStepOpensearch `json:"opensearch,omitempty"`
+	Postgres      *RecipeStepPostgres   `json:"postgres,omitempty"`
+	Notify        *RecipeNotify         `json:"notify,omitempty"`
+	Hooks         *RecipeStepHooks      `json:"hooks,omitempty"`
+	KVTunnel      *bool                 `json:"kv_tunnel,omitempty"`
+	MaxParallel   int                   `json:"max_parallel,omitempty"`
+	Serial        int                   `json:"serial,omitempty"`
+	EnvFrom       []EnvFromRef          `json:"env_from,omitempty"`
+	RunAs         string                `json:"run_as,omitempty"`
+	Env           map[string]string     `json:"env,omitempty"`
+	Secrets       map[string]string     `json:"secrets,omitempty"`
+	When          string                `json:"when,omitempty"`
+	ChangedWhen   string                `json:"changed_when,omitempty"`
+	FailedWhen    string                `json:"failed_when,omitempty"`
+	Retry         *RecipeStepRetry      `json:"retry,omitempty"`
+	Timeout       string                `json:"timeout,omitempty"`
+	IgnoreErrors  bool                  `json:"ignore_errors,omitempty"`
+	CheckCmd      string                `json:"check_cmd,omitempty"`
+	Output        string                `json:"output,omitempty"`
+	Loop          string                `json:"loop,omitempty"`
+	LoopFrom      *RecipeLoop           `json:"loop_from,omitempty"`
+	NotifyHandler []string              `json:"notify_handler,omitempty"`
 }
 
 // NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).
@@ -338,4 +340,37 @@ type DockerExec struct {
 // DockerStop configures stopping a running container.
 type DockerStop struct {
 	Container string `json:"container"`
+}
+
+// RecipeStepOpensearch configures an OpenSearch engine API step.
+type RecipeStepOpensearch struct {
+	Addresses []string       `json:"addresses,omitempty"`
+	Username  string         `json:"username,omitempty"`
+	Password  string         `json:"password,omitempty"`
+	APIKey    string         `json:"api_key,omitempty"`
+	Insecure  bool           `json:"insecure,omitempty"`
+	Index     string         `json:"index"`
+	Action    string         `json:"action"` // "get", "search", "index"
+	DocID     string         `json:"doc_id,omitempty"`
+	Body      map[string]any `json:"body,omitempty"`
+	Output    string         `json:"output,omitempty"`
+}
+
+// RecipeStepPostgres configures a PostgreSQL engine API step.
+type RecipeStepPostgres struct {
+	DSNSecret     string            `json:"dsn_secret"`
+	Action        string            `json:"action"` // "query", "exec", "migrate"
+	SQL           string            `json:"sql,omitempty"`
+	Params        json.RawMessage   `json:"params,omitempty"`
+	TimeoutMS     int               `json:"timeout_ms,omitempty"`
+	Readonly      *bool             `json:"readonly,omitempty"`
+	KVKey         string            `json:"kv_key,omitempty"`
+	KVKeyPerHost  bool              `json:"kv_key_per_host,omitempty"`
+	Extract       map[string]string `json:"extract,omitempty"`
+	Host          string            `json:"host,omitempty"`
+	Port          string            `json:"port,omitempty"`
+	TunnelStep    string            `json:"tunnel_step,omitempty"`
+	MigrationsDir string            `json:"migrations_dir,omitempty"`
+	Files         []string          `json:"files,omitempty"`
+	Output        string            `json:"output,omitempty"`
 }

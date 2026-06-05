@@ -211,6 +211,35 @@ const schemaSource = `
 			ttl_seconds?:     int
 		})
 	})
+	opensearch?: close({
+		addresses?: [...string]
+		username?:  string
+		password?:  string
+		api_key?:   string
+		insecure?:  bool
+		index:      string
+		action:     "get" | "search" | "index"
+		doc_id?:    string
+		body?:      {...}
+		output?:    string
+	})
+	postgres?: close({
+		dsn_secret:      string
+		action:          "query" | "exec" | "migrate"
+		sql?:            string
+		params?:         [...]
+		timeout_ms?:     int
+		readonly?:       bool
+		kv_key?:         string
+		kv_key_per_host?: bool
+		extract?:        {[string]: string}
+		host?:           string
+		port?:           string
+		tunnel_step?:    string
+		migrations_dir?: string
+		files?:          [...string]
+		output?:         string
+	})
 	hooks?: close({
 		on_success?: #StepHook
 		on_failure?: #StepHook

@@ -571,33 +571,7 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 
 	retryCfg := cuetry.EffectiveRetry(step, run.Recipe.Defaults)
 
-	var stepErr error
-	switch kind {
-	case cuetry.StepKindCommand:
-		stepErr = streamCueStepCommand(ctx, run, i, kind, step, targets, ch, retryCfg, &attemptMax)
-
-	case cuetry.StepKindPut:
-		stepErr = streamCueStepPut(ctx, run, step, targets, ch, retryCfg, &attemptMax)
-
-	case cuetry.StepKindGet:
-		stepErr = streamCueStepGet(ctx, run, step, targets, ch, retryCfg, &attemptMax)
-
-	case cuetry.StepKindScript:
-		stepErr = streamCueStepScript(ctx, run, i, kind, step, targets, ch, retryCfg, &attemptMax)
-
-	case cuetry.StepKindPlugin:
-		stepErr = streamCueStepPlugin(ctx, run, i, kind, step, targets, ch, retryCfg, &attemptMax)
-
-	case cuetry.StepKindTunnel:
-		stepErr = streamCueStepTunnel(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
-
-	case cuetry.StepKindK8s:
-		stepErr = streamCueStepK8s(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
-	case cuetry.StepKindDocker:
-		stepErr = streamCueStepDocker(ctx, run, i, step, targets, ch, retryCfg, &attemptMax)
-	case cuetry.StepKindTemplate:
-		_, stepErr = streamCueTemplateStep(ctx, run, i, step, ch)
-	}
+	stepErr := dispatchStepByKind(ctx, run, i, kind, step, targets, ch, retryCfg, &attemptMax)
 
 	close(ch)
 	<-done
@@ -619,6 +593,36 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 		return stepResults, stepErr
 	}
 	return stepResults, nil
+}
+
+func dispatchStepByKind(ctx context.Context, run *cueRun, i int, kind cuetry.StepKind, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	switch kind {
+	case cuetry.StepKindCommand:
+		return streamCueStepCommand(ctx, run, i, kind, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindPut:
+		return streamCueStepPut(ctx, run, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindGet:
+		return streamCueStepGet(ctx, run, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindScript:
+		return streamCueStepScript(ctx, run, i, kind, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindPlugin:
+		return streamCueStepPlugin(ctx, run, i, kind, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindTunnel:
+		return streamCueStepTunnel(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindK8s:
+		return streamCueStepK8s(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindDocker:
+		return streamCueStepDocker(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindOpensearch:
+		return streamCueStepOpensearch(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindPostgres:
+		return streamCueStepPostgres(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.StepKindTemplate:
+		_, err := streamCueTemplateStep(ctx, run, i, step, ch)
+		return err
+	default:
+		return nil
+	}
 }
 
 func streamCueStepAgentTransferWhen(ctx context.Context, run *cueRun, i int, step cuetry.RecipeStep) ([]HostExecResult, error) {

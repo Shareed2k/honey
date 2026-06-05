@@ -26,7 +26,6 @@ require (
 	github.com/coregx/coregex v0.12.21
 	github.com/creack/pty v1.1.24
 	github.com/creasty/defaults v1.8.0
-	github.com/elastic/go-elasticsearch/v8 v8.19.6
 	github.com/extism/go-pdk v1.1.3
 	github.com/extism/go-sdk v1.7.1
 	github.com/getkin/kin-openapi v0.139.0
@@ -56,6 +55,7 @@ require (
 	github.com/ncruces/go-sqlite3 v0.34.3
 	github.com/nikoksr/notify v1.5.0
 	github.com/olekukonko/tablewriter v1.1.4
+	github.com/opensearch-project/opensearch-go/v2 v2.3.0
 	github.com/pkg/sftp v1.13.10
 	github.com/prometheus/alertmanager v0.32.1
 	github.com/prometheus/client_golang v1.23.2
@@ -196,7 +196,6 @@ require (
 	github.com/dominikbraun/graph v0.23.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240819160327-2d926c5d788a // indirect
-	github.com/elastic/elastic-transport-go/v8 v8.9.0 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/emicklei/proto v1.14.3 // indirect

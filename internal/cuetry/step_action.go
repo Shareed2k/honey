@@ -21,6 +21,8 @@ const (
 	StepKindTunnel
 	StepKindK8s
 	StepKindDocker
+	StepKindOpensearch
+	StepKindPostgres
 )
 
 // StepKindLabel returns a short stable name for defaults and logging.
@@ -48,6 +50,10 @@ func StepKindLabel(k StepKind) string {
 		return "k8s"
 	case StepKindDocker:
 		return "docker"
+	case StepKindOpensearch:
+		return "opensearch"
+	case StepKindPostgres:
+		return "postgres"
 	default:
 		return "unknown"
 	}
@@ -120,9 +126,15 @@ func ClassifyStep(s RecipeStep) (StepKind, error) {
 	if err := check(StepKindDocker, s.Docker != nil, func() error { return validateDockerStep(s.Docker) }); err != nil {
 		return 0, err
 	}
+	if err := check(StepKindOpensearch, s.Opensearch != nil, func() error { return validateOpensearchStep(s.Opensearch) }); err != nil {
+		return 0, err
+	}
+	if err := check(StepKindPostgres, s.Postgres != nil, func() error { return validatePostgresStep(s.Postgres) }); err != nil {
+		return 0, err
+	}
 
 	if !found {
-		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, or docker")
+		return 0, fmt.Errorf("need exactly one of command, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, or postgres")
 	}
 	return kind, nil
 }
@@ -272,11 +284,39 @@ func validateFileTransfer(label string, op *RecipeFileTransfer) error {
 	return nil
 }
 
+func validateOpensearchStep(o *RecipeStepOpensearch) error {
+	action := strings.ToLower(strings.TrimSpace(o.Action))
+	if action != "get" && action != "search" && action != "index" {
+		return fmt.Errorf("opensearch.action must be one of: get, search, index")
+	}
+	if action == "get" && strings.TrimSpace(o.DocID) == "" {
+		return fmt.Errorf("opensearch.doc_id is required for get action")
+	}
+	if strings.TrimSpace(o.Index) == "" {
+		return fmt.Errorf("opensearch.index is required")
+	}
+	return nil
+}
+
+func validatePostgresStep(p *RecipeStepPostgres) error {
+	action := strings.ToLower(strings.TrimSpace(p.Action))
+	if action != "query" && action != "exec" && action != "migrate" {
+		return fmt.Errorf("postgres.action must be one of: query, exec, migrate")
+	}
+	if strings.TrimSpace(p.DSNSecret) == "" {
+		return fmt.Errorf("postgres.dsn_secret is required")
+	}
+	if (action == "query" || action == "exec") && strings.TrimSpace(p.SQL) == "" {
+		return fmt.Errorf("postgres.sql is required for %s action", action)
+	}
+	return nil
+}
+
 // ValidateStepRunAsForKind rejects per-step run_as on put/get (SFTP only).
 // Script steps allow run_as for the execute phase; defaults.run_as applies there too.
 func ValidateStepRunAsForKind(kind StepKind, step RecipeStep) error {
-	if (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI || kind == StepKindTemplate || kind == StepKindTunnel || kind == StepKindK8s) && strings.TrimSpace(step.RunAs) != "" {
-		return fmt.Errorf("run_as on put/get/agent_transfer/ai/template/tunnel/k8s steps is not supported")
+	if (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI || kind == StepKindTemplate || kind == StepKindTunnel || kind == StepKindK8s || kind == StepKindOpensearch || kind == StepKindPostgres) && strings.TrimSpace(step.RunAs) != "" {
+		return fmt.Errorf("run_as on put/get/agent_transfer/ai/template/tunnel/k8s/opensearch/postgres steps is not supported")
 	}
 	return nil
 }

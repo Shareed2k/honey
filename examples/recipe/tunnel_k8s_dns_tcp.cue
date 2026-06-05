@@ -12,15 +12,9 @@
 // Execute:
 //   honey cue-exec --execute examples/recipe/tunnel_k8s_dns_tcp.cue "k8s:coredns-xxxxx"
 //
-// Operator (TCP DNS — not UDP):
+// Operator query:
 //   dig @127.0.0.1 -p 1053 +tcp kubernetes.default.svc.cluster.local
-//
-// For UDP DNS from your laptop, use SSH to a node/worker instead:
-//   examples/recipe/tunnel_udp_dns.cue
-//
-// To query DNS inside the cluster without a tunnel, run dig in a debug pod (no tunnel step):
-//   host: "k8s:debug-pod"
-//   command: "dig +short kubernetes.default.svc.cluster.local"
+
 recipe: {
 	name: "tunnel-k8s-dns-tcp"
 
@@ -35,6 +29,6 @@ recipe: {
 		{
 			host:    "k8s:coredns-xxxxx"
 			command: "sleep 600"
-		},
+		}
 	]
 }

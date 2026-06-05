@@ -5,20 +5,20 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/elastic/go-elasticsearch/v8"
+	"github.com/opensearch-project/opensearch-go/v2"
 
 	"github.com/shareed2k/honey/internal/jsonutil"
 )
 
-// ElasticsearchStorage persists records to an Elasticsearch index.
+// ElasticsearchStorage persists records to an OpenSearch index.
 type ElasticsearchStorage struct {
-	client *elasticsearch.Client
+	client *opensearch.Client
 	index  string
 }
 
-// NewElasticsearchStorage connects to an Elasticsearch instance via configuration.
-func NewElasticsearchStorage(cfg elasticsearch.Config, index string) (*ElasticsearchStorage, error) {
-	client, err := elasticsearch.NewClient(cfg)
+// NewElasticsearchStorage connects to an OpenSearch instance via configuration.
+func NewElasticsearchStorage(cfg opensearch.Config, index string) (*ElasticsearchStorage, error) {
+	client, err := opensearch.NewClient(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func (e *ElasticsearchStorage) Write(ctx context.Context, rec StorageRecord) err
 	return e.WriteBatch(ctx, []StorageRecord{rec})
 }
 
-// WriteBatch performs high-speed bulk inserts using the Elasticsearch bulk API.
+// WriteBatch performs high-speed bulk inserts using the OpenSearch bulk API.
 func (e *ElasticsearchStorage) WriteBatch(ctx context.Context, records []StorageRecord) error {
 	var buf bytes.Buffer
 	for _, rec := range records {
