@@ -1,0 +1,5 @@
+id: k8s-probe
+version: "0.1.0"
+capabilities:
+  - custom_step
+allow_k8s_http: true

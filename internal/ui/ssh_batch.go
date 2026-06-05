@@ -56,18 +56,21 @@ func closeSSHIfEphemeral(cache *ClientCache, client HostClient) {
 
 // HostExecResult is the outcome of one non-interactive ssh run.
 type HostExecResult struct {
-	Name     string
-	IP       string
-	Provider string
-	Success  bool
-	Skipped  bool // when CEL was false; no SSH/SFTP ran
-	ExitCode int
-	Output   string
-	ErrMsg   string // transport / spawn failure (not remote stderr)
+	Name          string
+	IP            string
+	Provider      string
+	Success       bool
+	Skipped       bool // when CEL was false; no SSH/SFTP ran
+	Changed       bool // true if mutation occurred (e.g. check_cmd was absent, or check_cmd failed)
+	ExitCode      int
+	Output        string
+	OutputCapture string // named CUE output capture; display may suppress successful stdout
+	ErrMsg        string // transport / spawn failure (not remote stderr)
 
 	// HookPhase / HookOutput are set when a CUE step hook ran after the main result (command/script only).
 	HookPhase  string // "on_success" or "on_failure"
 	HookOutput string // captured stdout+stderr from the hook (local or remote)
+	HookFailed bool   // true if the hook execution failed
 }
 
 // SSHPostHostResultFunc runs after each host's main SSH run and before the result is emitted (e.g. CUE step hooks).
@@ -116,11 +119,18 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kv
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			effUser := strings.TrimSpace(user)
+			if effUser == "" {
+				if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+					effUser = u
+				}
+			}
+
 			run := func() HostExecResult {
 				if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
-					return runOneRemoteTrueNAS(ctx, user, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+					return runOneRemoteTrueNAS(ctx, effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
 				}
-				return runOneRemoteSSH(user, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+				return runOneRemoteSSH(effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
 			}
 			outcome := runHostExecWithRetry(ctx, opts.RetryCfg, run)
 			recordMaxAttempts(opts.AttemptMax, outcome.Attempts)
@@ -293,7 +303,13 @@ func runOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel b
 				closeSSHIfEphemeral(cache, client)
 				res.ExitCode = ee.ExitStatus()
 				res.Success = false
-				if res.ExitCode != 0 {
+				if res.ExitCode == 124 {
+					if strings.Contains(res.Output, "__HONEY_TIMEOUT_MISSING__") {
+						res.ErrMsg = "remote host missing `timeout` command (install coreutils or remove step timeout)"
+					} else {
+						res.ErrMsg = "command timed out (exit 124)"
+					}
+				} else if res.ExitCode != 0 {
 					res.ErrMsg = fmt.Sprintf("exit %d", res.ExitCode)
 				}
 				return res

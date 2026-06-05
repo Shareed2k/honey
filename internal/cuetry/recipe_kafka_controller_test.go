@@ -24,27 +24,24 @@ func TestParseKafkaControllerRollingRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := 2 + 2*len(recs) // list_nodes, pre_verify, restart+verify per controller
-	if got := len(r.Steps); got != want {
-		t.Fatalf("steps: got %d want %d", got, want)
+	if got := len(r.Steps); got != 3 {
+		t.Fatalf("steps: got %d want 3", got)
 	}
-	if r.Steps[0].ID != "list_nodes" || r.Steps[1].ID != "pre_verify" {
+	if r.Steps[0].ID != "list_nodes" || r.Steps[1].ID != "verify_cluster_health" {
 		t.Fatalf("first steps: %#v", r.Steps[:2])
 	}
-	if r.Steps[2].ID != "restart_0" || r.Steps[3].ID != "verify_0" {
-		t.Fatalf("restart pair: %#v", r.Steps[2:4])
+	if r.Steps[0].Output != "controllers_raw" {
+		t.Fatalf("list output: %#v", r.Steps[0])
 	}
-	if r.Steps[len(r.Steps)-1].ID != "verify_2" {
-		t.Fatalf("last step id: %s", r.Steps[len(r.Steps)-1].ID)
+	restart := r.Steps[2]
+	if restart.ID != "restart" || restart.Loop == "" || restart.Host != "${item}" || restart.Serial != 1 {
+		t.Fatalf("restart step: %#v", restart)
 	}
-	if r.Steps[2].Plugin == nil || r.Steps[2].Plugin.ID != "service" {
-		t.Fatalf("restart_0 plugin: %#v", r.Steps[2].Plugin)
+	if restart.Hooks == nil || restart.Hooks.OnSuccess == nil {
+		t.Fatalf("restart hook: %#v", restart.Hooks)
 	}
-	if r.Steps[1].Retry == nil || r.Steps[1].Retry.Attempts != 30 {
-		t.Fatalf("pre_verify retry: %#v", r.Steps[1].Retry)
-	}
-	if r.Steps[3].Retry == nil || r.Steps[3].Retry.Attempts != 30 {
-		t.Fatalf("verify_0 retry: %#v", r.Steps[3].Retry)
+	if restart.Hooks.OnSuccess.Where != "" || restart.Hooks.OnSuccess.Command != "quorum-cli am-i-caught-up" {
+		t.Fatalf("restart hook: %#v", restart.Hooks.OnSuccess)
 	}
 }
 

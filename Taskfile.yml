@@ -17,9 +17,21 @@ env:
 tasks:
   lint:
     desc: Run Go linters and security checks
+    deps: [golint, govulncheck, gosec]
+
+  golint:
+    desc: Run golangci-lint
     cmds:
       - go tool golangci-lint run
+      
+  govulncheck:
+    desc: Run govulncheck
+    cmds:      
       - go tool govulncheck ./...
+      
+  gosec:
+    desc: Run gosec
+    cmds:        
       - go tool gosec -fmt text -severity medium -quiet ./...
 
   webui:
@@ -28,6 +40,13 @@ tasks:
     cmds:
       - npm ci
       - npm run build
+
+  webui-lint:
+    desc: Lint the React web UI with ESLint
+    dir: webui
+    cmds:
+      - npm ci
+      - npm run lint
 
   build:
     desc: Build the honey binary
@@ -53,9 +72,13 @@ tasks:
     desc: Build all plugin modules as WASM binaries
     cmds:
       - |
-        for dir in bash shell copy template file service postgres rclone; do
+        for dir in bash shell copy template file service postgres sqlite rclone helm; do
           echo "building plugins/$dir"
-          (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .)
+          if [ "$dir" = "sqlite" ]; then
+            (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -tags sqlite3_dotlk -buildmode=c-shared -o plugin.wasm .)
+          else
+            (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .)
+          fi
           mkdir -p examples/plugins/$dir
           cp plugins/$dir/plugin.yaml plugins/$dir/plugin.wasm examples/plugins/$dir/
         done
@@ -64,6 +87,25 @@ tasks:
     desc: Package built plugin modules as release archives (dist/plugins/)
     cmds:
       - bash scripts/package-plugins.sh
+
+  download-onnx-runtime:
+    desc: Download ONNX Runtime 1.26.0 shared libraries for Linux amd64 and arm64
+    vars:
+      ONNX_VERSION: "1.26.0"
+    cmds:
+      - mkdir -p runtime/onnx/linux/amd64 runtime/onnx/linux/arm64
+      - |
+        curl -fsSL \
+          "https://github.com/microsoft/onnxruntime/releases/download/v{{.ONNX_VERSION}}/onnxruntime-linux-x64-{{.ONNX_VERSION}}.tgz" \
+          | tar -xz --strip-components=2 -C runtime/onnx/linux/amd64 \
+              "onnxruntime-linux-x64-{{.ONNX_VERSION}}/lib/libonnxruntime.so.{{.ONNX_VERSION}}"
+        ln -sf "libonnxruntime.so.{{.ONNX_VERSION}}" runtime/onnx/linux/amd64/libonnxruntime.so
+      - |
+        curl -fsSL \
+          "https://github.com/microsoft/onnxruntime/releases/download/v{{.ONNX_VERSION}}/onnxruntime-linux-aarch64-{{.ONNX_VERSION}}.tgz" \
+          | tar -xz --strip-components=2 -C runtime/onnx/linux/arm64 \
+              "onnxruntime-linux-aarch64-{{.ONNX_VERSION}}/lib/libonnxruntime.so.{{.ONNX_VERSION}}"
+        ln -sf "libonnxruntime.so.{{.ONNX_VERSION}}" runtime/onnx/linux/arm64/libonnxruntime.so
 
   anomaly-install:
     desc: Install Python dependencies for anomaly detection training

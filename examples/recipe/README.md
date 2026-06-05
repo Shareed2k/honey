@@ -26,6 +26,7 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 - `postgres_replica_lag_plugin.cue`: Same triage via **graph** recipe — **`tunnel`** + **postgres** + **bash** WASM plugins, sealed **`PG_DSN`**, optional AI summary; see [`postgres_replica_lag.cue`](postgres_replica_lag.cue) for legacy remote `psql`.
 - `kv_tunnel_multistep_example.cue`: Three **`command`** steps with **`defaults.kv_tunnel: true`** — one operator `stepkv` for the whole `cue-exec` on **SSH and Kubernetes** (pods use a long-lived exec bridge to that session). Per-host keys sanitize `HONEY_HOST_NAME` for `/` and `:`.
 - `postgres_module_demo.cue`: **`plugin:`** postgres WASM query via operator-side pgx; see file header for `make build-plugin-modules` and sealed `PG_DSN`.
+- `sqlite_module_demo.cue`: **`plugin:`** sqlite WASM query with SQLite embedded in `plugin.wasm`; requires `allowed_paths` in `plugins/sqlite/plugin.yaml` for DB files.
 - `postgres_tunnel_demo.cue`: Graph recipe with a **`tunnel`** step (SSH local forward) and postgres **`tunnel_step`** DSN rewrite for loopback Postgres on remote hosts; optional **`share_key`** for cross-run reuse.
 - `postgres_tunnel_ssh_config.cue`: Tunnel via **`use_ssh_config`** + **`ssh_config_match`** / **`ssh_config_env`** (`ssh -G`, Match exec).
 - `postgres_tunnel_k8s.cue`: k8s pod **`tunnel`** (API port-forward) + postgres consumer.

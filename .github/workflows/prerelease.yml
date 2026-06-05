@@ -2,66 +2,26 @@ name: PR Prerelease
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, closed]
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, master]
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: prerelease-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
-  prerelease-check:
-    name: Validate prerelease build
-    if: github.event.action != 'closed' && github.event.action != 'opened'
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-
-      - name: Build web UI
-        run: task webui
-
-      - name: Run GoReleaser prerelease snapshot (cross)
-        run: |
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace \
-            ghcr.io/goreleaser/goreleaser-cross:v1.26.2-3 \
-            release --clean --snapshot --skip=publish --config .goreleaser.prerelease.yaml
-
-      - name: Upload prerelease build artifacts
-        if: github.event.action == 'opened'
-        uses: actions/upload-artifact@v4
-        with:
-          name: prerelease-build-${{ github.event.pull_request.number }}-${{ github.sha }}
-          path: |
-            dist/**
-          if-no-files-found: error
-          retention-days: 7
-
   prerelease-publish:
     name: Create prerelease tag and publish artifacts
-    if: github.event.action == 'opened'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Select prerelease channel
         id: channel
@@ -90,7 +50,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "${TAG}" "${{ github.event.pull_request.merge_commit_sha }}"
+          git tag "${TAG}" "${{ github.event.pull_request.head.sha }}"
           git push origin "${TAG}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
@@ -105,13 +65,30 @@ jobs:
       - name: Build web UI
         run: task webui
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to the GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run GoReleaser prerelease (cross)
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $HOME/.docker:/root/.docker \
             -w /workspace \
             -e GITHUB_TOKEN \
-            ghcr.io/goreleaser/goreleaser-cross:v1.26.2-3 \
+            ghcr.io/goreleaser/goreleaser-cross:v1.26.3 \
             release --clean --config .goreleaser.prerelease.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

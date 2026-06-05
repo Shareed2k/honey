@@ -88,3 +88,15 @@ func TestMergeEnvFromInto_kv(t *testing.T) {
 		t.Fatalf("got %v", dst)
 	}
 }
+
+func TestEvalJQArray(t *testing.T) {
+	t.Parallel()
+	doc := `[{"name":"alice"},{"name":"bob"}]`
+	got, err := EvalJQArray(doc, ".[].name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "alice" || got[1] != "bob" {
+		t.Fatalf("expected [alice bob], got %v", got)
+	}
+}

@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -27,6 +29,45 @@ func TestBuildLocalHookEnv_injectsMeta(t *testing.T) {
 	}
 	if m["HONEY_RECIPE_NAME"] != "demo" || m["FOO"] != "bar" {
 		t.Fatalf("extras: %#v", m)
+	}
+}
+
+func TestRunCueStepHooks_defaultWhereRemote(t *testing.T) {
+	cache := NewClientCache()
+	cache.SetRegistry(&hostexec.StandardRegistry{})
+
+	var command string
+	client := &mockHostClient{
+		runFunc: func(cmd string) ([]byte, error) {
+			command = cmd
+			return []byte("hook ok"), nil
+		},
+	}
+
+	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
+	cache.clients[SSHClientCacheKey("root", rec)] = client
+	run := &cueRun{
+		CueRecipeRunParams: CueRecipeRunParams{
+			Recipe:  cuetry.Recipe{Name: "hook-default"},
+			SSHUser: "root",
+		},
+		cache: cache,
+	}
+	step := cuetry.RecipeStep{
+		Command: "true",
+		Hooks: &cuetry.RecipeStepHooks{
+			OnSuccess: &cuetry.RecipeStepHook{Command: "echo hook"},
+		},
+	}
+	res := &HostExecResult{Success: true}
+
+	runCueStepHooks(context.Background(), run, 0, cuetry.StepKindCommand, step, rec, res, false)
+
+	if command == "" || !strings.Contains(command, "echo hook") {
+		t.Fatalf("remote hook command = %q", command)
+	}
+	if res.HookPhase != "on_success" || res.HookOutput != "hook ok" {
+		t.Fatalf("hook result phase=%q output=%q", res.HookPhase, res.HookOutput)
 	}
 }
 

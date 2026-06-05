@@ -21,7 +21,7 @@ const schemaSource = `
 	backoff?: "fixed" | "exponential"
 })
 #StepHook: close({
-	where: "local" | "remote"
+	where?: "local" | "remote"
 	command?: string
 	plugin?: close({
 		id:     string
@@ -46,7 +46,7 @@ const schemaSource = `
 #Step: close({
 	id?:      string
 	depends?: [...string]
-	host:     string
+	host?:    string
 	ssh_port?: int
 	ssh_private_key?: string
 	notify?: close({
@@ -62,6 +62,7 @@ const schemaSource = `
 	})
 	run_as?:  string
 	command?: string
+	render?:  string
 	put?: close({
 		local:  string
 		remote: string
@@ -131,12 +132,121 @@ const schemaSource = `
 		tun_remote?: int
 		remote_socat?: bool
 	})
+	docker?: close({
+		action: "build" | "push" | "pull" | "run" | "exec" | "stop"
+		output?: string
+		build?: {
+			context:     string
+			dockerfile?: string
+			tags?: [...string]
+			build_args?: {[string]: string}
+		}
+		push?: {
+			image: string
+		}
+		pull?: {
+			image: string
+		}
+		run?: {
+			image:   string
+			name?:    string
+			command?: [...string]
+			ports?: [...string]
+			volumes?: [...string]
+			env?: {[string]: string}
+			detach?: bool
+		}
+		exec?: {
+			container: string
+			command: [...string]
+		}
+		stop?: {
+			container: string
+		}
+	})
+	k8s?: close({
+		namespace?: string
+		output?:    string
+		apply?: close({
+			manifest:     string
+			force?:       bool
+			server_side?: bool
+		})
+		delete?: close({
+			resource: string
+			wait?:    bool
+		})
+		scale?: close({
+			resource: string
+			replicas: int & >=0
+		})
+		rollout_restart?: close({
+			resource: string
+			wait?:    bool
+		})
+		wait?: close({
+			resource: string
+			"for":    string
+			timeout?: string
+		})
+		get?: close({
+			resource:       string
+			label_selector?: string
+			format?:        "json" | "yaml" | "name"
+		})
+		exec?: close({
+			pod:        string
+			container?: string
+			command:    [...string]
+			tty?:       bool
+		})
+		create_job?: close({
+			name:             string
+			image:            string
+			command?:         [...string]
+			args?:            [...string]
+			env?:             {[string]: string}
+			restart_policy?:  "Never" | "OnFailure"
+			wait?:            bool
+			ttl_seconds?:     int
+		})
+	})
+	opensearch?: close({
+		addresses?: [...string]
+		username?:  string
+		password?:  string
+		api_key?:   string
+		insecure?:  bool
+		index:      string
+		action:     "get" | "search" | "index"
+		doc_id?:    string
+		body?:      {...}
+		output?:    string
+	})
+	postgres?: close({
+		dsn_secret:      string
+		action:          "query" | "exec" | "migrate"
+		sql?:            string
+		params?:         [...]
+		timeout_ms?:     int
+		readonly?:       bool
+		kv_key?:         string
+		kv_key_per_host?: bool
+		extract?:        {[string]: string}
+		host?:           string
+		port?:           string
+		tunnel_step?:    string
+		migrations_dir?: string
+		files?:          [...string]
+		output?:         string
+	})
 	hooks?: close({
 		on_success?: #StepHook
 		on_failure?: #StepHook
 	})
 	kv_tunnel?: bool
 	max_parallel?: int
+	serial?: int & >=1
 	env_from?: [...close({
 		step?: string
 		from_output?: string
@@ -147,7 +257,19 @@ const schemaSource = `
 	env?: {[string]: string}
 	secrets?: {[string]: string}
 	when?: string
+	changed_when?: string
+	failed_when?: string
 	retry?: #Retry
+	timeout?:       string
+	ignore_errors?: bool
+	check_cmd?:     string
+	output?:        string
+	loop?:          string
+	loop_from?: close({
+		step:    string
+		extract: string
+	})
+	notify_handler?: [...string]
 })
 #Recipe: close({
 	name:  string
@@ -162,8 +284,10 @@ const schemaSource = `
 		ssh_port?: int
 		ssh_private_key?: string
 		retry?: #Retry
+		gather_facts?: bool
 	})
 	steps: [...#Step]
+	handlers?: [...#Step]
 })
 `
 
@@ -208,12 +332,12 @@ func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, 
 }
 
 func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefaults, records []hosts.Record, secretPrefixes []string, mode ExecutionMode) error {
-	if err := ValidateHostField(s.Host); err != nil {
-		return fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
-	}
 	kind, err := ClassifyStep(s)
 	if err != nil {
 		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
+	}
+	if err := validateStepHost(i, kind, s); err != nil {
+		return err
 	}
 	if err := validateStepEnvAndSecrets(i, kind, s, secretPrefixes); err != nil {
 		return err
@@ -226,6 +350,9 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 	}
 	if err := validateMaxParallelField(fmt.Sprintf("steps[%d]", i), s.MaxParallel); err != nil {
 		return err
+	}
+	if s.Serial < 0 {
+		return fmt.Errorf("cuetry: steps[%d].serial must be >= 1", i)
 	}
 	if err := validateSSHPrivateKeyField(fmt.Sprintf("steps[%d]", i), s.SSHPrivateKey); err != nil {
 		return err
@@ -255,7 +382,49 @@ func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefa
 	if err := validateStepRetry(i, s, defaults); err != nil {
 		return err
 	}
+	if err := validateStepLoop(i, s); err != nil {
+		return err
+	}
+	if err := validateStepOutputAndResultExpr(i, s); err != nil {
+		return err
+	}
 	return validateStepHooksAndKVTunnel(i, kind, s, defaults, secretPrefixes)
+}
+
+func validateStepHost(i int, kind StepKind, s RecipeStep) error {
+	if kind == StepKindTemplate && strings.TrimSpace(s.Host) == "" && strings.TrimSpace(s.Render) != "" {
+		return nil
+	}
+	if err := ValidateHostField(s.Host); err != nil {
+		return fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
+	}
+	return nil
+}
+
+func validateStepLoop(i int, s RecipeStep) error {
+	if strings.TrimSpace(s.Loop) != "" && s.LoopFrom != nil {
+		return fmt.Errorf("cuetry: steps[%d]: only one of loop or loop_from may be set", i)
+	}
+	return nil
+}
+
+func validateStepOutputAndResultExpr(i int, s RecipeStep) error {
+	if out := strings.TrimSpace(s.Output); out != "" {
+		if !recipeStepIDPattern.MatchString(out) {
+			return fmt.Errorf("cuetry: steps[%d].output %q must match [a-zA-Z][a-zA-Z0-9_-]*", i, out)
+		}
+	}
+	if expr := strings.TrimSpace(s.ChangedWhen); expr != "" {
+		if _, err := CompileResultBoolExpr(expr); err != nil {
+			return fmt.Errorf("cuetry: steps[%d].changed_when: %w", i, err)
+		}
+	}
+	if expr := strings.TrimSpace(s.FailedWhen); expr != "" {
+		if _, err := CompileResultBoolExpr(expr); err != nil {
+			return fmt.Errorf("cuetry: steps[%d].failed_when: %w", i, err)
+		}
+	}
+	return nil
 }
 
 func validateStepRetry(i int, s RecipeStep, defaults *RecipeDefaults) error {
@@ -325,14 +494,17 @@ func validateStepTemplate(i int, kind StepKind, s RecipeStep, mode ExecutionMode
 	if err := ValidateHostField(s.Host); err != nil {
 		return fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
 	}
-	if s.Template == nil {
+	if s.Template == nil && strings.TrimSpace(s.Render) == "" {
 		return fmt.Errorf("cuetry: steps[%d]: internal template step", i)
 	}
-	if strings.TrimSpace(s.Template.Template) == "" {
+	if s.Template != nil && strings.TrimSpace(s.Template.Template) == "" {
 		return fmt.Errorf("cuetry: steps[%d].template.template is required", i)
 	}
 	host := strings.TrimSpace(s.Host)
-	outName := strings.TrimSpace(s.Template.Output)
+	outName := ""
+	if s.Template != nil {
+		outName = strings.TrimSpace(s.Template.Output)
+	}
 	if outName != "" && host != MatchLocalAIHost {
 		return fmt.Errorf("cuetry: steps[%d].template.output requires host %q (per-host templates cannot register a global capture name)", i, MatchLocalAIHost)
 	}
@@ -365,6 +537,7 @@ func parseRemoteRecipeAfterTransform(cueBytes []byte, records []hosts.Record, se
 	if err := unified.Decode(&out); err != nil {
 		return out, fmt.Errorf("cuetry: decode: %w", err)
 	}
+	defaultRenderHosts(out.Steps)
 	if out.Defaults != nil && strings.TrimSpace(out.Defaults.RunAs) != "" {
 		if err := ValidateRunAsUser(out.Defaults.RunAs); err != nil {
 			return out, fmt.Errorf("cuetry: defaults.run_as: %w", err)
@@ -431,7 +604,7 @@ func validateStepHooks(stepIdx int, h *RecipeStepHooks, secretPrefixes []string)
 		if hook == nil {
 			return nil
 		}
-		w := strings.TrimSpace(hook.Where)
+		w := EffectiveHookWhere(hook)
 		if w != "local" && w != "remote" {
 			return fmt.Errorf("cuetry: steps[%d].hooks.%s.where must be \"local\" or \"remote\"", stepIdx, phase)
 		}

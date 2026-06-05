@@ -287,6 +287,68 @@ Examples: [`postgres_tunnel_demo.cue`](https://github.com/shareed2k/honey/blob/m
 
 Safety: `timeout_ms` required; `readonly` defaults to `true`; dry-run returns a plan without connecting; SQL text is audit-logged (SHA256 + truncated preview, never params/DSN).
 
+### SQLite (`sqlite` plugin)
+
+Runs SQLite inside the WASM plugin using the embedded `github.com/ncruces/go-sqlite3` driver. It does **not** call a `sqlite3` binary, does **not** use `host_exec`, and does **not** add a Honey host-side SQLite function. Database files are visible only through WASI `allowed_paths` mounts in `plugin.yaml`.
+
+Build note: the plugin must be built for WASI with the `sqlite3_dotlk` tag:
+
+```bash
+GOOS=wasip1 GOARCH=wasm go build -tags sqlite3_dotlk -buildmode=c-shared -o plugin.wasm .
+```
+
+Manifest path mount example:
+
+```yaml
+id: sqlite
+version: "0.1.0"
+capabilities:
+  - custom_step
+allow_kv: true
+allowed_paths:
+  "/sqlite": "/var/lib/honey/sqlite"
+```
+
+Recipe query example:
+
+```cue
+plugin: {
+  id:     "sqlite"
+  action: "query"
+  config: {
+    dsn:      "file:/sqlite/app.db?mode=ro"
+    readonly: true
+    sql:      "SELECT id, name FROM users WHERE active = ?"
+    params:   [true]
+  }
+}
+```
+
+Recipe exec example:
+
+```cue
+plugin: {
+  id:     "sqlite"
+  action: "exec"
+  config: {
+    dsn:    "file:/sqlite/app.db?mode=rw"
+    sql:    "INSERT INTO audit(event) VALUES (?)"
+    params: ["checked"]
+  }
+}
+```
+
+| Config field | Meaning |
+|--------------|---------|
+| `dsn` | SQLite filename or URI. Use a WASI guest path such as `file:/sqlite/app.db?mode=ro`. |
+| `sql` | SQL statement. Use `?` placeholders for parameters. |
+| `params` | Positional bind parameters passed to SQLite. |
+| `readonly` | When `true`, `exec` is refused. Prefer `mode=ro` in query DSNs. |
+| `timeout_ms` | Optional per-operation timeout. Defaults to 30000 ms. |
+| `kv_key` / `kv_key_per_host` | Optional storage of JSON stdout in recipe stepkv. |
+
+WASI file locking uses `sqlite3_dotlk`; avoid concurrent writes from other SQLite implementations against the same database file.
+
 ### Rclone RC API (`rclone` plugin)
 
 Calls **rclone rcd** over HTTP from the operator via a recipe **`tunnel:`** step (SSH local forward to remote `127.0.0.1:5572`). The plugin does **not** start rcd — use a prior **`command`** step or systemd on the target.
@@ -359,6 +421,7 @@ Shipped under [`plugins/`](https://github.com/shareed2k/honey/tree/main/plugins)
 | `file` | `manage` | `directory` / `absent` / `touch` |
 | `service` | `manage` | `systemctl` started/stopped/restarted |
 | `postgres` | `query` / `exec` / `migrate` | Host-mediated pgx (DSN from recipe secrets) |
+| `sqlite` | `query` / `exec` | Embedded SQLite in WASM against `allowed_paths` DB files |
 | `rclone` | `noop` / `copy` / `sync` / `list` / … | rclone RC HTTP via tunneled `rcd` on remote loopback |
 
 Build and install:
@@ -369,7 +432,7 @@ mkdir -p ~/.config/honey/plugins/bash
 cp examples/plugins/bash/plugin.yaml examples/plugins/bash/plugin.wasm ~/.config/honey/plugins/bash/
 ```
 
-Example recipes: [`bash_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/bash_module_demo.cue), [`postgres_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_module_demo.cue), [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_kv_demo.cue), [`rclone_rc_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/rclone_rc_tunnel.cue), [`tunnel_local_forward.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_local_forward.cue).
+Example recipes: [`bash_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/bash_module_demo.cue), [`postgres_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_module_demo.cue), [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_kv_demo.cue), [`sqlite_module_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/sqlite_module_demo.cue), [`rclone_rc_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/rclone_rc_tunnel.cue), [`tunnel_local_forward.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/tunnel_local_forward.cue).
 
 For simple one-off shell, prefer native `command` / `script` steps (no WASM). Use modules when you want structured `changed` / validation / composable actions.
 

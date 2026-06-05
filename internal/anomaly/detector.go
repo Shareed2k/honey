@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
+
+	regexp "github.com/coregx/coregex"
 )
 
 // Options configures the anomaly detector.
@@ -129,13 +130,25 @@ func NewEmbeddedDetector(opts Options) (*EmbeddedDetector, error) {
 		}
 		d.impl = onnxDet
 	}
-	if strings.ToLower(opts.Preprocessor) == "lshd" {
+
+	switch strings.ToLower(opts.Preprocessor) {
+	case "lshd":
 		preproc := NewLSHDDetector()
 		if d.impl != nil {
 			d.impl = &preprocessedDetector{preprocessor: preproc, inner: d.impl}
 		} else {
 			d.impl = &preprocessedDetector{
 				preprocessor: preproc,
+				inner: detectorFunc(func(_ context.Context, line string) (Result, error) {
+					return d.scoreHeuristic(line), nil
+				}),
+			}
+		}
+	case "lff":
+		if d.impl != nil {
+			d.impl = &lffPreprocessorDetector{inner: d.impl}
+		} else {
+			d.impl = &lffPreprocessorDetector{
 				inner: detectorFunc(func(_ context.Context, line string) (Result, error) {
 					return d.scoreHeuristic(line), nil
 				}),
@@ -181,10 +194,13 @@ var (
 	reKeySingle  = regexp.MustCompile(`\b(\w+)='[^']*'`)
 	reJSONVal    = regexp.MustCompile(`"(\w+)"\s*:\s*"[^"]*"`)
 	reKeyBareVal = regexp.MustCompile(`\b(\w+)=[a-zA-Z][a-zA-Z0-9._/\-]{2,}`)
+	reTimestamp  = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}[tT\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[zZ]|[\+\-]\d{2}:?\d{2})?\b|\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\b`)
 )
 
-func normalize(line string) string {
+// Normalize cleans and normalizes a log line by stripping parameter noise (timestamps, IPs, UUIDs).
+func Normalize(line string) string {
 	line = strings.ToLower(strings.TrimSpace(line))
+	line = reTimestamp.ReplaceAllString(line, "<timestamp>")
 	// Strip key=value pairs before number replacement to avoid partial matches.
 	line = reKeyQuoted.ReplaceAllString(line, "$1=<val>")
 	line = reKeySingle.ReplaceAllString(line, "$1=<val>")
@@ -209,7 +225,7 @@ func (d *EmbeddedDetector) Score(ctx context.Context, line string) (Result, erro
 }
 
 func (d *EmbeddedDetector) scoreHeuristic(line string) Result {
-	n := normalize(line)
+	n := Normalize(line)
 	if n == "" {
 		return Result{Score: 0, Anomaly: false, Reason: "empty", Original: line}
 	}

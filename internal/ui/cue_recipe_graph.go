@@ -46,6 +46,18 @@ func streamCueRecipeStepsGraph(ctx context.Context, run *cueRun, out chan<- Host
 			return fmt.Errorf("recipe graph finished with failed step %q", sg.IndexToID[i])
 		}
 	}
+
+	// Run triggered handlers
+	if len(run.triggeredHandlers) > 0 && len(run.Recipe.Handlers) > 0 {
+		zap.L().Debug("executing triggered handlers", zap.Any("triggered", run.triggeredHandlers))
+		for _, handler := range run.Recipe.Handlers {
+			if run.triggeredHandlers[handler.ID] {
+				zap.L().Info("running handler", zap.String("id", handler.ID))
+				_, _ = streamCueRecipeStep(ctx, run, -1, handler, out)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -145,7 +157,23 @@ func graphRunOneStep(ctx context.Context, run *cueRun, out chan<- HostExecResult
 		rows, stepErr = streamCueRecipeStep(ctx, run, idx, step, out)
 	}
 
-	failed := stepErr != nil || (len(rows) > 0 && cueStepAllTargetsTransientTransportFailed(rows))
+	failed := stepErr != nil
+	if !failed && len(rows) > 0 {
+		for _, r := range rows {
+			if !r.Skipped && !r.Success {
+				failed = true
+				break
+			}
+		}
+	}
+
+	if failed && step.IgnoreErrors {
+		zap.L().Warn("Step failed but ignore_errors is true. Marking as succeeded to let descendants run.",
+			zap.String("step_id", stepID),
+		)
+		failed = false
+	}
+
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if len(rows) > 0 {
@@ -156,17 +184,17 @@ func graphRunOneStep(ctx context.Context, run *cueRun, out chan<- HostExecResult
 	if len(rows) > 0 && allHostsWhenSkipped(rows) {
 		state[idx] = cuetry.StepRunSkipped
 		sg.MarkSkippedDescendants(idx, state)
-		logGraphStepFinished(stepID, kind, cuetry.StepRunSkipped)
+		logGraphStepFinished(stepID, kind, cuetry.StepRunSkipped, nil)
 		return
 	}
 	if failed {
 		state[idx] = cuetry.StepRunFailed
 		sg.MarkSkippedDescendants(idx, state)
-		logGraphStepFinished(stepID, kind, cuetry.StepRunFailed)
+		logGraphStepFinished(stepID, kind, cuetry.StepRunFailed, stepErr)
 		return
 	}
 	state[idx] = cuetry.StepRunSucceeded
-	logGraphStepFinished(stepID, kind, cuetry.StepRunSucceeded)
+	logGraphStepFinished(stepID, kind, cuetry.StepRunSucceeded, nil)
 	if step.NotifyEnabled() && len(rows) > 0 {
 		body := FormatCueStepHostResultsForNotify(idx+1, rows)
 		CueStepNotifyRemote(ctx, run.Recipe, idx+1, kind, step.Notify, body)
@@ -221,12 +249,16 @@ func graphRunTemplateStep(ctx context.Context, run *cueRun, idx int, step cuetry
 	return rows, nil
 }
 
-func logGraphStepFinished(stepID string, kind cuetry.StepKind, st cuetry.StepRunState) {
-	zap.L().Debug("recipe graph step finished",
+func logGraphStepFinished(stepID string, kind cuetry.StepKind, st cuetry.StepRunState, err error) {
+	fields := []zap.Field{
 		zap.String("step_id", stepID),
 		zap.String("kind", cuetry.StepKindLabel(kind)),
 		zap.String("state", graphStepRunStateLabel(st)),
-	)
+	}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	zap.L().Debug("recipe graph step finished", fields...)
 }
 
 func graphStepRunStateLabel(st cuetry.StepRunState) string {

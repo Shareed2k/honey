@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,8 @@ import (
 
 	extism "github.com/extism/go-sdk"
 	"go.uber.org/zap"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 )
@@ -78,6 +82,14 @@ func hostFunctions(m Manifest, pluginTimeoutMS int) []extism.HostFunction {
 				}
 				stack[0] = off
 			},
+			[]extism.ValueType{extism.ValueTypePTR},
+			[]extism.ValueType{extism.ValueTypeI64},
+		))
+	}
+	if m.AllowK8sHTTP {
+		fns = append(fns, extism.NewHostFunctionWithStack(
+			"k8s_http",
+			k8sHTTPCallback(m.ID),
 			[]extism.ValueType{extism.ValueTypePTR},
 			[]extism.ValueType{extism.ValueTypeI64},
 		))
@@ -321,6 +333,106 @@ func truncateHostExec(s string) string {
 		return s
 	}
 	return s[:maxHostExecOutput]
+}
+
+const (
+	defaultK8sHTTPMaxResponseBytes int64 = 4 << 20 // 4 MB
+)
+
+func k8sHTTPCallback(pluginID string) extism.HostFunctionStackCallback {
+	return func(ctx context.Context, p *extism.CurrentPlugin, stack []uint64) {
+		raw, err := p.ReadString(stack[0])
+		if err != nil {
+			stack[0] = writeK8sHTTPError(p, "read input: "+err.Error())
+			return
+		}
+		var in apiv1.K8sHTTPInput
+		if err := json.Unmarshal([]byte(raw), &in); err != nil {
+			stack[0] = writeK8sHTTPError(p, "parse input: "+err.Error())
+			return
+		}
+		out := runK8sHTTP(ctx, in, pluginID)
+		b, err := json.Marshal(out)
+		if err != nil {
+			stack[0] = writeK8sHTTPError(p, "encode output: "+err.Error())
+			return
+		}
+		off, err := p.WriteString(string(b))
+		if err != nil {
+			stack[0] = 0
+			zap.L().Warn("plugin k8s_http: write output failed", zap.String("plugin_id", pluginID), zap.Error(err))
+			return
+		}
+		stack[0] = off
+	}
+}
+
+func writeK8sHTTPError(p *extism.CurrentPlugin, msg string) uint64 {
+	b, _ := json.Marshal(apiv1.K8sHTTPOutput{Error: msg})
+	off, err := p.WriteString(string(b))
+	if err != nil {
+		return 0
+	}
+	return off
+}
+
+func runK8sHTTP(ctx context.Context, in apiv1.K8sHTTPInput, _ string) apiv1.K8sHTTPOutput {
+	hctx, ok := HostRunContextFromContext(ctx)
+	if !ok {
+		return apiv1.K8sHTTPOutput{Error: "k8s_http: no host context available"}
+	}
+
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kc := hctx.Record.Meta["kubeconfig"]; kc != "" {
+		loadingRules.ExplicitPath = kc
+	}
+	overrides := &clientcmd.ConfigOverrides{}
+	if kctx := hctx.Record.Meta["kube_context"]; kctx != "" {
+		overrides.CurrentContext = kctx
+	}
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
+	if err != nil {
+		return apiv1.K8sHTTPOutput{Error: fmt.Sprintf("k8s_http: build config for host %q: %s", hctx.Record.Name, err.Error())}
+	}
+
+	httpClient, err := rest.HTTPClientFor(cfg)
+	if err != nil {
+		return apiv1.K8sHTTPOutput{Error: "k8s_http: build http client: " + err.Error()}
+	}
+
+	targetURL := strings.TrimRight(cfg.Host, "/") + in.Path
+	req, err := http.NewRequestWithContext(ctx, in.Method, targetURL, bytes.NewReader(in.Body))
+	if err != nil {
+		return apiv1.K8sHTTPOutput{Error: "k8s_http: build request: " + err.Error()}
+	}
+	for k, v := range in.Headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return apiv1.K8sHTTPOutput{Error: "k8s_http: do request: " + err.Error()}
+	}
+	defer resp.Body.Close()
+
+	maxBytes := in.MaxResponseBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultK8sHTTPMaxResponseBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return apiv1.K8sHTTPOutput{Error: "k8s_http: read response: " + err.Error()}
+	}
+
+	respHeaders := make(map[string]string, len(resp.Header))
+	for k := range resp.Header {
+		respHeaders[k] = resp.Header.Get(k)
+	}
+	return apiv1.K8sHTTPOutput{
+		StatusCode: resp.StatusCode,
+		Body:       body,
+		Headers:    respHeaders,
+	}
 }
 
 // hostFunctionNames returns registered host function export names (for tests).

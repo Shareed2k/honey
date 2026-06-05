@@ -13,10 +13,12 @@ export type HostRecord = {
   meta?: Record<string, string>;
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function recordKey(rec: HostRecord): string {
   return `${rec.provider}\x1e${rec.name}\x1e${rec.primary_ip}`;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function recordHaystack(rec: HostRecord): string {
   const parts = [rec.provider, rec.name, rec.primary_ip, rec.zone || '', rec.region || ''];
   if (rec.extra_ips?.length) {

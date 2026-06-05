@@ -2264,7 +2264,8 @@ const docTemplate = `{
                     "default": 5
                 },
                 "anomaly_endpoint": {
-                    "type": "string"
+                    "type": "string",
+                    "default": "http://localhost:11434/v1"
                 },
                 "anomaly_feedback_file": {
                     "type": "string"
@@ -2289,6 +2290,9 @@ const docTemplate = `{
                 },
                 "anomaly_only": {
                     "type": "boolean"
+                },
+                "anomaly_preprocessor": {
+                    "type": "string"
                 },
                 "anomaly_strict": {
                     "type": "boolean"

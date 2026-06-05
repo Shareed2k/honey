@@ -29,7 +29,93 @@ const (
 
 func cueRecipeSSHPostHostResult(_ context.Context, run *cueRun, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeScopedKV bool) SSHPostHostResultFunc {
 	return func(hctx context.Context, r hosts.Record, res *HostExecResult) {
+		if step.CheckCmd != "" && strings.Contains(res.Output, "HONEY_CHECK_CMD_OK") {
+			res.Changed = false
+			res.Success = true
+			res.ExitCode = 0
+			res.Output = "Skipped: check_cmd passed"
+		} else {
+			res.Changed = true
+		}
+		applyCueRecipeResultExpressions(run, step, r, res)
+		if res.Success && res.Changed && len(step.NotifyHandler) > 0 {
+			if run.triggeredHandlers == nil {
+				run.triggeredHandlers = make(map[string]bool)
+			}
+			for _, handlerName := range step.NotifyHandler {
+				run.triggeredHandlers[handlerName] = true
+			}
+		}
 		runCueStepHooks(hctx, run, stepIdx, kind, step, r, res, recipeScopedKV)
+	}
+}
+
+func applyCueRecipeResultExpressions(run *cueRun, step cuetry.RecipeStep, r hosts.Record, res *HostExecResult) {
+	ctx := cuetry.ResultExprContext{
+		Stdout:    res.Output,
+		ExitCode:  res.ExitCode,
+		Succeeded: res.Success,
+		Changed:   res.Changed,
+		Host: map[string]any{
+			"name":     r.Name,
+			"ip":       r.PrimaryIP,
+			"provider": r.Provider,
+			"zone":     r.Zone,
+			"region":   r.Region,
+		},
+		Facts:   map[string]any{},
+		Steps:   map[string]cuetry.StepView{},
+		Outputs: map[string]any{},
+	}
+	if run != nil {
+		if run.outputStore != nil {
+			ctx.Steps = run.outputStore.StepsViewAggregated()
+		}
+		if run.outputCapture != nil {
+			ctx.Outputs = run.outputCapture.View()
+		}
+		if run.facts != nil {
+			if facts, ok := run.facts[r.Name]; ok {
+				ctx.Facts = facts
+			}
+		}
+	}
+	if step.Env != nil {
+		ctx.Item = step.Env["item"]
+	}
+	if expr := strings.TrimSpace(step.FailedWhen); expr != "" {
+		failed, err := cuetry.EvalResultBoolExpr(expr, ctx)
+		switch {
+		case err != nil:
+			res.Success = false
+			res.ErrMsg = "failed_when: " + err.Error()
+			if res.ExitCode == 0 {
+				res.ExitCode = 1
+			}
+		case failed:
+			res.Success = false
+			res.ErrMsg = "failed_when evaluated to true"
+			if res.ExitCode == 0 {
+				res.ExitCode = 1
+			}
+		case res.ErrMsg == "":
+			res.Success = true
+			res.ExitCode = 0
+		}
+		ctx.Succeeded = res.Success
+		ctx.ExitCode = res.ExitCode
+	}
+	if expr := strings.TrimSpace(step.ChangedWhen); expr != "" {
+		changed, err := cuetry.EvalResultBoolExpr(expr, ctx)
+		if err != nil {
+			res.Success = false
+			res.ErrMsg = "changed_when: " + err.Error()
+			if res.ExitCode == 0 {
+				res.ExitCode = 1
+			}
+			return
+		}
+		res.Changed = changed
 	}
 }
 
@@ -50,7 +136,7 @@ func runCueStepHooks(ctx context.Context, run *cueRun, stepIdx int, kind cuetry.
 	default:
 		return
 	}
-	where := strings.TrimSpace(hook.Where)
+	where := cuetry.EffectiveHookWhere(hook)
 	res.HookPhase = phase
 	switch where {
 	case "local":
@@ -101,6 +187,7 @@ func runCueStepHookRemote(ctx context.Context, run *cueRun, stepNo int, kind cue
 	}
 	stepRes.HookOutput = truncateRunes(strings.TrimSpace(b.String()), maxHookOutputRunes)
 	if !hres.Success {
+		stepRes.HookFailed = true
 		zap.L().Warn("cue recipe hook: remote hook command failed (original step outcome unchanged)",
 			zap.Int("step", stepNo), zap.String("phase", phase), zap.String("host", r.Name),
 			zap.Int("exit", hres.ExitCode), zap.String("err", hres.ErrMsg))
@@ -141,6 +228,7 @@ func runCueStepHookLocal(ctx context.Context, run *cueRun, stepNo int, kind cuet
 	exitCode := 0
 	success := runErr == nil
 	if runErr != nil {
+		stepRes.HookFailed = true
 		success = false
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
@@ -251,7 +339,7 @@ func WriteCueStepHooksDryLines(out io.Writer, stepIdx int, step cuetry.RecipeSte
 			return
 		}
 		preview := hookCommandPreview(hook.Command)
-		_, _ = fmt.Fprintf(out, "  step %d hook %s: where=%s command_preview=%q\n", stepIdx, phase, strings.TrimSpace(hook.Where), preview)
+		_, _ = fmt.Fprintf(out, "  step %d hook %s: where=%s command_preview=%q\n", stepIdx, phase, cuetry.EffectiveHookWhere(hook), preview)
 	}
 	write("on_success", step.Hooks.OnSuccess)
 	write("on_failure", step.Hooks.OnFailure)
@@ -318,11 +406,13 @@ func runCueStepHookLocalPlugin(ctx context.Context, run *cueRun, stepNo int, _ c
 	}
 	out, err := pluginMgr.OnStepResult(hctx, pl.ID, pl.Action, pl.Config, in, kvSess)
 	if err != nil {
+		stepRes.HookFailed = true
 		stepRes.HookOutput = truncateRunes(err.Error(), maxHookOutputRunes)
 		return
 	}
 	stepRes.HookOutput = truncateRunes(strings.TrimSpace(out.Output), maxHookOutputRunes)
 	if out.Err != "" {
+		stepRes.HookFailed = true
 		zap.L().Warn("cue recipe hook: plugin hook returned error",
 			zap.Int("step", stepNo), zap.String("phase", phase), zap.String("plugin", pl.ID), zap.String("err", out.Err))
 	}

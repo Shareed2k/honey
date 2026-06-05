@@ -5,6 +5,9 @@
 //
 // Plan:
 //   honey cue-exec examples/recipe/postgres_tunnel_k8s.cue "k8s:my-postgres-pod"
+// Execute:
+//   honey cue-exec --execute examples/recipe/postgres_tunnel_k8s.cue "k8s:my-postgres-pod"
+
 recipe: {
 	name: "postgres-tunnel-k8s"
 	type: "graph"
@@ -38,6 +41,6 @@ recipe: {
 					params:      []
 				}
 			}
-		},
+		}
 	]
 }

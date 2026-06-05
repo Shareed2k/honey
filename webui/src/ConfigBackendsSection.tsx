@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import { useForm, useFieldArray, FormProvider, useFormContext, Controller } from 'react-hook-form';
+import type { FieldValues } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Alert, Button, Card, Checkbox, Divider, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd';
@@ -336,7 +337,7 @@ function EditorModal({
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onSave: (body: any) => Promise<void>;
+  onSave: (body: FieldValues) => Promise<void>;
 }) {
   const backendDef = schema?.backends[editor.kind];
 
@@ -351,7 +352,7 @@ function EditorModal({
     mode: 'onChange',
   });
 
-  const onSubmit = (data: any) => {
+  const onSubmit = (data: FieldValues) => {
     return onSave(data);
   };
 
@@ -404,8 +405,10 @@ function BackendFormFields({
         const fieldPath = path ? `${path}.${field.key}` : field.key;
 
         // Deep error resolution for nested arrays
-        const error = fieldPath.split('.').reduce((obj: any, key) => (obj ? obj[key] : undefined), errors);
-        const errorMessage = error?.message as string | undefined;
+        const error = fieldPath
+          .split('.')
+          .reduce<unknown>((obj, key) => (obj as Record<string, unknown> | undefined)?.[key], errors);
+        const errorMessage = (error as { message?: string } | undefined)?.message;
 
         if (field.type === 'object') {
           return (
@@ -564,10 +567,14 @@ function ArrayFieldManager({ field, path }: { field: ConfigSchemaFieldSpec, path
       ) : null}
 
       {fields.map((item, idx) => {
-        const itemError = path
-          .split('.')
-          .reduce((obj: any, key) => (obj ? obj[key] : undefined), errors)?.[idx];
-        const errorMessage = itemError?.message as string | undefined;
+        const itemError = (
+          path
+            .split('.')
+            .reduce<unknown>((obj, key) => (obj as Record<string, unknown> | undefined)?.[key], errors) as
+            | Record<number, unknown>
+            | undefined
+        )?.[idx];
+        const errorMessage = (itemError as { message?: string } | undefined)?.message;
 
         return (
           <Card key={item.id} size="small" style={{ marginBottom: 8 }}>

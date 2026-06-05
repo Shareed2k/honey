@@ -7,6 +7,7 @@ before:
     - go mod tidy
     - sh -c 'test -f internal/webserver/static/index.html || go tool task webui'
     - go generate ./...
+    - go tool task download-onnx-runtime
 
 builds:
   - id: honey
@@ -80,6 +81,28 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
+
+dockers_v2:
+  - ids: [honey]
+    dockerfile: Dockerfile.release
+    images:
+      - "ghcr.io/shareed2k/honey"
+    tags:
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: false
+    flags:
+      - "--provenance=false"
+    extra_files:
+      - runtime/onnx/linux
+      - contrib/docker/config.yaml
+    annotations:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.title": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
 
 release:
   prerelease: auto

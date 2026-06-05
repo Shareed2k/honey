@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Checkbox, Input, InputNumber, Select } from 'antd';
+import { Checkbox, Input, InputNumber, Select } from 'antd';
 import type {
   ParsedRecipeAgentTransfer,
   ParsedRecipeFileTransfer,
@@ -13,9 +13,9 @@ import {
   AGENT_TRANSFER_CLOUD_PROVIDERS,
   dependsText,
   parseDependsText,
-  parseOptionalInt,
 } from './recipeStepUtils';
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const DEFAULT_STEP_RETRY: ParsedRecipeStepRetry = {
   attempts: 3,
   delay_ms: 1000,

@@ -1,6 +1,7 @@
 package cuetry
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -14,6 +15,12 @@ type RenderTemplateOpts struct {
 	Template string
 	Data     map[string]any
 	KV       KVReader
+	Funcs    template.FuncMap
+}
+
+// OutputTemplateFuncMap returns template helpers for named recipe outputs.
+func OutputTemplateFuncMap(capture *RecipeOutputCapture) template.FuncMap {
+	return outputTemplateFuncMap(capture)
 }
 
 var blockedTemplateFuncs = map[string]struct{}{
@@ -36,6 +43,9 @@ func RenderTemplate(opts RenderTemplateOpts) (string, error) {
 		data = map[string]any{}
 	}
 	funcs := templateFuncMap(opts.KV)
+	for name, fn := range opts.Funcs {
+		funcs[name] = fn
+	}
 	tmpl, err := template.New("recipe").Option("missingkey=error").Funcs(funcs).Parse(body)
 	if err != nil {
 		return "", fmt.Errorf("cuetry: template parse: %w", err)
@@ -57,6 +67,7 @@ func templateFuncMap(kv KVReader) template.FuncMap {
 		out[name] = fn
 	}
 	out["split"] = templateSplit
+	out["splitList"] = templateSplit
 	out["join"] = templateJoin
 	out["count"] = templateCount
 	out["add"] = templateAdd
@@ -65,6 +76,7 @@ func templateFuncMap(kv KVReader) template.FuncMap {
 	out["lower"] = strings.ToLower
 	out["trim"] = strings.TrimSpace
 	out["default"] = templateDefault
+	out["toJson"] = templateToJSON
 	out["kvGet"] = func(key string) string {
 		key = strings.TrimSpace(key)
 		if key == "" {
@@ -193,4 +205,12 @@ func templateDefault(def, val any) any {
 		return def
 	}
 	return val
+}
+
+func templateToJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }

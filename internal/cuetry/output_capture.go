@@ -53,3 +53,22 @@ func (c *RecipeOutputCapture) Get(name string) (string, bool) {
 	v, ok := c.byName[strings.TrimSpace(name)]
 	return v, ok
 }
+
+// View returns template/CEL-friendly named output metadata.
+func (c *RecipeOutputCapture) View() map[string]any {
+	out := make(map[string]any)
+	if c == nil || c.byName == nil {
+		return out
+	}
+	for name, stdout := range c.byName {
+		trimmed := strings.TrimSpace(stdout)
+		out[name] = map[string]any{
+			"stdout":       trimmed,
+			"stdout_lines": strings.Split(trimmed, "\n"),
+			"succeeded":    true,
+			"skipped":      false,
+			"exit_code":    int64(0),
+		}
+	}
+	return out
+}
