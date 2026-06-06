@@ -171,8 +171,8 @@ type RecipeLoop struct {
 type RecipeStep struct {
 	ID            string                `json:"id,omitempty"`
 	Depends       []string              `json:"depends,omitempty"`
-	Host          string                `json:"host"`
-	SSHPort       int                   `json:"ssh_port,omitempty"`
+	Host          string                `json:"host" jsonschema:"default=*"`
+	SSHPort       int                   `json:"ssh_port,omitempty" jsonschema:"default=22"`
 	SSHPrivateKey string                `json:"ssh_private_key,omitempty"`
 	Command       string                `json:"command,omitempty"`
 	Render        string                `json:"render,omitempty"`
@@ -190,8 +190,8 @@ type RecipeStep struct {
 	Postgres      *RecipeStepPostgres   `json:"postgres,omitempty"`
 	Notify        *RecipeNotify         `json:"notify,omitempty"`
 	Hooks         *RecipeStepHooks      `json:"hooks,omitempty"`
-	KVTunnel      *bool                 `json:"kv_tunnel,omitempty"`
-	MaxParallel   int                   `json:"max_parallel,omitempty"`
+	KVTunnel      *bool                 `json:"kv_tunnel,omitempty" jsonschema:"default=false"`
+	MaxParallel   int                   `json:"max_parallel,omitempty" jsonschema:"default=0"`
 	Serial        int                   `json:"serial,omitempty"`
 	EnvFrom       []EnvFromRef          `json:"env_from,omitempty"`
 	RunAs         string                `json:"run_as,omitempty"`
@@ -202,7 +202,7 @@ type RecipeStep struct {
 	FailedWhen    string                `json:"failed_when,omitempty"`
 	Retry         *RecipeStepRetry      `json:"retry,omitempty"`
 	Timeout       string                `json:"timeout,omitempty"`
-	IgnoreErrors  bool                  `json:"ignore_errors,omitempty"`
+	IgnoreErrors  bool                  `json:"ignore_errors,omitempty" jsonschema:"default=false"`
 	CheckCmd      string                `json:"check_cmd,omitempty"`
 	Output        string                `json:"output,omitempty"`
 	Loop          string                `json:"loop,omitempty"`

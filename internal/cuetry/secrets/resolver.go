@@ -4,6 +4,7 @@ import "context"
 
 // Resolver resolves a full recipe secrets ref string to plaintext (honey's execution-time contract).
 type Resolver interface {
+	Handles(ref string) bool
 	Resolve(ctx context.Context, ref string) (string, error)
 }
 

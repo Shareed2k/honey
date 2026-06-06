@@ -118,10 +118,21 @@ func RedactedSecretValueForDryRun(ref string) string {
 	return prefix + string(runes[:maxInner-1]) + "…" + suffix
 }
 
-func mergeEnvLiteralsInto(dst map[string]string, m map[string]string, label string) error {
+func mergeEnvInto(ctx context.Context, resolve bool, resolver SecretResolver, dst map[string]string, m map[string]string, label string) error {
 	for k, v := range m {
 		if err := validateOneEnv(k, v); err != nil {
 			return fmt.Errorf("%s: %w", label, err)
+		}
+		if resolver != nil && resolver.Handles(v) {
+			if resolve {
+				resolved, err := resolver.Resolve(ctx, v)
+				if err != nil {
+					return fmt.Errorf("%s key %q: %w", label, k, err)
+				}
+				v = resolved
+			} else {
+				v = RedactedSecretValueForDryRun(v)
+			}
 		}
 		dst[k] = v
 	}
@@ -165,11 +176,11 @@ func MergeResolvedSecretsInto(ctx context.Context, resolve bool, resolver Secret
 func EffectiveEnv(step RecipeStep, defaults *RecipeDefaults) (map[string]string, error) {
 	out := make(map[string]string)
 	if defaults != nil && len(defaults.Env) > 0 {
-		if err := mergeEnvLiteralsInto(out, defaults.Env, "defaults.env"); err != nil {
+		if err := mergeEnvInto(context.Background(), false, nil, out, defaults.Env, "defaults.env"); err != nil {
 			return nil, err
 		}
 	}
-	if err := mergeEnvLiteralsInto(out, step.Env, "env"); err != nil {
+	if err := mergeEnvInto(context.Background(), false, nil, out, step.Env, "env"); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -228,14 +239,14 @@ func appendHostEnvVars(dst map[string]string, r *hosts.Record) {
 func EffectiveEnvForRun(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
 	merged := make(map[string]string)
 	if defaults != nil {
-		if err := mergeEnvLiteralsInto(merged, defaults.Env, "defaults.env"); err != nil {
+		if err := mergeEnvInto(ctx, resolveSecrets, resolver, merged, defaults.Env, "defaults.env"); err != nil {
 			return nil, err
 		}
 		if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, defaults.Secrets, "defaults.secrets"); err != nil {
 			return nil, err
 		}
 	}
-	if err := mergeEnvLiteralsInto(merged, step.Env, "step.env"); err != nil {
+	if err := mergeEnvInto(ctx, resolveSecrets, resolver, merged, step.Env, "step.env"); err != nil {
 		return nil, err
 	}
 	if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, step.Secrets, "step.secrets"); err != nil {
@@ -270,20 +281,20 @@ func EffectiveEnvForRemoteHook(ctx context.Context, resolveSecrets bool, resolve
 	}
 	merged := make(map[string]string)
 	if defaults != nil {
-		if err := mergeEnvLiteralsInto(merged, defaults.Env, "defaults.env"); err != nil {
+		if err := mergeEnvInto(ctx, resolveSecrets, resolver, merged, defaults.Env, "defaults.env"); err != nil {
 			return nil, err
 		}
 		if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, defaults.Secrets, "defaults.secrets"); err != nil {
 			return nil, err
 		}
 	}
-	if err := mergeEnvLiteralsInto(merged, step.Env, "step.env"); err != nil {
+	if err := mergeEnvInto(ctx, resolveSecrets, resolver, merged, step.Env, "step.env"); err != nil {
 		return nil, err
 	}
 	if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, step.Secrets, "step.secrets"); err != nil {
 		return nil, err
 	}
-	if err := mergeEnvLiteralsInto(merged, hook.Env, "hooks.env"); err != nil {
+	if err := mergeEnvInto(ctx, resolveSecrets, resolver, merged, hook.Env, "hooks.env"); err != nil {
 		return nil, err
 	}
 	if err := MergeResolvedSecretsInto(ctx, resolveSecrets, resolver, merged, hook.Secrets, "hooks.secrets"); err != nil {

@@ -8,7 +8,7 @@ import (
 
 // RecipeStepTunnel configures an operator-side port forward for a recipe step.
 type RecipeStepTunnel struct {
-	Mode           string            `json:"mode,omitempty"`
+	Mode           string            `json:"mode,omitempty" jsonschema:"default=local"`
 	RemoteHost     string            `json:"remote_host,omitempty"`
 	RemotePort     int               `json:"remote_port,omitempty"`
 	LocalPort      int               `json:"local_port,omitempty"`
@@ -21,7 +21,7 @@ type RecipeStepTunnel struct {
 	SSHConfigMatch string            `json:"ssh_config_match,omitempty"`
 	SSHConfigEnv   map[string]string `json:"ssh_config_env,omitempty"`
 	ShareKey       string            `json:"share_key,omitempty"`
-	Protocol       string            `json:"protocol,omitempty"`
+	Protocol       string            `json:"protocol,omitempty" jsonschema:"default=tcp"`
 	TunLocal       int               `json:"tun_local,omitempty"`
 	TunRemote      int               `json:"tun_remote,omitempty"`
 	RemoteSocat    bool              `json:"remote_socat,omitempty"`

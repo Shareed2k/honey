@@ -773,7 +773,15 @@ func TestCueRun_postgresStep(t *testing.T) {
 }
 
 type mockSecretResolver struct {
+	handlesFunc func(ref string) bool
 	resolveFunc func(ref string) (string, error)
+}
+
+func (m *mockSecretResolver) Handles(ref string) bool {
+	if m.handlesFunc != nil {
+		return m.handlesFunc(ref)
+	}
+	return false
 }
 
 func (m *mockSecretResolver) Resolve(_ context.Context, ref string) (string, error) {
