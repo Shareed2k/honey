@@ -167,6 +167,67 @@ export function recipeNameFromFilename(fileName?: string): string {
   return baseName.replace(/\.cue$/i, '') || 'visual-studio-recipe';
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function buildFlowFromRecipe(recipeJson: any): {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  nodes: any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  edges: any[];
+  stepData: Record<string, StepDraft>;
+} {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodes: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const edges: any[] = [];
+  const stepData: Record<string, StepDraft> = {};
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (recipeJson.steps || []).forEach((step: any, index: number) => {
+    const id = step.id || `step_${index + 1}`;
+    const kind = detectStepKind(step);
+    nodes.push({
+      id,
+      type: 'step',
+      position: { x: 100 + index * 220, y: 150 },
+      data: { label: id, kind, host: step.host || '_' },
+    });
+    if (step.depends) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      step.depends.forEach((depId: any) => {
+        edges.push({ id: `edge_from_${depId}_to_${id}`, source: depId, target: id });
+      });
+    }
+    stepData[id] = { ...step, id, kind, host: step.host || '_' };
+  });
+
+  return { nodes, edges, stepData };
+}
+
+export function computeWavesFromEdges(
+  nodes: { id: string }[],
+  edges: { source: string; target: string }[],
+): Record<string, number> {
+  const inDegree: Record<string, number> = {};
+  const adj: Record<string, string[]> = {};
+  for (const n of nodes) { inDegree[n.id] = 0; adj[n.id] = []; }
+  for (const e of edges) {
+    adj[e.source].push(e.target);
+    inDegree[e.target]++;
+  }
+  const waveByNode: Record<string, number> = {};
+  const queue = nodes.filter((n) => inDegree[n.id] === 0).map((n) => n.id);
+  queue.forEach((id) => { waveByNode[id] = 1; });
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    for (const next of adj[curr]) {
+      waveByNode[next] = Math.max(waveByNode[next] ?? 0, (waveByNode[curr] ?? 1) + 1);
+      inDegree[next]--;
+      if (inDegree[next] === 0) queue.push(next);
+    }
+  }
+  return waveByNode;
+}
+
 export function applyWaveLayout<T extends PositionedNode>(nodes: T[]): T[] {
   const knownWaves = nodes
     .map((node) => node.data?.wave)

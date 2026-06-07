@@ -601,7 +601,7 @@ export function App() {
           {tab === 'tunnels' ? <TunnelsTab onNavigateToSearch={() => setTab('search')} /> : null}
 
           <div style={{ display: tab === 'studio' ? 'block' : 'none', height: '100%' }}>
-            <StudioWorkspace selectedRecords={selectedRecords} sshUser={sshUser} />
+            <StudioWorkspace records={records} selectedRecords={selectedRecords} sshUser={sshUser} />
           </div>
 
           {tab === 'apps' ? (

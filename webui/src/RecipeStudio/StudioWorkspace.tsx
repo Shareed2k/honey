@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { 
   ReactFlow, 
   Controls, 
@@ -12,25 +12,29 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './studio.css';
-import { Layout, Button, Drawer, Space, Typography, Select, message } from 'antd';
-import { PlusOutlined, SaveOutlined, SyncOutlined, PlayCircleOutlined, CloudDownloadOutlined, UndoOutlined, SettingOutlined } from '@ant-design/icons';
+import { Layout, Button, Drawer, Space, Typography, Select, message, Modal } from 'antd';
+import { PlusOutlined, SaveOutlined, SyncOutlined, PlayCircleOutlined, CloudDownloadOutlined, UndoOutlined, SettingOutlined, CodeOutlined } from '@ant-design/icons';
 
 import CustomStepNode from './CustomStepNode';
 import DynamicStepForm from './DynamicStepForm';
 import StorageModal from './StorageModal';
 import GitLoadModal from './GitLoadModal';
 import { StepRun } from '../RecipesTab/StepRun';
+import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
 import { apiGet, apiPost } from '../api';
 import {
   applyWaveLayout,
+  buildFlowFromRecipe,
   buildRecipeFromFlow,
+  computeWavesFromEdges,
   createStepDraft,
-  detectStepKind,
   listStepKinds,
   recipeNameFromFilename,
   stepSchemaForKind,
   type StepDraft,
 } from './recipeStudioUtils';
+
+const CodeEditor = lazy(() => import('../CodeEditor'));
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -40,11 +44,12 @@ const nodeTypes = {
 };
 
 type Props = {
+  records?: HostRecord[];
   selectedRecords?: any[];
   sshUser?: string;
 };
 
-export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root' }: Props) {
+export default function StudioWorkspace({ records = [], selectedRecords = [], sshUser = 'root' }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -58,6 +63,12 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
   const [runCount, setRunCount] = useState(0);
   const [recipeDefaults, setRecipeDefaults] = useState<any>({});
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+  const [rawMode, setRawMode] = useState(false);
+  const [rawContent, setRawContent] = useState('');
+  const [runHosts, setRunHosts] = useState<HostRecord[]>([]);
+  const [hostPickerOpen, setHostPickerOpen] = useState(false);
+  const [pendingRunStepId, setPendingRunStepId] = useState<string | null>(null);
+  const [modalSelectedKeys, setModalSelectedKeys] = useState<Record<string, boolean>>({});
 
   // Storage selection & loading state
   const [availableRecipes, setAvailableRecipes] = useState<any[]>([]);
@@ -91,8 +102,7 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
   };
 
   // 2. Load and Deconstruct Recipe
-  const loadRecipe = async (name: string | undefined) => {
-    if (!name) return;
+  const doLoadRecipe = async (name: string) => {
     try {
       setSelectedRecipe(name);
       const res = await apiGet(`/api/v1/recipes/store/${encodeURIComponent(name)}`);
@@ -113,33 +123,7 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
 
       setRecipeDefaults(recipeJson.defaults ?? {});
 
-      const newNodes: any[] = [];
-      const newEdges: any[] = [];
-      const newStepData: Record<string, StepDraft> = {};
-
-      recipeJson.steps.forEach((step: any, index: number) => {
-        const id = step.id || `step_${index + 1}`;
-        const kind = detectStepKind(step);
-
-        newNodes.push({
-          id,
-          type: 'step',
-          position: { x: 100 + index * 220, y: 150 },
-          data: { label: id, kind, host: step.host || '_' },
-        });
-
-        if (step.depends) {
-          step.depends.forEach((depId: string) => {
-            newEdges.push({
-              id: `edge_from_${depId}_to_${id}`,
-              source: depId,
-              target: id,
-            });
-          });
-        }
-
-        newStepData[id] = { ...step, id, kind, host: step.host || '_' };
-      });
+      const { nodes: newNodes, edges: newEdges, stepData: newStepData } = buildFlowFromRecipe(recipeJson);
 
       const waveByNode = graphWaveByNode(data.graph);
       const finalNodes = newNodes.map((node) => {
@@ -153,10 +137,26 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
       setNodes(applyWaveLayout(finalNodes));
       setEdges(newEdges);
       setStepData(newStepData);
+      setRawMode(false);
       message.success(`Successfully loaded ${name}!`);
     } catch (err: any) {
       message.error('Failed to load recipe: ' + err.message);
     }
+  };
+
+  const loadRecipe = (name: string | undefined) => {
+    if (!name) return;
+    if (nodes.length > 0 && selectedRecipe && name !== selectedRecipe) {
+      Modal.confirm({
+        title: 'Load new recipe?',
+        content: 'Current canvas will be discarded.',
+        okText: 'Discard & Load',
+        cancelText: 'Cancel',
+        onOk: () => doLoadRecipe(name),
+      });
+      return;
+    }
+    doLoadRecipe(name);
   };
 
   // 3. Select Node Click
@@ -196,6 +196,7 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
 
   // 6. Build full serializable Recipe JSON
   const buildRecipeJSON = () => {
+    if (rawMode) return JSON.parse(rawContent);
     const base = buildRecipeFromFlow({
       name: recipeNameFromFilename(selectedRecipe),
       nodes,
@@ -206,6 +207,32 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
       (base as any).defaults = recipeDefaults;
     }
     return base;
+  };
+
+  const handleSwitchToRaw = () => {
+    setRawContent(JSON.stringify(buildRecipeJSON(), null, 2));
+    setRawMode(true);
+    setRunPanelOpen(false);
+    setSelectedNodeId(null);
+  };
+
+  const handleSwitchToVisual = () => {
+    try {
+      const parsed = JSON.parse(rawContent);
+      const { nodes: newNodes, edges: newEdges, stepData: newStepData } = buildFlowFromRecipe(parsed);
+      const waveByNode = computeWavesFromEdges(newNodes, newEdges);
+      const nodesWithWave = newNodes.map((n) => ({
+        ...n,
+        data: { ...n.data, wave: waveByNode[n.id] ?? 1 },
+      }));
+      setNodes(applyWaveLayout(nodesWithWave));
+      setEdges(newEdges);
+      setStepData(newStepData);
+      setRecipeDefaults(parsed.defaults ?? {});
+      setRawMode(false);
+    } catch {
+      message.error('Invalid JSON — fix errors before switching to visual mode');
+    }
   };
 
   const buildSubgraphRecipe = (targetId: string) => {
@@ -237,6 +264,33 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
       (base as any).defaults = recipeDefaults;
     }
     return base;
+  };
+
+  const modalHosts = records.filter((r) => modalSelectedKeys[recordKey(r)]);
+
+  const handleRunStep = (stepId: string) => {
+    if (selectedRecords.length > 0) {
+      setRunHosts(selectedRecords as HostRecord[]);
+      setRunStepId(stepId);
+      setRunCount((c) => c + 1);
+      setRunPanelOpen(true);
+    } else {
+      setPendingRunStepId(stepId);
+      setModalSelectedKeys({});
+      setHostPickerOpen(true);
+    }
+  };
+
+  const handleModalRun = () => {
+    if (modalHosts.length === 0) {
+      message.warning('Select at least one host to run on');
+      return;
+    }
+    setRunHosts(modalHosts);
+    setRunStepId(pendingRunStepId!);
+    setRunCount((c) => c + 1);
+    setHostPickerOpen(false);
+    setRunPanelOpen(true);
   };
 
   const graphWaveByNode = (graph: any): Record<string, number> => {
@@ -356,6 +410,27 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
     gitPass: string;
     gitSsh: string;
   }) => {
+    if (nodes.length > 0) {
+      Modal.confirm({
+        title: 'Load recipe from Git?',
+        content: 'Current canvas will be discarded.',
+        okText: 'Discard & Load',
+        cancelText: 'Cancel',
+        onOk: () => doGitLoad(options),
+      });
+      return;
+    }
+    doGitLoad(options);
+  };
+
+  const doGitLoad = async (options: {
+    gitUrl: string;
+    gitBranch: string;
+    path: string;
+    gitUser: string;
+    gitPass: string;
+    gitSsh: string;
+  }) => {
     try {
       const payload = {
         path: options.path,
@@ -391,33 +466,7 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
         setRecipeDefaults({});
       }
 
-      const newNodes: any[] = [];
-      const newEdges: any[] = [];
-      const newStepData: Record<string, StepDraft> = {};
-
-      recipeJson.steps.forEach((step: any, index: number) => {
-        const id = step.id || `step_${index + 1}`;
-        const kind = detectStepKind(step);
-
-        newNodes.push({
-          id,
-          type: 'step',
-          position: { x: 100 + index * 220, y: 150 },
-          data: { label: id, kind, host: step.host || '_' },
-        });
-
-        if (step.depends) {
-          step.depends.forEach((depId: string) => {
-            newEdges.push({
-              id: `edge_from_${depId}_to_${id}`,
-              source: depId,
-              target: id,
-            });
-          });
-        }
-
-        newStepData[id] = { ...step, id, kind, host: step.host || '_' };
-      });
+      const { nodes: newNodes, edges: newEdges, stepData: newStepData } = buildFlowFromRecipe(recipeJson);
 
       const validatedNodes = [...newNodes];
       try {
@@ -442,6 +491,7 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
       setNodes(applyWaveLayout(validatedNodes));
       setEdges(newEdges);
       setStepData(newStepData);
+      setRawMode(false);
       setGitLoadModalVisible(false);
       message.success(`Successfully loaded ${options.path}!`);
     } catch (err: any) {
@@ -467,6 +517,13 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
           </Button>
         </Space>
         <Space>
+          <Button
+            type={rawMode ? 'primary' : 'default'}
+            icon={<CodeOutlined />}
+            onClick={rawMode ? handleSwitchToVisual : handleSwitchToRaw}
+          >
+            {rawMode ? 'Visual' : 'Raw'}
+          </Button>
           <Button type="default" icon={<SettingOutlined />} onClick={() => setSettingsDrawerOpen(true)}>
             Recipe Settings
           </Button>
@@ -501,19 +558,30 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
         </Sider>
 
         <Content style={{ position: 'relative', overflow: 'hidden', background: '#0d1117' }}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
-            nodeTypes={nodeTypes}
-            fitView
-          >
-            <Controls className="studio-flow-controls" />
-            <Background />
-          </ReactFlow>
+          {rawMode ? (
+            <Suspense fallback={<div style={{ padding: 16, color: '#8b949e' }}>Loading editor…</div>}>
+              <CodeEditor
+                value={rawContent}
+                onChange={setRawContent}
+                language="plain"
+                height="100%"
+              />
+            </Suspense>
+          ) : (
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={onNodeClick}
+              nodeTypes={nodeTypes}
+              fitView
+            >
+              <Controls className="studio-flow-controls" />
+              <Background />
+            </ReactFlow>
+          )}
         </Content>
       </Layout>
 
@@ -530,15 +598,11 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
               value={stepData[selectedNodeId]}
               onChange={handleStepDataChange}
             />
-            <Button 
-              type="primary" 
+            <Button
+              type="primary"
               icon={<PlayCircleOutlined />}
               style={{ marginTop: 16, width: '100%' }}
-              onClick={() => {
-                setRunStepId(selectedNodeId);
-                setRunCount(c => c + 1);
-                setRunPanelOpen(true);
-              }}
+              onClick={() => handleRunStep(selectedNodeId!)}
             >
               Run Step
             </Button>
@@ -557,7 +621,7 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
               key={`${runStepId}-${runCount}`}
               recipe={buildSubgraphRecipe(runStepId) as any}
               recipeBasePath={null}
-              hosts={selectedRecords}
+              hosts={runHosts}
               envOverrides={[]}
               sshUser={sshUser}
               recordSession={false}
@@ -597,6 +661,25 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
           onLoad={handleGitLoad}
         />
       )}
+
+      <Modal
+        title="Select hosts to run on"
+        open={hostPickerOpen}
+        onCancel={() => setHostPickerOpen(false)}
+        onOk={handleModalRun}
+        okText="Run"
+        width={720}
+      >
+        <HostPicker
+          records={records}
+          selectedKeys={modalSelectedKeys}
+          pageSize={5}
+          onToggleRow={(rec) => {
+            const key = recordKey(rec);
+            setModalSelectedKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+          }}
+        />
+      </Modal>
     </Layout>
   );
 }
