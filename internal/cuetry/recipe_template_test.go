@@ -7,12 +7,12 @@ import (
 
 func TestClassifyStep_template(t *testing.T) {
 	t.Parallel()
-	kind, err := ClassifyStep(RecipeStep{
-		Host:     MatchLocalAIHost,
+	step := &TemplateStep{
+		StepBase: StepBase{Host: MatchLocalAIHost},
 		Template: &RecipeStepTemplate{Template: "x"},
-	})
-	if err != nil || kind != StepKindTemplate {
-		t.Fatalf("kind=%v err=%v", kind, err)
+	}
+	if step.Kind() != KindTemplate {
+		t.Fatalf("kind=%v", step.Kind())
 	}
 }
 
@@ -51,17 +51,17 @@ recipe: {
 
 func TestValidateEnvFromRefs_rejectsBothStepAndFromOutput(t *testing.T) {
 	t.Parallel()
-	steps := []RecipeStep{
-		{ID: "a", Host: "_", Template: &RecipeStepTemplate{Template: "x", Output: "OUT"}},
-		{ID: "b", Host: "*", Depends: []string{"a"}, Command: "echo", EnvFrom: []EnvFromRef{{
+	steps := wrapAll(
+		&TemplateStep{StepBase: StepBase{ID: "a", Host: "_"}, Template: &RecipeStepTemplate{Template: "x", Output: "OUT"}},
+		&CommandStep{StepBase: StepBase{ID: "b", Host: "*", Depends: []string{"a"}, EnvFrom: []EnvFromRef{{
 			Step: "a", FromOutput: "OUT", Map: map[string]string{"X": "stdout"},
-		}}},
-	}
+		}}}, Command: "echo"},
+	)
 	sg, err := BuildStepGraph(steps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = validateEnvFromRefs(1, steps[1], sg, templateOutputProducers(steps))
+	err = validateEnvFromRefs(1, steps[1].Step.Base(), sg, templateOutputProducers(steps))
 	if err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("got %v", err)
 	}
@@ -71,7 +71,7 @@ func TestMergeEnvFromInto_fromOutput(t *testing.T) {
 	t.Parallel()
 	outputCap := NewRecipeOutputCapture()
 	outputCap.Set("RESULT", "hello")
-	step := RecipeStep{
+	step := &StepBase{
 		EnvFrom: []EnvFromRef{{
 			FromOutput: "RESULT",
 			Map:        map[string]string{"CFG": "stdout"},
@@ -88,10 +88,10 @@ func TestMergeEnvFromInto_fromOutput(t *testing.T) {
 
 func TestValidateStepTemplate_outputRequiresLocalHost(t *testing.T) {
 	t.Parallel()
-	err := validateDecodedRecipeStep(0, 1, RecipeStep{
-		Host:     "*",
+	err := validateDecodedRecipeStep(StepValidateCtx{Index: 0, NumSteps: 1, Mode: ExecutionModeLinear}, wrap(&TemplateStep{
+		StepBase: StepBase{Host: "*"},
 		Template: &RecipeStepTemplate{Template: "x", Output: "RESULT"},
-	}, nil, nil, nil, ExecutionModeLinear)
+	}))
 	if err == nil || !strings.Contains(err.Error(), "template.output requires host") {
 		t.Fatalf("got %v", err)
 	}
@@ -99,10 +99,10 @@ func TestValidateStepTemplate_outputRequiresLocalHost(t *testing.T) {
 
 func TestValidateStepTemplate_allowsPerHostWithoutOutput(t *testing.T) {
 	t.Parallel()
-	err := validateDecodedRecipeStep(0, 1, RecipeStep{
-		Host:     "*",
+	err := validateDecodedRecipeStep(StepValidateCtx{Index: 0, NumSteps: 1, Mode: ExecutionModeLinear}, wrap(&TemplateStep{
+		StepBase: StepBase{Host: "*"},
 		Template: &RecipeStepTemplate{Template: "x"},
-	}, nil, nil, nil, ExecutionModeLinear)
+	}))
 	if err != nil {
 		t.Fatalf("got %v", err)
 	}

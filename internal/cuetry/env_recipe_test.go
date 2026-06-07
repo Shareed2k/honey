@@ -23,7 +23,7 @@ func TestValidateRecipeEnvMap_badValue(t *testing.T) {
 
 func TestEffectiveEnv_stepOverridesDefaults(t *testing.T) {
 	def := &RecipeDefaults{Env: map[string]string{"A": "1", "B": "2"}}
-	step := RecipeStep{Env: map[string]string{"B": "9", "C": "3"}}
+	step := &StepBase{Env: map[string]string{"B": "9", "C": "3"}}
 	got, err := EffectiveEnv(step, def)
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestParseEnvKeyValuePairs(t *testing.T) {
 
 func TestEffectiveEnvForRun_cliOverrides(t *testing.T) {
 	def := &RecipeDefaults{Env: map[string]string{"A": "1"}}
-	step := RecipeStep{Env: map[string]string{"B": "2"}}
+	step := &StepBase{Env: map[string]string{"B": "2"}}
 	cli := map[string]string{"A": "9", "C": "3"}
 	got, err := EffectiveEnvForRun(context.Background(), false, nil, step, def, cli, nil)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestEffectiveEnvForRun_cliOverrides(t *testing.T) {
 }
 
 func TestEffectiveEnvForRun_withHostRecord(t *testing.T) {
-	step := RecipeStep{Env: map[string]string{"USER_VAR": "custom"}}
+	step := &StepBase{Env: map[string]string{"USER_VAR": "custom"}}
 	r := &hosts.Record{
 		Name:      "web-01",
 		PrimaryIP: "10.0.0.5",
@@ -164,7 +164,7 @@ func TestEffectiveEnvForRun_resolvesSecureV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	step := RecipeStep{Secrets: map[string]string{"TOKEN": ref}}
+	step := &StepBase{Secrets: map[string]string{"TOKEN": ref}}
 	got, err := EffectiveEnvForRun(context.Background(), true, res, step, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ recipe: {
 	if r.Defaults == nil || r.Defaults.Env["GLOBAL"] != "g" {
 		t.Fatalf("defaults: %+v", r.Defaults)
 	}
-	if r.Steps[0].Env["LOCAL"] != "l" {
-		t.Fatalf("step env: %+v", r.Steps[0].Env)
+	if r.Steps[0].Step.Base().Env["LOCAL"] != "l" {
+		t.Fatalf("step env: %+v", r.Steps[0].Step.Base().Env)
 	}
 }

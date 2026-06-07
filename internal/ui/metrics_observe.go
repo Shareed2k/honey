@@ -52,11 +52,11 @@ func observeRecipeHostResult(obs metrics.Observer, res HostExecResult) {
 	obs.ObserveRecipeHostResult(hostResultStatus(res))
 }
 
-func observeRecipeStep(obs metrics.Observer, kind cuetry.StepKind, start time.Time, rows []HostExecResult, retryAttempts int) {
+func observeRecipeStep(obs metrics.Observer, kind string, start time.Time, rows []HostExecResult, retryAttempts int) {
 	if !metrics.ObserverEnabled(obs) {
 		return
 	}
-	kindLabel := cuetry.StepKindLabel(kind)
+	kindLabel := kind
 	status := classifyStepStatus(rows)
 	obs.ObserveRecipeStep(kindLabel, status, time.Since(start), retryAttempts)
 	for _, row := range rows {

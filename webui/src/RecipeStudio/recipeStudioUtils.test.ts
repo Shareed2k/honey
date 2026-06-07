@@ -11,13 +11,13 @@ import {
 } from './recipeStudioUtils';
 
 describe('recipeStudioUtils', () => {
-  it('lists step kinds from backend schema properties instead of a fixed toolbar list', () => {
+  it('lists step kinds from backend per-kind definitions, excluding defaults', () => {
     const schema = {
-      properties: {
-        id: { type: 'string' },
+      definitions: {
         postgres: { type: 'object' },
         opensearch: { type: 'object' },
-        command: { type: 'string' },
+        command: { type: 'object' },
+        defaults: { type: 'object' },
       },
     };
 
@@ -49,44 +49,51 @@ describe('recipeStudioUtils', () => {
     });
   });
 
-  it('uses kind-specific definitions and inherits all other fields', () => {
+  it('returns the self-contained per-kind definition for the selected kind', () => {
     const schema = {
-      properties: { id: { type: 'string' }, host: { type: 'string' }, command: { type: 'string' }, postgres: { type: 'object' } },
-      definitions: { postgres: { type: 'object', properties: { sql: { type: 'string' } } } },
+      definitions: {
+        command: { type: 'object', properties: { id: { type: 'string' }, command: { type: 'string' } } },
+        postgres: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            host: { type: 'string' },
+            postgres: { $ref: '#/$defs/RecipeStepPostgres' },
+          },
+          $defs: { RecipeStepPostgres: { type: 'object', properties: { sql: { type: 'string' } } } },
+        },
+      },
     };
 
-    expect(stepSchemaForKind(schema, 'postgres')?.properties).toEqual({
-      id: schema.properties.id,
-      host: schema.properties.host,
-      postgres: schema.definitions.postgres,
-    });
-  });
-
-  it('focuses drawer schema by removing other specific definitions', () => {
-    const schema = {
+    // The postgres step schema exposes base fields plus its own action object,
+    // with the internal $ref inlined so the form can render it.
+    expect(stepSchemaForKind(schema, 'postgres')).toEqual({
       type: 'object',
       properties: {
         id: { type: 'string' },
         host: { type: 'string' },
-        depends: { type: 'array' },
-        command: { type: 'string' },
-        plugin: { type: 'object' },
-        postgres: { type: 'object' },
-        retry: { type: 'object' },
-      },
-      definitions: {
         postgres: { type: 'object', properties: { sql: { type: 'string' } } },
-        plugin: { type: 'object', properties: { id: { type: 'string' } } },
+      },
+    });
+  });
+
+  it('inlines nested $ref entries and drops the $defs table', () => {
+    const schema = {
+      definitions: {
+        command: {
+          type: 'object',
+          properties: {
+            command: { type: 'string' },
+            retry: { $ref: '#/$defs/RecipeStepRetry' },
+          },
+          $defs: { RecipeStepRetry: { type: 'object', properties: { attempts: { type: 'integer' } } } },
+        },
       },
     };
 
-    expect(Object.keys(stepSchemaForKind(schema, 'plugin').properties).sort()).toEqual([
-      'depends',
-      'host',
-      'id',
-      'plugin',
-      'retry',
-    ]);
+    const resolved = stepSchemaForKind(schema, 'command');
+    expect(resolved.$defs).toBeUndefined();
+    expect(resolved.properties.retry).toEqual({ type: 'object', properties: { attempts: { type: 'integer' } } });
   });
 
   it('serializes dynamic step fields and removes ui-only kind', () => {

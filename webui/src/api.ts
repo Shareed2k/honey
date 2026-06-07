@@ -795,11 +795,13 @@ export async function cueExec(body: CueExecRequest): Promise<{ plan?: string; re
 export async function cueExecStream(
   body: CueExecRequest,
   onRow: (row: HostExecResultRow) => void,
+  signal?: AbortSignal,
 ): Promise<{ recording_id?: string }> {
   const r = await fetch('/api/v1/cue-exec?stream=1', {
     method: 'POST',
     headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
   if (!r.ok) {
     const j = (await r.json().catch(() => ({}))) as { error?: string };

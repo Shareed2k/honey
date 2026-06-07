@@ -22,7 +22,7 @@ func ValidateRunAsUser(user string) error {
 }
 
 // EffectiveRunAs returns step-level run_as, else recipe defaults.run_as, else "".
-func EffectiveRunAs(step RecipeStep, defaults *RecipeDefaults) string {
+func EffectiveRunAs(step *StepBase, defaults *RecipeDefaults) string {
 	if s := strings.TrimSpace(step.RunAs); s != "" {
 		return s
 	}

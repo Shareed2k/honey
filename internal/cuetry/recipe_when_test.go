@@ -146,7 +146,7 @@ func TestBuildEnvMapForWhen_cliOverride(t *testing.T) {
 		Env: map[string]string{"BARMAN_DO_RESET": "false"},
 	}
 	host := hosts.Record{Name: "barman-1", PrimaryIP: "10.0.0.1"}
-	m, err := BuildEnvMapForWhen(context.Background(), false, nil, RecipeStep{}, defaults, map[string]string{"BARMAN_DO_RESET": "true"}, &host)
+	m, err := BuildEnvMapForWhen(context.Background(), false, nil, &StepBase{}, defaults, map[string]string{"BARMAN_DO_RESET": "true"}, &host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestBuildEnvMapForWhen_cliOverride(t *testing.T) {
 
 func TestBuildSecretsMapForWhen_dryRun(t *testing.T) {
 	t.Parallel()
-	m, err := BuildSecretsMapForWhen(context.Background(), false, nil, RecipeStep{
+	m, err := BuildSecretsMapForWhen(context.Background(), false, nil, &StepBase{
 		Secrets: map[string]string{"X": "secure:v1:AA:bb"},
 	}, nil)
 	if err != nil {
@@ -170,7 +170,7 @@ func TestBuildSecretsMapForWhen_dryRun(t *testing.T) {
 
 func TestValidateStepWhen_requiresID(t *testing.T) {
 	t.Parallel()
-	err := validateStepWhen(0, ExecutionModeGraph, RecipeStep{
+	err := validateStepWhen(0, ExecutionModeGraph, &StepBase{
 		Host: "*",
 		When: "true",
 	}, nil)
@@ -194,7 +194,7 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(r.Steps[1].When) == "" {
+	if strings.TrimSpace(r.Steps[1].Step.Base().When) == "" {
 		t.Fatal("expected when")
 	}
 }
@@ -203,11 +203,10 @@ func TestValidateRecipeGraph_linearWhenID(t *testing.T) {
 	t.Parallel()
 	r := Recipe{
 		Name: "l",
-		Steps: []RecipeStep{{
-			Host:    "*",
-			Command: "echo",
-			When:    "host.name != ''",
-		}},
+		Steps: wrapAll(&CommandStep{
+			StepBase: StepBase{Host: "*", When: "host.name != ''"},
+			Command:  "echo",
+		}),
 	}
 	if err := ValidateRecipeGraph(r); err == nil {
 		t.Fatal("expected id required")

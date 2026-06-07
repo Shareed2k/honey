@@ -3,19 +3,14 @@ package cuetry
 import "testing"
 
 func TestPreviewForStepTunnel(t *testing.T) {
-	kind, err := ClassifyStep(RecipeStep{
-		Host: "*",
+	step := &TunnelStep{
+		StepBase: StepBase{Host: "*"},
 		Tunnel: &RecipeStepTunnel{
 			RemoteHost: "db.internal",
 			RemotePort: 5432,
 		},
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	got := previewForStep(kind, RecipeStep{
-		Tunnel: &RecipeStepTunnel{RemoteHost: "db.internal", RemotePort: 5432},
-	})
+	got := previewForStep(step)
 	want := `tunnel local -> db.internal:5432`
 	if got != want {
 		t.Fatalf("preview = %q, want %q", got, want)
@@ -23,7 +18,7 @@ func TestPreviewForStepTunnel(t *testing.T) {
 }
 
 func TestRetrySummaryExplicit(t *testing.T) {
-	step := RecipeStep{
+	step := &StepBase{
 		Retry: &RecipeStepRetry{Attempts: 5, Backoff: "exponential"},
 	}
 	got := retrySummary(step, nil)
@@ -33,7 +28,7 @@ func TestRetrySummaryExplicit(t *testing.T) {
 }
 
 func TestRetrySummaryAbsent(t *testing.T) {
-	if retrySummary(RecipeStep{}, nil) != "" {
+	if retrySummary(&StepBase{}, nil) != "" {
 		t.Fatal("expected empty retry summary without step.retry")
 	}
 }

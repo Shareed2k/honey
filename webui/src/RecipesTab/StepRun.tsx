@@ -1,5 +1,5 @@
 // webui/src/RecipesTab/StepRun.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Typography } from 'antd';
 import { cueExecStream, type CueExecRequest, type HostExecResultRow, type ParsedRecipe } from '../api';
 import type { HostRecord } from '../HostPicker';
@@ -21,9 +21,11 @@ type Props = {
 export function StepRun(props: Props) {
   const [state, setState] = useState<LiveState>({ rows: [], status: 'idle' });
   const [recordingFileName, setRecordingFileName] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setState({ rows: [], status: 'running' });
     setRecordingFileName(null);
 
@@ -42,36 +44,31 @@ export function StepRun(props: Props) {
     };
 
     cueExecStream(payload, (row: HostExecResultRow) => {
-      if (cancelled) {
-        return;
-      }
+      if (ctrl.signal.aborted) return;
       setState((s) => ({ ...s, rows: [...s.rows, row] }));
-    })
+    }, ctrl.signal)
       .then((footer) => {
-        if (cancelled) {
-          return;
-        }
+        if (ctrl.signal.aborted) return;
         if (footer.recording_id) {
           setRecordingFileName(`${footer.recording_id}.hrec.jsonl`);
         }
         setState((s) => ({ ...s, status: 'ok' }));
       })
       .catch((e: unknown) => {
-        if (cancelled) {
-          return;
-        }
+        if (e instanceof Error && e.name === 'AbortError') return;
         console.error('cueExecStream failed:', e);
         setState((s) => ({ ...s, status: 'err' }));
       });
 
     return () => {
-      cancelled = true;
+      ctrl.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleCancel() {
-    console.warn('cueExecStream does not support cancellation; ignoring cancel click');
+    abortRef.current?.abort();
+    setState((s) => ({ ...s, status: 'idle' }));
   }
 
   const ok = state.rows.filter((r) => r.Success).length;
@@ -128,7 +125,7 @@ export function StepRun(props: Props) {
           <Button onClick={props.onStartNew}>
             start new
           </Button>
-          <Button type="primary" onClick={props.onRunAgain}>
+          <Button type="default" onClick={props.onRunAgain}>
             Run again
           </Button>
         </footer>

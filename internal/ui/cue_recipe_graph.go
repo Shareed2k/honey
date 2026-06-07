@@ -51,9 +51,10 @@ func streamCueRecipeStepsGraph(ctx context.Context, run *cueRun, out chan<- Host
 	if len(run.triggeredHandlers) > 0 && len(run.Recipe.Handlers) > 0 {
 		zap.L().Debug("executing triggered handlers", zap.Any("triggered", run.triggeredHandlers))
 		for _, handler := range run.Recipe.Handlers {
-			if run.triggeredHandlers[handler.ID] {
-				zap.L().Info("running handler", zap.String("id", handler.ID))
-				_, _ = streamCueRecipeStep(ctx, run, -1, handler, out)
+			hid := handler.Step.Base().ID
+			if run.triggeredHandlers[hid] {
+				zap.L().Info("running handler", zap.String("id", hid))
+				_, _ = streamCueRecipeStep(ctx, run, -1, handler.Step, out)
 			}
 		}
 	}
@@ -130,28 +131,16 @@ func runGraphWave(ctx context.Context, run *cueRun, out chan<- HostExecResult, s
 }
 
 func graphRunOneStep(ctx context.Context, run *cueRun, out chan<- HostExecResult, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, stateMu *sync.Mutex, historyMu *sync.Mutex, idx int) {
-	step := run.Recipe.Steps[idx]
+	step := run.Recipe.Steps[idx].Step
 	stepID := sg.IndexToID[idx]
-	kind, classifyErr := cuetry.ClassifyStep(step)
-	if classifyErr != nil {
-		zap.L().Debug("recipe graph step finished",
-			zap.String("step_id", stepID),
-			zap.String("kind", "unknown"),
-			zap.String("state", "failed"),
-		)
-		stateMu.Lock()
-		state[idx] = cuetry.StepRunFailed
-		sg.MarkSkippedDescendants(idx, state)
-		stateMu.Unlock()
-		return
-	}
+	kind := step.Kind()
 
 	var rows []HostExecResult
 	var stepErr error
 	switch kind {
-	case cuetry.StepKindAI:
+	case cuetry.KindAI:
 		rows, stepErr = graphRunAIStep(ctx, run, idx, step, sg, state, historyByIndex, stateMu, historyMu, out)
-	case cuetry.StepKindTemplate:
+	case cuetry.KindTemplate:
 		rows, stepErr = graphRunTemplateStep(ctx, run, idx, step, out)
 	default:
 		rows, stepErr = streamCueRecipeStep(ctx, run, idx, step, out)
@@ -167,7 +156,7 @@ func graphRunOneStep(ctx context.Context, run *cueRun, out chan<- HostExecResult
 		}
 	}
 
-	if failed && step.IgnoreErrors {
+	if failed && step.Base().IgnoreErrors {
 		zap.L().Warn("Step failed but ignore_errors is true. Marking as succeeded to let descendants run.",
 			zap.String("step_id", stepID),
 		)
@@ -195,13 +184,13 @@ func graphRunOneStep(ctx context.Context, run *cueRun, out chan<- HostExecResult
 	}
 	state[idx] = cuetry.StepRunSucceeded
 	logGraphStepFinished(stepID, kind, cuetry.StepRunSucceeded, nil)
-	if step.NotifyEnabled() && len(rows) > 0 {
+	if step.Base().NotifyEnabled() && len(rows) > 0 {
 		body := FormatCueStepHostResultsForNotify(idx+1, rows)
-		CueStepNotifyRemote(ctx, run.Recipe, idx+1, kind, step.Notify, body)
+		CueStepNotifyRemote(ctx, run.Recipe, idx+1, kind, step.Base().Notify, body)
 	}
 }
 
-func graphRunAIStep(ctx context.Context, run *cueRun, idx int, step cuetry.RecipeStep, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, stateMu *sync.Mutex, historyMu *sync.Mutex, out chan<- HostExecResult) ([]HostExecResult, error) {
+func graphRunAIStep(ctx context.Context, run *cueRun, idx int, step cuetry.Step, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, stateMu *sync.Mutex, historyMu *sync.Mutex, out chan<- HostExecResult) ([]HostExecResult, error) {
 	kv := kvReaderFromCoordinator(run.recipeKV)
 	ok, whenErr := evalAIStepWhen(ctx, run.Recipe, step, run.outputStore, run.SecretResolver, kv, run.CLIEnv, run.Execute)
 	if whenErr != nil {
@@ -241,7 +230,7 @@ func graphRunAIStep(ctx context.Context, run *cueRun, idx int, step cuetry.Recip
 	return []HostExecResult{res}, nil
 }
 
-func graphRunTemplateStep(ctx context.Context, run *cueRun, idx int, step cuetry.RecipeStep, out chan<- HostExecResult) ([]HostExecResult, error) {
+func graphRunTemplateStep(ctx context.Context, run *cueRun, idx int, step cuetry.Step, out chan<- HostExecResult) ([]HostExecResult, error) {
 	rows, err := streamCueTemplateStep(ctx, run, idx, step, out)
 	if err != nil {
 		return rows, err
@@ -249,10 +238,10 @@ func graphRunTemplateStep(ctx context.Context, run *cueRun, idx int, step cuetry
 	return rows, nil
 }
 
-func logGraphStepFinished(stepID string, kind cuetry.StepKind, st cuetry.StepRunState, err error) {
+func logGraphStepFinished(stepID string, kind string, st cuetry.StepRunState, err error) {
 	fields := []zap.Field{
 		zap.String("step_id", stepID),
-		zap.String("kind", cuetry.StepKindLabel(kind)),
+		zap.String("kind", kind),
 		zap.String("state", graphStepRunStateLabel(st)),
 	}
 	if err != nil {

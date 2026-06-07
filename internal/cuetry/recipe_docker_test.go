@@ -5,8 +5,8 @@ import (
 )
 
 func TestClassifyDockerStep(t *testing.T) {
-	step := RecipeStep{
-		Host: "localhost",
+	step := &DockerStep{
+		StepBase: StepBase{Host: "localhost"},
 		Docker: &RecipeStepDocker{
 			Action: "build",
 			Build: &DockerBuild{
@@ -14,12 +14,11 @@ func TestClassifyDockerStep(t *testing.T) {
 			},
 		},
 	}
-	kind, err := ClassifyStep(step)
-	if err != nil {
-		t.Fatalf("unexpected classification error: %v", err)
+	if err := step.Validate(StepValidateCtx{}); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
 	}
-	if kind != StepKindDocker {
-		t.Errorf("expected StepKindDocker, got %v", kind)
+	if step.Kind() != KindDocker {
+		t.Errorf("expected KindDocker, got %v", step.Kind())
 	}
 }
 
@@ -52,7 +51,7 @@ recipe: {
 	if len(r.Steps) != 1 {
 		t.Fatalf("expected 1 step, got %d", len(r.Steps))
 	}
-	step := r.Steps[0]
+	step := r.Steps[0].Step.(*DockerStep)
 	if step.Docker == nil || step.Docker.Action != "build" {
 		t.Fatalf("parsed step is missing correct docker config: %+v", step.Docker)
 	}
@@ -90,7 +89,7 @@ recipe: {
 	if err != nil {
 		t.Fatalf("failed to parse valid docker run recipe: %v", err)
 	}
-	step := r.Steps[0]
+	step := r.Steps[0].Step.(*DockerStep)
 	if step.Docker == nil || step.Docker.Action != "run" {
 		t.Fatalf("parsed step is missing correct docker config")
 	}

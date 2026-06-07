@@ -64,17 +64,17 @@ func transferConfigFromSessionHoney(path string, f *config.File) config.Transfer
 	return LoadTransferConfigFromConfigPath(path)
 }
 
-func cueApplyRecipeSSHDialOptions(recipe cuetry.Recipe, step cuetry.RecipeStep, targets []hosts.Record) []hosts.Record {
+func cueApplyRecipeSSHDialOptions(recipe cuetry.Recipe, re *cuetry.RemoteExec, targets []hosts.Record) []hosts.Record {
 	out := make([]hosts.Record, len(targets))
 	for i, t := range targets {
-		out[i] = cuetry.RecordForSSHDial(recipe.Defaults, step, t)
+		out[i] = cuetry.RecordForSSHDial(recipe.Defaults, re, t)
 	}
 	return out
 }
 
 // WriteCueSSHPrivateKeyDryLine prints one plan line when ssh_private_key is set for the step or defaults.
-func WriteCueSSHPrivateKeyDryLine(out io.Writer, stepIdx int, step cuetry.RecipeStep, def *cuetry.RecipeDefaults) {
-	key := cuetry.EffectiveSSHPrivateKey(def, step)
+func WriteCueSSHPrivateKeyDryLine(out io.Writer, stepIdx int, step cuetry.Step, def *cuetry.RecipeDefaults) {
+	key := cuetry.EffectiveSSHPrivateKey(def, remoteOpts(step))
 	if key == "" {
 		return
 	}
@@ -144,7 +144,7 @@ func (run *cueRun) gatherFacts(ctx context.Context) {
 		return
 	}
 
-	targets = cueApplyRecipeSSHDialOptions(run.Recipe, cuetry.RecipeStep{}, targets)
+	targets = cueApplyRecipeSSHDialOptions(run.Recipe, nil, targets)
 
 	for _, r := range targets {
 		run.facts[r.Name] = cuetry.DefaultFacts()
@@ -217,12 +217,10 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	run.outputStore = cuetry.NewStepOutputStore()
 	run.outputCapture = cuetry.NewRecipeOutputCapture()
 	var history [][]HostExecResult
-	for i, step := range p.Recipe.Steps {
-		kind, classifyErr := cuetry.ClassifyStep(step)
-		if classifyErr != nil {
-			return fmt.Errorf("step %d: %w", i, classifyErr)
-		}
-		if kind == cuetry.StepKindTemplate {
+	for i, ws := range p.Recipe.Steps {
+		step := ws.Step
+		kind := step.Kind()
+		if kind == cuetry.KindTemplate {
 			stepStart := time.Now()
 			rows, err := streamCueTemplateStep(ctx, run, i, step, out)
 			observeRecipeStep(p.Obs, kind, stepStart, rows, 1)
@@ -235,7 +233,7 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 			}
 			continue
 		}
-		if kind == cuetry.StepKindAI {
+		if kind == cuetry.KindAI {
 			stepStart := time.Now()
 			kv := kvReaderFromCoordinator(run.recipeKV)
 			ok, whenErr := evalAIStepWhen(ctx, p.Recipe, step, run.outputStore, p.SecretResolver, kv, p.CLIEnv, p.Execute)
@@ -268,7 +266,7 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 			history = append(history, rows)
 		}
 		if err != nil {
-			if step.IgnoreErrors {
+			if step.Base().IgnoreErrors {
 				zap.L().Warn("Step failed but ignore_errors is true. Continuing.",
 					zap.Int("step_index", i+1),
 					zap.Error(err),
@@ -280,7 +278,7 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 			}
 		}
 		if len(rows) > 0 && cueStepAllTargetsTransientTransportFailed(rows) {
-			if step.IgnoreErrors {
+			if step.Base().IgnoreErrors {
 				zap.L().Warn("Step failed with transport errors but ignore_errors is true. Continuing.",
 					zap.Int("step_index", i+1),
 				)
@@ -289,9 +287,9 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 				return runErr
 			}
 		}
-		if step.NotifyEnabled() && err == nil && len(rows) > 0 {
+		if step.Base().NotifyEnabled() && err == nil && len(rows) > 0 {
 			body := FormatCueStepHostResultsForNotify(i+1, rows)
-			CueStepNotifyRemote(ctx, p.Recipe, i+1, kind, step.Notify, body)
+			CueStepNotifyRemote(ctx, p.Recipe, i+1, kind, step.Base().Notify, body)
 		}
 	}
 
@@ -299,10 +297,11 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	if len(run.triggeredHandlers) > 0 && len(p.Recipe.Handlers) > 0 {
 		zap.L().Debug("executing triggered handlers", zap.Any("triggered", run.triggeredHandlers))
 		for _, handler := range p.Recipe.Handlers {
-			if run.triggeredHandlers[handler.ID] {
-				zap.L().Info("running handler", zap.String("id", handler.ID))
+			hid := handler.Step.Base().ID
+			if run.triggeredHandlers[hid] {
+				zap.L().Info("running handler", zap.String("id", hid))
 				// Execute the handler step. Use step index -1 to indicate it is a handler.
-				_, _ = streamCueRecipeStep(ctx, run, -1, handler, out)
+				_, _ = streamCueRecipeStep(ctx, run, -1, handler.Step, out)
 			}
 		}
 	}
@@ -334,22 +333,23 @@ func cueStepAllTargetsTransientTransportFailed(results []HostExecResult) bool {
 	return true
 }
 
-func recipeHostMaxConc(step cuetry.RecipeStep, defaults *cuetry.RecipeDefaults) int {
-	if step.Serial > 0 {
-		return step.Serial
+func recipeHostMaxConc(step cuetry.Step, defaults *cuetry.RecipeDefaults) int {
+	re := remoteOpts(step)
+	if re != nil && re.Serial > 0 {
+		return re.Serial
 	}
-	return cuetry.EffectiveMaxParallel(step, defaults)
+	return cuetry.EffectiveMaxParallel(re, defaults)
 }
 
 func cueEnvRunOpts(recipe *cuetry.Recipe, store *cuetry.StepOutputStore, capture *cuetry.RecipeOutputCapture, kv cuetry.KVReader, dryRun bool) *cuetry.EffectiveEnvForRunOpts {
 	return &cuetry.EffectiveEnvForRunOpts{Recipe: recipe, OutputStore: store, OutputCapture: capture, KV: kv, DryRun: dryRun}
 }
 
-func recordGraphStepStdout(recipe cuetry.Recipe, step cuetry.RecipeStep, kind cuetry.StepKind, store *cuetry.StepOutputStore, rows []HostExecResult) {
+func recordGraphStepStdout(recipe cuetry.Recipe, step cuetry.Step, kind string, store *cuetry.StepOutputStore, rows []HostExecResult) {
 	if store == nil {
 		return
 	}
-	id := strings.TrimSpace(step.ID)
+	id := strings.TrimSpace(step.Base().ID)
 	if id == "" {
 		return
 	}
@@ -362,19 +362,19 @@ func recordGraphStepStdout(recipe cuetry.Recipe, step cuetry.RecipeStep, kind cu
 		return
 	}
 	switch kind {
-	case cuetry.StepKindCommand, cuetry.StepKindScript, cuetry.StepKindPlugin, cuetry.StepKindTunnel:
+	case cuetry.KindCommand, cuetry.KindScript, cuetry.KindPlugin, cuetry.KindTunnel:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
 				store.Record(id, hostNameFromExecResult(row.Name), row.Output)
 			}
 		}
-	case cuetry.StepKindTemplate:
+	case cuetry.KindTemplate:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
 				store.Record(id, cuetry.MatchLocalAIHost, row.Output)
 			}
 		}
-	case cuetry.StepKindK8s:
+	case cuetry.KindK8s:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
 				store.Record(id, hostNameFromExecResult(row.Name), row.Output)
@@ -390,28 +390,19 @@ func hostNameFromExecResult(name string) string {
 	return strings.TrimSpace(name)
 }
 
-func cloneMap(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
-}
-
-func cueRecipeLoopUsesItemHost(step cuetry.RecipeStep) bool {
-	if strings.TrimSpace(step.Loop) == "" && step.LoopFrom == nil {
+func cueRecipeLoopUsesItemHost(step cuetry.Step) bool {
+	b := step.Base()
+	if strings.TrimSpace(b.Loop) == "" && b.LoopFrom == nil {
 		return false
 	}
-	return strings.TrimSpace(step.Host) == "${item}"
+	return strings.TrimSpace(b.Host) == "${item}"
 }
 
-func cueRecipeLoopItems(run *cueRun, step cuetry.RecipeStep, target hosts.Record) ([]string, error) {
-	if strings.TrimSpace(step.Loop) != "" {
+func cueRecipeLoopItems(run *cueRun, step cuetry.Step, target hosts.Record) ([]string, error) {
+	b := step.Base()
+	if strings.TrimSpace(b.Loop) != "" {
 		items, err := cuetry.RenderLoopTemplate(cuetry.RenderLoopTemplateOpts{
-			Template: step.Loop,
+			Template: b.Loop,
 			Store:    run.outputStore,
 			Capture:  run.outputCapture,
 		})
@@ -421,22 +412,22 @@ func cueRecipeLoopItems(run *cueRun, step cuetry.RecipeStep, target hosts.Record
 		return items, nil
 	}
 
-	raw, ok := run.outputStore.Get(step.LoopFrom.Step, target.Name)
+	raw, ok := run.outputStore.Get(b.LoopFrom.Step, target.Name)
 	if !ok {
-		raw, ok = run.outputStore.FirstStdout(step.LoopFrom.Step)
+		raw, ok = run.outputStore.FirstStdout(b.LoopFrom.Step)
 	}
 	if !ok {
-		zap.L().Warn("loop_from: no raw output found for step", zap.String("step", step.LoopFrom.Step))
+		zap.L().Warn("loop_from: no raw output found for step", zap.String("step", b.LoopFrom.Step))
 		return nil, nil
 	}
-	items, err := cuetry.EvalJQArray(raw, step.LoopFrom.Extract)
+	items, err := cuetry.EvalJQArray(raw, b.LoopFrom.Extract)
 	if err != nil {
 		return nil, fmt.Errorf("loop_from extraction failed: %w", err)
 	}
 	return items, nil
 }
 
-func streamCueLoopStep(ctx context.Context, run *cueRun, i int, step cuetry.RecipeStep, targets []hosts.Record, out chan<- HostExecResult) ([]HostExecResult, error) {
+func streamCueLoopStep(ctx context.Context, run *cueRun, i int, step cuetry.Step, targets []hosts.Record, out chan<- HostExecResult) ([]HostExecResult, error) {
 	var stepResults []HostExecResult
 	for _, t := range targets {
 		items, err := cueRecipeLoopItems(run, step, t)
@@ -447,18 +438,17 @@ func streamCueLoopStep(ctx context.Context, run *cueRun, i int, step cuetry.Reci
 			continue
 		}
 		for _, item := range items {
-			loopStep := step
+			loopStep := step.Clone()
+			lb := loopStep.Base()
 			if cueRecipeLoopUsesItemHost(step) {
-				loopStep.Host = item
+				lb.Host = item
 			}
-			if loopStep.Env == nil {
-				loopStep.Env = make(map[string]string)
-			} else {
-				loopStep.Env = cloneMap(loopStep.Env)
+			if lb.Env == nil {
+				lb.Env = make(map[string]string)
 			}
-			loopStep.Env["item"] = item
-			loopStep.Loop = ""
-			loopStep.LoopFrom = nil
+			lb.Env["item"] = item
+			lb.Loop = ""
+			lb.LoopFrom = nil
 
 			runParams := run.CueRecipeRunParams
 			if cueRecipeLoopUsesItemHost(step) {
@@ -488,7 +478,7 @@ func streamCueLoopStep(ctx context.Context, run *cueRun, i int, step cuetry.Reci
 			}
 			stepResults = append(stepResults, subResults...)
 			if err != nil {
-				if step.IgnoreErrors {
+				if step.Base().IgnoreErrors {
 					zap.L().Warn("loop step failed but ignore_errors is true. Continuing.", zap.Error(err))
 				} else {
 					return stepResults, err
@@ -499,14 +489,11 @@ func streamCueLoopStep(ctx context.Context, run *cueRun, i int, step cuetry.Reci
 	return stepResults, nil
 }
 
-func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.RecipeStep, out chan<- HostExecResult) ([]HostExecResult, error) {
+func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Step, out chan<- HostExecResult) ([]HostExecResult, error) {
 	stepStart := time.Now()
 	var attemptMax atomic.Int32
-	kind, classifyErr := cuetry.ClassifyStep(step)
-	if classifyErr != nil {
-		return nil, fmt.Errorf("step %d: %w", i, classifyErr)
-	}
-	if kind == cuetry.StepKindAgentTransfer {
+	kind := step.Kind()
+	if kind == cuetry.KindAgentTransfer {
 		rows, err := streamCueStepAgentTransferWhen(ctx, run, i, step)
 		for _, r := range rows {
 			out <- r
@@ -521,20 +508,20 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 	if cueRecipeLoopUsesItemHost(step) {
 		targets = []hosts.Record{cuetry.MatchLocalAIHostRecord()}
 	} else {
-		targets, err = cuetry.ExpandStepHosts(step.Host, run.Records)
+		targets, err = cuetry.ExpandStepHosts(step.Base().Host, run.Records)
 		if err != nil {
 			return nil, fmt.Errorf("step %d: %w", i, err)
 		}
 	}
-	targets = cueApplyRecipeSSHDialOptions(run.Recipe, step, targets)
+	targets = cueApplyRecipeSSHDialOptions(run.Recipe, remoteOpts(step), targets)
 
-	if strings.TrimSpace(step.Loop) != "" || step.LoopFrom != nil {
+	if strings.TrimSpace(step.Base().Loop) != "" || step.Base().LoopFrom != nil {
 		return streamCueLoopStep(ctx, run, i, step, targets, out)
 	}
 
 	kv := kvReaderFromCoordinator(run.recipeKV)
 	var whenSkipped []HostExecResult
-	if strings.TrimSpace(step.When) != "" {
+	if strings.TrimSpace(step.Base().When) != "" {
 		targets, whenSkipped, err = filterTargetsByWhen(ctx, run.Recipe, step, targets, run.outputStore, run.SecretResolver, kv, run.CLIEnv, run.Execute)
 		if err != nil {
 			return nil, fmt.Errorf("step %d: %w", i, err)
@@ -569,7 +556,7 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 		return stepResults, nil
 	}
 
-	retryCfg := cuetry.EffectiveRetry(step, run.Recipe.Defaults)
+	retryCfg := cuetry.EffectiveRetry(step.Base(), run.Recipe.Defaults)
 
 	stepErr := dispatchStepByKind(ctx, run, i, kind, step, targets, ch, retryCfg, &attemptMax)
 
@@ -595,42 +582,24 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.Re
 	return stepResults, nil
 }
 
-func dispatchStepByKind(ctx context.Context, run *cueRun, i int, kind cuetry.StepKind, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	switch kind {
-	case cuetry.StepKindCommand:
-		return streamCueStepCommand(ctx, run, i, kind, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindPut:
-		return streamCueStepPut(ctx, run, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindGet:
-		return streamCueStepGet(ctx, run, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindScript:
-		return streamCueStepScript(ctx, run, i, kind, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindPlugin:
-		return streamCueStepPlugin(ctx, run, i, kind, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindTunnel:
-		return streamCueStepTunnel(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindK8s:
-		return streamCueStepK8s(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindDocker:
-		return streamCueStepDocker(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindOpensearch:
-		return streamCueStepOpensearch(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindPostgres:
-		return streamCueStepPostgres(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.StepKindTemplate:
+func dispatchStepByKind(ctx context.Context, run *cueRun, i int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	if kind == cuetry.KindTemplate {
 		_, err := streamCueTemplateStep(ctx, run, i, step, ch)
 		return err
-	default:
-		return nil
 	}
+	if fn, ok := stepExecRegistry[kind]; ok {
+		return fn(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
+	}
+	return nil
 }
 
-func streamCueStepAgentTransferWhen(ctx context.Context, run *cueRun, i int, step cuetry.RecipeStep) ([]HostExecResult, error) {
-	at := step.AgentTransfer
-	if at == nil {
+func streamCueStepAgentTransferWhen(ctx context.Context, run *cueRun, i int, step cuetry.Step) ([]HostExecResult, error) {
+	ats, _ := step.(*cuetry.AgentTransferStep)
+	if ats == nil || ats.AgentTransfer == nil {
 		return nil, fmt.Errorf("step %d: internal: missing agent_transfer", i)
 	}
-	srcHosts, err := cuetry.ExpandStepHosts(step.Host, run.Records)
+	at := ats.AgentTransfer
+	srcHosts, err := cuetry.ExpandStepHosts(step.Base().Host, run.Records)
 	if err != nil {
 		return nil, fmt.Errorf("step %d: %w", i, err)
 	}
@@ -657,7 +626,7 @@ func streamCueStepAgentTransferWhen(ctx context.Context, run *cueRun, i int, ste
 }
 
 // WriteCueKVTunnelDryLine prints one plan line when kv_tunnel is enabled for the step or defaults.
-func WriteCueKVTunnelDryLine(out io.Writer, recipe cuetry.Recipe, stepIdx int, step cuetry.RecipeStep, def *cuetry.RecipeDefaults) {
+func WriteCueKVTunnelDryLine(out io.Writer, recipe cuetry.Recipe, stepIdx int, step cuetry.Step, def *cuetry.RecipeDefaults) {
 	if !cuetry.KVTunnelEnabled(step, def) {
 		return
 	}
@@ -669,27 +638,32 @@ func WriteCueKVTunnelDryLine(out io.Writer, recipe cuetry.Recipe, stepIdx int, s
 	_, _ = fmt.Fprintf(out, "  step %d kv_tunnel: enabled — one operator stepkv for the whole cue-exec (SSH remote-forward, TrueNAS API shell bridge, or k8s exec multiplex per host; keys shared across steps and hosts; parallel hosts may race); remote env: HONEY_KV_URL, HONEY_KV_TOKEN (see docs)\n", stepIdx)
 }
 
-func streamCueStepCommand(ctx context.Context, run *cueRun, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	runAs := cuetry.EffectiveRunAs(step, run.Recipe.Defaults)
+func streamCueStepCommand(ctx context.Context, run *cueRun, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	cs, ok := step.(*cuetry.CommandStep)
+	if !ok {
+		return fmt.Errorf("internal: command step has wrong type %T", step)
+	}
+	b := step.Base()
+	runAs := cuetry.EffectiveRunAs(b, run.Recipe.Defaults)
 	kvTunnel := cuetry.KVTunnelEnabled(step, run.Recipe.Defaults)
 
 	cmdFunc := func(r hosts.Record, kv map[string]string) string {
-		env, err := cuetry.EffectiveEnvForRunEx(ctx, true, run.SecretResolver, step, run.Recipe.Defaults, run.CLIEnv, &r, cueEnvRunOpts(&run.Recipe, run.outputStore, run.outputCapture, kvReaderFromCoordinator(run.recipeKV), false))
+		env, err := cuetry.EffectiveEnvForRunEx(ctx, true, run.SecretResolver, b, run.Recipe.Defaults, run.CLIEnv, &r, cueEnvRunOpts(&run.Recipe, run.outputStore, run.outputCapture, kvReaderFromCoordinator(run.recipeKV), false))
 		if err != nil {
 			return fmt.Sprintf("echo 'env err: %s'", err.Error())
 		}
 		for k, v := range kv {
 			env[k] = v
 		}
-		mainCmd := strings.TrimSpace(step.Command)
+		mainCmd := strings.TrimSpace(cs.Command)
 		var combined string
-		if step.CheckCmd != "" {
-			combined = fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(step.CheckCmd), mainCmd)
+		if b.CheckCmd != "" {
+			combined = fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(b.CheckCmd), mainCmd)
 		} else {
 			combined = mainCmd
 		}
-		if strings.TrimSpace(step.Timeout) != "" {
-			d, err := time.ParseDuration(strings.TrimSpace(step.Timeout))
+		if strings.TrimSpace(b.Timeout) != "" {
+			d, err := time.ParseDuration(strings.TrimSpace(b.Timeout))
 			if err == nil && d > 0 {
 				combined = fmt.Sprintf("command -v timeout >/dev/null 2>&1 || { echo '__HONEY_TIMEOUT_MISSING__' >&2; exit 124; }; timeout %s sh -c %s",
 					d.String(),
@@ -723,12 +697,16 @@ func streamCueStepCommand(ctx context.Context, run *cueRun, stepIdx int, kind cu
 	})
 }
 
-func streamCueStepPut(ctx context.Context, run *cueRun, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.RecipeDir, step.Put.Local)
+func streamCueStepPut(ctx context.Context, run *cueRun, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	ps, ok := step.(*cuetry.PutStep)
+	if !ok || ps.Put == nil {
+		return fmt.Errorf("internal: put step missing put field")
+	}
+	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.RecipeDir, ps.Put.Local)
 	if err != nil {
 		return fmt.Errorf("put.local: %w", err)
 	}
-	remotePath := strings.TrimSpace(step.Put.Remote)
+	remotePath := strings.TrimSpace(ps.Put.Remote)
 	if _, statErr := os.Stat(localAbs); statErr != nil {
 		return fmt.Errorf("put: local file %q: %w", localAbs, statErr)
 	}
@@ -741,18 +719,22 @@ func streamCueStepPut(ctx context.Context, run *cueRun, step cuetry.RecipeStep, 
 	})
 }
 
-func streamCueStepGet(ctx context.Context, run *cueRun, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	remotePath := strings.TrimSpace(step.Get.Remote)
-	localRoot, err := cuetry.ResolveLocalAgainstRecipe(run.RecipeDir, step.Get.Local)
+func streamCueStepGet(ctx context.Context, run *cueRun, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	gs, okt := step.(*cuetry.GetStep)
+	if !okt || gs.Get == nil {
+		return fmt.Errorf("internal: get step missing get field")
+	}
+	remotePath := strings.TrimSpace(gs.Get.Remote)
+	localRoot, err := cuetry.ResolveLocalAgainstRecipe(run.RecipeDir, gs.Get.Local)
 	if err != nil {
 		return fmt.Errorf("get.local: %w", err)
 	}
 	if len(targets) > 1 {
-		ok, err := cueGetLocalIsDirectory(step.Get.Local, localRoot)
+		ok, err := cueGetLocalIsDirectory(gs.Get.Local, localRoot)
 		if err != nil {
 			return fmt.Errorf("get: %w", err)
 		} else if !ok {
-			return fmt.Errorf("get: %d hosts require get.local to be a directory; got %q", len(targets), step.Get.Local)
+			return fmt.Errorf("get: %d hosts require get.local to be a directory; got %q", len(targets), gs.Get.Local)
 		}
 	}
 	jobs := make([]SFTPDownloadJob, 0, len(targets))
@@ -789,13 +771,18 @@ func streamCueStepGet(ctx context.Context, run *cueRun, step cuetry.RecipeStep, 
 	})
 }
 
-func streamCueStepScript(ctx context.Context, run *cueRun, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.RecipeDir, step.Script.Local)
+func streamCueStepScript(ctx context.Context, run *cueRun, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	ss, ok := step.(*cuetry.ScriptStep)
+	if !ok || ss.Script == nil {
+		return fmt.Errorf("internal: script step missing script field")
+	}
+	b := step.Base()
+	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.RecipeDir, ss.Script.Local)
 	if err != nil {
 		return fmt.Errorf("script.local: %w", err)
 	}
-	remotePath := strings.TrimSpace(step.Script.Remote)
-	runAs := cuetry.EffectiveRunAs(step, run.Recipe.Defaults)
+	remotePath := strings.TrimSpace(ss.Script.Remote)
+	runAs := cuetry.EffectiveRunAs(b, run.Recipe.Defaults)
 	kvTunnel := cuetry.KVTunnelEnabled(step, run.Recipe.Defaults)
 
 	if _, statErr := os.Stat(localAbs); statErr != nil {
@@ -803,7 +790,7 @@ func streamCueStepScript(ctx context.Context, run *cueRun, stepIdx int, kind cue
 	}
 
 	cmdFunc := func(r hosts.Record, kv map[string]string) string {
-		env, err := cuetry.EffectiveEnvForRunEx(ctx, true, run.SecretResolver, step, run.Recipe.Defaults, run.CLIEnv, &r, cueEnvRunOpts(&run.Recipe, run.outputStore, run.outputCapture, kvReaderFromCoordinator(run.recipeKV), false))
+		env, err := cuetry.EffectiveEnvForRunEx(ctx, true, run.SecretResolver, b, run.Recipe.Defaults, run.CLIEnv, &r, cueEnvRunOpts(&run.Recipe, run.outputStore, run.outputCapture, kvReaderFromCoordinator(run.recipeKV), false))
 		if err != nil {
 			return fmt.Sprintf("echo 'env err: %s'", err.Error())
 		}
@@ -815,11 +802,11 @@ func streamCueStepScript(ctx context.Context, run *cueRun, stepIdx int, kind cue
 			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
 		}
 		finalCmd := remoteCmd
-		if step.CheckCmd != "" {
-			finalCmd = fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(step.CheckCmd), remoteCmd)
+		if b.CheckCmd != "" {
+			finalCmd = fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(b.CheckCmd), remoteCmd)
 		}
-		if strings.TrimSpace(step.Timeout) != "" {
-			d, err := time.ParseDuration(strings.TrimSpace(step.Timeout))
+		if strings.TrimSpace(b.Timeout) != "" {
+			d, err := time.ParseDuration(strings.TrimSpace(b.Timeout))
 			if err == nil && d > 0 {
 				finalCmd = fmt.Sprintf("command -v timeout >/dev/null 2>&1 || { echo '__HONEY_TIMEOUT_MISSING__' >&2; exit 124; }; timeout %s sh -c %s",
 					d.String(),
@@ -887,11 +874,11 @@ func runCueRecipeStepsDry(out io.Writer, p CueRecipeRunParams, rec *SessionRecor
 		}
 		_, _ = fmt.Fprint(outWrite, text)
 	}
-	for i, step := range p.Recipe.Steps {
+	for i, ws := range p.Recipe.Steps {
 		if i > 0 {
 			_, _ = fmt.Fprintln(outWrite)
 		}
-		if err := runCueRecipeStep(outWrite, p.Recipe, p.RecipeDir, p.Records, p.SSHUser, false, p.CLIEnv, p.ConfigPath, i, step, p.SecretResolver, p.PluginMgr); err != nil {
+		if err := runCueRecipeStep(outWrite, p.Recipe, p.RecipeDir, p.Records, p.SSHUser, false, p.CLIEnv, p.ConfigPath, i, ws.Step, p.SecretResolver, p.PluginMgr); err != nil {
 			if rec != nil {
 				rec.RecordError(err)
 			}
@@ -989,19 +976,17 @@ func cueRecipeDisplayOutput(res HostExecResult) string {
 	return res.Output
 }
 
-func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, configPath string, i int, step cuetry.RecipeStep, secretResolver cuetry.SecretResolver, pluginMgr *plugins.Manager) error {
-	zap.L().Debug("evaluating cue step", zap.Int("step_index", i), zap.String("host", step.Host))
-	kind, err := cuetry.ClassifyStep(step)
-	if err != nil {
-		return fmt.Errorf("step %d: %w", i, err)
-	}
-	if kind == cuetry.StepKindAgentTransfer {
+func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, configPath string, i int, step cuetry.Step, secretResolver cuetry.SecretResolver, pluginMgr *plugins.Manager) error {
+	zap.L().Debug("evaluating cue step", zap.Int("step_index", i), zap.String("host", step.Base().Host))
+	kind := step.Kind()
+	var err error
+	if kind == cuetry.KindAgentTransfer {
 		return runCueStepAgentTransferDry(out, records, sshUser, configPath, i, step)
 	}
-	if kind == cuetry.StepKindAI {
+	if kind == cuetry.KindAI {
 		return runCueStepAIDry(out, recipe, execute, i, step)
 	}
-	if kind == cuetry.StepKindTemplate {
+	if kind == cuetry.KindTemplate {
 		return runCueStepTemplateDry(out, execute, i, step)
 	}
 	var targets []hosts.Record
@@ -1012,51 +997,56 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 			PrimaryIP: "${item}",
 		}}
 	} else {
-		targets, err = cuetry.ExpandStepHosts(step.Host, records)
+		targets, err = cuetry.ExpandStepHosts(step.Base().Host, records)
 		if err != nil {
 			return fmt.Errorf("step %d: %w", i, err)
 		}
 	}
-	targets = cueApplyRecipeSSHDialOptions(recipe, step, targets)
-	if !execute && strings.TrimSpace(step.When) != "" {
+	targets = cueApplyRecipeSSHDialOptions(recipe, remoteOpts(step), targets)
+	if !execute && strings.TrimSpace(step.Base().When) != "" {
 		if err := writeWhenDryLines(out, i, step, recipe, targets, nil, cliEnv, false); err != nil {
 			return err
 		}
 	}
 	switch kind {
-	case cuetry.StepKindCommand:
+	case cuetry.KindCommand:
 		return runCueStepCommand(out, recipe, execute, cliEnv, i, step, targets)
-	case cuetry.StepKindPut:
+	case cuetry.KindPut:
 		return runCueStepPut(out, recipe, recipeDir, execute, i, step, targets)
-	case cuetry.StepKindGet:
+	case cuetry.KindGet:
 		return runCueStepGet(out, recipe, recipeDir, execute, i, step, targets)
-	case cuetry.StepKindScript:
+	case cuetry.KindScript:
 		return runCueStepScript(out, recipeDir, recipe, execute, cliEnv, i, step, targets)
-	case cuetry.StepKindPlugin:
+	case cuetry.KindPlugin:
 		return runCueStepPluginDry(out, recipe, recipeDir, cliEnv, sshUser, secretResolver, pluginMgr, i, step, targets)
-	case cuetry.StepKindTunnel:
+	case cuetry.KindTunnel:
 		return runCueStepTunnelDry(out, recipe, i, step, targets)
-	case cuetry.StepKindDocker:
+	case cuetry.KindDocker:
 		return runCueStepDockerDry(out, recipe, i, step, targets)
 	default:
 		return nil
 	}
 }
 
-func runCueStepCommand(out io.Writer, recipe cuetry.Recipe, execute bool, cliEnv map[string]string, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
-	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
+func runCueStepCommand(out io.Writer, recipe cuetry.Recipe, execute bool, cliEnv map[string]string, i int, step cuetry.Step, targets []hosts.Record) error {
+	cs, _ := step.(*cuetry.CommandStep)
+	command := ""
+	if cs != nil {
+		command = cs.Command
+	}
+	runAs := cuetry.EffectiveRunAs(step.Base(), recipe.Defaults)
 	if !execute {
 		WriteCueStepNotifyDryLine(out, step)
 		WriteCueKVTunnelDryLine(out, recipe, i, step, recipe.Defaults)
 		WriteCueSSHPrivateKeyDryLine(out, i, step, recipe.Defaults)
 		WriteCueStepHooksDryLines(out, i, step)
-		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step, recipe.Defaults))
+		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 		for _, target := range targets {
-			env, err := cuetry.EffectiveEnvForRunEx(context.Background(), false, nil, step, recipe.Defaults, cliEnv, &target, cueEnvRunOpts(&recipe, nil, nil, nil, true))
+			env, err := cuetry.EffectiveEnvForRunEx(context.Background(), false, nil, step.Base(), recipe.Defaults, cliEnv, &target, cueEnvRunOpts(&recipe, nil, nil, nil, true))
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
-			inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(step.Command))
+			inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(command))
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
@@ -1073,15 +1063,19 @@ func runCueStepCommand(out io.Writer, recipe cuetry.Recipe, execute bool, cliEnv
 	return nil
 }
 
-func runCueStepPut(out io.Writer, recipe cuetry.Recipe, recipeDir string, execute bool, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
-	localAbs, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, step.Put.Local)
+func runCueStepPut(out io.Writer, recipe cuetry.Recipe, recipeDir string, execute bool, i int, step cuetry.Step, targets []hosts.Record) error {
+	ps, _ := step.(*cuetry.PutStep)
+	if ps == nil || ps.Put == nil {
+		return fmt.Errorf("step %d: internal: missing put", i)
+	}
+	localAbs, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, ps.Put.Local)
 	if err != nil {
 		return fmt.Errorf("step %d put.local: %w", i, err)
 	}
-	remotePath := strings.TrimSpace(step.Put.Remote)
+	remotePath := strings.TrimSpace(ps.Put.Remote)
 	if !execute {
 		WriteCueStepNotifyDryLine(out, step)
-		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step, recipe.Defaults))
+		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 		if _, statErr := os.Stat(localAbs); statErr != nil {
 			_, _ = fmt.Fprintf(out, "step %d: kind=put (warning: local not readable: %v)\n", i, statErr)
 		}
@@ -1094,20 +1088,24 @@ func runCueStepPut(out io.Writer, recipe cuetry.Recipe, recipeDir string, execut
 	return nil
 }
 
-func runCueStepGet(out io.Writer, recipe cuetry.Recipe, recipeDir string, execute bool, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
-	remotePath := strings.TrimSpace(step.Get.Remote)
-	localRoot, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, step.Get.Local)
+func runCueStepGet(out io.Writer, recipe cuetry.Recipe, recipeDir string, execute bool, i int, step cuetry.Step, targets []hosts.Record) error {
+	gs, _ := step.(*cuetry.GetStep)
+	if gs == nil || gs.Get == nil {
+		return fmt.Errorf("step %d: internal: missing get", i)
+	}
+	remotePath := strings.TrimSpace(gs.Get.Remote)
+	localRoot, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, gs.Get.Local)
 	if err != nil {
 		return fmt.Errorf("step %d get.local: %w", i, err)
 	}
 	if len(targets) > 1 {
-		ok, err := cueGetLocalIsDirectory(step.Get.Local, localRoot)
+		ok, err := cueGetLocalIsDirectory(gs.Get.Local, localRoot)
 		if err != nil {
 			return fmt.Errorf("step %d get: %w", i, err)
 		}
 		if !ok {
 			return fmt.Errorf("step %d get: %d hosts require get.local to be a directory (add trailing %q or use an existing directory); got %q",
-				i, len(targets), string(filepath.Separator), step.Get.Local)
+				i, len(targets), string(filepath.Separator), gs.Get.Local)
 		}
 	}
 	jobs := make([]SFTPDownloadJob, 0, len(targets))
@@ -1128,7 +1126,7 @@ func runCueStepGet(out io.Writer, recipe cuetry.Recipe, recipeDir string, execut
 	}
 	if !execute {
 		WriteCueStepNotifyDryLine(out, step)
-		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step, recipe.Defaults))
+		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 		for _, j := range jobs {
 			_, _ = fmt.Fprintf(out, "step %d: kind=get name=%q %s provider=%s remote:%q → %q\n",
 				i, j.Record.Name, FormatTargetForDryRun(j.Record), j.Record.Provider, j.RemotePath, j.LocalAbs)
@@ -1138,25 +1136,29 @@ func runCueStepGet(out io.Writer, recipe cuetry.Recipe, recipeDir string, execut
 	return nil
 }
 
-func runCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, execute bool, cliEnv map[string]string, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
-	localAbs, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, step.Script.Local)
+func runCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, execute bool, cliEnv map[string]string, i int, step cuetry.Step, targets []hosts.Record) error {
+	ss, _ := step.(*cuetry.ScriptStep)
+	if ss == nil || ss.Script == nil {
+		return fmt.Errorf("step %d: internal: missing script", i)
+	}
+	localAbs, err := cuetry.ResolveLocalAgainstRecipe(recipeDir, ss.Script.Local)
 	if err != nil {
 		return fmt.Errorf("step %d script.local: %w", i, err)
 	}
-	remotePath := strings.TrimSpace(step.Script.Remote)
-	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
+	remotePath := strings.TrimSpace(ss.Script.Remote)
+	runAs := cuetry.EffectiveRunAs(step.Base(), recipe.Defaults)
 
 	if !execute {
 		WriteCueStepNotifyDryLine(out, step)
 		WriteCueKVTunnelDryLine(out, recipe, i, step, recipe.Defaults)
 		WriteCueSSHPrivateKeyDryLine(out, i, step, recipe.Defaults)
 		WriteCueStepHooksDryLines(out, i, step)
-		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step, recipe.Defaults))
+		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 		if _, statErr := os.Stat(localAbs); statErr != nil {
 			_, _ = fmt.Fprintf(out, "step %d: kind=script (warning: local not readable: %v)\n", i, statErr)
 		}
 		for _, target := range targets {
-			env, err := cuetry.EffectiveEnvForRunEx(context.Background(), false, nil, step, recipe.Defaults, cliEnv, &target, cueEnvRunOpts(&recipe, nil, nil, nil, true))
+			env, err := cuetry.EffectiveEnvForRunEx(context.Background(), false, nil, step.Base(), recipe.Defaults, cliEnv, &target, cueEnvRunOpts(&recipe, nil, nil, nil, true))
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
@@ -1222,12 +1224,13 @@ func summarizeAgentTransferEvents(events []AgentTransferEvent) string {
 	return s
 }
 
-func runCueStepAgentTransferDry(out io.Writer, records []hosts.Record, sshUser, configPath string, i int, step cuetry.RecipeStep) error {
-	at := step.AgentTransfer
-	if at == nil {
+func runCueStepAgentTransferDry(out io.Writer, records []hosts.Record, sshUser, configPath string, i int, step cuetry.Step) error {
+	ats, _ := step.(*cuetry.AgentTransferStep)
+	if ats == nil || ats.AgentTransfer == nil {
 		return fmt.Errorf("step %d: internal: missing agent_transfer", i)
 	}
-	srcHosts, err := cuetry.ExpandStepHosts(step.Host, records)
+	at := ats.AgentTransfer
+	srcHosts, err := cuetry.ExpandStepHosts(step.Base().Host, records)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
 	}
@@ -1272,12 +1275,13 @@ func runCueStepAgentTransferDry(out io.Writer, records []hosts.Record, sshUser, 
 	return nil
 }
 
-func streamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, sshUser, configPath string, i int, step cuetry.RecipeStep, cache *ClientCache) ([]HostExecResult, error) {
-	at := step.AgentTransfer
-	if at == nil {
+func streamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, sshUser, configPath string, i int, step cuetry.Step, cache *ClientCache) ([]HostExecResult, error) {
+	ats, _ := step.(*cuetry.AgentTransferStep)
+	if ats == nil || ats.AgentTransfer == nil {
 		return nil, fmt.Errorf("step %d: internal: missing agent_transfer", i)
 	}
-	srcHosts, err := cuetry.ExpandStepHosts(step.Host, records)
+	at := ats.AgentTransfer
+	srcHosts, err := cuetry.ExpandStepHosts(step.Base().Host, records)
 	if err != nil {
 		return nil, fmt.Errorf("step %d: %w", i, err)
 	}

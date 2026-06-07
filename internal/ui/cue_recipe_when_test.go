@@ -11,10 +11,12 @@ import (
 func TestFilterTargetsByWhen_skipsHost(t *testing.T) {
 	t.Parallel()
 	recipe := cuetry.Recipe{Name: "t"}
-	step := cuetry.RecipeStep{
-		ID:      "deploy",
-		Host:    "*",
-		When:    `host.name == "keep"`,
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:   "deploy",
+			Host: "*",
+			When: `host.name == "keep"`,
+		},
 		Command: "echo",
 	}
 	targets := []hosts.Record{

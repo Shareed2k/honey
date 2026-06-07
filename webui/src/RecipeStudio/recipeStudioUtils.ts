@@ -46,19 +46,53 @@ const kindLabels: Record<string, string> = {
   agent_transfer: 'Agent Transfer',
 };
 
+// listStepKinds reads the per-kind definitions emitted by BuildRecipeStepJSONSchema
+// (definitions: { command: {...}, postgres: {...}, ..., defaults: {...} }). "defaults"
+// is the recipe-level block, not a step kind, so it is excluded.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function listStepKinds(schema: any): StepKindOption[] {
   const names = new Set<string>();
-  
-  for (const kind of preferredKindOrder) {
-    if (schema?.properties?.[kind]) {
-      names.add(kind);
+
+  for (const key of Object.keys(schema?.definitions ?? {})) {
+    if (key !== 'defaults') {
+      names.add(key);
     }
   }
 
   return [...names]
     .sort((a, b) => kindSortIndex(a) - kindSortIndex(b) || a.localeCompare(b))
     .map((kind) => ({ kind, label: kindLabels[kind] || titleCase(kind) }));
+}
+
+// resolveRefs inlines all local $ref ("#/$defs/Name" or "#/definitions/Name") using
+// the schema's own $defs/definitions table, so the form (which does not resolve refs)
+// can render nested object fields. Cycles are broken by tracking visited refs.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function resolveRefs(node: any, defs: Record<string, any>, seen: Set<string> = new Set()): any {
+  if (Array.isArray(node)) {
+    return node.map((n) => resolveRefs(n, defs, seen));
+  }
+  if (!node || typeof node !== 'object') {
+    return node;
+  }
+  if (typeof node.$ref === 'string') {
+    const name = node.$ref.replace(/^#\/(\$defs|definitions)\//, '');
+    if (seen.has(name) || !defs[name]) {
+      return { type: 'object' };
+    }
+    const next = new Set(seen);
+    next.add(name);
+    return resolveRefs(defs[name], defs, next);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const out: any = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === '$defs' || k === 'definitions') {
+      continue;
+    }
+    out[k] = resolveRefs(v, defs, seen);
+  }
+  return out;
 }
 
 export function detectStepKind(step: Record<string, unknown>): string {
@@ -81,29 +115,17 @@ export function createStepDraft(kind: string, id: string): StepDraft {
   return draft;
 }
 
+// stepSchemaForKind returns the self-contained, ref-resolved object schema for one
+// step kind (or "defaults"). definitions[kind] is the full reflected struct schema
+// for that kind; its internal $ref entries are inlined so the form can render them.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function stepSchemaForKind(schema: any, kind?: string): any {
-  if (!schema?.properties || !kind) {
+  if (!kind || !schema?.definitions?.[kind]) {
     return schema;
   }
-
-  const properties = { ...schema.properties };
-  const allKinds = listStepKinds(schema).map((k) => k.kind);
-
-  for (const k of allKinds) {
-    if (k !== kind) {
-      delete properties[k];
-    }
-  }
-
-  if (schema.definitions?.[kind]) {
-    properties[kind] = schema.definitions[kind];
-  }
-
-  return {
-    ...schema,
-    properties,
-  };
+  const def = schema.definitions[kind];
+  const defs = def.$defs ?? def.definitions ?? {};
+  return resolveRefs(def, defs);
 }
 
 export function buildRecipeFromFlow(input: {

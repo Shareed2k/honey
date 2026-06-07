@@ -28,7 +28,7 @@ func (r RecipeStepRetry) Enabled() bool {
 }
 
 // EffectiveRetry merges step and recipe defaults; applies defaults when a retry block is present.
-func EffectiveRetry(step RecipeStep, defaults *RecipeDefaults) RecipeStepRetry {
+func EffectiveRetry(step *StepBase, defaults *RecipeDefaults) RecipeStepRetry {
 	var base *RecipeStepRetry
 	if defaults != nil && defaults.Retry != nil {
 		cp := *defaults.Retry

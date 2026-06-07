@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/webserver/recipestore"
 )
 
@@ -49,6 +50,16 @@ func (s *Server) handleRecipesStoreList(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(list)
 }
 
+// StoreLoadResponse is returned by GET /api/v1/recipes/store/{name}.
+// It combines the parsed recipe with graph/plan data so the Studio needs only one call.
+type StoreLoadResponse struct {
+	Recipe map[string]interface{}  `json:"recipe"`
+	Plan   string                  `json:"plan,omitempty"`
+	Steps  []ResolvedStepSummary   `json:"steps,omitempty"`
+	Graph  *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
+	Errors []ValidateContentError  `json:"errors,omitempty"`
+}
+
 func (s *Server) handleRecipesStoreGet(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if strings.TrimSpace(name) == "" {
@@ -61,8 +72,54 @@ func (s *Server) handleRecipesStoreGet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	_, _ = w.Write([]byte(content))
+	recipe, err := cuetry.ParseRemoteRecipe([]byte(content), nil)
+	if err != nil {
+		httpError(w, fmt.Errorf("parse recipe: %w", err), http.StatusUnprocessableEntity)
+		return
+	}
+	b, err := json.Marshal(recipe)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	var recipeMap map[string]interface{}
+	if err := json.Unmarshal(b, &recipeMap); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	resp := StoreLoadResponse{Recipe: recipeMap}
+	if verr := cuetry.ValidateParsedRecipe(recipe, nil); verr != nil {
+		resp.Errors = []ValidateContentError{{Kind: "validation", Message: verr.Error()}}
+	} else {
+		plan, summaries, perr := cuetry.RenderDryRunPlan(recipe)
+		if perr == nil {
+			resp.Plan = plan
+			steps := make([]ResolvedStepSummary, len(summaries))
+			for i, s := range summaries {
+				steps[i] = ResolvedStepSummary{
+					Index:   s.Index,
+					ID:      s.ID,
+					Depends: s.Depends,
+					Wave:    s.Wave,
+					Kind:    s.Kind,
+					Host:    s.Host,
+					RunAs:   s.RunAs,
+					When:    s.When,
+					Retry:   s.Retry,
+					Notify:  s.Notify,
+					Preview: s.Preview,
+				}
+			}
+			resp.Steps = steps
+		}
+		if mode, merr := cuetry.RecipeExecutionMode(recipe); merr == nil && mode == cuetry.ExecutionModeGraph {
+			if gp, gerr := cuetry.BuildRecipeGraphPlan(recipe); gerr == nil {
+				resp.Graph = gp
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 type saveRecipeRequest struct {

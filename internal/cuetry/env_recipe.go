@@ -173,7 +173,7 @@ func MergeResolvedSecretsInto(ctx context.Context, resolve bool, resolver Secret
 }
 
 // EffectiveEnv merges recipe.defaults.env with step.env (step wins on duplicate keys). Literal env only (no secrets).
-func EffectiveEnv(step RecipeStep, defaults *RecipeDefaults) (map[string]string, error) {
+func EffectiveEnv(step *StepBase, defaults *RecipeDefaults) (map[string]string, error) {
 	out := make(map[string]string)
 	if defaults != nil && len(defaults.Env) > 0 {
 		if err := mergeEnvInto(context.Background(), false, nil, out, defaults.Env, "defaults.env"); err != nil {
@@ -236,7 +236,7 @@ func appendHostEnvVars(dst map[string]string, r *hosts.Record) {
 
 // EffectiveEnvForRun merges defaults.env → resolved defaults.secrets → step.env → resolved step.secrets → cliEnv → host HONEY_HOST_*.
 // When resolveSecrets is false (dry-run / plan), secret values are replaced with redacted placeholders and resolver may be nil.
-func EffectiveEnvForRun(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
+func EffectiveEnvForRun(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step *StepBase, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
 	merged := make(map[string]string)
 	if defaults != nil {
 		if err := mergeEnvInto(ctx, resolveSecrets, resolver, merged, defaults.Env, "defaults.env"); err != nil {
@@ -263,7 +263,7 @@ func EffectiveEnvForRun(ctx context.Context, resolveSecrets bool, resolver Secre
 }
 
 // EffectiveEnvForRunWithVarExpand merges env then expands ${VAR} in values using merged map as vars.
-func EffectiveEnvForRunWithVarExpand(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record, strict bool) (map[string]string, error) {
+func EffectiveEnvForRunWithVarExpand(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step *StepBase, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record, strict bool) (map[string]string, error) {
 	merged, err := EffectiveEnvForRun(ctx, resolveSecrets, resolver, step, defaults, cliEnv, r)
 	if err != nil {
 		return nil, err
@@ -275,7 +275,7 @@ func EffectiveEnvForRunWithVarExpand(ctx context.Context, resolveSecrets bool, r
 }
 
 // EffectiveEnvForRemoteHook merges defaults env/secrets, step env/secrets, hook env/secrets, then cliEnv, then host variables.
-func EffectiveEnvForRemoteHook(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, hook *RecipeStepHook, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
+func EffectiveEnvForRemoteHook(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step *StepBase, defaults *RecipeDefaults, hook *RecipeStepHook, cliEnv map[string]string, r *hosts.Record) (map[string]string, error) {
 	if hook == nil {
 		return EffectiveEnvForRun(ctx, resolveSecrets, resolver, step, defaults, cliEnv, r)
 	}
@@ -312,7 +312,7 @@ func EffectiveEnvForRemoteHook(ctx context.Context, resolveSecrets bool, resolve
 
 // EffectiveEnvHostOnly returns only HONEY_HOST_* variables derived from r (no recipe env or secrets).
 func EffectiveEnvHostOnly(r *hosts.Record) (map[string]string, error) {
-	return EffectiveEnvForRun(context.Background(), false, nil, RecipeStep{}, nil, nil, r)
+	return EffectiveEnvForRun(context.Background(), false, nil, &StepBase{}, nil, nil, r)
 }
 
 // EnvForDockerInteractive returns a small env slice for docker exec TTY sessions.

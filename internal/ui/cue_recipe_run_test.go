@@ -42,11 +42,13 @@ func TestCueStepAllTargetsTransientTransportFailed(t *testing.T) {
 }
 
 func TestCueRecipeSSHPostHostResult_CheckCmd(t *testing.T) {
-	step := cuetry.RecipeStep{
-		CheckCmd: "test -f /etc/ready",
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			CheckCmd: "test -f /etc/ready",
+		},
 	}
 	run := &cueRun{}
-	post := cueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.StepKindCommand, step, false)
+	post := cueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
 
 	resChecked := HostExecResult{
 		Output:  "HONEY_CHECK_CMD_OK",
@@ -140,13 +142,13 @@ func TestCueRun_loopFromAndHandlers(t *testing.T) {
 	run := &cueRun{
 		CueRecipeRunParams: CueRecipeRunParams{
 			Recipe: cuetry.Recipe{
-				Handlers: []cuetry.RecipeStep{
-					{
-						ID:      "restart-app",
-						Host:    "h1",
-						Command: "echo restarting",
+				Handlers: wrapSteps(&cuetry.CommandStep{
+					StepBase: cuetry.StepBase{
+						ID:   "restart-app",
+						Host: "h1",
 					},
-				},
+					Command: "echo restarting",
+				}),
 			},
 			Records: []hosts.Record{rec},
 			SSHUser: "root",
@@ -159,15 +161,17 @@ func TestCueRun_loopFromAndHandlers(t *testing.T) {
 	// Record output for previous step to loop over
 	run.outputStore.Record("fetch-users", "h1", `[{"name":"alice"},{"name":"bob"}]`)
 
-	step := cuetry.RecipeStep{
-		ID:      "process-users",
-		Host:    "h1",
-		Command: "echo processed ${item}",
-		LoopFrom: &cuetry.RecipeLoop{
-			Step:    "fetch-users",
-			Extract: ".[].name",
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:   "process-users",
+			Host: "h1",
+			LoopFrom: &cuetry.RecipeLoop{
+				Step:    "fetch-users",
+				Extract: ".[].name",
+			},
+			NotifyHandler: []string{"restart-app"},
 		},
-		NotifyHandler: []string{"restart-app"},
+		Command: "echo processed ${item}",
 	}
 
 	ch := make(chan HostExecResult, 10)
@@ -214,10 +218,12 @@ func TestCueRun_loopTemplateMultilineStdout(t *testing.T) {
 	}
 	run.outputStore.Record("get-controllers", "h1", "10.201.0.104\n10.201.0.22\n10.201.0.102\n")
 
-	step := cuetry.RecipeStep{
-		ID:      "restart",
-		Host:    "h1",
-		Loop:    `{{ splitList "\n" (stepStdout "get-controllers") | compact | toJson }}`,
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:   "restart",
+			Host: "h1",
+			Loop: `{{ splitList "\n" (stepStdout "get-controllers") | compact | toJson }}`,
+		},
 		Command: `echo "${item}"`,
 	}
 
@@ -277,10 +283,12 @@ func TestCueRun_loopTemplateHostItem(t *testing.T) {
 	}
 	run.outputStore.Record("get-controllers", "node-a", "node-a\nnode-b\n")
 
-	step := cuetry.RecipeStep{
-		ID:      "restart",
-		Host:    "${item}",
-		Loop:    `{{ stepStdoutLines "get-controllers" | compact | toJson }}`,
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:   "restart",
+			Host: "${item}",
+			Loop: `{{ stepStdoutLines "get-controllers" | compact | toJson }}`,
+		},
 		Command: `echo "${item}"`,
 	}
 
@@ -332,11 +340,13 @@ func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
 	}
 
 	ch := make(chan HostExecResult, 10)
-	_, err := streamCueRecipeStep(context.TODO(), run, 0, cuetry.RecipeStep{
-		ID:      "list",
-		Host:    "h1",
+	_, err := streamCueRecipeStep(context.TODO(), run, 0, &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:     "list",
+			Host:   "h1",
+			Output: "raw",
+		},
 		Command: "printf data",
-		Output:  "raw",
 	}, ch)
 	if err != nil {
 		t.Fatal(err)
@@ -349,11 +359,13 @@ func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
 		t.Fatalf("raw output = %q, ok=%v", got, ok)
 	}
 
-	_, err = streamCueRecipeStep(context.TODO(), run, 1, cuetry.RecipeStep{
-		ID:     "render",
-		Host:   "_",
+	_, err = streamCueRecipeStep(context.TODO(), run, 1, &cuetry.TemplateStep{
+		StepBase: cuetry.StepBase{
+			ID:     "render",
+			Host:   "_",
+			Output: "items",
+		},
 		Render: `{{ .outputs.raw.stdout_lines | compact | toJson }}`,
-		Output: "items",
 	}, ch)
 	if err != nil {
 		t.Fatal(err)
@@ -372,12 +384,14 @@ func TestCueRecipeSSHPostHostResult_changedWhenFailedWhen(t *testing.T) {
 		outputStore:   cuetry.NewStepOutputStore(),
 		outputCapture: cuetry.NewRecipeOutputCapture(),
 	}
-	step := cuetry.RecipeStep{
-		ChangedWhen:   "false",
-		FailedWhen:    `stdout.contains("bad")`,
-		NotifyHandler: []string{"restart"},
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ChangedWhen:   "false",
+			FailedWhen:    `stdout.contains("bad")`,
+			NotifyHandler: []string{"restart"},
+		},
 	}
-	post := cueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.StepKindCommand, step, false)
+	post := cueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
 	res := &HostExecResult{Success: true, Output: "bad", ExitCode: 0}
 
 	post(context.TODO(), hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}, res)
@@ -394,7 +408,7 @@ func TestCueRecipeSSHPostHostResult_changedWhenFailedWhen(t *testing.T) {
 }
 
 func TestRecipeHostMaxConc_serialOverridesMaxParallel(t *testing.T) {
-	got := recipeHostMaxConc(cuetry.RecipeStep{Serial: 1, MaxParallel: 8}, nil)
+	got := recipeHostMaxConc(&cuetry.CommandStep{RemoteExec: cuetry.RemoteExec{Serial: 1, MaxParallel: 8}}, nil)
 	if got != 1 {
 		t.Fatalf("got %d, want 1", got)
 	}
@@ -459,11 +473,13 @@ func TestCueRun_stepTimeout(t *testing.T) {
 		outputStore: cuetry.NewStepOutputStore(),
 	}
 
-	step := cuetry.RecipeStep{
-		ID:      "test-timeout",
-		Host:    "h1",
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:      "test-timeout",
+			Host:    "h1",
+			Timeout: "5s",
+		},
 		Command: "sleep 10",
-		Timeout: "5s",
 	}
 
 	ch := make(chan HostExecResult, 10)
@@ -481,13 +497,13 @@ func TestCueRun_stepTimeout(t *testing.T) {
 func TestRunCueRecipeStepsJSON_DryRun(t *testing.T) {
 	recipe := cuetry.Recipe{
 		Name: "test-dry-run",
-		Steps: []cuetry.RecipeStep{
-			{
-				ID:      "step-1",
-				Host:    "*",
-				Command: "echo hello",
+		Steps: wrapSteps(&cuetry.CommandStep{
+			StepBase: cuetry.StepBase{
+				ID:   "step-1",
+				Host: "*",
 			},
-		},
+			Command: "echo hello",
+		}),
 	}
 	records := []hosts.Record{
 		{
@@ -530,13 +546,13 @@ func TestRunCueRecipeStepsJSON_DryRun(t *testing.T) {
 func TestRunCueRecipeStepsJSON_Execute(t *testing.T) {
 	recipe := cuetry.Recipe{
 		Name: "test-execute",
-		Steps: []cuetry.RecipeStep{
-			{
-				ID:      "step-1",
-				Host:    "host-1",
-				Command: "echo execute",
+		Steps: wrapSteps(&cuetry.CommandStep{
+			StepBase: cuetry.StepBase{
+				ID:   "step-1",
+				Host: "host-1",
 			},
-		},
+			Command: "echo execute",
+		}),
 	}
 	rec := hosts.Record{
 		Name:      "host-1",
@@ -622,17 +638,19 @@ func TestCueRun_loopAbortedOnHookFailure(t *testing.T) {
 	}
 	run.outputStore.Record("get-items", "h1", "item1\nitem2\n")
 
-	step := cuetry.RecipeStep{
-		ID:      "process",
-		Host:    "h1",
-		Loop:    `{{ stepStdoutLines "get-items" | compact | toJson }}`,
-		Command: `echo "${item}"`,
-		Hooks: &cuetry.RecipeStepHooks{
-			OnSuccess: &cuetry.RecipeStepHook{
-				Where:   "local",
-				Command: "false_command_does_not_exist",
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:   "process",
+			Host: "h1",
+			Loop: `{{ stepStdoutLines "get-items" | compact | toJson }}`,
+			Hooks: &cuetry.RecipeStepHooks{
+				OnSuccess: &cuetry.RecipeStepHook{
+					Where:   "local",
+					Command: "false_command_does_not_exist",
+				},
 			},
 		},
+		Command: `echo "${item}"`,
 	}
 
 	ch := make(chan HostExecResult, 10)
@@ -681,9 +699,11 @@ func TestCueRun_opensearchStep(t *testing.T) {
 		outputCapture: cuetry.NewRecipeOutputCapture(),
 	}
 
-	step := cuetry.RecipeStep{
-		ID:   "get_doc",
-		Host: "h1",
+	step := &cuetry.OpensearchStep{
+		StepBase: cuetry.StepBase{
+			ID:   "get_doc",
+			Host: "h1",
+		},
 		Opensearch: &cuetry.RecipeStepOpensearch{
 			Addresses: []string{server.URL},
 			Index:     "my-index",
@@ -748,9 +768,11 @@ func TestCueRun_postgresStep(t *testing.T) {
 		outputCapture: cuetry.NewRecipeOutputCapture(),
 	}
 
-	step := cuetry.RecipeStep{
-		ID:   "query_pg",
-		Host: "h1",
+	step := &cuetry.PostgresStep{
+		StepBase: cuetry.StepBase{
+			ID:   "query_pg",
+			Host: "h1",
+		},
 		Postgres: &cuetry.RecipeStepPostgres{
 			DSNSecret: "PG_DSN",
 			Action:    "query",

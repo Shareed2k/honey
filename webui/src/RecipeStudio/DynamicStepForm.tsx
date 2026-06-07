@@ -60,7 +60,7 @@ export default function DynamicStepForm({ schema, value, onChange }: Props) {
     // 2. Objects mapped recursively
     if (propSchema.type === 'object') {
       return (
-        <Collapse key={key} defaultActiveKey={['1']} style={{ marginBottom: 12 }}>
+        <Collapse key={key} style={{ marginBottom: 12 }}>
           <Panel header={key} key="1">
             {Object.entries(propSchema.properties || {}).map(([subKey, subSchema]: [string, any]) =>
               renderFormItem(subKey, subSchema, val?.[subKey], itemPath)

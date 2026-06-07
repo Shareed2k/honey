@@ -9,11 +9,10 @@ func TestValidateRecipeGraph_linearRejectsDepends(t *testing.T) {
 	t.Parallel()
 	r := Recipe{
 		Name: "t",
-		Steps: []RecipeStep{{
-			Host:    "*",
-			Depends: []string{"x"},
-			Command: "true",
-		}},
+		Steps: wrapAll(&CommandStep{
+			StepBase: StepBase{Host: "*", Depends: []string{"x"}},
+			Command:  "true",
+		}),
 	}
 	if err := ValidateRecipeGraph(r); err == nil || !strings.Contains(err.Error(), "depends") {
 		t.Fatalf("got %v", err)
@@ -22,10 +21,10 @@ func TestValidateRecipeGraph_linearRejectsDepends(t *testing.T) {
 
 func TestBuildStepGraph_cycle(t *testing.T) {
 	t.Parallel()
-	steps := []RecipeStep{
-		{ID: "a", Host: "*", Depends: []string{"b"}, Command: "a"},
-		{ID: "b", Host: "*", Depends: []string{"a"}, Command: "b"},
-	}
+	steps := wrapAll(
+		&CommandStep{StepBase: StepBase{ID: "a", Host: "*", Depends: []string{"b"}}, Command: "a"},
+		&CommandStep{StepBase: StepBase{ID: "b", Host: "*", Depends: []string{"a"}}, Command: "b"},
+	)
 	_, err := BuildStepGraph(steps)
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("got %v", err)
@@ -34,12 +33,12 @@ func TestBuildStepGraph_cycle(t *testing.T) {
 
 func TestBuildStepGraph_waves(t *testing.T) {
 	t.Parallel()
-	steps := []RecipeStep{
-		{ID: "fetch", Host: "*", Command: "fetch"},
-		{ID: "a", Host: "*", Depends: []string{"fetch"}, Command: "a"},
-		{ID: "b", Host: "*", Depends: []string{"fetch"}, Command: "b"},
-		{ID: "verify", Host: "*", Depends: []string{"a", "b"}, Command: "v"},
-	}
+	steps := wrapAll(
+		&CommandStep{StepBase: StepBase{ID: "fetch", Host: "*"}, Command: "fetch"},
+		&CommandStep{StepBase: StepBase{ID: "a", Host: "*", Depends: []string{"fetch"}}, Command: "a"},
+		&CommandStep{StepBase: StepBase{ID: "b", Host: "*", Depends: []string{"fetch"}}, Command: "b"},
+		&CommandStep{StepBase: StepBase{ID: "verify", Host: "*", Depends: []string{"a", "b"}}, Command: "v"},
+	)
 	sg, err := BuildStepGraph(steps)
 	if err != nil {
 		t.Fatal(err)
@@ -54,10 +53,10 @@ func TestBuildStepGraph_waves(t *testing.T) {
 
 func TestBuildStepGraph_aiCannotBeDependedOn(t *testing.T) {
 	t.Parallel()
-	steps := []RecipeStep{
-		{ID: "ai", Host: "_", AI: &RecipeAI{Prompt: "x"}},
-		{ID: "bad", Host: "*", Depends: []string{"ai"}, Command: "true"},
-	}
+	steps := wrapAll(
+		&AIStep{StepBase: StepBase{ID: "ai", Host: "_"}, AI: &RecipeAI{Prompt: "x"}},
+		&CommandStep{StepBase: StepBase{ID: "bad", Host: "*", Depends: []string{"ai"}}, Command: "true"},
+	)
 	_, err := BuildStepGraph(steps)
 	if err == nil || !strings.Contains(err.Error(), "ai") {
 		t.Fatalf("got %v", err)
@@ -80,7 +79,7 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Type != "graph" || r.Steps[0].ID != "fetch" {
+	if r.Type != "graph" || r.Steps[0].Step.Base().ID != "fetch" {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -125,10 +124,10 @@ func TestFormatGraphWavesText(t *testing.T) {
 	r := Recipe{
 		Name: "g",
 		Type: "graph",
-		Steps: []RecipeStep{
-			{ID: "fetch", Host: "*", Command: "f"},
-			{ID: "a", Host: "*", Depends: []string{"fetch"}, Command: "a"},
-		},
+		Steps: wrapAll(
+			&CommandStep{StepBase: StepBase{ID: "fetch", Host: "*"}, Command: "f"},
+			&CommandStep{StepBase: StepBase{ID: "a", Host: "*", Depends: []string{"fetch"}}, Command: "a"},
+		),
 	}
 	text, err := FormatGraphWavesText(r)
 	if err != nil {

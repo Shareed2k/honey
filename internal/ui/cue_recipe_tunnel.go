@@ -19,8 +19,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func streamCueStepTunnel(ctx context.Context, run *cueRun, stepIdx int, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	if step.Tunnel == nil {
+func streamCueStepTunnel(ctx context.Context, run *cueRun, stepIdx int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	if _, ok := step.(*cuetry.TunnelStep); !ok {
 		return fmt.Errorf("internal tunnel step")
 	}
 	maxConc := recipeHostMaxConc(step, run.Recipe.Defaults)
@@ -49,7 +49,7 @@ func streamCueStepTunnel(ctx context.Context, run *cueRun, stepIdx int, step cue
 
 func runCueTunnelOnHost(
 	ctx context.Context,
-	step cuetry.RecipeStep,
+	step cuetry.Step,
 	target hosts.Record,
 	sshUser string,
 	stepIdx int,
@@ -58,8 +58,13 @@ func runCueTunnelOnHost(
 	execute bool,
 ) HostExecResult {
 	res := HostExecResult{Name: target.Name, IP: target.PrimaryIP, Provider: target.Provider, Success: false}
-	t := step.Tunnel
-	stepID := strings.TrimSpace(step.ID)
+	ts, _ := step.(*cuetry.TunnelStep)
+	if ts == nil || ts.Tunnel == nil {
+		res.ErrMsg = "internal: tunnel step missing tunnel field"
+		return res
+	}
+	t := ts.Tunnel
+	stepID := strings.TrimSpace(step.Base().ID)
 	if stepID == "" {
 		stepID = fmt.Sprintf("step%d", stepIdx)
 	}
@@ -292,12 +297,12 @@ func tunnelDryRunJSON(t *cuetry.RecipeStepTunnel) string {
 	return string(b)
 }
 
-func runCueStepTunnelDry(out io.Writer, recipe cuetry.Recipe, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
+func runCueStepTunnelDry(out io.Writer, recipe cuetry.Recipe, i int, step cuetry.Step, targets []hosts.Record) error {
 	WriteCueStepNotifyDryLine(out, step)
-	WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step, recipe.Defaults))
+	WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 	for _, target := range targets {
 		_, _ = fmt.Fprintf(out, "step %d: kind=tunnel name=%q %s mode=%s output=%s\n",
-			i, target.Name, FormatTargetForDryRun(target), cuetry.EffectiveTunnelMode(step.Tunnel), tunnelDryRunJSON(step.Tunnel))
+			i, target.Name, FormatTargetForDryRun(target), cuetry.EffectiveTunnelMode(tunnelOf(step)), tunnelDryRunJSON(tunnelOf(step)))
 	}
 	return nil
 }

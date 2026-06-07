@@ -27,13 +27,13 @@ func TestParseKafkaControllerRollingRestart(t *testing.T) {
 	if got := len(r.Steps); got != 3 {
 		t.Fatalf("steps: got %d want 3", got)
 	}
-	if r.Steps[0].ID != "list_nodes" || r.Steps[1].ID != "verify_cluster_health" {
+	if r.Steps[0].Step.Base().ID != "list_nodes" || r.Steps[1].Step.Base().ID != "verify_cluster_health" {
 		t.Fatalf("first steps: %#v", r.Steps[:2])
 	}
-	if r.Steps[0].Output != "controllers_raw" {
+	if r.Steps[0].Step.Base().Output != "controllers_raw" {
 		t.Fatalf("list output: %#v", r.Steps[0])
 	}
-	restart := r.Steps[2]
+	restart := r.Steps[2].Step.(*CommandStep)
 	if restart.ID != "restart" || restart.Loop == "" || restart.Host != "${item}" || restart.Serial != 1 {
 		t.Fatalf("restart step: %#v", restart)
 	}
@@ -60,7 +60,7 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Steps[0].Host != "kafka-ctrl-1" {
-		t.Fatalf("host: %q", r.Steps[0].Host)
+	if r.Steps[0].Step.Base().Host != "kafka-ctrl-1" {
+		t.Fatalf("host: %q", r.Steps[0].Step.Base().Host)
 	}
 }

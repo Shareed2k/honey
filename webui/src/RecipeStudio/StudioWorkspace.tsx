@@ -91,47 +91,34 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
   };
 
   // 2. Load and Deconstruct Recipe
-  const loadRecipe = async (name: string) => {
+  const loadRecipe = async (name: string | undefined) => {
+    if (!name) return;
     try {
       setSelectedRecipe(name);
       const res = await apiGet(`/api/v1/recipes/store/${encodeURIComponent(name)}`);
       if (!res.ok) {
         throw new Error(await res.text());
       }
-      const rawText = await res.text();
-      let recipeJson: any;
-      try {
-        recipeJson = JSON.parse(rawText);
-      } catch {
-        // If the file is stored as raw CUE/YAML, parse it via backend parse API
-        const parseRes = await apiPost('/api/v1/recipes/parse', { content: rawText });
-        if (parseRes.ok) {
-          const parsed = await parseRes.json();
-          recipeJson = parsed.recipe;
-        } else {
-          throw new Error(await parseRes.text());
-        }
-      }
+      const data = await res.json();
+      const recipeJson = data.recipe;
 
       if (!recipeJson || !recipeJson.steps) {
         message.warning('Selected file is not a valid graph recipe');
         return;
       }
 
-      if (recipeJson.defaults) {
-        setRecipeDefaults(recipeJson.defaults);
-      } else {
-        setRecipeDefaults({});
+      if (data.errors?.length) {
+        message.warning('Loaded recipe contains validation issues');
       }
 
-      // Visual Deconstructor Loop
+      setRecipeDefaults(recipeJson.defaults ?? {});
+
       const newNodes: any[] = [];
       const newEdges: any[] = [];
       const newStepData: Record<string, StepDraft> = {};
 
       recipeJson.steps.forEach((step: any, index: number) => {
         const id = step.id || `step_${index + 1}`;
-        
         const kind = detectStepKind(step);
 
         newNodes.push({
@@ -154,27 +141,16 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
         newStepData[id] = { ...step, id, kind, host: step.host || '_' };
       });
 
-      const validatedNodes = [...newNodes];
-      try {
-        const validateRes = await apiPost('/api/v1/recipes/validate-content', { recipe_content: recipeJson });
-        const validation = await validateRes.json();
-        if (validation.errors?.length) {
-          message.warning('Loaded recipe contains validation issues');
-        } else {
-          const waveByNode = graphWaveByNode(validation.graph);
-          validatedNodes.forEach((node) => {
-            const stepSummary = validation.steps?.find((s: any) => s.id === node.id);
-            node.data = {
-              ...node.data,
-              wave: waveByNode[node.id] ?? stepSummary?.wave,
-            };
-          });
-        }
-      } catch {
-        message.warning('Loaded recipe, but validation metadata could not be refreshed');
-      }
+      const waveByNode = graphWaveByNode(data.graph);
+      const finalNodes = newNodes.map((node) => {
+        const stepSummary = data.steps?.find((s: any) => s.id === node.id);
+        return {
+          ...node,
+          data: { ...node.data, wave: waveByNode[node.id] ?? stepSummary?.wave },
+        };
+      });
 
-      setNodes(applyWaveLayout(validatedNodes));
+      setNodes(applyWaveLayout(finalNodes));
       setEdges(newEdges);
       setStepData(newStepData);
       message.success(`Successfully loaded ${name}!`);
@@ -497,16 +473,16 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
           <Button type="default" icon={<UndoOutlined />} onClick={handleReset}>
             Reset
           </Button>
-          <Button type="primary" icon={<SyncOutlined />} loading={validating} onClick={handleValidate}>
+          <Button type="default" icon={<SyncOutlined />} loading={validating} onClick={handleValidate}>
             Validate Graph
           </Button>
-          <Button type="primary" icon={<SaveOutlined />} onClick={() => setSaveModalVisible(true)}>
+          <Button type="default" icon={<SaveOutlined />} onClick={() => setSaveModalVisible(true)}>
             Save Recipe
           </Button>
         </Space>
       </Header>
 
-      <Layout>
+      <Layout style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <Sider width={220} style={{ background: '#001529', borderRight: '1px solid #1f2937', padding: '16px' }}>
           <Title level={5} style={{ color: '#f0f6fc', marginTop: 0 }}>Toolbox (Drag/Click)</Title>
           <Text style={{ color: '#8b949e' }}>Drop steps onto canvas</Text>
@@ -514,9 +490,8 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
             {listStepKinds(schema).map((stepKind) => (
               <Button
                 key={stepKind.kind}
-                ghost
+                type="default"
                 icon={<PlusOutlined />}
-                style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.72)' }}
                 onClick={() => addStepNode(stepKind.kind)}
               >
                 {stepKind.label}
@@ -525,7 +500,7 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
           </div>
         </Sider>
 
-        <Content style={{ position: 'relative', height: '100%', background: '#0d1117' }}>
+        <Content style={{ position: 'relative', overflow: 'hidden', background: '#0d1117' }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -602,7 +577,7 @@ export default function StudioWorkspace({ selectedRecords = [], sshUser = 'root'
         onClose={() => setSettingsDrawerOpen(false)}
       >
         <DynamicStepForm
-          schema={schema?.definitions?.defaults}
+          schema={stepSchemaForKind(schema, 'defaults')}
           value={recipeDefaults}
           onChange={setRecipeDefaults}
         />
