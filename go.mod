@@ -8,27 +8,27 @@ require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.3
 	cloud.google.com/go/compute v1.64.0
-	cloud.google.com/go/storage v1.62.2
+	cloud.google.com/go/storage v1.62.3
 	cuelang.org/go v0.16.1
 	filippo.io/age v1.3.1
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
 	github.com/Telmate/proxmox-api-go v0.0.0-20260601171806-be33f19f9268
 	github.com/atotto/clipboard v0.1.4
-	github.com/aws/aws-sdk-go-v2 v1.41.10
-	github.com/aws/aws-sdk-go-v2/config v1.32.21
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.20
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.305.0
-	github.com/aws/aws-sdk-go-v2/service/kms v1.53.1
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.0
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.0
-	github.com/aws/smithy-go v1.27.0
+	github.com/aws/aws-sdk-go-v2 v1.41.12
+	github.com/aws/aws-sdk-go-v2/config v1.32.23
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.22
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.305.2
+	github.com/aws/aws-sdk-go-v2/service/kms v1.53.3
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.2
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.2
+	github.com/aws/smithy-go v1.27.1
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/coregx/coregex v0.12.21
 	github.com/creack/pty v1.1.24
 	github.com/creasty/defaults v1.8.0
 	github.com/extism/go-pdk v1.1.3
 	github.com/extism/go-sdk v1.7.1
-	github.com/getkin/kin-openapi v0.139.0
+	github.com/getkin/kin-openapi v0.140.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-playground/mold/v4 v4.5.1
 	github.com/go-playground/validator/v10 v10.30.3
@@ -43,7 +43,7 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/iamcalledrob/netstatus v1.0.2
 	github.com/itchyny/gojq v0.12.19
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jackc/puddle/v2 v2.2.2
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/kevinburke/ssh_config v1.6.0
@@ -52,19 +52,19 @@ require (
 	github.com/moby/moby/client v0.4.1
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/mr-karan/balance v0.0.0-20250317053523-d32c6ade6cf1
-	github.com/ncruces/go-sqlite3 v0.34.3
+	github.com/ncruces/go-sqlite3 v0.34.4
 	github.com/nikoksr/notify v1.5.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/opensearch-project/opensearch-go/v2 v2.3.0
 	github.com/pkg/sftp v1.13.10
-	github.com/prometheus/alertmanager v0.32.1
+	github.com/prometheus/alertmanager v0.32.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/swaggo/swag/v2 v2.0.0-rc5
 	github.com/things-go/go-socks5 v0.1.1
-	github.com/yalue/onnxruntime_go v1.30.1
+	github.com/yalue/onnxruntime_go v1.31.0
 	github.com/zalando/go-keyring v0.2.8
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.52.0
@@ -130,19 +130,19 @@ require (
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/ashanbrown/forbidigo/v2 v2.3.1 // indirect
 	github.com/ashanbrown/makezero/v2 v2.2.1 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.11 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.26 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.26 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.26 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.27 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.10 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.19 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.26 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.26 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.1.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.31.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.43.0 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.13 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.28 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.28 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.28 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.29 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.12 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.21 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.28 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.28 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.1.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.31.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.43.2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bgentry/go-netrc v0.0.0-20140422174119-9fd32a8b3d3d // indirect
@@ -310,7 +310,6 @@ require (
 	github.com/jgautheron/goconst v1.10.0 // indirect
 	github.com/jjti/go-spancheck v0.6.5 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
-	github.com/josharian/intern v1.0.0 // indirect
 	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/julz/importas v0.2.0 // indirect
@@ -370,13 +369,12 @@ require (
 	github.com/moby/spdystream v0.5.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
-	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/moricho/tparallel v0.3.2 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f // indirect
 	github.com/nakabonne/nestif v0.3.1 // indirect
-	github.com/ncruces/go-sqlite3-wasm/v2 v2.5.35301 // indirect
+	github.com/ncruces/go-sqlite3-wasm/v2 v2.6.35302 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nishanths/exhaustive v0.12.0 // indirect
 	github.com/nishanths/predeclared v0.2.2 // indirect
@@ -393,7 +391,6 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
-	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
@@ -470,7 +467,6 @@ require (
 	github.com/uudashr/gocognit v1.2.1 // indirect
 	github.com/uudashr/iface v1.4.2 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
-	github.com/woodsbury/decimal128 v1.3.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xen0n/gosmopolitan v1.3.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
