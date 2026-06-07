@@ -1,5 +1,7 @@
 version: '3'
 
+dotenv: ['.env']
+
 vars:
   PYTHON: python3
   ANOMALY_MODEL_ID: distilbert/distilbert-base-uncased
@@ -11,7 +13,6 @@ vars:
   ANOMALY_DOCKER_TRAINER_IMAGE: honey-anomaly-trainer:latest
 
 env:
-  DOCKER_CONTEXT: remote-builder
   CGO_ENABLED: 1
 
 tasks:
@@ -167,3 +168,8 @@ tasks:
           ANOMALY_TRAIN_CSV: contrib/anomaly/sample_train.csv
           ANOMALY_EVAL_CSV: contrib/anomaly/sample_eval.csv
           ANOMALY_OUT_DIR: models
+
+  test:integration:
+    desc: Run integration tests with testcontainers
+    cmds:
+      - go test -tags integration -timeout 10m -v ./tests/integration/...
