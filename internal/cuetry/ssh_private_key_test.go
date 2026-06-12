@@ -10,14 +10,14 @@ import (
 func TestEffectiveSSHPrivateKey(t *testing.T) {
 	t.Parallel()
 	def := &RecipeDefaults{SSHPrivateKey: "~/.ssh/default"}
-	step := RecipeStep{Host: "*", SSHPrivateKey: "~/.ssh/step"}
+	step := &RemoteExec{SSHPrivateKey: "~/.ssh/step"}
 	if got := EffectiveSSHPrivateKey(def, step); got != "~/.ssh/step" {
 		t.Fatalf("step over defaults: got %q", got)
 	}
-	if got := EffectiveSSHPrivateKey(def, RecipeStep{Host: "*"}); got != "~/.ssh/default" {
+	if got := EffectiveSSHPrivateKey(def, &RemoteExec{}); got != "~/.ssh/default" {
 		t.Fatalf("defaults: got %q", got)
 	}
-	if got := EffectiveSSHPrivateKey(nil, RecipeStep{Host: "*"}); got != "" {
+	if got := EffectiveSSHPrivateKey(nil, &RemoteExec{}); got != "" {
 		t.Fatalf("unset: got %q", got)
 	}
 }
@@ -25,7 +25,7 @@ func TestEffectiveSSHPrivateKey(t *testing.T) {
 func TestRecordForSSHDial_identityMeta(t *testing.T) {
 	t.Parallel()
 	r := hosts.Record{Name: "a", PrimaryIP: "10.0.0.1"}
-	out := RecordForSSHDial(&RecipeDefaults{SSHPrivateKey: "~/.ssh/k"}, RecipeStep{Host: "*"}, r)
+	out := RecordForSSHDial(&RecipeDefaults{SSHPrivateKey: "~/.ssh/k"}, &RemoteExec{}, r)
 	id, ok := hosts.MetaSSHIdentityFile(&out)
 	if !ok || id != "~/.ssh/k" {
 		t.Fatalf("identity meta got %q ok=%v", id, ok)

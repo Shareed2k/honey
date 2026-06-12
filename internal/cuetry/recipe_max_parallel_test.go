@@ -5,7 +5,7 @@ import "testing"
 func TestEffectiveMaxParallel_precedence(t *testing.T) {
 	t.Parallel()
 	def := &RecipeDefaults{MaxParallel: 4}
-	step := RecipeStep{MaxParallel: 8}
+	step := &RemoteExec{MaxParallel: 8}
 	if got := EffectiveMaxParallel(step, def); got != 8 {
 		t.Fatalf("step override: got %d", got)
 	}
@@ -13,7 +13,7 @@ func TestEffectiveMaxParallel_precedence(t *testing.T) {
 	if got := EffectiveMaxParallel(step, def); got != 4 {
 		t.Fatalf("defaults: got %d", got)
 	}
-	if got := EffectiveMaxParallel(RecipeStep{}, nil); got != 0 {
+	if got := EffectiveMaxParallel(&RemoteExec{}, nil); got != 0 {
 		t.Fatalf("zero: got %d", got)
 	}
 }

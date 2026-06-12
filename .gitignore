@@ -17,3 +17,4 @@ contrib/ansible/inventory_plugins/__pycache__
 models
 runtime
 honey
+.env

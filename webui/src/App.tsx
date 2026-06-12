@@ -23,6 +23,7 @@ import { recordKey } from './HostPicker';
 import type { HostRecord } from './HostPicker';
 import { RecipesTab } from './RecipesTab';
 import { AppsTab } from './AppsTab';
+import StudioWorkspace from './RecipeStudio/StudioWorkspace';
 import { BackendsTab } from './tabs/BackendsTab';
 import { FilesTab } from './tabs/FilesTab';
 import { TunnelsTab } from './tabs/TunnelsTab';
@@ -89,7 +90,8 @@ export function App() {
       val === 'apps' ||
       val === 'logs' ||
       val === 'api-docs' ||
-      val === 'feedback'
+      val === 'feedback' ||
+      val === 'studio'
     ) {
       return val as Tab;
     }
@@ -303,6 +305,7 @@ export function App() {
     { key: 'backends', icon: <CloudOutlined />,      label: 'Backends' },
     { key: 'config',   icon: <SettingOutlined />,    label: 'Config' },
     { key: 'recipes',  icon: <PlayCircleOutlined />, label: 'Recipes' },
+    { key: 'studio',   icon: <AppstoreOutlined />,   label: 'Recipe Studio' },
     { key: 'tunnels',  icon: <ApiOutlined />,        label: 'Tunnels' },
     { key: 'apps',     icon: <DatabaseOutlined />,      label: 'Apps & Proxies' },
     { key: 'logs',     icon: <UnorderedListOutlined />, label: 'Logs' },
@@ -596,6 +599,10 @@ export function App() {
           ) : null}
 
           {tab === 'tunnels' ? <TunnelsTab onNavigateToSearch={() => setTab('search')} /> : null}
+
+          <div style={{ display: tab === 'studio' ? 'block' : 'none', height: '100%' }}>
+            <StudioWorkspace records={records} selectedRecords={selectedRecords} sshUser={sshUser} />
+          </div>
 
           {tab === 'apps' ? (
             <AppsTab sshUser={sshUser} providers={selectedProviders} backends={selectedBackends} />

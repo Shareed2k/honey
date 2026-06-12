@@ -162,24 +162,13 @@ func ResolveHostFromRecords(host string, records []hosts.Record) (hosts.Record, 
 // for the given host rows (one per expanded target per step, or one per agent_transfer step).
 func CountRecipeStreamResults(recipe Recipe, records []hosts.Record) (int, error) {
 	var total int
-	for _, step := range recipe.Steps {
-		kind, err := ClassifyStep(step)
-		if err != nil {
-			return 0, err
-		}
-		if kind == StepKindAgentTransfer || kind == StepKindAI {
+	for _, w := range recipe.Steps {
+		kind := w.Step.Kind()
+		if kind == KindAgentTransfer || kind == KindAI {
 			total++
 			continue
 		}
-		if kind == StepKindTemplate {
-			targets, err := ExpandStepHosts(step.Host, records)
-			if err != nil {
-				return 0, err
-			}
-			total += len(targets)
-			continue
-		}
-		targets, err := ExpandStepHosts(step.Host, records)
+		targets, err := ExpandStepHosts(w.Step.Base().Host, records)
 		if err != nil {
 			return 0, err
 		}

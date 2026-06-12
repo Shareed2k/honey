@@ -10,10 +10,10 @@ func TestBuildRecipeGraphPlan(t *testing.T) {
 	r := Recipe{
 		Name: "g",
 		Type: "graph",
-		Steps: []RecipeStep{
-			{ID: "fetch", Host: "*", Command: "f"},
-			{ID: "a", Host: "*", Depends: []string{"fetch"}, Command: "a"},
-		},
+		Steps: wrapAll(
+			&CommandStep{StepBase: StepBase{ID: "fetch", Host: "*"}, Command: "f"},
+			&CommandStep{StepBase: StepBase{ID: "a", Host: "*", Depends: []string{"fetch"}}, Command: "a"},
+		),
 	}
 	plan, err := BuildRecipeGraphPlan(r)
 	if err != nil {
@@ -29,7 +29,7 @@ func TestBuildRecipeGraphPlan(t *testing.T) {
 
 func TestBuildRecipeGraphPlan_rejectsLinear(t *testing.T) {
 	t.Parallel()
-	_, err := BuildRecipeGraphPlan(Recipe{Name: "l", Steps: []RecipeStep{{Host: "*", Command: "x"}}})
+	_, err := BuildRecipeGraphPlan(Recipe{Name: "l", Steps: wrapAll(&CommandStep{StepBase: StepBase{Host: "*"}, Command: "x"})})
 	if err == nil || !strings.Contains(err.Error(), "graph") {
 		t.Fatalf("got %v", err)
 	}

@@ -27,9 +27,9 @@ const (
 	maxHookOutputRunes    = 8000
 )
 
-func cueRecipeSSHPostHostResult(_ context.Context, run *cueRun, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, recipeScopedKV bool) SSHPostHostResultFunc {
+func cueRecipeSSHPostHostResult(_ context.Context, run *cueRun, stepIdx int, kind string, step cuetry.Step, recipeScopedKV bool) SSHPostHostResultFunc {
 	return func(hctx context.Context, r hosts.Record, res *HostExecResult) {
-		if step.CheckCmd != "" && strings.Contains(res.Output, "HONEY_CHECK_CMD_OK") {
+		if step.Base().CheckCmd != "" && strings.Contains(res.Output, "HONEY_CHECK_CMD_OK") {
 			res.Changed = false
 			res.Success = true
 			res.ExitCode = 0
@@ -38,11 +38,11 @@ func cueRecipeSSHPostHostResult(_ context.Context, run *cueRun, stepIdx int, kin
 			res.Changed = true
 		}
 		applyCueRecipeResultExpressions(run, step, r, res)
-		if res.Success && res.Changed && len(step.NotifyHandler) > 0 {
+		if res.Success && res.Changed && len(step.Base().NotifyHandler) > 0 {
 			if run.triggeredHandlers == nil {
 				run.triggeredHandlers = make(map[string]bool)
 			}
-			for _, handlerName := range step.NotifyHandler {
+			for _, handlerName := range step.Base().NotifyHandler {
 				run.triggeredHandlers[handlerName] = true
 			}
 		}
@@ -50,7 +50,7 @@ func cueRecipeSSHPostHostResult(_ context.Context, run *cueRun, stepIdx int, kin
 	}
 }
 
-func applyCueRecipeResultExpressions(run *cueRun, step cuetry.RecipeStep, r hosts.Record, res *HostExecResult) {
+func applyCueRecipeResultExpressions(run *cueRun, step cuetry.Step, r hosts.Record, res *HostExecResult) {
 	ctx := cuetry.ResultExprContext{
 		Stdout:    res.Output,
 		ExitCode:  res.ExitCode,
@@ -80,10 +80,10 @@ func applyCueRecipeResultExpressions(run *cueRun, step cuetry.RecipeStep, r host
 			}
 		}
 	}
-	if step.Env != nil {
-		ctx.Item = step.Env["item"]
+	if step.Base().Env != nil {
+		ctx.Item = step.Base().Env["item"]
 	}
-	if expr := strings.TrimSpace(step.FailedWhen); expr != "" {
+	if expr := strings.TrimSpace(step.Base().FailedWhen); expr != "" {
 		failed, err := cuetry.EvalResultBoolExpr(expr, ctx)
 		switch {
 		case err != nil:
@@ -105,7 +105,7 @@ func applyCueRecipeResultExpressions(run *cueRun, step cuetry.RecipeStep, r host
 		ctx.Succeeded = res.Success
 		ctx.ExitCode = res.ExitCode
 	}
-	if expr := strings.TrimSpace(step.ChangedWhen); expr != "" {
+	if expr := strings.TrimSpace(step.Base().ChangedWhen); expr != "" {
 		changed, err := cuetry.EvalResultBoolExpr(expr, ctx)
 		if err != nil {
 			res.Success = false
@@ -119,8 +119,8 @@ func applyCueRecipeResultExpressions(run *cueRun, step cuetry.RecipeStep, r host
 	}
 }
 
-func runCueStepHooks(ctx context.Context, run *cueRun, stepIdx int, kind cuetry.StepKind, step cuetry.RecipeStep, r hosts.Record, res *HostExecResult, recipeScopedKV bool) {
-	h := step.Hooks
+func runCueStepHooks(ctx context.Context, run *cueRun, stepIdx int, kind string, step cuetry.Step, r hosts.Record, res *HostExecResult, recipeScopedKV bool) {
+	h := step.Base().Hooks
 	if h == nil {
 		return
 	}
@@ -149,14 +149,14 @@ func runCueStepHooks(ctx context.Context, run *cueRun, stepIdx int, kind cuetry.
 	}
 }
 
-func runCueStepHookRemote(ctx context.Context, run *cueRun, stepNo int, kind cuetry.StepKind, phase string, step cuetry.RecipeStep, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeScopedKV bool) {
-	runAs := cuetry.EffectiveRunAs(step, run.Recipe.Defaults)
+func runCueStepHookRemote(ctx context.Context, run *cueRun, stepNo int, kind string, phase string, step cuetry.Step, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeScopedKV bool) {
+	runAs := cuetry.EffectiveRunAs(step.Base(), run.Recipe.Defaults)
 	if rs := strings.TrimSpace(hook.RunAs); rs != "" {
 		runAs = rs
 	}
 	kvTunnel := cuetry.KVTunnelEnabled(step, run.Recipe.Defaults)
 	build := func(r2 hosts.Record, kv map[string]string) string {
-		env, err := cuetry.EffectiveEnvForRemoteHook(ctx, true, run.SecretResolver, step, run.Recipe.Defaults, hook, run.CLIEnv, &r2)
+		env, err := cuetry.EffectiveEnvForRemoteHook(ctx, true, run.SecretResolver, step.Base(), run.Recipe.Defaults, hook, run.CLIEnv, &r2)
 		if err != nil {
 			return fmt.Sprintf("echo 'env err: %s'", err.Error())
 		}
@@ -198,7 +198,7 @@ func runCueStepHookRemote(ctx context.Context, run *cueRun, stepNo int, kind cue
 	}
 }
 
-func runCueStepHookLocal(ctx context.Context, run *cueRun, stepNo int, kind cuetry.StepKind, phase string, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeScopedKV bool) {
+func runCueStepHookLocal(ctx context.Context, run *cueRun, stepNo int, kind string, phase string, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeScopedKV bool) {
 	if hook.Plugin != nil {
 		runCueStepHookLocalPlugin(ctx, run, stepNo, kind, phase, r, stepRes, hook, recipeScopedKV)
 		return
@@ -330,8 +330,8 @@ func formatHookNotifyBody(phase string, r hosts.Record, hres HostExecResult) str
 }
 
 // WriteCueStepHooksDryLines prints one plan line per configured hook (no secrets).
-func WriteCueStepHooksDryLines(out io.Writer, stepIdx int, step cuetry.RecipeStep) {
-	if step.Hooks == nil {
+func WriteCueStepHooksDryLines(out io.Writer, stepIdx int, step cuetry.Step) {
+	if step.Base().Hooks == nil {
 		return
 	}
 	write := func(phase string, hook *cuetry.RecipeStepHook) {
@@ -341,8 +341,8 @@ func WriteCueStepHooksDryLines(out io.Writer, stepIdx int, step cuetry.RecipeSte
 		preview := hookCommandPreview(hook.Command)
 		_, _ = fmt.Fprintf(out, "  step %d hook %s: where=%s command_preview=%q\n", stepIdx, phase, cuetry.EffectiveHookWhere(hook), preview)
 	}
-	write("on_success", step.Hooks.OnSuccess)
-	write("on_failure", step.Hooks.OnFailure)
+	write("on_success", step.Base().Hooks.OnSuccess)
+	write("on_failure", step.Base().Hooks.OnFailure)
 }
 
 func hookCommandPreview(cmd string) string {
@@ -354,7 +354,7 @@ func hookCommandPreview(cmd string) string {
 	return s
 }
 
-func runCueStepHookLocalPlugin(ctx context.Context, run *cueRun, stepNo int, _ cuetry.StepKind, phase string, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeScopedKV bool) {
+func runCueStepHookLocalPlugin(ctx context.Context, run *cueRun, stepNo int, _ string, phase string, r hosts.Record, stepRes *HostExecResult, hook *cuetry.RecipeStepHook, recipeScopedKV bool) {
 	pluginMgr := run.PluginMgr
 	recipeKV := run.recipeKV
 	recipe := run.Recipe

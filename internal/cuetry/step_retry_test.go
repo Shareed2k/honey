@@ -12,7 +12,7 @@ func TestEffectiveRetryMerge(t *testing.T) {
 	defaults := &RecipeDefaults{
 		Retry: &RecipeStepRetry{Attempts: 5, DelayMS: 500, Backoff: "exponential"},
 	}
-	step := RecipeStep{
+	step := &StepBase{
 		Retry: &RecipeStepRetry{Attempts: 10},
 	}
 	got := EffectiveRetry(step, defaults)
@@ -32,7 +32,7 @@ func TestEffectiveRetryDefaultsOnly(t *testing.T) {
 	defaults := &RecipeDefaults{
 		Retry: &RecipeStepRetry{Attempts: 4},
 	}
-	got := EffectiveRetry(RecipeStep{}, defaults)
+	got := EffectiveRetry(&StepBase{}, defaults)
 	if got.Attempts != 4 {
 		t.Fatalf("attempts: got %d want 4", got.Attempts)
 	}
@@ -46,7 +46,7 @@ func TestEffectiveRetryDefaultsOnly(t *testing.T) {
 
 func TestEffectiveRetryDisabledWhenAbsent(t *testing.T) {
 	t.Parallel()
-	got := EffectiveRetry(RecipeStep{}, nil)
+	got := EffectiveRetry(&StepBase{}, nil)
 	if got.Enabled() {
 		t.Fatal("expected retry disabled when no block")
 	}
@@ -57,7 +57,7 @@ func TestEffectiveRetryDisabledWhenAbsent(t *testing.T) {
 
 func TestEffectiveRetrySingleAttempt(t *testing.T) {
 	t.Parallel()
-	step := RecipeStep{Retry: &RecipeStepRetry{Attempts: 1}}
+	step := &StepBase{Retry: &RecipeStepRetry{Attempts: 1}}
 	got := EffectiveRetry(step, nil)
 	if got.Enabled() {
 		t.Fatal("attempts=1 should not enable retry")

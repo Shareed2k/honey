@@ -43,7 +43,7 @@ type StepGraph struct {
 }
 
 // BuildStepGraph validates ids and depends, detects cycles, and computes topo order and waves.
-func BuildStepGraph(steps []RecipeStep) (*StepGraph, error) {
+func BuildStepGraph(steps []StepWrapper) (*StepGraph, error) {
 	n := len(steps)
 	if n == 0 {
 		return nil, fmt.Errorf("cuetry: recipe has no steps")
@@ -55,8 +55,9 @@ func BuildStepGraph(steps []RecipeStep) (*StepGraph, error) {
 		Children:  make([][]int, n),
 		AIIndex:   -1,
 	}
-	for i, s := range steps {
-		id := strings.TrimSpace(s.ID)
+	for i, w := range steps {
+		b := w.Step.Base()
+		id := strings.TrimSpace(b.ID)
 		if id == "" {
 			return nil, fmt.Errorf("cuetry: steps[%d].id is required in graph mode", i)
 		}
@@ -68,11 +69,7 @@ func BuildStepGraph(steps []RecipeStep) (*StepGraph, error) {
 		}
 		sg.IDToIndex[id] = i
 		sg.IndexToID[i] = id
-		kind, err := ClassifyStep(s)
-		if err != nil {
-			return nil, fmt.Errorf("cuetry: steps[%d]: %w", i, err)
-		}
-		if kind == StepKindAI {
+		if w.Step.Kind() == KindAI {
 			if sg.AIIndex >= 0 {
 				return nil, fmt.Errorf("cuetry: recipe has more than one ai step")
 			}
@@ -80,8 +77,8 @@ func BuildStepGraph(steps []RecipeStep) (*StepGraph, error) {
 		}
 	}
 	nonAI := 0
-	for i, s := range steps {
-		for _, dep := range s.Depends {
+	for i, w := range steps {
+		for _, dep := range w.Step.Base().Depends {
 			dep = strings.TrimSpace(dep)
 			if dep == "" {
 				return nil, fmt.Errorf("cuetry: steps[%d].depends contains empty id", i)
@@ -96,8 +93,7 @@ func BuildStepGraph(steps []RecipeStep) (*StepGraph, error) {
 			sg.Depends[i] = append(sg.Depends[i], j)
 			sg.Children[j] = append(sg.Children[j], i)
 		}
-		kind, _ := ClassifyStep(s)
-		if kind != StepKindAI {
+		if w.Step.Kind() != KindAI {
 			nonAI++
 		}
 	}
@@ -105,8 +101,8 @@ func BuildStepGraph(steps []RecipeStep) (*StepGraph, error) {
 		return nil, fmt.Errorf("cuetry: graph recipe requires at least one non-ai step")
 	}
 	if sg.AIIndex >= 0 {
-		for i, s := range steps {
-			for _, dep := range s.Depends {
+		for i, w := range steps {
+			for _, dep := range w.Step.Base().Depends {
 				dep = strings.TrimSpace(dep)
 				if sg.IDToIndex[dep] == sg.AIIndex {
 					return nil, fmt.Errorf("cuetry: steps[%d].id %q must not depend on ai step %q", i, sg.IndexToID[i], sg.IndexToID[sg.AIIndex])
@@ -191,19 +187,20 @@ func ValidateRecipeGraph(r Recipe) error {
 	}
 	switch mode {
 	case ExecutionModeLinear:
-		for i, s := range r.Steps {
-			hasWhen := strings.TrimSpace(s.When) != ""
-			hasID := strings.TrimSpace(s.ID) != ""
+		for i, ws := range r.Steps {
+			b := ws.Step.Base()
+			hasWhen := strings.TrimSpace(b.When) != ""
+			hasID := strings.TrimSpace(b.ID) != ""
 			if hasID && !hasWhen {
 				return fmt.Errorf("cuetry: steps[%d].id in linear mode is only allowed when when is set", i)
 			}
 			if hasWhen && !hasID {
 				return fmt.Errorf("cuetry: steps[%d].when requires a non-empty id", i)
 			}
-			if len(s.Depends) > 0 {
+			if len(b.Depends) > 0 {
 				return fmt.Errorf("cuetry: steps[%d].depends is only allowed when recipe.type is \"graph\"", i)
 			}
-			if len(s.EnvFrom) > 0 {
+			if len(b.EnvFrom) > 0 {
 				return fmt.Errorf("cuetry: steps[%d].env_from is only allowed when recipe.type is \"graph\"", i)
 			}
 		}
@@ -217,19 +214,17 @@ func ValidateRecipeGraph(r Recipe) error {
 		if err != nil {
 			return err
 		}
-		for i, s := range r.Steps {
-			if _, kerr := ClassifyStep(s); kerr != nil {
-				return fmt.Errorf("cuetry: steps[%d]: %w", i, kerr)
-			}
-			if len(s.EnvFrom) > 0 {
-				if err := validateEnvFromRefs(i, s, sg, outputByName); err != nil {
+		for i, ws := range r.Steps {
+			b := ws.Step.Base()
+			if len(b.EnvFrom) > 0 {
+				if err := validateEnvFromRefs(i, b, sg, outputByName); err != nil {
 					return err
 				}
 			}
-			if KVTunnelEnabled(s, r.Defaults) && strings.TrimSpace(s.ID) == "" {
+			if KVTunnelEnabled(ws.Step, r.Defaults) && strings.TrimSpace(b.ID) == "" {
 				return fmt.Errorf("cuetry: steps[%d]: kv_tunnel in graph mode requires a non-empty id", i)
 			}
-			if err := validateStepWhen(i, ExecutionModeGraph, s, sg); err != nil {
+			if err := validateStepWhen(i, ExecutionModeGraph, b, sg); err != nil {
 				return err
 			}
 		}

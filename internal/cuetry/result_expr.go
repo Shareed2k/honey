@@ -101,10 +101,14 @@ func (p *ResultExprProgram) Eval(ctx ResultExprContext) (bool, error) {
 	return b, nil
 }
 
-func defaultRenderHosts(steps []RecipeStep) {
+func defaultRenderHosts(steps []StepWrapper) {
 	for i := range steps {
-		if strings.TrimSpace(steps[i].Render) != "" && strings.TrimSpace(steps[i].Host) == "" {
-			steps[i].Host = MatchLocalAIHost
+		ts, ok := steps[i].Step.(*TemplateStep)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(ts.Render) != "" && strings.TrimSpace(ts.Host) == "" {
+			ts.Host = MatchLocalAIHost
 		}
 	}
 }

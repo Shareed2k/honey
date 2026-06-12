@@ -9,8 +9,8 @@ const (
 
 // EffectiveMaxParallel returns host-level parallelism for a step (SSH/SFTP batch).
 // Step max_parallel overrides defaults; zero means caller should use its package default (32).
-func EffectiveMaxParallel(step RecipeStep, defaults *RecipeDefaults) int {
-	if step.MaxParallel > 0 {
+func EffectiveMaxParallel(step *RemoteExec, defaults *RecipeDefaults) int {
+	if step != nil && step.MaxParallel > 0 {
 		return step.MaxParallel
 	}
 	if defaults != nil && defaults.MaxParallel > 0 {

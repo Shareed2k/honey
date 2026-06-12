@@ -18,6 +18,20 @@ func NewManager(backends ...ref.Backend) *Manager {
 	return &Manager{backends: append([]ref.Backend(nil), backends...)}
 }
 
+// Handles implements [Resolver].
+func (m *Manager) Handles(ref string) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	for _, b := range m.backends {
+		if b.Handles(ref) {
+			return true
+		}
+	}
+	return false
+}
+
 // Resolve implements [Resolver].
 func (m *Manager) Resolve(ctx context.Context, ref string) (string, error) {
 	ref = strings.TrimSpace(ref)

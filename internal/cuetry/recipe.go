@@ -331,95 +331,99 @@ func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, 
 	return unified, nil
 }
 
-func validateDecodedRecipeStep(i, nSteps int, s RecipeStep, defaults *RecipeDefaults, records []hosts.Record, secretPrefixes []string, mode ExecutionMode) error {
-	kind, err := ClassifyStep(s)
-	if err != nil {
-		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
-	}
-	if err := validateStepHost(i, kind, s); err != nil {
+func validateDecodedRecipeStep(vc StepValidateCtx, w StepWrapper) error {
+	st := w.Step
+	b := st.Base()
+	kind := st.Kind()
+	i := vc.Index
+	if err := validateStepHost(i, kind, b); err != nil {
 		return err
 	}
-	if err := validateStepEnvAndSecrets(i, kind, s, secretPrefixes); err != nil {
+	if err := validateStepEnvAndSecrets(i, kind, b, vc.SecretPrefixes); err != nil {
 		return err
 	}
-	if err := validateStepEnvFrom(i, kind, mode, s); err != nil {
+	if err := validateStepEnvFrom(i, kind, vc.Mode, b); err != nil {
 		return err
 	}
-	if err := validateStepWhen(i, mode, s, nil); err != nil {
+	if err := validateStepWhen(i, vc.Mode, b, nil); err != nil {
 		return err
 	}
-	if err := validateMaxParallelField(fmt.Sprintf("steps[%d]", i), s.MaxParallel); err != nil {
-		return err
-	}
-	if s.Serial < 0 {
-		return fmt.Errorf("cuetry: steps[%d].serial must be >= 1", i)
-	}
-	if err := validateSSHPrivateKeyField(fmt.Sprintf("steps[%d]", i), s.SSHPrivateKey); err != nil {
-		return err
-	}
-	if err := ValidateStepRunAsForKind(kind, s); err != nil {
-		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
-	}
-	if strings.TrimSpace(s.RunAs) != "" {
-		if err := ValidateRunAsUser(s.RunAs); err != nil {
-			return fmt.Errorf("cuetry: steps[%d].run_as: %w", i, err)
+	if rs, ok := st.(RemoteStep); ok {
+		r := rs.Remote()
+		if err := validateMaxParallelField(fmt.Sprintf("steps[%d]", i), r.MaxParallel); err != nil {
+			return err
 		}
-	}
-	if kind == StepKindAgentTransfer {
-		if err := validateAgentTransferStep(i, s, records); err != nil {
+		if r.Serial < 0 {
+			return fmt.Errorf("cuetry: steps[%d].serial must be >= 1", i)
+		}
+		if err := validateSSHPrivateKeyField(fmt.Sprintf("steps[%d]", i), r.SSHPrivateKey); err != nil {
 			return err
 		}
 	}
-	if err := validateStepAI(i, nSteps, kind, s, mode); err != nil {
+	if err := validateStepRunAs(i, kind, b); err != nil {
 		return err
 	}
-	if err := validateStepTemplate(i, kind, s, mode); err != nil {
+	if err := validateStepRetry(i, b, vc.Defaults); err != nil {
 		return err
 	}
-	if err := validateStepTunnel(i, kind, s, mode); err != nil {
+	if err := validateStepLoop(i, b); err != nil {
 		return err
 	}
-	if err := validateStepRetry(i, s, defaults); err != nil {
+	if err := validateStepOutputAndResultExpr(i, b); err != nil {
 		return err
 	}
-	if err := validateStepLoop(i, s); err != nil {
+	if err := validateStepHooksAndKVTunnel(i, kind, b, vc.SecretPrefixes); err != nil {
 		return err
 	}
-	if err := validateStepOutputAndResultExpr(i, s); err != nil {
-		return err
-	}
-	return validateStepHooksAndKVTunnel(i, kind, s, defaults, secretPrefixes)
+	return st.Validate(vc)
 }
 
-func validateStepHost(i int, kind StepKind, s RecipeStep) error {
-	if kind == StepKindTemplate && strings.TrimSpace(s.Host) == "" && strings.TrimSpace(s.Render) != "" {
+func validateStepHost(i int, kind string, b *StepBase) error {
+	// Template hosts (including render-only steps) are validated in TemplateStep.Validate.
+	if kind == KindTemplate {
 		return nil
 	}
-	if err := ValidateHostField(s.Host); err != nil {
+	if err := ValidateHostField(b.Host); err != nil {
 		return fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
 	}
 	return nil
 }
 
-func validateStepLoop(i int, s RecipeStep) error {
-	if strings.TrimSpace(s.Loop) != "" && s.LoopFrom != nil {
+// validateStepRunAs gates run_as by kind and validates the user syntax.
+func validateStepRunAs(i int, kind string, b *StepBase) error {
+	runAs := strings.TrimSpace(b.RunAs)
+	if runAs == "" {
+		return nil
+	}
+	switch kind {
+	case KindPut, KindGet, KindAgentTransfer, KindAI, KindTemplate, KindTunnel, KindK8s, KindOpensearch, KindPostgres:
+		return fmt.Errorf("cuetry: steps[%d]: run_as on put/get/agent_transfer/ai/template/tunnel/k8s/opensearch/postgres steps is not supported", i)
+	}
+	if err := ValidateRunAsUser(runAs); err != nil {
+		return fmt.Errorf("cuetry: steps[%d].run_as: %w", i, err)
+	}
+	return nil
+}
+
+func validateStepLoop(i int, b *StepBase) error {
+	if strings.TrimSpace(b.Loop) != "" && b.LoopFrom != nil {
 		return fmt.Errorf("cuetry: steps[%d]: only one of loop or loop_from may be set", i)
 	}
 	return nil
 }
 
-func validateStepOutputAndResultExpr(i int, s RecipeStep) error {
-	if out := strings.TrimSpace(s.Output); out != "" {
+func validateStepOutputAndResultExpr(i int, b *StepBase) error {
+	if out := strings.TrimSpace(b.Output); out != "" {
 		if !recipeStepIDPattern.MatchString(out) {
 			return fmt.Errorf("cuetry: steps[%d].output %q must match [a-zA-Z][a-zA-Z0-9_-]*", i, out)
 		}
 	}
-	if expr := strings.TrimSpace(s.ChangedWhen); expr != "" {
+	if expr := strings.TrimSpace(b.ChangedWhen); expr != "" {
 		if _, err := CompileResultBoolExpr(expr); err != nil {
 			return fmt.Errorf("cuetry: steps[%d].changed_when: %w", i, err)
 		}
 	}
-	if expr := strings.TrimSpace(s.FailedWhen); expr != "" {
+	if expr := strings.TrimSpace(b.FailedWhen); expr != "" {
 		if _, err := CompileResultBoolExpr(expr); err != nil {
 			return fmt.Errorf("cuetry: steps[%d].failed_when: %w", i, err)
 		}
@@ -427,12 +431,12 @@ func validateStepOutputAndResultExpr(i int, s RecipeStep) error {
 	return nil
 }
 
-func validateStepRetry(i int, s RecipeStep, defaults *RecipeDefaults) error {
-	if s.Retry != nil || (defaults != nil && defaults.Retry != nil) {
-		cfg := EffectiveRetry(s, defaults)
+func validateStepRetry(i int, b *StepBase, defaults *RecipeDefaults) error {
+	if b.Retry != nil || (defaults != nil && defaults.Retry != nil) {
+		cfg := EffectiveRetry(b, defaults)
 		if err := ValidateRetry(cfg); err != nil {
 			where := fmt.Sprintf("steps[%d].retry", i)
-			if s.Retry == nil && defaults != nil && defaults.Retry != nil {
+			if b.Retry == nil && defaults != nil && defaults.Retry != nil {
 				where = "defaults.retry"
 			}
 			return fmt.Errorf("cuetry: %s: %w", where, err)
@@ -441,87 +445,36 @@ func validateStepRetry(i int, s RecipeStep, defaults *RecipeDefaults) error {
 	return nil
 }
 
-func validateStepEnvAndSecrets(i int, kind StepKind, s RecipeStep, secretPrefixes []string) error {
-	if len(s.Env) > 0 && (kind == StepKindPut || kind == StepKindGet || kind == StepKindAgentTransfer || kind == StepKindAI) {
+func validateStepEnvAndSecrets(i int, kind string, b *StepBase, secretPrefixes []string) error {
+	if len(b.Env) > 0 && (kind == KindPut || kind == KindGet || kind == KindAgentTransfer || kind == KindAI) {
 		return fmt.Errorf("cuetry: steps[%d]: env is only supported for command, script, plugin, and template steps", i)
 	}
-	if len(s.Secrets) > 0 && kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin && kind != StepKindTemplate {
+	if len(b.Secrets) > 0 && kind != KindCommand && kind != KindScript && kind != KindPlugin && kind != KindTemplate {
 		return fmt.Errorf("cuetry: steps[%d]: secrets are only supported for command, script, plugin, and template steps", i)
 	}
-	if len(s.Env) > 0 {
-		if err := ValidateRecipeEnvMap(s.Env); err != nil {
+	if len(b.Env) > 0 {
+		if err := ValidateRecipeEnvMap(b.Env); err != nil {
 			return fmt.Errorf("cuetry: steps[%d].env: %w", i, err)
 		}
 	}
-	if len(s.Secrets) == 0 {
+	if len(b.Secrets) == 0 {
 		return nil
 	}
-	if err := ValidateRecipeSecretsRefMapPrefixes(s.Secrets, secretPrefixes); err != nil {
+	if err := ValidateRecipeSecretsRefMapPrefixes(b.Secrets, secretPrefixes); err != nil {
 		return fmt.Errorf("cuetry: steps[%d].secrets: %w", i, err)
 	}
-	if err := OverlapEnvSecrets(s.Env, s.Secrets); err != nil {
+	if err := OverlapEnvSecrets(b.Env, b.Secrets); err != nil {
 		return fmt.Errorf("cuetry: steps[%d]: %w", i, err)
 	}
 	return nil
 }
 
-func validateStepAI(i, nSteps int, kind StepKind, s RecipeStep, mode ExecutionMode) error {
-	if kind != StepKindAI {
-		return nil
-	}
-	if mode == ExecutionModeLinear && i != nSteps-1 {
-		return fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
-	}
-	if i == 0 {
-		return fmt.Errorf("cuetry: steps[%d]: ai cannot be the first step; add at least one prior step", i)
-	}
-	if strings.TrimSpace(s.Host) != MatchLocalAIHost {
-		return fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
-	}
-	if s.AI == nil {
-		return fmt.Errorf("cuetry: steps[%d]: internal ai step", i)
-	}
-	if strings.TrimSpace(s.AI.Prompt) == "" {
-		return fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
-	}
-	return nil
-}
-
-func validateStepTemplate(i int, kind StepKind, s RecipeStep, mode ExecutionMode) error {
-	if kind != StepKindTemplate {
-		return nil
-	}
-	if err := ValidateHostField(s.Host); err != nil {
-		return fmt.Errorf("cuetry: steps[%d].host: %w", i, err)
-	}
-	if s.Template == nil && strings.TrimSpace(s.Render) == "" {
-		return fmt.Errorf("cuetry: steps[%d]: internal template step", i)
-	}
-	if s.Template != nil && strings.TrimSpace(s.Template.Template) == "" {
-		return fmt.Errorf("cuetry: steps[%d].template.template is required", i)
-	}
-	host := strings.TrimSpace(s.Host)
-	outName := ""
-	if s.Template != nil {
-		outName = strings.TrimSpace(s.Template.Output)
-	}
-	if outName != "" && host != MatchLocalAIHost {
-		return fmt.Errorf("cuetry: steps[%d].template.output requires host %q (per-host templates cannot register a global capture name)", i, MatchLocalAIHost)
-	}
-	if mode == ExecutionModeGraph {
-		if strings.TrimSpace(s.ID) == "" && (len(s.Depends) > 0 || len(s.EnvFrom) > 0) {
-			return fmt.Errorf("cuetry: steps[%d]: template step with depends or env_from requires a non-empty id", i)
-		}
-	}
-	return nil
-}
-
-func validateStepHooksAndKVTunnel(i int, kind StepKind, s RecipeStep, _ *RecipeDefaults, secretPrefixes []string) error {
-	if s.Hooks != nil {
-		if kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin {
+func validateStepHooksAndKVTunnel(i int, kind string, b *StepBase, secretPrefixes []string) error {
+	if b.Hooks != nil {
+		if kind != KindCommand && kind != KindScript && kind != KindPlugin {
 			return fmt.Errorf("cuetry: steps[%d]: hooks are only supported on command, script, and plugin steps", i)
 		}
-		if err := validateStepHooks(i, s.Hooks, secretPrefixes); err != nil {
+		if err := validateStepHooks(i, b.Hooks, secretPrefixes); err != nil {
 			return err
 		}
 	}
@@ -564,7 +517,7 @@ func parseRemoteRecipeAfterTransform(cueBytes []byte, records []hosts.Record, se
 			return out, err
 		}
 		if out.Defaults.Retry != nil {
-			cfg := EffectiveRetry(RecipeStep{}, out.Defaults)
+			cfg := EffectiveRetry(&StepBase{}, out.Defaults)
 			if err := ValidateRetry(cfg); err != nil {
 				return out, fmt.Errorf("cuetry: defaults.retry: %w", err)
 			}
@@ -575,8 +528,9 @@ func parseRemoteRecipeAfterTransform(cueBytes []byte, records []hosts.Record, se
 		return out, err
 	}
 	nSteps := len(out.Steps)
-	for i, s := range out.Steps {
-		if err := validateDecodedRecipeStep(i, nSteps, s, out.Defaults, records, secretPrefixes, mode); err != nil {
+	for i, st := range out.Steps {
+		vc := StepValidateCtx{Index: i, NumSteps: nSteps, Defaults: out.Defaults, Records: records, SecretPrefixes: secretPrefixes, Mode: mode}
+		if err := validateDecodedRecipeStep(vc, st); err != nil {
 			return out, err
 		}
 	}
@@ -657,49 +611,6 @@ func validateStepHooks(stepIdx int, h *RecipeStepHooks, secretPrefixes []string)
 	return nil
 }
 
-func validateAgentTransferStep(i int, s RecipeStep, records []hosts.Record) error {
-	at := s.AgentTransfer
-	if at == nil {
-		return fmt.Errorf("cuetry: steps[%d]: internal agent_transfer", i)
-	}
-	if err := ValidateHostField(at.DestHost); err != nil {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer.dest_host: %w", i, err)
-	}
-	if strings.TrimSpace(at.SourcePath) == "" {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer.source_path is empty", i)
-	}
-	if strings.TrimSpace(at.DestPath) == "" {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer.dest_path is empty", i)
-	}
-	if at.Cloud == nil {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer.cloud is required", i)
-	}
-	if strings.TrimSpace(at.Cloud.Provider) == "" {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer.cloud.provider is empty", i)
-	}
-	if strings.TrimSpace(at.Cloud.Bucket) == "" {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer.cloud.bucket is empty", i)
-	}
-	if len(records) == 0 {
-		return nil
-	}
-	src, err := ExpandStepHosts(s.Host, records)
-	if err != nil {
-		return fmt.Errorf("cuetry: steps[%d].host (source): %w", i, err)
-	}
-	if len(src) != 1 {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer: need exactly one source host match, got %d (narrow host selector)", i, len(src))
-	}
-	dst, err := ExpandStepHosts(at.DestHost, records)
-	if err != nil {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer.dest_host: %w", i, err)
-	}
-	if len(dst) != 1 {
-		return fmt.Errorf("cuetry: steps[%d].agent_transfer: need exactly one destination host match, got %d (narrow dest_host)", i, len(dst))
-	}
-	return nil
-}
-
 // ValidateRemoteRecipe checks that cueBytes is valid CUE and conforms to #Recipe.
 func ValidateRemoteRecipe(cueBytes []byte) error {
 	_, err := ParseRemoteRecipe(cueBytes, nil)
@@ -740,8 +651,9 @@ func ValidateParsedRecipe(r Recipe, records []hosts.Record) error {
 		return err
 	}
 	nSteps := len(r.Steps)
-	for i, s := range r.Steps {
-		if err := validateDecodedRecipeStep(i, nSteps, s, r.Defaults, records, nil, mode); err != nil {
+	for i, st := range r.Steps {
+		vc := StepValidateCtx{Index: i, NumSteps: nSteps, Defaults: r.Defaults, Records: records, Mode: mode}
+		if err := validateDecodedRecipeStep(vc, st); err != nil {
 			return err
 		}
 	}

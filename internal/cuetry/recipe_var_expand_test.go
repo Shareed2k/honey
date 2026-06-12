@@ -45,7 +45,7 @@ func TestPrepareTemplateData_envFromAndVar(t *testing.T) {
 	store := NewStepOutputStore()
 	store.Record("fetch", "web-1", "alice")
 	outputCap := NewRecipeOutputCapture()
-	step := RecipeStep{
+	step := &StepBase{
 		EnvFrom: []EnvFromRef{{Step: "fetch", Map: map[string]string{"HOSTNAME": "stdout"}}},
 	}
 	data := map[string]any{"msg": "hello ${HOSTNAME}"}

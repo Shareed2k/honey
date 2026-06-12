@@ -107,6 +107,16 @@ type Logs struct {
 	AlertSuppressDuration  string  `yaml:"alert_suppress_duration,omitempty" json:"alert_suppress_duration,omitempty" honey:"label=Alert suppression window (e.g. 5m)" mod:"trim"`
 }
 
+// StudioConfig holds settings for Recipe Studio UI integration.
+type StudioConfig struct {
+	RecipesPath string `yaml:"recipes_path,omitempty" json:"recipes_path,omitempty" honey:"label=Recipes directory" mod:"trim"`
+	GitURL      string `yaml:"git_url,omitempty" json:"git_url,omitempty" honey:"label=Default Git URL" mod:"trim"`
+	GitBranch   string `yaml:"git_branch,omitempty" json:"git_branch,omitempty" honey:"label=Default Git Branch" mod:"trim"`
+	GitUser     string `yaml:"git_user,omitempty" json:"git_user,omitempty" honey:"label=Default Git User" mod:"trim"`
+	GitPass     string `yaml:"git_pass,omitempty" json:"git_pass,omitempty" honey:"label=Default Git Pass;secret" mod:"trim"`
+	GitSSH      string `yaml:"git_ssh,omitempty" json:"git_ssh,omitempty" honey:"label=Default Git SSH private key;secret" mod:"trim"`
+}
+
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
 	SSHUser         string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user" mod:"trim"`
@@ -122,6 +132,7 @@ type Defaults struct {
 	AISystemPrompt  string         `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step" mod:"trim"`
 	DockerDiscover  DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover Defaults"`
 	Logs            Logs           `yaml:"logs,omitempty" json:"logs,omitempty" honey:"label=Logs command defaults"`
+	Studio          StudioConfig   `yaml:"studio,omitempty" json:"studio,omitempty" honey:"label=Studio defaults"`
 
 	// secretsprovider unwraps the stack AES data key (see internal/cuetry/secrets/doc.go).
 	// Examples: gcpkms://projects/…/cryptoKeys/…, awskms://, vault-transit://mount/key,

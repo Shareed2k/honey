@@ -57,22 +57,19 @@ func BuildRecipeGraphPlan(r Recipe) (*RecipeGraphPlan, error) {
 		Type:  "graph",
 		Nodes: make([]GraphPlanNode, 0, len(r.Steps)),
 	}
-	for i, step := range r.Steps {
-		kind, kerr := ClassifyStep(step)
-		if kerr != nil {
-			return nil, fmt.Errorf("step %d: %w", i, kerr)
-		}
+	for i, w := range r.Steps {
+		b := w.Step.Base()
 		n := GraphPlanNode{
 			Index:    i,
 			ID:       sg.IndexToID[i],
-			Kind:     StepKindLabel(kind),
-			Host:     strings.TrimSpace(step.Host),
+			Kind:     w.Step.Kind(),
+			Host:     strings.TrimSpace(b.Host),
 			Wave:     waveOf[i],
-			When:     strings.TrimSpace(step.When),
-			Retry:    retrySummary(step, r.Defaults),
-			Notify:   step.NotifyEnabled(),
-			KVTunnel: KVTunnelEnabled(step, r.Defaults),
-			Preview:  previewForStep(kind, step),
+			When:     strings.TrimSpace(b.When),
+			Retry:    retrySummary(b, r.Defaults),
+			Notify:   b.NotifyEnabled(),
+			KVTunnel: KVTunnelEnabled(w.Step, r.Defaults),
+			Preview:  previewForStep(w.Step),
 		}
 		plan.Nodes = append(plan.Nodes, n)
 	}
@@ -100,10 +97,9 @@ func BuildRecipeGraphPlan(r Recipe) (*RecipeGraphPlan, error) {
 func formatGraphMermaid(sg *StepGraph, r Recipe) string {
 	var b strings.Builder
 	b.WriteString("flowchart TD\n")
-	for i, step := range r.Steps {
+	for i, w := range r.Steps {
 		id := sg.IndexToID[i]
-		kind, _ := ClassifyStep(step)
-		label := fmt.Sprintf("%s\\n%s", id, StepKindLabel(kind))
+		label := fmt.Sprintf("%s\\n%s", id, w.Step.Kind())
 		fmt.Fprintf(&b, "  %s[%q]\n", mermaidNodeID(id), label)
 	}
 	for i, deps := range sg.Depends {

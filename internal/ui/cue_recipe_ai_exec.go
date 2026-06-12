@@ -11,13 +11,14 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 )
 
-func runCueStepAIExecute(ctx context.Context, recipe cuetry.Recipe, stepIdx int, step cuetry.RecipeStep, history [][]HostExecResult, aiSystemPromptFromCfg string) HostExecResult {
+func runCueStepAIExecute(ctx context.Context, recipe cuetry.Recipe, stepIdx int, step cuetry.Step, history [][]HostExecResult, aiSystemPromptFromCfg string) HostExecResult {
 	stepNo := stepIdx + 1
 	prefix := fmt.Sprintf("Step %d | ai", stepNo)
-	ai := step.AI
-	if ai == nil {
+	as, _ := step.(*cuetry.AIStep)
+	if as == nil || as.AI == nil {
 		return HostExecResult{Name: prefix, Provider: "local", IP: "-", Success: false, ErrMsg: "internal: missing ai block"}
 	}
+	ai := as.AI
 	transcript := BuildCueRecipeTranscript(history)
 	maxIn := cueAIDefaultMaxInputChars
 	if ai.MaxInputChars > 0 {
@@ -41,8 +42,8 @@ func runCueStepAIExecute(ctx context.Context, recipe cuetry.Recipe, stepIdx int,
 		}
 	}
 	out := text
-	if step.NotifyEnabled() {
-		out += CueStepNotifyAppendSuffix(ctx, recipe, stepNo, cuetry.StepKindAI, step.Notify, text)
+	if step.Base().NotifyEnabled() {
+		out += CueStepNotifyAppendSuffix(ctx, recipe, stepNo, cuetry.KindAI, step.Base().Notify, text)
 	}
 	return HostExecResult{
 		Name:     prefix,
@@ -53,7 +54,7 @@ func runCueStepAIExecute(ctx context.Context, recipe cuetry.Recipe, stepIdx int,
 	}
 }
 
-func runCueStepAIDry(out io.Writer, _ cuetry.Recipe, execute bool, i int, step cuetry.RecipeStep) error {
+func runCueStepAIDry(out io.Writer, _ cuetry.Recipe, execute bool, i int, step cuetry.Step) error {
 	if execute {
 		return nil
 	}
@@ -64,7 +65,8 @@ func runCueStepAIDry(out io.Writer, _ cuetry.Recipe, execute bool, i int, step c
 		base = "(OPENAI_BASE_URL set)"
 	}
 	var model string
-	if m := strings.TrimSpace(step.AI.Model); m != "" {
+	if as, ok := step.(*cuetry.AIStep); ok && as.AI != nil && strings.TrimSpace(as.AI.Model) != "" {
+		m := strings.TrimSpace(as.AI.Model)
 		model = m
 	} else if m := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); m != "" {
 		model = "(from OPENAI_MODEL)"
@@ -72,7 +74,7 @@ func runCueStepAIDry(out io.Writer, _ cuetry.Recipe, execute bool, i int, step c
 		model = aichat.DefaultModel + " (built-in default)"
 	}
 	_, _ = fmt.Fprintf(out, "step %d: kind=ai host=%q %s model=%s (requires OPENAI_API_KEY to execute; summarizes all prior step outputs in one request)\n",
-		i, step.Host, base, model)
+		i, step.Base().Host, base, model)
 	WriteCueStepNotifyDryLine(out, step)
 	return nil
 }
