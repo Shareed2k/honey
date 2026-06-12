@@ -17,7 +17,7 @@ func TestStepOutputStore_recordGet(t *testing.T) {
 
 func TestMergeEnvFromInto_dryRun(t *testing.T) {
 	t.Parallel()
-	step := RecipeStep{
+	step := &StepBase{
 		EnvFrom: []EnvFromRef{{
 			Step: "fetch",
 			Map:  map[string]string{"TAG": "stdout"},
@@ -34,7 +34,7 @@ func TestMergeEnvFromInto_dryRun(t *testing.T) {
 
 func TestMergeEnvFromInto_missingStdout(t *testing.T) {
 	t.Parallel()
-	step := RecipeStep{
+	step := &StepBase{
 		EnvFrom: []EnvFromRef{{
 			Step: "fetch",
 			Map:  map[string]string{"TAG": "stdout"},
@@ -48,23 +48,23 @@ func TestMergeEnvFromInto_missingStdout(t *testing.T) {
 
 func TestValidateEnvFromRefs_requiresDepends(t *testing.T) {
 	t.Parallel()
-	steps := []RecipeStep{
-		{ID: "fetch", Host: "*", Command: "echo"},
-		{ID: "use", Host: "*", Depends: []string{"fetch"}, Command: "echo", EnvFrom: []EnvFromRef{{
+	steps := wrapAll(
+		&CommandStep{StepBase: StepBase{ID: "fetch", Host: "*"}, Command: "echo"},
+		&CommandStep{StepBase: StepBase{ID: "use", Host: "*", Depends: []string{"fetch"}, EnvFrom: []EnvFromRef{{
 			Step: "fetch",
 			Map:  map[string]string{"X": "stdout"},
-		}}},
-	}
+		}}}, Command: "echo"},
+	)
 	sg, err := BuildStepGraph(steps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	producers := templateOutputProducers(steps)
-	if err := validateEnvFromRefs(1, steps[1], sg, producers); err != nil {
+	if err := validateEnvFromRefs(1, steps[1].Step.Base(), sg, producers); err != nil {
 		t.Fatal(err)
 	}
-	steps[1].Depends = nil
-	if err := validateEnvFromRefs(1, steps[1], sg, producers); err == nil {
+	steps[1].Step.Base().Depends = nil
+	if err := validateEnvFromRefs(1, steps[1].Step.Base(), sg, producers); err == nil {
 		t.Fatal("expected depends error")
 	}
 }

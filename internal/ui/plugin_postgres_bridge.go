@@ -231,14 +231,14 @@ func postgresReadonlyDefault(p *bool) bool {
 	return *p
 }
 
-func mergeRecipeSecretRefs(defaults *cuetry.RecipeDefaults, step cuetry.RecipeStep) map[string]string {
+func mergeRecipeSecretRefs(defaults *cuetry.RecipeDefaults, step cuetry.Step) map[string]string {
 	out := make(map[string]string)
 	if defaults != nil {
 		for k, v := range defaults.Secrets {
 			out[k] = v
 		}
 	}
-	for k, v := range step.Secrets {
+	for k, v := range step.Base().Secrets {
 		out[k] = v
 	}
 	return out

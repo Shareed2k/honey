@@ -11,8 +11,8 @@ type Recipe struct {
 	Name     string          `json:"name"`
 	Type     string          `json:"type,omitempty"`
 	Defaults *RecipeDefaults `json:"defaults,omitempty"`
-	Steps    []RecipeStep    `json:"steps"`
-	Handlers []RecipeStep    `json:"handlers,omitempty"`
+	Steps    []StepWrapper   `json:"steps"`
+	Handlers []StepWrapper   `json:"handlers,omitempty"`
 }
 
 // RecipeDefaults holds recipe-level defaults (optional fields).
@@ -142,12 +142,12 @@ func EffectiveHookWhere(hook *RecipeStepHook) string {
 }
 
 // StepOutputName returns the step-level or legacy nested capture name.
-func StepOutputName(s RecipeStep) string {
-	if out := strings.TrimSpace(s.Output); out != "" {
+func StepOutputName(s Step) string {
+	if out := strings.TrimSpace(s.Base().Output); out != "" {
 		return out
 	}
-	if s.Template != nil {
-		return strings.TrimSpace(s.Template.Output)
+	if ts, ok := s.(*TemplateStep); ok && ts.Template != nil {
+		return strings.TrimSpace(ts.Template.Output)
 	}
 	return ""
 }
@@ -163,56 +163,6 @@ type RecipeStepPlugin struct {
 type RecipeLoop struct {
 	Step    string `json:"step"`
 	Extract string `json:"extract"` // jq expression to extract a JSON array
-}
-
-// RecipeStep is one remote action: exactly one of command, put, get, script, agent_transfer, ai, template, plugin, or tunnel.
-// Host selects targets: literal IP, exact name, "*", "re:…", or "_" for ai only (see resolve.go). For agent_transfer,
-// host selects the source endpoint (must match exactly one row); agent_transfer.dest_host selects the destination.
-type RecipeStep struct {
-	ID            string                `json:"id,omitempty"`
-	Depends       []string              `json:"depends,omitempty"`
-	Host          string                `json:"host"`
-	SSHPort       int                   `json:"ssh_port,omitempty"`
-	SSHPrivateKey string                `json:"ssh_private_key,omitempty"`
-	Command       string                `json:"command,omitempty"`
-	Render        string                `json:"render,omitempty"`
-	Put           *RecipeFileTransfer   `json:"put,omitempty"`
-	Get           *RecipeFileTransfer   `json:"get,omitempty"`
-	Script        *RecipeFileTransfer   `json:"script,omitempty"`
-	AgentTransfer *RecipeAgentTransfer  `json:"agent_transfer,omitempty"`
-	AI            *RecipeAI             `json:"ai,omitempty"`
-	Template      *RecipeStepTemplate   `json:"template,omitempty"`
-	Plugin        *RecipeStepPlugin     `json:"plugin,omitempty"`
-	Tunnel        *RecipeStepTunnel     `json:"tunnel,omitempty"`
-	Docker        *RecipeStepDocker     `json:"docker,omitempty"`
-	K8s           *RecipeStepK8s        `json:"k8s,omitempty"`
-	Opensearch    *RecipeStepOpensearch `json:"opensearch,omitempty"`
-	Postgres      *RecipeStepPostgres   `json:"postgres,omitempty"`
-	Notify        *RecipeNotify         `json:"notify,omitempty"`
-	Hooks         *RecipeStepHooks      `json:"hooks,omitempty"`
-	KVTunnel      *bool                 `json:"kv_tunnel,omitempty"`
-	MaxParallel   int                   `json:"max_parallel,omitempty"`
-	Serial        int                   `json:"serial,omitempty"`
-	EnvFrom       []EnvFromRef          `json:"env_from,omitempty"`
-	RunAs         string                `json:"run_as,omitempty"`
-	Env           map[string]string     `json:"env,omitempty"`
-	Secrets       map[string]string     `json:"secrets,omitempty"`
-	When          string                `json:"when,omitempty"`
-	ChangedWhen   string                `json:"changed_when,omitempty"`
-	FailedWhen    string                `json:"failed_when,omitempty"`
-	Retry         *RecipeStepRetry      `json:"retry,omitempty"`
-	Timeout       string                `json:"timeout,omitempty"`
-	IgnoreErrors  bool                  `json:"ignore_errors,omitempty"`
-	CheckCmd      string                `json:"check_cmd,omitempty"`
-	Output        string                `json:"output,omitempty"`
-	Loop          string                `json:"loop,omitempty"`
-	LoopFrom      *RecipeLoop           `json:"loop_from,omitempty"`
-	NotifyHandler []string              `json:"notify_handler,omitempty"`
-}
-
-// NotifyEnabled reports whether the recipe author included a notify block (including notify: {}).
-func (s RecipeStep) NotifyEnabled() bool {
-	return s.Notify != nil
 }
 
 // RecipeStepK8s configures a Kubernetes API step.

@@ -66,10 +66,10 @@ recipe: {
 	if r.Defaults == nil || r.Defaults.RunAs != "nginx" {
 		t.Fatalf("defaults: %+v", r.Defaults)
 	}
-	if EffectiveRunAs(r.Steps[0], r.Defaults) != "nginx" {
+	if EffectiveRunAs(r.Steps[0].Step.Base(), r.Defaults) != "nginx" {
 		t.Fatal("step0 run_as")
 	}
-	if EffectiveRunAs(r.Steps[1], r.Defaults) != "root" {
+	if EffectiveRunAs(r.Steps[1].Step.Base(), r.Defaults) != "root" {
 		t.Fatal("step1 run_as")
 	}
 }
@@ -421,14 +421,14 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Steps[0].Notify == nil {
+	if r.Steps[0].Step.Base().Notify == nil {
 		t.Fatal("expected steps[0].notify present")
 	}
-	if r.Steps[0].Notify.NotifySubject != "" {
-		t.Fatalf("steps[0] subject: %q", r.Steps[0].Notify.NotifySubject)
+	if r.Steps[0].Step.Base().Notify.NotifySubject != "" {
+		t.Fatalf("steps[0] subject: %q", r.Steps[0].Step.Base().Notify.NotifySubject)
 	}
-	if r.Steps[1].Notify == nil || r.Steps[1].Notify.NotifySubject != "Ping" {
-		t.Fatalf("steps[1].notify: %+v", r.Steps[1].Notify)
+	if r.Steps[1].Step.Base().Notify == nil || r.Steps[1].Step.Base().Notify.NotifySubject != "Ping" {
+		t.Fatalf("steps[1].notify: %+v", r.Steps[1].Step.Base().Notify)
 	}
 }
 
@@ -456,7 +456,7 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := r.Steps[0].Notify
+	n := r.Steps[0].Step.Base().Notify
 	if n == nil || n.Message != "fixed body" {
 		t.Fatalf("notify: %+v", n)
 	}
@@ -498,11 +498,12 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Steps[0].Hooks == nil || r.Steps[0].Hooks.OnSuccess == nil || r.Steps[0].Hooks.OnSuccess.Where != "local" {
-		t.Fatalf("step0 hooks: %+v", r.Steps[0].Hooks)
+	b0 := r.Steps[0].Step.Base()
+	if b0.Hooks == nil || b0.Hooks.OnSuccess == nil || b0.Hooks.OnSuccess.Where != "local" {
+		t.Fatalf("step0 hooks: %+v", b0.Hooks)
 	}
-	if r.Steps[0].Hooks.OnFailure == nil || r.Steps[0].Hooks.OnFailure.RunAs != "nobody" {
-		t.Fatalf("step0 on_failure: %+v", r.Steps[0].Hooks.OnFailure)
+	if b0.Hooks.OnFailure == nil || b0.Hooks.OnFailure.RunAs != "nobody" {
+		t.Fatalf("step0 on_failure: %+v", b0.Hooks.OnFailure)
 	}
 }
 
@@ -523,11 +524,12 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Steps[0].Hooks == nil || r.Steps[0].Hooks.OnSuccess == nil {
-		t.Fatalf("hooks missing: %+v", r.Steps[0].Hooks)
+	b0 := r.Steps[0].Step.Base()
+	if b0.Hooks == nil || b0.Hooks.OnSuccess == nil {
+		t.Fatalf("hooks missing: %+v", b0.Hooks)
 	}
-	if r.Steps[0].Hooks.OnSuccess.Where != "" {
-		t.Fatalf("where = %q, want empty default", r.Steps[0].Hooks.OnSuccess.Where)
+	if b0.Hooks.OnSuccess.Where != "" {
+		t.Fatalf("where = %q, want empty default", b0.Hooks.OnSuccess.Where)
 	}
 }
 
@@ -586,9 +588,8 @@ recipe: {
 }
 
 func TestEffectiveEnvForRemoteHook_overridesStepEnv(t *testing.T) {
-	step := RecipeStep{
-		Command: "x",
-		Env:     map[string]string{"A": "step", "B": "b"},
+	step := &StepBase{
+		Env: map[string]string{"A": "step", "B": "b"},
 	}
 	hook := &RecipeStepHook{Env: map[string]string{"A": "hook"}}
 	cli := map[string]string{"C": "cli"}
@@ -685,7 +686,7 @@ recipe: {
 	if len(r.Steps) != 1 {
 		t.Fatalf("expected 1 step, got %d", len(r.Steps))
 	}
-	step := r.Steps[0]
+	step := r.Steps[0].Step.Base()
 	if !step.IgnoreErrors {
 		t.Error("expected ignore_errors to be true")
 	}
@@ -698,7 +699,7 @@ recipe: {
 	if len(step.NotifyHandler) != 1 || step.NotifyHandler[0] != "restart-service" {
 		t.Errorf("expected notify_handler, got %+v", step.NotifyHandler)
 	}
-	if len(r.Handlers) != 1 || r.Handlers[0].ID != "restart-service" {
+	if len(r.Handlers) != 1 || r.Handlers[0].Step.Base().ID != "restart-service" {
 		t.Fatalf("expected 1 handler, got %+v", r.Handlers)
 	}
 }
@@ -728,7 +729,7 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := r.Steps[1].Loop; got != `{{ stepStdoutLines "fetch" | compact | toJson }}` {
+	if got := r.Steps[1].Step.Base().Loop; got != `{{ stepStdoutLines "fetch" | compact | toJson }}` {
 		t.Fatalf("loop = %q", got)
 	}
 }
@@ -794,14 +795,14 @@ recipe: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := r.Steps[0].Output; got != "controllers_raw" {
+	if got := r.Steps[0].Step.Base().Output; got != "controllers_raw" {
 		t.Fatalf("output = %q", got)
 	}
-	render := r.Steps[1]
+	render := r.Steps[1].Step.(*TemplateStep)
 	if render.Render == "" || render.Output != "controllers" || render.Host != MatchLocalAIHost {
 		t.Fatalf("render step = %+v", render)
 	}
-	restart := r.Steps[2]
+	restart := r.Steps[2].Step.(*CommandStep)
 	if restart.Serial != 1 || restart.ChangedWhen != "true" || restart.FailedWhen != "exit_code != 0" {
 		t.Fatalf("restart step = %+v", restart)
 	}

@@ -270,6 +270,12 @@ func (s *Server) validateExecRequest(body ExecRequest) (string, error) {
 	return mode, nil
 }
 
+func (s *Server) handleRecipesSchema(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	schema := cuetry.BuildRecipeStepJSONSchema()
+	_ = json.NewEncoder(w).Encode(schema)
+}
+
 // handleExec runs a shell command on many hosts in parallel (optional NDJSON stream).
 // @Summary Parallel remote exec
 // @Tags exec

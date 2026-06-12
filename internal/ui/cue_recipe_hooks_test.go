@@ -53,15 +53,17 @@ func TestRunCueStepHooks_defaultWhereRemote(t *testing.T) {
 		},
 		cache: cache,
 	}
-	step := cuetry.RecipeStep{
-		Command: "true",
-		Hooks: &cuetry.RecipeStepHooks{
-			OnSuccess: &cuetry.RecipeStepHook{Command: "echo hook"},
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			Hooks: &cuetry.RecipeStepHooks{
+				OnSuccess: &cuetry.RecipeStepHook{Command: "echo hook"},
+			},
 		},
+		Command: "true",
 	}
 	res := &HostExecResult{Success: true}
 
-	runCueStepHooks(context.Background(), run, 0, cuetry.StepKindCommand, step, rec, res, false)
+	runCueStepHooks(context.Background(), run, 0, cuetry.KindCommand, step, rec, res, false)
 
 	if command == "" || !strings.Contains(command, "echo hook") {
 		t.Fatalf("remote hook command = %q", command)

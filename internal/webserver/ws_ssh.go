@@ -180,7 +180,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = sess.Close() }()
 
 	var shellCmd string
-	env, err := cuetry.EffectiveEnvForRun(context.Background(), false, nil, cuetry.RecipeStep{}, nil, nil, &hello.Record)
+	env, err := cuetry.EffectiveEnvForRun(context.Background(), false, nil, &cuetry.StepBase{}, nil, nil, &hello.Record)
 	if err == nil && len(env) > 0 {
 		for k, v := range env {
 			_ = sess.Setenv(k, v)

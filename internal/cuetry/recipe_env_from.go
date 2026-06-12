@@ -21,20 +21,20 @@ type EnvFromRef struct {
 	Kv         map[string]string `json:"kv,omitempty"`
 }
 
-func validateStepEnvFrom(stepIdx int, kind StepKind, mode ExecutionMode, step RecipeStep) error {
+func validateStepEnvFrom(stepIdx int, kind string, mode ExecutionMode, step *StepBase) error {
 	if len(step.EnvFrom) == 0 {
 		return nil
 	}
 	if mode == ExecutionModeLinear {
 		return fmt.Errorf("cuetry: steps[%d].env_from is only allowed when recipe.type is \"graph\"", stepIdx)
 	}
-	if kind != StepKindCommand && kind != StepKindScript && kind != StepKindPlugin && kind != StepKindTemplate && kind != StepKindK8s {
+	if kind != KindCommand && kind != KindScript && kind != KindPlugin && kind != KindTemplate && kind != KindK8s {
 		return fmt.Errorf("cuetry: steps[%d]: env_from is only supported for command, script, plugin, template, and k8s steps", stepIdx)
 	}
 	return nil
 }
 
-func validateEnvFromRefs(stepIdx int, step RecipeStep, sg *StepGraph, outputByName map[string]string) error {
+func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByName map[string]string) error {
 	if len(step.EnvFrom) == 0 {
 		return nil
 	}
@@ -117,17 +117,17 @@ func validateEnvFromRefs(stepIdx int, step RecipeStep, sg *StepGraph, outputByNa
 }
 
 // templateOutputProducers maps named capture names (template.output or k8s.output) to producer step ids.
-func templateOutputProducers(steps []RecipeStep) map[string]string {
+func templateOutputProducers(steps []StepWrapper) map[string]string {
 	out := make(map[string]string)
-	for _, s := range steps {
-		id := strings.TrimSpace(s.ID)
-		if s.Template != nil {
-			if name := strings.TrimSpace(s.Template.Output); name != "" {
+	for _, w := range steps {
+		id := strings.TrimSpace(w.Step.Base().ID)
+		if ts, ok := w.Step.(*TemplateStep); ok && ts.Template != nil {
+			if name := strings.TrimSpace(ts.Template.Output); name != "" {
 				out[name] = id
 			}
 		}
-		if s.K8s != nil {
-			if name := strings.TrimSpace(s.K8s.Output); name != "" {
+		if ks, ok := w.Step.(*K8sStep); ok && ks.K8s != nil {
+			if name := strings.TrimSpace(ks.K8s.Output); name != "" {
 				out[name] = id
 			}
 		}
@@ -136,7 +136,7 @@ func templateOutputProducers(steps []RecipeStep) map[string]string {
 }
 
 // validateUniqueTemplateOutputs ensures named capture names (template.output / k8s.output) are unique in a recipe.
-func validateUniqueTemplateOutputs(steps []RecipeStep) error {
+func validateUniqueTemplateOutputs(steps []StepWrapper) error {
 	seen := make(map[string]int)
 	check := func(i int, name, field string) error {
 		if name == "" {
@@ -148,14 +148,14 @@ func validateUniqueTemplateOutputs(steps []RecipeStep) error {
 		seen[name] = i
 		return nil
 	}
-	for i, s := range steps {
-		if s.Template != nil {
-			if err := check(i, strings.TrimSpace(s.Template.Output), "template.output"); err != nil {
+	for i, w := range steps {
+		if ts, ok := w.Step.(*TemplateStep); ok && ts.Template != nil {
+			if err := check(i, strings.TrimSpace(ts.Template.Output), "template.output"); err != nil {
 				return err
 			}
 		}
-		if s.K8s != nil {
-			if err := check(i, strings.TrimSpace(s.K8s.Output), "k8s.output"); err != nil {
+		if ks, ok := w.Step.(*K8sStep); ok && ks.K8s != nil {
+			if err := check(i, strings.TrimSpace(ks.K8s.Output), "k8s.output"); err != nil {
 				return err
 			}
 		}
@@ -164,7 +164,7 @@ func validateUniqueTemplateOutputs(steps []RecipeStep) error {
 }
 
 // MergeEnvFromInto resolves env_from into dst (execute mode). Fails if a mapped value is missing.
-func MergeEnvFromInto(dst map[string]string, step RecipeStep, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, dryRun bool) error {
+func MergeEnvFromInto(dst map[string]string, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, dryRun bool) error {
 	if len(step.EnvFrom) == 0 {
 		return nil
 	}
@@ -273,7 +273,7 @@ func envFromStdout(store *StepOutputStore, capture *RecipeOutputCapture, refStep
 }
 
 // MergeEnvFromIntoTemplateData overlays env_from-resolved keys onto template data (graph mode).
-func MergeEnvFromIntoTemplateData(data map[string]any, step RecipeStep, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, dryRun bool) error {
+func MergeEnvFromIntoTemplateData(data map[string]any, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, dryRun bool) error {
 	env := make(map[string]string)
 	if err := MergeEnvFromInto(env, step, store, capture, kv, hostName, dryRun); err != nil {
 		return err
@@ -285,7 +285,7 @@ func MergeEnvFromIntoTemplateData(data map[string]any, step RecipeStep, store *S
 }
 
 // PrepareTemplateData merges env_from and expands ${VAR} in data values (not the Go template body).
-func PrepareTemplateData(data map[string]any, step RecipeStep, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, extraEnv map[string]string, dryRun bool) error {
+func PrepareTemplateData(data map[string]any, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, extraEnv map[string]string, dryRun bool) error {
 	if err := MergeEnvFromIntoTemplateData(data, step, store, capture, kv, hostName, dryRun); err != nil {
 		return err
 	}
@@ -307,11 +307,12 @@ func RecipeNeedsStepOutputCapture(r Recipe) bool {
 	if len(StepIDsReferencedByEnvFrom(r)) > 0 || len(StepIDsReferencedByWhen(r)) > 0 {
 		return true
 	}
-	for _, s := range r.Steps {
-		if len(s.EnvFrom) > 0 || strings.TrimSpace(s.When) != "" {
+	for _, w := range r.Steps {
+		b := w.Step.Base()
+		if len(b.EnvFrom) > 0 || strings.TrimSpace(b.When) != "" {
 			return true
 		}
-		if s.Template != nil && strings.TrimSpace(s.Template.Output) != "" {
+		if ts, ok := w.Step.(*TemplateStep); ok && ts.Template != nil && strings.TrimSpace(ts.Template.Output) != "" {
 			return true
 		}
 	}
@@ -321,8 +322,8 @@ func RecipeNeedsStepOutputCapture(r Recipe) bool {
 // StepIDsReferencedByEnvFrom returns step ids that should capture stdout (sources in env_from).
 func StepIDsReferencedByEnvFrom(r Recipe) map[string]struct{} {
 	out := make(map[string]struct{})
-	for _, s := range r.Steps {
-		for _, ref := range s.EnvFrom {
+	for _, w := range r.Steps {
+		for _, ref := range w.Step.Base().EnvFrom {
 			if id := strings.TrimSpace(ref.Step); id != "" {
 				out[id] = struct{}{}
 			}
@@ -337,8 +338,8 @@ func StepIDsReferencedByEnvFrom(r Recipe) map[string]struct{} {
 // OutputNamesReferencedByEnvFrom returns template.output names referenced via from_output.
 func OutputNamesReferencedByEnvFrom(r Recipe) map[string]struct{} {
 	out := make(map[string]struct{})
-	for _, s := range r.Steps {
-		for _, ref := range s.EnvFrom {
+	for _, w := range r.Steps {
+		for _, ref := range w.Step.Base().EnvFrom {
 			if name := strings.TrimSpace(ref.FromOutput); name != "" {
 				out[name] = struct{}{}
 			}
@@ -347,7 +348,7 @@ func OutputNamesReferencedByEnvFrom(r Recipe) map[string]struct{} {
 	return out
 }
 
-func validateHoneyStepIDForGraph(recipe *Recipe, step RecipeStep) error {
+func validateHoneyStepIDForGraph(recipe *Recipe, step *StepBase) error {
 	if recipe == nil {
 		return nil
 	}
@@ -365,7 +366,7 @@ func validateHoneyStepIDForGraph(recipe *Recipe, step RecipeStep) error {
 	return validateOneEnv("HONEY_STEP_ID", id)
 }
 
-func mergeHoneyStepID(dst map[string]string, recipe *Recipe, step RecipeStep) {
+func mergeHoneyStepID(dst map[string]string, recipe *Recipe, step *StepBase) {
 	if recipe == nil {
 		return
 	}
@@ -390,7 +391,7 @@ type EffectiveEnvForRunOpts struct {
 }
 
 // EffectiveEnvForRunEx merges env like EffectiveEnvForRun with env_from and HONEY_STEP_ID.
-func EffectiveEnvForRunEx(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record, opts *EffectiveEnvForRunOpts) (map[string]string, error) {
+func EffectiveEnvForRunEx(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step *StepBase, defaults *RecipeDefaults, cliEnv map[string]string, r *hosts.Record, opts *EffectiveEnvForRunOpts) (map[string]string, error) {
 	merged, err := EffectiveEnvForRun(ctx, resolveSecrets, resolver, step, defaults, cliEnv, r)
 	if err != nil {
 		return nil, err

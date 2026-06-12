@@ -795,11 +795,13 @@ export async function cueExec(body: CueExecRequest): Promise<{ plan?: string; re
 export async function cueExecStream(
   body: CueExecRequest,
   onRow: (row: HostExecResultRow) => void,
+  signal?: AbortSignal,
 ): Promise<{ recording_id?: string }> {
   const r = await fetch('/api/v1/cue-exec?stream=1', {
     method: 'POST',
     headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
   if (!r.ok) {
     const j = (await r.json().catch(() => ({}))) as { error?: string };
@@ -808,6 +810,16 @@ export async function cueExecStream(
   const recordingId = r.headers.get('X-Honey-Recording-Id')?.trim() || undefined;
   await readNDJSON<HostExecResultRow>(r, onRow);
   return { recording_id: recordingId };
+}
+
+export async function encryptSecret(plaintext: string): Promise<string> {
+  const res = await apiPost('/api/v1/secrets/encrypt', { plaintext });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || res.statusText);
+  }
+  const data = await res.json();
+  return data.encrypted;
 }
 
 export async function startAgentTransferStream(

@@ -28,10 +28,10 @@ func TestEffectiveTunnelMode_protocolUDP(t *testing.T) {
 
 func TestValidateStepTunnel_localRequiresRemotePort(t *testing.T) {
 	t.Parallel()
-	err := validateStepTunnel(0, StepKindTunnel, RecipeStep{
-		Host:   "db-*",
-		Tunnel: &RecipeStepTunnel{Mode: "local"},
-	}, ExecutionModeLinear)
+	err := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
+		Tunnel:   &RecipeStepTunnel{Mode: "local"},
+	}).Validate(StepValidateCtx{Index: 0, Mode: ExecutionModeLinear})
 	if err == nil || !strings.Contains(err.Error(), "remote_port") {
 		t.Fatalf("got %v", err)
 	}
@@ -39,13 +39,13 @@ func TestValidateStepTunnel_localRequiresRemotePort(t *testing.T) {
 
 func TestValidateStepTunnel_udpRequiresSocat(t *testing.T) {
 	t.Parallel()
-	err := validateStepTunnel(0, StepKindTunnel, RecipeStep{
-		Host: "db-*",
+	err := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
 		Tunnel: &RecipeStepTunnel{
 			Mode:       "udp",
 			RemotePort: 53,
 		},
-	}, ExecutionModeLinear)
+	}).Validate(StepValidateCtx{Index: 0, Mode: ExecutionModeLinear})
 	if err == nil || !strings.Contains(err.Error(), "remote_socat") {
 		t.Fatalf("got %v", err)
 	}
@@ -54,14 +54,14 @@ func TestValidateStepTunnel_udpRequiresSocat(t *testing.T) {
 func TestValidateRecipeTunnelRefs_unknownStep(t *testing.T) {
 	t.Parallel()
 	cfg, _ := json.Marshal(map[string]string{"tunnel_step": "missing"})
-	steps := []RecipeStep{{
-		Host: "*",
+	steps := wrapAll(&PluginStep{
+		StepBase: StepBase{Host: "*"},
 		Plugin: &RecipeStepPlugin{
 			ID:     "postgres",
 			Action: "query",
 			Config: cfg,
 		},
-	}}
+	})
 	err := validateRecipeTunnelRefs(steps)
 	if err == nil || !strings.Contains(err.Error(), "unknown step id") {
 		t.Fatalf("got %v", err)
@@ -71,10 +71,10 @@ func TestValidateRecipeTunnelRefs_unknownStep(t *testing.T) {
 func TestValidateRecipeTunnelRefs_requiresTunnelKind(t *testing.T) {
 	t.Parallel()
 	cfg, _ := json.Marshal(map[string]string{"tunnel_step": "fetch"})
-	steps := []RecipeStep{
-		{ID: "fetch", Host: "*", Command: "echo"},
-		{ID: "pg", Host: "*", Plugin: &RecipeStepPlugin{ID: "postgres", Action: "query", Config: cfg}},
-	}
+	steps := wrapAll(
+		&CommandStep{StepBase: StepBase{ID: "fetch", Host: "*"}, Command: "echo"},
+		&PluginStep{StepBase: StepBase{ID: "pg", Host: "*"}, Plugin: &RecipeStepPlugin{ID: "postgres", Action: "query", Config: cfg}},
+	)
 	err := validateRecipeTunnelRefs(steps)
 	if err == nil || !strings.Contains(err.Error(), "not a tunnel step") {
 		t.Fatalf("got %v", err)
@@ -123,8 +123,7 @@ recipe: {
 	if len(r.Steps) != 2 {
 		t.Fatalf("steps=%d", len(r.Steps))
 	}
-	k, err := ClassifyStep(r.Steps[0])
-	if err != nil || k != StepKindTunnel {
-		t.Fatalf("kind=%v err=%v", k, err)
+	if k := r.Steps[0].Step.Kind(); k != KindTunnel {
+		t.Fatalf("kind=%v", k)
 	}
 }

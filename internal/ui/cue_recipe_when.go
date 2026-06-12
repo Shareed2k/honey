@@ -51,20 +51,20 @@ func hostFactsFromContext(ctx context.Context) map[string]map[string]any {
 	return val
 }
 
-func compileStepWhen(step cuetry.RecipeStep) (*cuetry.WhenProgram, error) {
-	w := strings.TrimSpace(step.When)
+func compileStepWhen(step cuetry.Step) (*cuetry.WhenProgram, error) {
+	w := strings.TrimSpace(step.Base().When)
 	if w == "" {
 		return nil, nil
 	}
 	return cuetry.CompileWhen(w)
 }
 
-func buildWhenEvalOpts(ctx context.Context, recipe cuetry.Recipe, step cuetry.RecipeStep, host hosts.Record, dest *hosts.Record, store *cuetry.StepResultStore, secretResolver cuetry.SecretResolver, kv cuetry.KVReader, cliEnv map[string]string, execute bool) (cuetry.WhenEvalOpts, error) {
-	secrets, err := cuetry.BuildSecretsMapForWhen(ctx, execute, secretResolver, step, recipe.Defaults)
+func buildWhenEvalOpts(ctx context.Context, recipe cuetry.Recipe, step cuetry.Step, host hosts.Record, dest *hosts.Record, store *cuetry.StepResultStore, secretResolver cuetry.SecretResolver, kv cuetry.KVReader, cliEnv map[string]string, execute bool) (cuetry.WhenEvalOpts, error) {
+	secrets, err := cuetry.BuildSecretsMapForWhen(ctx, execute, secretResolver, step.Base(), recipe.Defaults)
 	if err != nil {
 		return cuetry.WhenEvalOpts{}, err
 	}
-	env, err := cuetry.BuildEnvMapForWhen(ctx, execute, secretResolver, step, recipe.Defaults, cliEnv, &host)
+	env, err := cuetry.BuildEnvMapForWhen(ctx, execute, secretResolver, step.Base(), recipe.Defaults, cliEnv, &host)
 	if err != nil {
 		return cuetry.WhenEvalOpts{}, err
 	}
@@ -95,7 +95,7 @@ func buildWhenEvalOpts(ctx context.Context, recipe cuetry.Recipe, step cuetry.Re
 	}, nil
 }
 
-func evalStepWhen(ctx context.Context, prog *cuetry.WhenProgram, recipe cuetry.Recipe, step cuetry.RecipeStep, host hosts.Record, dest *hosts.Record, store *cuetry.StepResultStore, secretResolver cuetry.SecretResolver, kv cuetry.KVReader, cliEnv map[string]string, execute bool) (bool, error) {
+func evalStepWhen(ctx context.Context, prog *cuetry.WhenProgram, recipe cuetry.Recipe, step cuetry.Step, host hosts.Record, dest *hosts.Record, store *cuetry.StepResultStore, secretResolver cuetry.SecretResolver, kv cuetry.KVReader, cliEnv map[string]string, execute bool) (bool, error) {
 	if prog == nil {
 		return true, nil
 	}
@@ -109,7 +109,7 @@ func evalStepWhen(ctx context.Context, prog *cuetry.WhenProgram, recipe cuetry.R
 func filterTargetsByWhen(
 	ctx context.Context,
 	recipe cuetry.Recipe,
-	step cuetry.RecipeStep,
+	step cuetry.Step,
 	targets []hosts.Record,
 	store *cuetry.StepResultStore,
 	secretResolver cuetry.SecretResolver,
@@ -140,7 +140,7 @@ func filterTargetsByWhen(
 	return kept, skipped, nil
 }
 
-func evalAgentTransferWhen(ctx context.Context, recipe cuetry.Recipe, step cuetry.RecipeStep, src, dst hosts.Record, store *cuetry.StepResultStore, secretResolver cuetry.SecretResolver, kv cuetry.KVReader, cliEnv map[string]string, execute bool) (bool, error) {
+func evalAgentTransferWhen(ctx context.Context, recipe cuetry.Recipe, step cuetry.Step, src, dst hosts.Record, store *cuetry.StepResultStore, secretResolver cuetry.SecretResolver, kv cuetry.KVReader, cliEnv map[string]string, execute bool) (bool, error) {
 	prog, err := compileStepWhen(step)
 	if err != nil {
 		return false, err
@@ -151,7 +151,7 @@ func evalAgentTransferWhen(ctx context.Context, recipe cuetry.Recipe, step cuetr
 	return evalStepWhen(ctx, prog, recipe, step, src, &dst, store, secretResolver, kv, cliEnv, execute)
 }
 
-func evalAIStepWhen(ctx context.Context, recipe cuetry.Recipe, step cuetry.RecipeStep, store *cuetry.StepResultStore, secretResolver cuetry.SecretResolver, kv cuetry.KVReader, cliEnv map[string]string, execute bool) (bool, error) {
+func evalAIStepWhen(ctx context.Context, recipe cuetry.Recipe, step cuetry.Step, store *cuetry.StepResultStore, secretResolver cuetry.SecretResolver, kv cuetry.KVReader, cliEnv map[string]string, execute bool) (bool, error) {
 	prog, err := compileStepWhen(step)
 	if err != nil {
 		return false, err
@@ -229,8 +229,8 @@ func kvReaderFromCoordinator(coord *RecipeKVCoordinator) cuetry.KVReader {
 	return coordinatorKVReader{coord: coord}
 }
 
-func writeWhenDryLines(out interface{ Write([]byte) (int, error) }, stepIdx int, step cuetry.RecipeStep, recipe cuetry.Recipe, targets []hosts.Record, store *cuetry.StepResultStore, cliEnv map[string]string, execute bool) error {
-	w := strings.TrimSpace(step.When)
+func writeWhenDryLines(out interface{ Write([]byte) (int, error) }, stepIdx int, step cuetry.Step, recipe cuetry.Recipe, targets []hosts.Record, store *cuetry.StepResultStore, cliEnv map[string]string, execute bool) error {
+	w := strings.TrimSpace(step.Base().When)
 	if w == "" {
 		return nil
 	}

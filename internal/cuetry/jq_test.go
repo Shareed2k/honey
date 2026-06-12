@@ -50,7 +50,7 @@ func TestMergeEnvFromInto_extract(t *testing.T) {
 	t.Parallel()
 	store := NewStepOutputStore()
 	store.Record("pg", "h1", `[{"n":7}]`)
-	step := RecipeStep{
+	step := &StepBase{
 		EnvFrom: []EnvFromRef{{
 			Step:    "pg",
 			Extract: map[string]string{"THRESHOLD": ".[0].n"},
@@ -74,7 +74,7 @@ func (m testKVReader) Get(key string) (string, bool, error) {
 
 func TestMergeEnvFromInto_kv(t *testing.T) {
 	t.Parallel()
-	step := RecipeStep{
+	step := &StepBase{
 		EnvFrom: []EnvFromRef{{
 			Kv: map[string]string{"THRESHOLD": "pg_activity_count"},
 		}},

@@ -118,13 +118,13 @@ func streamCueStepK8s(
 	ctx context.Context,
 	run *cueRun,
 	stepIdx int,
-	step cuetry.RecipeStep,
+	step cuetry.Step,
 	targets []hosts.Record,
 	ch chan<- HostExecResult,
 	retryCfg cuetry.RecipeStepRetry,
 	attemptMax *atomic.Int32,
 ) error {
-	if step.K8s == nil {
+	if _, ok := step.(*cuetry.K8sStep); !ok {
 		return fmt.Errorf("internal: k8s step missing k8s field")
 	}
 	maxConc := recipeHostMaxConc(step, run.Recipe.Defaults)
@@ -152,7 +152,7 @@ func runK8sActionOnHost(
 	ctx context.Context,
 	run *cueRun,
 	stepIdx int,
-	step cuetry.RecipeStep,
+	step cuetry.Step,
 	target hosts.Record,
 	retryCfg cuetry.RecipeStepRetry,
 	attemptMax *atomic.Int32,
@@ -162,7 +162,12 @@ func runK8sActionOnHost(
 		IP:       target.PrimaryIP,
 		Provider: target.Provider,
 	}
-	k := step.K8s
+	ks, _ := step.(*cuetry.K8sStep)
+	if ks == nil || ks.K8s == nil {
+		res.ErrMsg = "internal: k8s step missing k8s field"
+		return res
+	}
+	k := ks.K8s
 	ns := k8sNamespace(k, target)
 
 	clients, err := newK8sClients(target)
@@ -172,7 +177,7 @@ func runK8sActionOnHost(
 	}
 
 	// Resolve env once for ${VAR} expansion in manifest and other action fields.
-	stepEnv, err := cuetry.EffectiveEnvForRunEx(ctx, run.Execute, run.SecretResolver, step, run.Recipe.Defaults, run.CLIEnv, &target, cueEnvRunOpts(&run.Recipe, run.outputStore, run.outputCapture, kvReaderFromCoordinator(run.recipeKV), !run.Execute))
+	stepEnv, err := cuetry.EffectiveEnvForRunEx(ctx, run.Execute, run.SecretResolver, step.Base(), run.Recipe.Defaults, run.CLIEnv, &target, cueEnvRunOpts(&run.Recipe, run.outputStore, run.outputCapture, kvReaderFromCoordinator(run.recipeKV), !run.Execute))
 	if err != nil {
 		res.ErrMsg = fmt.Errorf("k8s step env: %w", err).Error()
 		return res
@@ -217,7 +222,7 @@ func runK8sActionOnHost(
 		run.outputCapture.Set(strings.TrimSpace(k.Output), res.Output)
 	}
 
-	runCueStepHooks(ctx, run, stepIdx, cuetry.StepKindK8s, step, target, &res, false)
+	runCueStepHooks(ctx, run, stepIdx, cuetry.KindK8s, step, target, &res, false)
 	return res
 }
 

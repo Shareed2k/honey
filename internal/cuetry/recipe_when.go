@@ -243,18 +243,27 @@ func stepsToCELMap(steps map[string]StepView) map[string]any {
 	return out
 }
 
+// stepIDsInWhenExpr extracts step ids referenced as steps['id'] in one when expression.
+func stepIDsInWhenExpr(w string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, m := range whenStepIDInExpr.FindAllStringSubmatch(w, -1) {
+		if len(m) > 1 && m[1] != "" {
+			out[m[1]] = struct{}{}
+		}
+	}
+	return out
+}
+
 // StepIDsReferencedByWhen returns step ids referenced as steps['id'] in when expressions.
 func StepIDsReferencedByWhen(r Recipe) map[string]struct{} {
 	out := make(map[string]struct{})
-	for _, s := range r.Steps {
-		w := strings.TrimSpace(s.When)
+	for _, ws := range r.Steps {
+		w := strings.TrimSpace(ws.Step.Base().When)
 		if w == "" {
 			continue
 		}
-		for _, m := range whenStepIDInExpr.FindAllStringSubmatch(w, -1) {
-			if len(m) > 1 && m[1] != "" {
-				out[m[1]] = struct{}{}
-			}
+		for id := range stepIDsInWhenExpr(w) {
+			out[id] = struct{}{}
 		}
 	}
 	return out
@@ -263,7 +272,7 @@ func StepIDsReferencedByWhen(r Recipe) map[string]struct{} {
 // RecipeUsesWhen reports whether any step has a when expression.
 func RecipeUsesWhen(r Recipe) bool {
 	for _, s := range r.Steps {
-		if strings.TrimSpace(s.When) != "" {
+		if strings.TrimSpace(s.Step.Base().When) != "" {
 			return true
 		}
 	}
@@ -273,7 +282,7 @@ func RecipeUsesWhen(r Recipe) bool {
 // RecipeUsesKVInWhen reports whether any when expression calls kv_get or kv_has.
 func RecipeUsesKVInWhen(r Recipe) bool {
 	for _, s := range r.Steps {
-		w := strings.TrimSpace(s.When)
+		w := strings.TrimSpace(s.Step.Base().When)
 		if w == "" {
 			continue
 		}
@@ -284,7 +293,7 @@ func RecipeUsesKVInWhen(r Recipe) bool {
 	return false
 }
 
-func validateStepWhen(i int, mode ExecutionMode, step RecipeStep, sg *StepGraph) error {
+func validateStepWhen(i int, mode ExecutionMode, step *StepBase, sg *StepGraph) error {
 	w := strings.TrimSpace(step.When)
 	if w == "" {
 		return nil
@@ -301,7 +310,7 @@ func validateStepWhen(i int, mode ExecutionMode, step RecipeStep, sg *StepGraph)
 		for _, d := range step.Depends {
 			depSet[strings.TrimSpace(d)] = struct{}{}
 		}
-		for refID := range StepIDsReferencedByWhen(Recipe{Steps: []RecipeStep{step}}) {
+		for refID := range stepIDsInWhenExpr(w) {
 			if _, ok := sg.IDToIndex[refID]; !ok {
 				return fmt.Errorf("cuetry: steps[%d].when references unknown step id %q", i, refID)
 			}
@@ -314,7 +323,7 @@ func validateStepWhen(i int, mode ExecutionMode, step RecipeStep, sg *StepGraph)
 }
 
 // BuildSecretsMapForWhen merges defaults and step secret keys into a map for CEL (resolved or redacted).
-func BuildSecretsMapForWhen(ctx context.Context, resolve bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults) (map[string]string, error) {
+func BuildSecretsMapForWhen(ctx context.Context, resolve bool, resolver SecretResolver, step *StepBase, defaults *RecipeDefaults) (map[string]string, error) {
 	out := make(map[string]string)
 	if defaults != nil && len(defaults.Secrets) > 0 {
 		if err := MergeResolvedSecretsInto(ctx, resolve, resolver, out, defaults.Secrets, "defaults.secrets"); err != nil {
@@ -330,7 +339,7 @@ func BuildSecretsMapForWhen(ctx context.Context, resolve bool, resolver SecretRe
 }
 
 // BuildEnvMapForWhen merges recipe defaults/step env, CLI overrides, and host env for CEL when.
-func BuildEnvMapForWhen(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step RecipeStep, defaults *RecipeDefaults, cliEnv map[string]string, host *hosts.Record) (map[string]string, error) {
+func BuildEnvMapForWhen(ctx context.Context, resolveSecrets bool, resolver SecretResolver, step *StepBase, defaults *RecipeDefaults, cliEnv map[string]string, host *hosts.Record) (map[string]string, error) {
 	if host == nil {
 		return nil, fmt.Errorf("cuetry: when env requires host")
 	}
@@ -338,7 +347,7 @@ func BuildEnvMapForWhen(ctx context.Context, resolveSecrets bool, resolver Secre
 }
 
 // DeclaredSecretKeys returns union of secret keys from defaults and step.
-func DeclaredSecretKeys(step RecipeStep, defaults *RecipeDefaults) map[string]struct{} {
+func DeclaredSecretKeys(step *StepBase, defaults *RecipeDefaults) map[string]struct{} {
 	out := make(map[string]struct{})
 	if defaults != nil {
 		for k := range defaults.Secrets {

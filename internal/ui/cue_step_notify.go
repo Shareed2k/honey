@@ -40,7 +40,7 @@ func resolveCueNotifyBody(notify *cuetry.RecipeNotify, defaultBody string) strin
 	return defaultBody
 }
 
-func resolveCueNotifySubject(recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, notify *cuetry.RecipeNotify) string {
+func resolveCueNotifySubject(recipe cuetry.Recipe, stepNo int, kind string, notify *cuetry.RecipeNotify) string {
 	if notify == nil {
 		return ""
 	}
@@ -48,10 +48,10 @@ func resolveCueNotifySubject(recipe cuetry.Recipe, stepNo int, kind cuetry.StepK
 		return s
 	}
 	name := strings.TrimSpace(recipe.Name)
-	if kind == cuetry.StepKindAI {
+	if kind == cuetry.KindAI {
 		return fmt.Sprintf("honey: %s AI summary", name)
 	}
-	return fmt.Sprintf("honey: %s step %d (%s)", name, stepNo, cuetry.StepKindLabel(kind))
+	return fmt.Sprintf("honey: %s step %d (%s)", name, stepNo, kind)
 }
 
 // notifyServiceFilter maps recipe notify.services to recipenotify.ServiceFilter. Nil notify or nil Services means no restriction (all env backends).
@@ -81,7 +81,7 @@ func cueNotifyNoReceiversHint(filter *recipenotify.ServiceFilter) string {
 }
 
 // CueStepNotifyAppendSuffix sends notify after a successful AI step; returns text to append on missing receivers or send errors.
-func CueStepNotifyAppendSuffix(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, notify *cuetry.RecipeNotify, body string) string {
+func CueStepNotifyAppendSuffix(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind string, notify *cuetry.RecipeNotify, body string) string {
 	if notify == nil {
 		return ""
 	}
@@ -102,7 +102,7 @@ func CueStepNotifyAppendSuffix(ctx context.Context, recipe cuetry.Recipe, stepNo
 }
 
 // CueStepNotifyRemote sends notify after a non-AI step; failures are logged only (no change to streamed host rows).
-func CueStepNotifyRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, notify *cuetry.RecipeNotify, body string) {
+func CueStepNotifyRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind string, notify *cuetry.RecipeNotify, body string) {
 	if notify == nil {
 		return
 	}
@@ -112,7 +112,7 @@ func CueStepNotifyRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, 
 	if !recipenotify.EnvHasReceiverMatchingFilter(filter) {
 		zap.L().Warn("cue recipe notify: no matching receivers for configuration",
 			zap.Int("step", stepNo),
-			zap.String("kind", cuetry.StepKindLabel(kind)),
+			zap.String("kind", kind),
 			zap.Bool("services_restrict", filter != nil && filter.Restrict))
 		return
 	}
@@ -120,26 +120,26 @@ func CueStepNotifyRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, 
 	if !ok {
 		zap.L().Warn("cue recipe notify: no notifier built",
 			zap.Int("step", stepNo),
-			zap.String("kind", cuetry.StepKindLabel(kind)))
+			zap.String("kind", kind))
 		return
 	}
 	if err := n.Send(ctx, subject, body); err != nil {
 		zap.L().Warn("cue recipe notify: send failed",
 			zap.Int("step", stepNo),
-			zap.String("kind", cuetry.StepKindLabel(kind)),
+			zap.String("kind", kind),
 			zap.Error(err))
 	}
 }
 
 // CueHookNotifyRemote sends notify after a per-host hook; failures are logged only.
-func CueHookNotifyRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind cuetry.StepKind, phase, hostName string, notify *cuetry.RecipeNotify, body string) {
+func CueHookNotifyRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, kind string, phase, hostName string, notify *cuetry.RecipeNotify, body string) {
 	if notify == nil {
 		return
 	}
 	subject := strings.TrimSpace(notify.NotifySubject)
 	if subject == "" {
 		name := strings.TrimSpace(recipe.Name)
-		subject = fmt.Sprintf("honey: hook %s step %d (%s) %s host %q", name, stepNo, cuetry.StepKindLabel(kind), phase, hostName)
+		subject = fmt.Sprintf("honey: hook %s step %d (%s) %s host %q", name, stepNo, kind, phase, hostName)
 	}
 	body = truncateCueNotifyBody(resolveCueNotifyBody(notify, body))
 	filter := notifyServiceFilter(notify)
@@ -169,11 +169,11 @@ func CueHookNotifyRemote(ctx context.Context, recipe cuetry.Recipe, stepNo int, 
 }
 
 // WriteCueStepNotifyDryLine prints one plan line when notify is enabled (boolean only; no secrets).
-func WriteCueStepNotifyDryLine(out io.Writer, step cuetry.RecipeStep) {
-	if !step.NotifyEnabled() {
+func WriteCueStepNotifyDryLine(out io.Writer, step cuetry.Step) {
+	if !step.Base().NotifyEnabled() {
 		return
 	}
-	filter := notifyServiceFilter(step.Notify)
+	filter := notifyServiceFilter(step.Base().Notify)
 	hasRecv := recipenotify.EnvHasReceiverMatchingFilter(filter)
 	_, _ = fmt.Fprintf(out, "  notify: enabled — receivers configured (env)=%v (HTTP/Slack/Telegram — see docs; values not shown)\n", hasRecv)
 }

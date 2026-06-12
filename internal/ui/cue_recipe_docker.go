@@ -22,8 +22,9 @@ import (
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 )
 
-func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	if step.Docker == nil {
+func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	ds, _ := step.(*cuetry.DockerStep)
+	if ds == nil || ds.Docker == nil {
 		return fmt.Errorf("internal: docker step missing docker field")
 	}
 	execOne := func(r hosts.Record) HostExecResult {
@@ -37,7 +38,7 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 			var err error
 
 			zap.L().Debug("docker step starting",
-				zap.String("action", step.Docker.Action),
+				zap.String("action", ds.Docker.Action),
 				zap.String("host_name", r.Name),
 				zap.String("primary_ip", r.PrimaryIP),
 			)
@@ -68,7 +69,7 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 				bc := dockerprovider.BackendConfig{
 					SSHUser: sshUser,
 					Socket:  "/var/run/docker.sock",
-					RunAs:   cuetry.EffectiveRunAs(step, run.Recipe.Defaults),
+					RunAs:   cuetry.EffectiveRunAs(step.Base(), run.Recipe.Defaults),
 				}
 				opts := dockerprovider.APIClientOptions{
 					SSHUser:     sshUser,
@@ -86,7 +87,7 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 			}
 			defer mCli.Close()
 
-			outputStr, execErr := executeDockerSDKAction(ctx, mCli, step.Docker, run.RecipeDir)
+			outputStr, execErr := executeDockerSDKAction(ctx, mCli, ds.Docker, run.RecipeDir)
 			if execErr != nil {
 				res.Success = false
 				res.ErrMsg = execErr.Error()
@@ -94,7 +95,7 @@ func streamCueStepDocker(ctx context.Context, run *cueRun, _ int, step cuetry.Re
 				return res
 			}
 
-			zap.L().Debug("docker step finished", zap.String("action", step.Docker.Action), zap.String("host_name", r.Name))
+			zap.L().Debug("docker step finished", zap.String("action", ds.Docker.Action), zap.String("host_name", r.Name))
 			res.Success = true
 			res.Output = outputStr
 			return res
@@ -276,9 +277,13 @@ func executeDockerStop(ctx context.Context, cli *client.Client, s *cuetry.Docker
 	return string(res), nil
 }
 
-func runCueStepDockerDry(out io.Writer, recipe cuetry.Recipe, i int, step cuetry.RecipeStep, targets []hosts.Record) error {
-	runAs := cuetry.EffectiveRunAs(step, recipe.Defaults)
-	action := step.Docker.Action
+func runCueStepDockerDry(out io.Writer, recipe cuetry.Recipe, i int, step cuetry.Step, targets []hosts.Record) error {
+	runAs := cuetry.EffectiveRunAs(step.Base(), recipe.Defaults)
+	ds, _ := step.(*cuetry.DockerStep)
+	action := ""
+	if ds != nil && ds.Docker != nil {
+		action = ds.Docker.Action
+	}
 	for _, target := range targets {
 		_, _ = fmt.Fprintf(out, "step %d: kind=docker action=%q name=%q %s provider=%s run_as=%q\n",
 			i, action, target.Name, FormatTargetForDryRun(target), target.Provider, runAs)

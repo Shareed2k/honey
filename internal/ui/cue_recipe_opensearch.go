@@ -17,8 +17,12 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-func streamCueStepOpensearch(ctx context.Context, run *cueRun, _ int, step cuetry.RecipeStep, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	es := step.Opensearch
+func streamCueStepOpensearch(ctx context.Context, run *cueRun, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	os, _ := step.(*cuetry.OpensearchStep)
+	if os == nil || os.Opensearch == nil {
+		return fmt.Errorf("internal: opensearch step missing opensearch field")
+	}
+	es := os.Opensearch
 	if es == nil {
 		return fmt.Errorf("internal: opensearch step missing config")
 	}

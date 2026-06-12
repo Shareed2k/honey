@@ -50,6 +50,8 @@ type Props = {
   filter?: string;
   /** Notified on filter change. Required if `filter` is controlled. */
   onFilterChange?: (q: string) => void;
+  /** Rows per page. Defaults to 25. */
+  pageSize?: number;
 };
 
 export function HostPicker(props: Props) {
@@ -64,6 +66,7 @@ export function HostPicker(props: Props) {
     renderRowActions,
     filter: filterProp,
     onFilterChange,
+    pageSize = 25,
   } = props;
 
   const [filterInternal, setFilterInternal] = useState('');
@@ -109,9 +112,9 @@ export function HostPicker(props: Props) {
         rowKey={recordKey}
         size="small"
         pagination={{
-          pageSize: 25,
+          pageSize,
           showSizeChanger: true,
-          pageSizeOptions: ['25', '50', '100'],
+          pageSizeOptions: [String(pageSize), '25', '50', '100'].filter((v, i, a) => a.indexOf(v) === i),
           showTotal: (total) => `${total} results`,
         }}
         rowSelection={{

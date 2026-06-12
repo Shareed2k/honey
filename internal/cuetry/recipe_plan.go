@@ -52,24 +52,21 @@ func RenderDryRunPlan(r Recipe) (string, []StepSummary, error) {
 			b.WriteString(text)
 		}
 	}
-	for i, step := range r.Steps {
-		kind, err := ClassifyStep(step)
-		if err != nil {
-			return "", nil, fmt.Errorf("step %d: %w", i, err)
-		}
-		kindLabel := StepKindLabel(kind)
-		runAs := EffectiveRunAs(step, r.Defaults)
-		preview := previewForStep(kind, step)
+	for i, w := range r.Steps {
+		sb := w.Step.Base()
+		kindLabel := w.Step.Kind()
+		runAs := EffectiveRunAs(sb, r.Defaults)
+		preview := previewForStep(w.Step)
 		summary := StepSummary{
 			Index:   i,
-			ID:      strings.TrimSpace(step.ID),
-			Depends: append([]string(nil), step.Depends...),
+			ID:      strings.TrimSpace(sb.ID),
+			Depends: append([]string(nil), sb.Depends...),
 			Kind:    kindLabel,
-			Host:    strings.TrimSpace(step.Host),
+			Host:    strings.TrimSpace(sb.Host),
 			RunAs:   runAs,
-			When:    strings.TrimSpace(step.When),
-			Retry:   retrySummary(step, r.Defaults),
-			Notify:  step.NotifyEnabled(),
+			When:    strings.TrimSpace(sb.When),
+			Retry:   retrySummary(sb, r.Defaults),
+			Notify:  sb.NotifyEnabled(),
 			Preview: preview,
 		}
 		if waveOf != nil {
@@ -102,48 +99,48 @@ func RenderDryRunPlan(r Recipe) (string, []StepSummary, error) {
 
 // previewForStep is a small, stable, host-agnostic one-line description of a
 // step's action. It must never include secret values (env, tokens, etc.).
-func previewForStep(kind StepKind, s RecipeStep) string {
+func previewForStep(s Step) string {
 	const maxPreviewBytes = 160
 	var p string
-	switch kind {
-	case StepKindCommand:
-		p = strings.TrimSpace(s.Command)
-	case StepKindPut:
-		if s.Put != nil {
-			p = fmt.Sprintf("put %q -> remote:%q", strings.TrimSpace(s.Put.Local), strings.TrimSpace(s.Put.Remote))
+	switch v := s.(type) {
+	case *CommandStep:
+		p = strings.TrimSpace(v.Command)
+	case *PutStep:
+		if v.Put != nil {
+			p = fmt.Sprintf("put %q -> remote:%q", strings.TrimSpace(v.Put.Local), strings.TrimSpace(v.Put.Remote))
 		}
-	case StepKindGet:
-		if s.Get != nil {
-			p = fmt.Sprintf("get remote:%q -> %q", strings.TrimSpace(s.Get.Remote), strings.TrimSpace(s.Get.Local))
+	case *GetStep:
+		if v.Get != nil {
+			p = fmt.Sprintf("get remote:%q -> %q", strings.TrimSpace(v.Get.Remote), strings.TrimSpace(v.Get.Local))
 		}
-	case StepKindScript:
-		if s.Script != nil {
-			p = fmt.Sprintf("script %q -> remote:%q", strings.TrimSpace(s.Script.Local), strings.TrimSpace(s.Script.Remote))
+	case *ScriptStep:
+		if v.Script != nil {
+			p = fmt.Sprintf("script %q -> remote:%q", strings.TrimSpace(v.Script.Local), strings.TrimSpace(v.Script.Remote))
 		}
-	case StepKindAgentTransfer:
-		if s.AgentTransfer != nil {
+	case *AgentTransferStep:
+		if v.AgentTransfer != nil {
 			p = fmt.Sprintf("agent_transfer %s:%s -> %s:%s",
-				strings.TrimSpace(s.Host), strings.TrimSpace(s.AgentTransfer.SourcePath),
-				strings.TrimSpace(s.AgentTransfer.DestHost), strings.TrimSpace(s.AgentTransfer.DestPath))
+				strings.TrimSpace(v.Host), strings.TrimSpace(v.AgentTransfer.SourcePath),
+				strings.TrimSpace(v.AgentTransfer.DestHost), strings.TrimSpace(v.AgentTransfer.DestPath))
 		}
-	case StepKindAI:
-		if s.AI != nil {
-			p = "ai: " + strings.TrimSpace(s.AI.Prompt)
+	case *AIStep:
+		if v.AI != nil {
+			p = "ai: " + strings.TrimSpace(v.AI.Prompt)
 		}
-	case StepKindTemplate:
-		if s.Template != nil {
-			p = strings.TrimSpace(s.Template.Template)
-			if out := strings.TrimSpace(s.Template.Output); out != "" {
+	case *TemplateStep:
+		if v.Template != nil {
+			p = strings.TrimSpace(v.Template.Template)
+			if out := strings.TrimSpace(v.Template.Output); out != "" {
 				p = fmt.Sprintf("capture %q: %s", out, p)
 			}
 		}
-	case StepKindPlugin:
-		if s.Plugin != nil {
-			p = fmt.Sprintf("plugin %s action=%s", strings.TrimSpace(s.Plugin.ID), strings.TrimSpace(s.Plugin.Action))
+	case *PluginStep:
+		if v.Plugin != nil {
+			p = fmt.Sprintf("plugin %s action=%s", strings.TrimSpace(v.Plugin.ID), strings.TrimSpace(v.Plugin.Action))
 		}
-	case StepKindTunnel:
-		if s.Tunnel != nil {
-			t := s.Tunnel
+	case *TunnelStep:
+		if v.Tunnel != nil {
+			t := v.Tunnel
 			host := strings.TrimSpace(t.RemoteHost)
 			if host == "" {
 				host = "localhost"
@@ -160,7 +157,7 @@ func previewForStep(kind StepKind, s RecipeStep) string {
 }
 
 // retrySummary returns a compact per-step retry descriptor for plan UIs (no secrets).
-func retrySummary(step RecipeStep, defaults *RecipeDefaults) string {
+func retrySummary(step *StepBase, defaults *RecipeDefaults) string {
 	if step.Retry == nil {
 		return ""
 	}
