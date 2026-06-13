@@ -303,3 +303,42 @@ func (*Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(RecipesParseResponse{Recipe: recipeMap})
 }
+
+// SyncASTRequest is the JSON body for POST /api/v1/recipes/sync-ast.
+type SyncASTRequest struct {
+	OriginalCUE   string                 `json:"original_cue"`
+	RecipeContent map[string]interface{} `json:"recipe_content"`
+}
+
+// SyncASTResponse is the JSON response for POST /api/v1/recipes/sync-ast.
+type SyncASTResponse struct {
+	CUE string `json:"cue"`
+}
+
+func (s *Server) handleRecipesSyncAST(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req SyncASTRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	// Convert map back to JSON bytes
+	jsonBytes, err := json.Marshal(req.RecipeContent)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	merged, err := cuetry.ApplyJSONToCUEAST([]byte(req.OriginalCUE), jsonBytes)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(SyncASTResponse{CUE: string(merged)})
+}
