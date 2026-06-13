@@ -104,6 +104,16 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 		writeValidationErrors(w, []ValidateContentError{{Kind: "schema", Message: "recipe_content required"}})
 		return
 	}
+
+	hash, _ := cuetry.HashRecipeJSON(*recipe)
+	if hash != "" && s.recipeValidationCache != nil {
+		if cached, ok := s.recipeValidationCache.Get(hash); ok {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(cached)
+			return
+		}
+	}
+
 	if err := cuetry.ValidateParsedRecipe(*recipe, nil); err != nil {
 		status = "error"
 		writeValidationErrors(w, []ValidateContentError{{Kind: "validation", Message: err.Error()}})
@@ -137,6 +147,11 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 			resp.Graph = gp
 		}
 	}
+
+	if hash != "" && len(resp.Errors) == 0 && s.recipeValidationCache != nil {
+		s.recipeValidationCache.Add(hash, &resp)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -151,7 +166,7 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/graph-plan [post]
 // @Security BearerAuth
-func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -199,6 +214,16 @@ func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("path or recipe_content required"), http.StatusBadRequest)
 		return
 	}
+
+	hash, _ := cuetry.HashRecipeJSON(recipe)
+	if hash != "" && s.recipeGraphCache != nil {
+		if cached, ok := s.recipeGraphCache.Get(hash); ok {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(cached)
+			return
+		}
+	}
+
 	if err := cuetry.ValidateParsedRecipe(recipe, nil); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -208,6 +233,11 @@ func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
+
+	if hash != "" && s.recipeGraphCache != nil {
+		s.recipeGraphCache.Add(hash, plan)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(plan)
 }
