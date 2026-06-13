@@ -1,6 +1,7 @@
 package recordings
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -44,5 +45,23 @@ func TestHasStructuredBatch(t *testing.T) {
 	evts = []Event{{Type: "data", Direction: "plan"}}
 	if !HasStructuredBatch(evts) {
 		t.Fatal("expected structured for plan")
+	}
+}
+
+func TestExtractFailedHosts(t *testing.T) {
+	events := []Event{
+		{
+			Type:   "result",
+			Result: json.RawMessage(`{"provider":"ssh", "name":"host1", "primary_ip":"1.1.1.1", "success":false}`),
+		},
+		{
+			Type:   "result",
+			Result: json.RawMessage(`{"provider":"ssh", "name":"host2", "primary_ip":"2.2.2.2", "success":true}`),
+		},
+	}
+
+	failed := ExtractFailedHosts(events)
+	if len(failed) != 1 || failed[0].Name != "host1" {
+		t.Fatalf("expected 1 failed host 'host1', got %v", failed)
 	}
 }
