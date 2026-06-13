@@ -40,6 +40,7 @@ type Props = {
   listStats?: { file_count: number; total_bytes: number };
   retention?: RecordingsRetentionInfo;
   assistAvailable?: boolean;
+  onRetryFailed?: (fileName: string) => void;
 };
 
 const textDecoder = new TextDecoder();
@@ -149,6 +150,7 @@ export function SessionReplayModal({
   listStats,
   retention,
   assistAvailable,
+  onRetryFailed,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const structuredRef = useRef<HTMLPreElement>(null);
@@ -482,6 +484,14 @@ export function SessionReplayModal({
               {summaryBusy ? 'Summarizing…' : 'Summarize run'}
             </Button>
           </>
+        ) : null}
+        {hasStructuredLog && onRetryFailed ? (
+          <Button
+            disabled={loading || !selectedFile}
+            onClick={() => onRetryFailed?.(selectedFile)}
+          >
+            Retry Failed
+          </Button>
         ) : null}
         <Button danger disabled={!selectedFile || deleteBusy} onClick={() => void handleDelete()}>
           {deleteBusy ? 'Deleting…' : 'Delete'}
