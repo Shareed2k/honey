@@ -952,14 +952,27 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
           setLibraryOpen(false);
           try {
             setRawContent(libRecipe.content);
+            setOriginalCue(libRecipe.content);
             setRawMode(true);
             setTimeout(async () => {
                try {
                  const parseRes = await apiPost('/api/v1/recipes/parse', { content: libRecipe.content });
                  if (!parseRes.ok) throw new Error(await parseRes.text());
                  const parseData = await parseRes.json();
-                 setRawContent(JSON.stringify(parseData.recipe, null, 2));
-                 message.success(`Loaded ${libRecipe.name} from Library (CUE loaded into Raw view)`);
+                 
+                 // Apply the parsed visual nodes, but DO NOT overwrite rawContent with JSON!
+                 const recipeJson = parseData.recipe;
+                 if (recipeJson.defaults) {
+                   setRecipeDefaults(recipeJson.defaults);
+                 } else {
+                   setRecipeDefaults({});
+                 }
+                 const { nodes: newNodes, edges: newEdges, stepData: newStepData } = buildFlowFromRecipe(recipeJson);
+                 setNodes(applyWaveLayout(newNodes));
+                 setEdges(newEdges);
+                 setStepData(newStepData);
+                 
+                 message.success(`Loaded ${libRecipe.name} from Library`);
                } catch (e) {
                  message.success(`Loaded ${libRecipe.name} (Switch to visual manually after fixing validation if needed)`);
                }
