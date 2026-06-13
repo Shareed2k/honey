@@ -3,13 +3,14 @@ import { EditorView } from '@codemirror/view';
 import { Diagnostic, linter, lintGutter } from '@codemirror/lint';
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
+import { simpleMode } from '@codemirror/legacy-modes/mode/simple-mode';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 import type { Extension } from '@codemirror/state';
 import { useMemo } from 'react';
 import { lintScript } from './api';
 
-export type EditorLanguage = 'bash' | 'python' | 'plain';
+export type EditorLanguage = 'bash' | 'python' | 'plain' | 'cue';
 
 type Props = {
   value: string;
@@ -21,12 +22,31 @@ type Props = {
   placeholder?: string;
 };
 
+const cueMode = simpleMode({
+  start: [
+    { regex: /\/\/.*/, token: 'comment' },
+    { regex: /"(?:[^\\]|\\.)*?(?:"|$)/, token: 'string' },
+    { regex: /'''(?:[^']|'[^']|''[^'])*?(?:'''|$)/, token: 'string' },
+    { regex: /"""(?:[^"]|"[^"]|""[^"])*?(?:"""|$)/, token: 'string' },
+    { regex: /\b(?:package|import|for|if|in|let|null|true|false)\b/, token: 'keyword' },
+    { regex: /\b(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\b/, token: 'number' },
+    { regex: /==|!=|<=|>=|&&|\|\||[+\-*/%<>=!]/, token: 'operator' },
+    { regex: /[a-zA-Z_][a-zA-Z0-9_]*:/, token: 'property' },
+    { regex: /[[\]{}(),]/, token: 'punctuation' },
+  ],
+  languageData: {
+    commentTokens: { line: '//' },
+  },
+});
+
 function languageExtension(language: EditorLanguage): Extension | null {
   switch (language) {
     case 'python':
       return python();
     case 'bash':
       return StreamLanguage.define(shell);
+    case 'cue':
+      return StreamLanguage.define(cueMode);
     default:
       return null;
   }
