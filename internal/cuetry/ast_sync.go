@@ -6,6 +6,7 @@ import (
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/parser"
+	"cuelang.org/go/cue/token"
 )
 
 // ApplyJSONToCUEAST is the boundary for mapping JSON structural edits back onto raw CUE.
@@ -29,10 +30,30 @@ func ApplyJSONToCUEAST(originalCUE []byte, updatedJSON []byte) ([]byte, error) {
 	// We want the `recipe: { ... }` block from fUpdated. Wait, the JSON *is* the recipe block contents.
 	// In the JSON we have {"name": "test_updated", "steps": [...]}, which are the struct fields inside `recipe: {}`.
 
+	ast.Walk(fUpdated, func(n ast.Node) bool {
+		if field, ok := n.(*ast.Field); ok {
+			if bLit, ok := field.Label.(*ast.BasicLit); ok && bLit.Kind == token.STRING {
+				// Strip quotes from string labels to make it look like idiomatic CUE
+				val := bLit.Value
+				if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+					field.Label = ast.NewIdent(val[1 : len(val)-1])
+				}
+			}
+		}
+		return true
+	}, nil)
+
 	var updatedFields []interface{}
 	for _, decl := range fUpdated.Decls {
 		if x, ok := decl.(*ast.Field); ok {
 			updatedFields = append(updatedFields, x)
+		}
+		if expr, ok := decl.(*ast.EmbedDecl); ok {
+			if strLit, ok := expr.Expr.(*ast.StructLit); ok {
+				for _, f := range strLit.Elts {
+					updatedFields = append(updatedFields, f)
+				}
+			}
 		}
 	}
 	_ = updatedFields // Silence unused variable warning if not used below
@@ -50,7 +71,9 @@ func ApplyJSONToCUEAST(originalCUE []byte, updatedJSON []byte) ([]byte, error) {
 					// The top-level comments (e.g. `// Header comment`) remain intact because they are attached to
 					// the `recipe` node or the file itself.
 					structLit.Elts = nil
-					structLit.Elts = append(structLit.Elts, fUpdated.Decls...)
+					for _, f := range updatedFields {
+						structLit.Elts = append(structLit.Elts, f.(ast.Decl))
+					}
 				}
 			}
 		}
