@@ -13,7 +13,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import './studio.css';
 import { Layout, Button, Drawer, Space, Typography, Select, message, Modal, Alert, Input } from 'antd';
-import { PlusOutlined, SaveOutlined, SyncOutlined, PlayCircleOutlined, CloudDownloadOutlined, UndoOutlined, SettingOutlined, CodeOutlined, ReadOutlined } from '@ant-design/icons';
+import { PlusOutlined, SaveOutlined, SyncOutlined, PlayCircleOutlined, CloudDownloadOutlined, UndoOutlined, SettingOutlined, CodeOutlined, ReadOutlined, FireOutlined } from '@ant-design/icons';
 
 import CustomStepNode from './CustomStepNode';
 import DynamicStepForm from './DynamicStepForm';
@@ -666,11 +666,11 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   return (
     <Layout style={{ height: '100vh', background: '#0f1115' }}>
       <Header style={{ background: '#001529', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px' }}>
-        <Space size="large">
-          <Title level={4} style={{ color: '#fff', margin: 0 }}>CUE Recipe Studio</Title>
+        <Space size="small">
+          <Title level={5} style={{ color: '#fff', margin: 0 }}>CUE Recipe Studio</Title>
           <Select
             placeholder="Load existing recipe..."
-            style={{ width: 240 }}
+            style={{ width: 200 }}
             value={selectedRecipe}
             onChange={loadRecipe}
             options={availableRecipes.map((r) => ({ value: r.name, label: r.name }))}
@@ -682,10 +682,8 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
           <Button type="default" icon={<ReadOutlined />} onClick={() => setLibraryOpen(true)}>
             Library
           </Button>
-        </Space>
-        <Space>
-          <Button type="default" onClick={() => setGenerateModalOpen(true)}>
-            ✨ Generate
+          <Button type="default" icon={<FireOutlined />} onClick={() => setGenerateModalOpen(true)}>
+            Generate
           </Button>
           <Button
             type={rawMode ? 'primary' : 'default'}
@@ -807,7 +805,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
               <CodeEditor
                 value={rawContent}
                 onChange={setRawContent}
-                language="plain"
+                language="cue"
                 height="100%"
               />
             </Suspense>
