@@ -12,9 +12,11 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -73,6 +75,9 @@ type Server struct {
 	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
 	pveQemuVncMu   sync.Mutex
 	pveQemuVncByID map[string]pveQemuVncOfferSession
+
+	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
+	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
 }
 
 // NewServer builds handlers with the given auth token.
@@ -87,15 +92,20 @@ func NewServer(opts Options) (*Server, error) {
 		opts.ExecRegistry.Reconfigure(opts.Config)
 	}
 
+	valCache, _ := lru.New[string, *ValidateContentResponse](50)
+	graphCache, _ := lru.New[string, *cuetry.RecipeGraphPlan](50)
+
 	s := &Server{
-		opts:            opts,
-		metrics:         opts.Metrics,
-		mux:             http.NewServeMux(),
-		assistRL:        newSlidingRL(),
-		tunnels:         newTunnelManager(),
-		proxy:           proxy.NewManager(proxy.NewLogger(zap.L())),
-		pgPools:         postgres.NewPoolManager(),
-		fileClientCache: ui.NewClientCache(),
+		opts:                  opts,
+		metrics:               opts.Metrics,
+		mux:                   http.NewServeMux(),
+		assistRL:              newSlidingRL(),
+		tunnels:               newTunnelManager(),
+		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
+		pgPools:               postgres.NewPoolManager(),
+		fileClientCache:       ui.NewClientCache(),
+		recipeValidationCache: valCache,
+		recipeGraphCache:      graphCache,
 	}
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))

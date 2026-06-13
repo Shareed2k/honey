@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/shareed2k/honey/internal/config"
 )
 
 func TestAuthMiddlewareRejectsMissingToken(t *testing.T) {
@@ -40,5 +42,19 @@ func TestAuthMiddlewareAcceptsBearer(t *testing.T) {
 	s.withAuth(s.handleMeta)(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServerInitializesCaches(t *testing.T) {
+	opts := Options{Token: "test", Config: &config.File{}}
+	srv, err := NewServer(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if srv.recipeValidationCache == nil {
+		t.Errorf("expected recipeValidationCache to be initialized")
+	}
+	if srv.recipeGraphCache == nil {
+		t.Errorf("expected recipeGraphCache to be initialized")
 	}
 }
