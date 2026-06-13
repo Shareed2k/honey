@@ -13,12 +13,13 @@ import {
 import '@xyflow/react/dist/style.css';
 import './studio.css';
 import { Layout, Button, Drawer, Space, Typography, Select, message, Modal, Alert, Input } from 'antd';
-import { PlusOutlined, SaveOutlined, SyncOutlined, PlayCircleOutlined, CloudDownloadOutlined, UndoOutlined, SettingOutlined, CodeOutlined } from '@ant-design/icons';
+import { PlusOutlined, SaveOutlined, SyncOutlined, PlayCircleOutlined, CloudDownloadOutlined, UndoOutlined, SettingOutlined, CodeOutlined, ReadOutlined } from '@ant-design/icons';
 
 import CustomStepNode from './CustomStepNode';
 import DynamicStepForm from './DynamicStepForm';
 import StorageModal from './StorageModal';
 import GitLoadModal from './GitLoadModal';
+import { LibraryModal } from './LibraryModal';
 import { ParameterPromptModal } from './ParameterPromptModal';
 import { StepRun } from '../RecipesTab/StepRun';
 import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
@@ -96,6 +97,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [intent, setIntent] = useState("");
   const [generateBusy, setGenerateBusy] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   // Storage selection & loading state
   const [availableRecipes, setAvailableRecipes] = useState<any[]>([]);
@@ -677,6 +679,9 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
           <Button type="default" icon={<CloudDownloadOutlined />} onClick={() => setGitLoadModalVisible(true)}>
             Load from Git
           </Button>
+          <Button type="default" icon={<ReadOutlined />} onClick={() => setLibraryOpen(true)}>
+            Library
+          </Button>
         </Space>
         <Space>
           <Button type="default" onClick={() => setGenerateModalOpen(true)}>
@@ -919,6 +924,31 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
           onLoad={handleGitLoad}
         />
       )}
+
+      <LibraryModal
+        open={libraryOpen}
+        onCancel={() => setLibraryOpen(false)}
+        onSelect={async (libRecipe) => {
+          setLibraryOpen(false);
+          try {
+            setRawContent(libRecipe.content);
+            setRawMode(true);
+            setTimeout(async () => {
+               try {
+                 const parseRes = await apiPost('/api/v1/recipes/parse', { content: libRecipe.content });
+                 if (!parseRes.ok) throw new Error(await parseRes.text());
+                 const parseData = await parseRes.json();
+                 setRawContent(JSON.stringify(parseData.recipe, null, 2));
+                 message.success(`Loaded ${libRecipe.name} from Library (CUE loaded into Raw view)`);
+               } catch (e) {
+                 message.success(`Loaded ${libRecipe.name} (Switch to visual manually after fixing validation if needed)`);
+               }
+            }, 50);
+          } catch (err) {
+            message.error("Failed to load library recipe: " + (err as Error).message);
+          }
+        }}
+      />
 
       <Modal
         title="Select hosts to run on"
