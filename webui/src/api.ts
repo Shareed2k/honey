@@ -1307,3 +1307,26 @@ export async function generateRecipe(intent: string, model: string): Promise<Rec
   }
   return await r.json();
 }
+
+export type LibraryRecipe = {
+  name: string;
+  filename: string;
+  description: string;
+  content: string;
+  category: string;
+};
+
+export type LibraryCategory = {
+  name: string;
+  recipes: LibraryRecipe[];
+};
+
+export async function fetchLibraryRecipes(): Promise<LibraryCategory[]> {
+  const r = await apiGet('/api/v1/recipes/library');
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  const data = await r.json();
+  return data.categories || [];
+}
