@@ -142,6 +142,7 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("POST /api/v1/files/copy", s.withAuth(s.handleFilesCopy))
 	s.mux.HandleFunc("POST /api/v1/files/agent-transfer", s.withAuth(s.handleFilesAgentTransfer))
 	s.mux.HandleFunc("GET /api/v1/recipes", s.withAuth(s.handleRecipesList))
+	s.mux.HandleFunc("GET /api/v1/recipes/library", s.withAuth(s.handleRecipesLibrary))
 	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
 	s.mux.HandleFunc("POST /api/v1/recipes/assist", s.withAuth(s.handleRecipesAssist))
 	s.mux.HandleFunc("POST /api/v1/recipes/assist-fix", s.withAuth(s.handleRecipesAssistFix))
