@@ -2,6 +2,7 @@ package cuetry
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -821,5 +822,31 @@ recipe: {
 	}
 	if !strings.Contains(err.Error(), "host") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRecipePromptsDecoding(t *testing.T) {
+	jsonData := `{
+		"name": "test",
+		"defaults": {
+			"prompts": {
+				"APP_VERSION": {
+					"description": "Tag to deploy",
+					"type": "string",
+					"required": true
+				}
+			}
+		},
+		"steps": []
+	}`
+	var r Recipe
+	if err := json.Unmarshal([]byte(jsonData), &r); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.Defaults == nil || r.Defaults.Prompts == nil {
+		t.Fatalf("prompts not decoded")
+	}
+	if p, ok := r.Defaults.Prompts["APP_VERSION"]; !ok || !p.Required {
+		t.Errorf("expected APP_VERSION prompt to be required")
 	}
 }

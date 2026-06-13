@@ -15,18 +15,26 @@ type Recipe struct {
 	Handlers []StepWrapper   `json:"handlers,omitempty"`
 }
 
+// RecipePrompt defines metadata for UI form generation.
+type RecipePrompt struct {
+	Description string `json:"description,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
 // RecipeDefaults holds recipe-level defaults (optional fields).
 type RecipeDefaults struct {
-	RunAs         string            `json:"run_as,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	Secrets       map[string]string `json:"secrets,omitempty"`
-	K8sDebugImage string            `json:"k8s_debug_image,omitempty"`
-	KVTunnel      *bool             `json:"kv_tunnel,omitempty"`
-	MaxParallel   int               `json:"max_parallel,omitempty"`
-	SSHPort       int               `json:"ssh_port,omitempty"`
-	SSHPrivateKey string            `json:"ssh_private_key,omitempty"`
-	Retry         *RecipeStepRetry  `json:"retry,omitempty"`
-	GatherFacts   *bool             `json:"gather_facts,omitempty"`
+	RunAs         string                  `json:"run_as,omitempty"`
+	Env           map[string]string       `json:"env,omitempty"`
+	Secrets       map[string]string       `json:"secrets,omitempty"`
+	Prompts       map[string]RecipePrompt `json:"prompts,omitempty"`
+	K8sDebugImage string                  `json:"k8s_debug_image,omitempty"`
+	KVTunnel      *bool                   `json:"kv_tunnel,omitempty"`
+	MaxParallel   int                     `json:"max_parallel,omitempty"`
+	SSHPort       int                     `json:"ssh_port,omitempty"`
+	SSHPrivateKey string                  `json:"ssh_private_key,omitempty"`
+	Retry         *RecipeStepRetry        `json:"retry,omitempty"`
+	GatherFacts   *bool                   `json:"gather_facts,omitempty"`
 }
 
 // RecipeFileTransfer is a local ↔ remote path pair for SFTP put/get steps.
