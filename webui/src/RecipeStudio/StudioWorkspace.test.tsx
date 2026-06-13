@@ -10,27 +10,29 @@ vi.mock('../api', () => ({
   apiPost: vi.fn(),
 }));
 
+const originalGetComputedStyle = window.getComputedStyle.bind(window);
+
 // Mock ResizeObserver for ReactFlow
 beforeEach(() => {
-  const getComputedStyle = window.getComputedStyle.bind(window);
-  vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => getComputedStyle(elt));
+  vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => originalGetComputedStyle(elt));
 
-  class ResizeObserver {
-    observe() {}
-    unobserve() {}
+  class MockResizeObserver implements ResizeObserver {
+    observe(_target: Element, _options?: ResizeObserverOptions) {}
+    unobserve(_target: Element) {}
     disconnect() {}
   }
-  window.ResizeObserver = ResizeObserver as any;
+  window.ResizeObserver = MockResizeObserver;
 
   vi.clearAllMocks();
 });
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 const renderStudio = () => {
-  (apiGet as any).mockImplementation((url: string) => {
+  vi.mocked(apiGet).mockImplementation((url: string) => {
     if (url === '/api/v1/recipes/studio-config') {
       return Promise.resolve({
         ok: true,
@@ -50,7 +52,7 @@ const renderStudio = () => {
     });
   });
 
-  (apiPost as any).mockImplementation((url: string) => {
+  vi.mocked(apiPost).mockImplementation((url: string) => {
     if (url === '/api/v1/recipes/store/git-load') {
       return Promise.resolve({
         ok: true,

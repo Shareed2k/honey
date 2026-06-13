@@ -46,8 +46,8 @@ export default function KeyValueEditor({ value = {}, onChange }: Props) {
       setEncryptingKey(null);
       setPlaintext('');
       message.success('Secret encrypted successfully');
-    } catch (err: any) {
-      message.error('Encryption failed: ' + err.message);
+    } catch (err: unknown) {
+      message.error('Encryption failed: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIsEncrypting(false);
     }

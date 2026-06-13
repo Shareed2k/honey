@@ -115,6 +115,9 @@ export type HostExecResultRow = {
   Provider: string;
   Success: boolean;
   Skipped?: boolean;
+  StepIndex?: number;
+  StepID?: string;
+  StepKind?: string;
   ExitCode: number;
   Output: string;
   ErrMsg: string;
@@ -1253,4 +1256,3 @@ export async function fetchLogSummary(stats: LogTemplateStat[]): Promise<string>
   const j = await r.json() as { markdown: string };
   return j.markdown;
 }
-
