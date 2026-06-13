@@ -24,6 +24,11 @@ type Props = {
 
 const cueMode = simpleMode({
   start: [
+    // Shell block detection
+    { regex: /(command|script)(\s*:\s*)(""")/, token: ['property', 'operator', 'string'], push: 'shellMultiline' },
+    { regex: /(command|script)(\s*:\s*)(")/, token: ['property', 'operator', 'string'], push: 'shellSingle' },
+    
+    // Standard CUE matching rules
     { regex: /\/\/.*/, token: 'comment' },
     { regex: /"(?:[^\\]|\\.)*?(?:"|$)/, token: 'string' },
     { regex: /'''(?:[^']|'[^']|''[^'])*?(?:'''|$)/, token: 'string' },
@@ -33,6 +38,23 @@ const cueMode = simpleMode({
     { regex: /==|!=|<=|>=|&&|\|\||[+\-*/%<>=!]/, token: 'operator' },
     { regex: /[a-zA-Z_][a-zA-Z0-9_]*:/, token: 'property' },
     { regex: /[[\]{}(),]/, token: 'punctuation' },
+  ],
+  shellMultiline: [
+    { regex: /"""/, token: 'string', pop: true },
+    { regex: /\b(?:echo|ls|cat|cd|pwd|grep|awk|sed|if|then|else|fi|for|do|done|while|case|esac|sudo|apt|apt-get|yum|apk|dnf|pacman|systemctl|journalctl|docker|kubectl|podman)\b/, token: 'keyword' },
+    { regex: /\$\w+|\$\{[^}]+\}/, token: 'variable-2' },
+    { regex: /#.*/, token: 'comment' },
+    { regex: /[^"#$\w]+/, token: 'string' },
+    { regex: /"/, token: 'string' },
+    { regex: /[\w$#]/, token: 'string' }
+  ],
+  shellSingle: [
+    { regex: /"/, token: 'string', pop: true },
+    { regex: /\\./, token: 'string' },
+    { regex: /\b(?:echo|ls|cat|cd|pwd|grep|awk|sed|if|then|else|fi|for|do|done|while|case|esac|sudo|apt|apt-get|yum|apk|dnf|pacman|systemctl|journalctl|docker|kubectl|podman)\b/, token: 'keyword' },
+    { regex: /\$\w+|\$\{[^}]+\}/, token: 'variable-2' },
+    { regex: /[^"\\$\w]+/, token: 'string' },
+    { regex: /[\w$]/, token: 'string' }
   ],
   languageData: {
     commentTokens: { line: '//' },
