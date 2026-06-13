@@ -44,17 +44,15 @@ const cueMode = simpleMode({
     { regex: /\b(?:echo|ls|cat|cd|pwd|grep|awk|sed|if|then|else|fi|for|do|done|while|case|esac|sudo|apt|apt-get|yum|apk|dnf|pacman|systemctl|journalctl|docker|kubectl|podman)\b/, token: 'keyword' },
     { regex: /\$\w+|\$\{[^}]+\}/, token: 'variable-2' },
     { regex: /#.*/, token: 'comment' },
-    { regex: /[^"#$\w]+/, token: 'string' },
-    { regex: /"/, token: 'string' },
-    { regex: /[\w$#]/, token: 'string' }
+    { regex: /"/, token: 'string-2' },
+    { regex: /./, token: null }
   ],
   shellSingle: [
     { regex: /"/, token: 'string', pop: true },
-    { regex: /\\./, token: 'string' },
+    { regex: /\\./, token: 'string-2' },
     { regex: /\b(?:echo|ls|cat|cd|pwd|grep|awk|sed|if|then|else|fi|for|do|done|while|case|esac|sudo|apt|apt-get|yum|apk|dnf|pacman|systemctl|journalctl|docker|kubectl|podman)\b/, token: 'keyword' },
     { regex: /\$\w+|\$\{[^}]+\}/, token: 'variable-2' },
-    { regex: /[^"\\$\w]+/, token: 'string' },
-    { regex: /[\w$]/, token: 'string' }
+    { regex: /./, token: null }
   ],
   languageData: {
     commentTokens: { line: '//' },
