@@ -11,6 +11,13 @@ export type StepDraft = Record<string, unknown> & {
 
 type FlowNodeLike = { id: string };
 type FlowEdgeLike = { source: string; target: string };
+
+export type RecipeStudioSnippet = {
+  id: string;
+  label: string;
+  steps: StepDraft[];
+  edges: FlowEdgeLike[];
+};
 type PositionedNode = {
   id: string;
   position: { x: number; y: number };
@@ -45,6 +52,113 @@ const kindLabels: Record<string, string> = {
   opensearch: 'OpenSearch',
   agent_transfer: 'Agent Transfer',
 };
+
+export const recipeStudioSnippets: RecipeStudioSnippet[] = [
+  {
+    id: 'load_check_ai',
+    label: 'Load Check + AI',
+    steps: [
+      {
+        id: 'collect_load',
+        kind: 'command',
+        host: '*',
+        command: 'uptime && free -h && ps -eo pid,ppid,comm,%cpu,%mem --sort=-%cpu | head -20',
+      },
+      {
+        id: 'summarize_load',
+        kind: 'ai',
+        host: '_',
+        ai: {
+          prompt: 'Summarize host load anomalies, likely causes, and safe next checks.',
+        },
+      },
+    ],
+    edges: [{ source: 'collect_load', target: 'summarize_load' }],
+  },
+  {
+    id: 'k8s_rollout_restart',
+    label: 'K8s Rollout Restart',
+    steps: [
+      {
+        id: 'restart_workload',
+        kind: 'k8s',
+        host: '*',
+        k8s: {
+          namespace: 'default',
+          rollout_restart: { resource: 'deployment/app', wait: true },
+        },
+      },
+      {
+        id: 'verify_workload',
+        kind: 'k8s',
+        host: '*',
+        k8s: {
+          namespace: 'default',
+          get: { resource: 'pods', label_selector: 'app=app', format: 'wide' },
+        },
+      },
+    ],
+    edges: [{ source: 'restart_workload', target: 'verify_workload' }],
+  },
+  {
+    id: 'tunnel_postgres_query',
+    label: 'Tunnel + Postgres',
+    steps: [
+      {
+        id: 'pg_tunnel',
+        kind: 'tunnel',
+        host: '*',
+        tunnel: { remote_host: '127.0.0.1', remote_port: 5432, local_port: 0 },
+      },
+      {
+        id: 'pg_check',
+        kind: 'plugin',
+        host: '_',
+        plugin: {
+          id: 'postgres',
+          action: 'query',
+          config: {
+            dsn_secret: 'PG_DSN',
+            tunnel_step: 'pg_tunnel',
+            sql: 'select now() as checked_at, version() as version',
+          },
+        },
+      },
+    ],
+    edges: [{ source: 'pg_tunnel', target: 'pg_check' }],
+  },
+  {
+    id: 'service_restart_verify',
+    label: 'Service Restart + Verify',
+    steps: [
+      {
+        id: 'service_before',
+        kind: 'command',
+        host: '*',
+        command: 'systemctl is-active --quiet app.service && echo active || echo inactive',
+      },
+      {
+        id: 'service_restart',
+        kind: 'command',
+        host: '*',
+        run_as: 'root',
+        command: 'systemctl restart app.service',
+        retry: { attempts: 3, delay_ms: 1000, max_delay_ms: 10000, backoff: 'exponential' },
+      },
+      {
+        id: 'service_verify',
+        kind: 'command',
+        host: '*',
+        command: 'systemctl is-active --quiet app.service && echo ok',
+        retry: { attempts: 5, delay_ms: 1000, max_delay_ms: 15000, backoff: 'fixed' },
+      },
+    ],
+    edges: [
+      { source: 'service_before', target: 'service_restart' },
+      { source: 'service_restart', target: 'service_verify' },
+    ],
+  },
+];
 
 // listStepKinds reads the per-kind definitions emitted by BuildRecipeStepJSONSchema
 // (definitions: { command: {...}, postgres: {...}, ..., defaults: {...} }). "defaults"
@@ -160,6 +274,37 @@ export function buildRecipeFromFlow(input: {
   });
 
   return { name: input.name, type: 'graph', steps };
+}
+
+export function collectAncestorNodeIDs(edges: FlowEdgeLike[], targetId: string): Set<string> {
+  const out = new Set<string>([targetId]);
+  const visit = (id: string) => {
+    for (const edge of edges) {
+      if (edge.target !== id || out.has(edge.source)) {
+        continue;
+      }
+      out.add(edge.source);
+      visit(edge.source);
+    }
+  };
+  visit(targetId);
+  return out;
+}
+
+export function uniqueStepID(base: string, usedIDs: Set<string>): string {
+  const clean = base.trim().replace(/^[^a-zA-Z]+/, '').replace(/[^a-zA-Z0-9_-]/g, '_') || 'step';
+  if (!usedIDs.has(clean)) {
+    usedIDs.add(clean);
+    return clean;
+  }
+
+  let suffix = 2;
+  while (usedIDs.has(`${clean}_${suffix}`)) {
+    suffix++;
+  }
+  const next = `${clean}_${suffix}`;
+  usedIDs.add(next);
+  return next;
 }
 
 export function recipeNameFromFilename(fileName?: string): string {

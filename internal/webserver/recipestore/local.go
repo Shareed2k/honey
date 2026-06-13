@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
@@ -75,7 +76,23 @@ func (s *LocalRecipeStore) Save(_ context.Context, name string, content string) 
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(content), 0o600)
+
+	finalContent := []byte(content)
+	if strings.HasPrefix(strings.TrimSpace(content), "{") {
+		// #nosec G304
+		existingCUE, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		merged, err := cuetry.ApplyJSONToCUEAST(existingCUE, []byte(content))
+		if err != nil {
+			return fmt.Errorf("failed to apply JSON to CUE AST: %w", err)
+		}
+		finalContent = merged
+	}
+
+	// #nosec G703
+	return os.WriteFile(path, finalContent, 0o600)
 }
 
 // Delete permanently removes a local recipe file by name.

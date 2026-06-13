@@ -54,6 +54,7 @@ func (s *Server) handleRecipesStoreList(w http.ResponseWriter, r *http.Request) 
 // It combines the parsed recipe with graph/plan data so the Studio needs only one call.
 type StoreLoadResponse struct {
 	Recipe map[string]interface{}  `json:"recipe"`
+	RawCUE string                  `json:"raw_cue"`
 	Plan   string                  `json:"plan,omitempty"`
 	Steps  []ResolvedStepSummary   `json:"steps,omitempty"`
 	Graph  *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
@@ -87,7 +88,7 @@ func (s *Server) handleRecipesStoreGet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
-	resp := StoreLoadResponse{Recipe: recipeMap}
+	resp := StoreLoadResponse{Recipe: recipeMap, RawCUE: content}
 	if verr := cuetry.ValidateParsedRecipe(recipe, nil); verr != nil {
 		resp.Errors = []ValidateContentError{{Kind: "validation", Message: verr.Error()}}
 	} else {

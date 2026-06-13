@@ -5,6 +5,7 @@ import type {
   ParsedRecipe,
   RecipeGraphPlan,
   ResolvedStep,
+  RiskReport,
   ValidationError,
 } from '../api';
 
@@ -25,7 +26,7 @@ export type Draft = {
 export type EnvPair = { key: string; value: string };
 
 export type PlanState =
-  | { ok: true; plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan }
+  | { ok: true; plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan; risk?: RiskReport }
   | { ok: false; errors: ValidationError[] }
   | null;
 

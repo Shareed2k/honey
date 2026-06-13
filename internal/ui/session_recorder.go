@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -193,11 +194,13 @@ func (r *SessionRecorder) RecordError(err error) {
 // Recorded into the session file so a later "recent runs" enumeration can
 // attribute the recording to a recipe and detect in-browser edits.
 type RecipeMeta struct {
-	RecipePath        string         `json:"recipe_path"`
-	HostCount         int            `json:"host_count"`
-	RecipeContentHash string         `json:"recipe_content_hash"`
-	StartedAt         time.Time      `json:"started_at"`
-	Hosts             []hosts.Record `json:"hosts,omitempty"`
+	RecipePath        string                  `json:"recipe_path"`
+	HostCount         int                     `json:"host_count"`
+	RecipeContentHash string                  `json:"recipe_content_hash"`
+	StartedAt         time.Time               `json:"started_at"`
+	Hosts             []hosts.Record          `json:"hosts,omitempty"`
+	Plan              string                  `json:"plan,omitempty"`
+	Graph             *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
 }
 
 // HostsForRecipeMeta copies up to limit connectable host records for recipe-meta (web re-run).

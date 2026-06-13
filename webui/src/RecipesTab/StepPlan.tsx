@@ -8,10 +8,12 @@ import {
   type RecipeGraphPlan,
   type ResolvedStep,
   type ValidationError,
+  type RiskReport,
 } from '../api';
 import type { EnvPair, PlanState } from './types';
 import { EditForm } from './EditForm';
 import { RecipeGraphFlow } from './RecipeGraphFlow';
+import { ParameterPromptModal } from '../RecipeStudio/ParameterPromptModal';
 
 type PlanTab = 'plan' | 'graph' | 'edit';
 
@@ -30,12 +32,14 @@ type Props = {
   hostCount: number;
   onBack: () => void;
   onExecute: () => void;
+  validationRisk?: RiskReport;
 };
 
 export function StepPlan(props: Props) {
   const graphMode = isGraphRecipe(props.recipe);
   const [tab, setTab] = useState<PlanTab>('plan');
   const [plan, setPlan] = useState<PlanState>(null);
+  const [promptsOpen, setPromptsOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +49,7 @@ export function StepPlan(props: Props) {
       setPlan(
         'errors' in res
           ? { ok: false, errors: res.errors }
-          : { ok: true, plan: res.plan, steps: res.steps, graph: res.graph },
+          : { ok: true, plan: res.plan, steps: res.steps, graph: res.graph, risk: res.risk },
       );
     })();
     return () => {
@@ -69,6 +73,12 @@ export function StepPlan(props: Props) {
   const dangerous = root || !props.recordSession;
 
   function handleExecute() {
+    const prompts = props.baseRecipe?.defaults?.prompts;
+    if (prompts && Object.keys(prompts).length > 0) {
+      setPromptsOpen(true);
+      return;
+    }
+
     const msg = dangerous
       ? 'Execute this recipe? Some steps run as root and/or session recording is off.'
       : `Execute this recipe on ${props.hostCount} host${props.hostCount === 1 ? '' : 's'}?`;
@@ -153,6 +163,24 @@ export function StepPlan(props: Props) {
             }
           />
         ) : null}
+        
+        {(() => {
+          const risk = props.validationRisk || (plan?.ok ? plan.risk : undefined);
+          return risk && risk.score > 0 ? (
+            <div style={{ marginBottom: 16, marginTop: 16 }}>
+              <Alert
+                type={risk.level === 'High' ? 'error' : risk.level === 'Medium' ? 'warning' : 'info'}
+                showIcon
+                message={`Risk Level: ${risk.level} (Score: ${risk.score})`}
+                description={
+                  <ul style={{ margin: 0, paddingLeft: 20, marginTop: 8 }}>
+                    {risk.findings.map((f: string, i: number) => <li key={i}>{f}</li>)}
+                  </ul>
+                }
+              />
+            </div>
+          ) : null;
+        })()}
       </section>
 
       <footer className="rcp-step__footer">
@@ -168,6 +196,19 @@ export function StepPlan(props: Props) {
           Execute on {props.hostCount} host{props.hostCount === 1 ? '' : 's'} ▶
         </Button>
       </footer>
+      <ParameterPromptModal
+        open={promptsOpen}
+        prompts={props.baseRecipe?.defaults?.prompts || {}}
+        onCancel={() => setPromptsOpen(false)}
+        onSubmit={(vals) => {
+          setPromptsOpen(false);
+          const newEnv = Object.entries(vals).map(([k, v]) => ({ key: k, value: v }));
+          props.onEnvChange([...props.envOverrides, ...newEnv]);
+          setTimeout(() => {
+            props.onExecute();
+          }, 50);
+        }}
+      />
     </div>
   );
 }

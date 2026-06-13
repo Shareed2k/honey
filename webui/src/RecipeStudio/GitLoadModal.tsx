@@ -15,6 +15,15 @@ type Props = {
   }) => Promise<void>;
 };
 
+type GitLoadFormValues = {
+  gitUrl: string;
+  gitBranch: string;
+  path: string;
+  gitUser?: string;
+  gitPass?: string;
+  gitSsh?: string;
+};
+
 export default function GitLoadModal({ visible, onCancel, onLoad }: Props) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
@@ -38,19 +47,19 @@ export default function GitLoadModal({ visible, onCancel, onLoad }: Props) {
     }
   }, [visible, configLoaded, form]);
 
-  const handleFinish = async (values: any) => {
+  const handleFinish = async (values: GitLoadFormValues) => {
     setLoading(true);
     try {
       await onLoad({
         gitUrl: values.gitUrl,
         gitBranch: values.gitBranch,
         path: values.path,
-        gitUser: values.gitUser,
-        gitPass: values.gitPass,
-        gitSsh: values.gitSsh,
+        gitUser: values.gitUser || '',
+        gitPass: values.gitPass || '',
+        gitSsh: values.gitSsh || '',
       });
       onCancel();
-    } catch (err: any) {
+    } catch {
       // Error handled by parent
     } finally {
       setLoading(false);

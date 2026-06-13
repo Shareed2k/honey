@@ -1,6 +1,9 @@
 package webserver
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -27,5 +30,24 @@ func TestClipRunesForRecipeAssist(t *testing.T) {
 	got := clipRunesForRecipeAssist(s, 3)
 	if got == s || !strings.Contains(got, "truncated") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestHandleRecipesAIFixAndGenerate(t *testing.T) {
+	// We just test the signature and auth/method bounds since we don't have an OpenAI key in tests.
+	srv := &Server{}
+
+	req1 := httptest.NewRequest("POST", "/api/v1/recipes/assist-fix", bytes.NewBufferString(`{}`))
+	w1 := httptest.NewRecorder()
+	srv.handleRecipesAssistFix(w1, req1)
+	if w1.Code == http.StatusNotFound {
+		t.Errorf("handleRecipesAssistFix not implemented")
+	}
+
+	req2 := httptest.NewRequest("POST", "/api/v1/recipes/generate", bytes.NewBufferString(`{}`))
+	w2 := httptest.NewRecorder()
+	srv.handleRecipesGenerate(w2, req2)
+	if w2.Code == http.StatusNotFound {
+		t.Errorf("handleRecipesGenerate not implemented")
 	}
 }

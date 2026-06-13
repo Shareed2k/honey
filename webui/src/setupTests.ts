@@ -7,6 +7,12 @@ if (typeof ResizeObserver === 'undefined') {
   };
 }
 
+const jsdomGetComputedStyle = window.getComputedStyle.bind(window);
+Object.defineProperty(window, 'getComputedStyle', {
+  writable: true,
+  value: (elt: Element) => jsdomGetComputedStyle(elt),
+});
+
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: (query: string) => ({
