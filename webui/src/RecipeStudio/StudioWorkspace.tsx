@@ -23,7 +23,7 @@ import { LibraryModal } from './LibraryModal';
 import { ParameterPromptModal } from './ParameterPromptModal';
 import { StepRun } from '../RecipesTab/StepRun';
 import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
-import { apiGet, apiPost, fixRecipeErrors, generateRecipe } from '../api';
+import { apiGet, apiPost, fixRecipeErrors, generateRecipe, syncRecipeAST } from '../api';
 import {
   applyWaveLayout,
   buildFlowFromRecipe,
@@ -80,6 +80,8 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const [originalCue, setOriginalCue] = useState<string>('');
+  const [syncingAST, setSyncingAST] = useState(false);
   const [runHosts, setRunHosts] = useState<HostRecord[]>([]);
   const [hostPickerOpen, setHostPickerOpen] = useState(false);
   const [pendingRunStepId, setPendingRunStepId] = useState<string | null>(null);
@@ -139,6 +141,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
         throw new Error(await res.text());
       }
       const data = await res.json();
+      setOriginalCue(data.raw_cue || '');
       const recipeJson = data.recipe;
 
       if (!recipeJson || !recipeJson.steps) {
@@ -238,11 +241,30 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
     return base;
   }, [edges, nodes, rawContent, rawMode, recipeDefaults, selectedRecipe, stepData]);
 
-  const handleSwitchToRaw = () => {
-    setRawContent(JSON.stringify(buildRecipeJSON(), null, 2));
-    setRawMode(true);
-    setRunPanelOpen(false);
-    setSelectedNodeId(null);
+  const handleSwitchToRaw = async () => {
+    try {
+      setSyncingAST(true);
+      const visualJSON = buildRecipeJSON();
+      
+      let newRaw = '';
+      if (originalCue) {
+        try {
+          newRaw = await syncRecipeAST(originalCue, visualJSON);
+        } catch (syncErr) {
+          console.warn("AST Sync failed, falling back to JSON:", syncErr);
+          newRaw = JSON.stringify(visualJSON, null, 2);
+        }
+      } else {
+        newRaw = JSON.stringify(visualJSON, null, 2);
+      }
+      
+      setRawContent(newRaw);
+      setRawMode(true);
+      setRunPanelOpen(false);
+      setSelectedNodeId(null);
+    } finally {
+      setSyncingAST(false);
+    }
   };
 
   const handleSwitchToVisual = () => {

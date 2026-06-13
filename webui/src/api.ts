@@ -555,6 +555,16 @@ export async function fetchRecipeContent(path: string): Promise<string> {
   return j.content ?? '';
 }
 
+export async function syncRecipeAST(originalCUE: string, recipeContent: any): Promise<string> {
+  const r = await apiPost('/api/v1/recipes/sync-ast', { original_cue: originalCUE, recipe_content: recipeContent });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  const data = await r.json();
+  return data.cue;
+}
+
 /** Parse a disk recipe (.cue) into a ParsedRecipe via POST /api/v1/recipes/parse. */
 export async function parseDiskRecipe(path: string): Promise<ParsedRecipe> {
   const r = await apiPost('/api/v1/recipes/parse', { path });
