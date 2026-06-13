@@ -248,6 +248,7 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 					Skipped:  true,
 					Output:   "(skipped: when)",
 				}
+				annotateCueStepResult(&res, i, step, kind)
 				out <- res
 				rows := []HostExecResult{res}
 				observeRecipeStep(p.Obs, kind, stepStart, rows, 1)
@@ -255,6 +256,7 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 				continue
 			}
 			res := runCueStepAIExecute(ctx, p.Recipe, i, step, history, p.AISystemPrompt)
+			annotateCueStepResult(&res, i, step, kind)
 			out <- res
 			rows := []HostExecResult{res}
 			observeRecipeStep(p.Obs, kind, stepStart, rows, 1)
@@ -331,6 +333,17 @@ func cueStepAllTargetsTransientTransportFailed(results []HostExecResult) bool {
 		}
 	}
 	return true
+}
+
+func annotateCueStepResult(res *HostExecResult, stepIdx int, step cuetry.Step, kind string) {
+	if res == nil || step == nil {
+		return
+	}
+	if stepIdx >= 0 {
+		res.StepIndex = stepIdx + 1
+	}
+	res.StepID = strings.TrimSpace(step.Base().ID)
+	res.StepKind = strings.TrimSpace(kind)
 }
 
 func recipeHostMaxConc(step cuetry.Step, defaults *cuetry.RecipeDefaults) int {
@@ -495,8 +508,9 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.St
 	kind := step.Kind()
 	if kind == cuetry.KindAgentTransfer {
 		rows, err := streamCueStepAgentTransferWhen(ctx, run, i, step)
-		for _, r := range rows {
-			out <- r
+		for idx := range rows {
+			annotateCueStepResult(&rows[idx], i, step, kind)
+			out <- rows[idx]
 		}
 		recordGraphStepStdout(run.Recipe, step, kind, run.outputStore, rows)
 		observeRecipeStep(run.Obs, kind, stepStart, rows, 1)
@@ -534,6 +548,7 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.St
 	go func() {
 		for _, sk := range whenSkipped {
 			sk.OutputCapture = cuetry.StepOutputName(step)
+			annotateCueStepResult(&sk, i, step, kind)
 			stepResults = append(stepResults, sk)
 			res := sk
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
@@ -541,6 +556,7 @@ func streamCueRecipeStep(ctx context.Context, run *cueRun, i int, step cuetry.St
 		}
 		for res := range ch {
 			res.OutputCapture = cuetry.StepOutputName(step)
+			annotateCueStepResult(&res, i, step, kind)
 			stepResults = append(stepResults, res)
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 			out <- res

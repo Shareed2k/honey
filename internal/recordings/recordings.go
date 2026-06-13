@@ -9,6 +9,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // Limits for loading a full recording into memory (aligned with HTTP API).
@@ -192,4 +194,39 @@ func ListHrecBasenames(recordDir string) ([]string, error) {
 		out[i] = files[i].name
 	}
 	return out, nil
+}
+
+// ExtractFailedHosts parses a recording and returns unique failed host records.
+func ExtractFailedHosts(events []Event) []hosts.Record {
+	seen := make(map[string]bool)
+	var failed []hosts.Record
+
+	type partialResult struct {
+		Provider  string            `json:"provider"`
+		Name      string            `json:"name"`
+		PrimaryIP string            `json:"primary_ip"`
+		ExtraIPs  []string          `json:"extra_ips"`
+		Meta      map[string]string `json:"meta"`
+		Success   bool              `json:"success"`
+	}
+
+	for _, e := range events {
+		if e.Type == "result" {
+			var res partialResult
+			if err := json.Unmarshal(e.Result, &res); err == nil && !res.Success {
+				key := res.Provider + ":" + res.Name + ":" + res.PrimaryIP
+				if !seen[key] {
+					seen[key] = true
+					failed = append(failed, hosts.Record{
+						Provider:  res.Provider,
+						Name:      res.Name,
+						PrimaryIP: res.PrimaryIP,
+						ExtraIPs:  res.ExtraIPs,
+						Meta:      res.Meta,
+					})
+				}
+			}
+		}
+	}
+	return failed
 }

@@ -115,6 +115,9 @@ export type HostExecResultRow = {
   Provider: string;
   Success: boolean;
   Skipped?: boolean;
+  StepIndex?: number;
+  StepID?: string;
+  StepKind?: string;
   ExitCode: number;
   Output: string;
   ErrMsg: string;
@@ -510,13 +513,19 @@ export async function fetchRecentRuns(limit = 20): Promise<RecentRunEntry[]> {
   return j.runs ?? [];
 }
 
+export type RiskReport = {
+  score: number;
+  level: string;
+  findings: string[];
+};
+
 /**
  * Validate a structured recipe payload. Returns `{plan, steps}` on success (200), or
  * `{errors}` on a 400 validation failure. Other HTTP errors throw.
  */
 export async function validateRecipeContent(
   recipe: ParsedRecipe,
-): Promise<{ plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan } | { errors: ValidationError[] }> {
+): Promise<{ plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan; risk?: RiskReport } | { errors: ValidationError[] }> {
   const r = await apiPost('/api/v1/recipes/validate-content', { recipe_content: recipe });
   const body = (await r.json().catch(() => ({}))) as {
     plan?: string;
@@ -524,9 +533,10 @@ export async function validateRecipeContent(
     graph?: RecipeGraphPlan;
     errors?: ValidationError[];
     error?: string;
+    risk?: RiskReport;
   };
   if (r.ok) {
-    return { plan: body.plan ?? '', steps: body.steps ?? [], graph: body.graph };
+    return { plan: body.plan ?? '', steps: body.steps ?? [], graph: body.graph, risk: body.risk };
   }
   if (r.status === 400) {
     return {
@@ -543,6 +553,16 @@ export async function fetchRecipeContent(path: string): Promise<string> {
     throw new Error(j.error || r.statusText);
   }
   return j.content ?? '';
+}
+
+export async function syncRecipeAST(originalCUE: string, recipeContent: any): Promise<string> {
+  const r = await apiPost('/api/v1/recipes/sync-ast', { original_cue: originalCUE, recipe_content: recipeContent });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  const data = await r.json();
+  return data.cue;
 }
 
 /** Parse a disk recipe (.cue) into a ParsedRecipe via POST /api/v1/recipes/parse. */
@@ -626,6 +646,15 @@ export async function fetchRecordingsForHost(params: {
     host_ip: params.host_ip,
   });
   return resp.items;
+}
+
+export async function fetchRecordingsFailedHosts(fileName: string): Promise<HostRecord[]> {
+  const r = await apiGet(`/api/v1/recordings/${encodeURIComponent(fileName.replace('.hrec.jsonl', ''))}/failed-hosts`);
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return await r.json();
 }
 
 export async function fetchRecordingEvents(fileName: string): Promise<RecordingEvent[]> {
@@ -1254,3 +1283,60 @@ export async function fetchLogSummary(stats: LogTemplateStat[]): Promise<string>
   return j.markdown;
 }
 
+export type RecipesAIGraphResponse = {
+  recipe: Record<string, unknown>;
+  explanation?: string;
+};
+
+export async function fixRecipeErrors(
+  recipeContent: Record<string, unknown>,
+  errors: any[],
+  model: string
+): Promise<RecipesAIGraphResponse> {
+  const r = await fetch('/api/v1/recipes/assist-fix', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipe_content: recipeContent, errors, model })
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return await r.json();
+}
+
+export async function generateRecipe(intent: string, model: string): Promise<RecipesAIGraphResponse> {
+  const r = await fetch('/api/v1/recipes/generate', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ intent, model })
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return await r.json();
+}
+
+export type LibraryRecipe = {
+  name: string;
+  filename: string;
+  description: string;
+  content: string;
+  category: string;
+};
+
+export type LibraryCategory = {
+  name: string;
+  recipes: LibraryRecipe[];
+};
+
+export async function fetchLibraryRecipes(): Promise<LibraryCategory[]> {
+  const r = await apiGet('/api/v1/recipes/library');
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  const data = await r.json();
+  return data.categories || [];
+}

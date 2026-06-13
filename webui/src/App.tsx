@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Layout, Menu, Typography, Modal, Button, Input, Select, Alert, Space, Spin,
+  Layout, Menu, Typography, Modal, Button, Input, Select, Alert, Space, Spin, message,
 } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -17,6 +17,8 @@ import {
   recipeAssist,
   startTunnel,
   fetchHostPorts,
+  fetchRecordingsFailedHosts,
+  fetchRecordingEvents,
 } from './api';
 import type { RecordingListEntry, RecordingsListResponse } from './api';
 import { recordKey } from './HostPicker';
@@ -652,6 +654,43 @@ export function App() {
             assistAvailable={!!meta?.terminal_assist_available}
             onRecordingsChange={() => void openReplayAllRecordings()}
             onClose={() => { setReplayRecord(null); setReplayListMeta(null); }}
+            onRetryFailed={async (fileName) => {
+              try {
+                const events = await fetchRecordingEvents(fileName);
+                const metaEv = events.find((e) => e.type === 'recipe-meta');
+                const recipePath = (metaEv?.result as any)?.recipe_path;
+                if (!recipePath) {
+                  message.warning('Recording does not contain recipe metadata');
+                  return;
+                }
+                const failedHosts = await fetchRecordingsFailedHosts(fileName);
+                if (failedHosts.length === 0) {
+                  message.info('No failed hosts found in this recording');
+                  return;
+                }
+                
+                setReplayRecord(null); // Close modal
+                setTab('studio');
+                
+                setRecords((prev) => {
+                  const merged = [...prev];
+                  for (const fh of failedHosts) {
+                    if (!merged.some(r => recordKey(r) === recordKey(fh))) {
+                      merged.push(fh);
+                    }
+                  }
+                  return merged;
+                });
+                
+                const nextKeys: Record<string, boolean> = {};
+                for (const h of failedHosts) nextKeys[recordKey(h)] = true;
+                setSelectedKeys(nextKeys);
+                
+                message.success(`Loaded ${failedHosts.length} failed hosts for retry`);
+              } catch (e) {
+                message.error('Failed to prepare retry: ' + (e instanceof Error ? e.message : String(e)));
+              }
+            }}
           />
         ) : (
           <Modal

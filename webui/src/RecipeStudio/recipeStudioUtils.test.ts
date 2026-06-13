@@ -3,11 +3,14 @@ import { describe, expect, it } from 'vitest';
 import {
   applyWaveLayout,
   buildRecipeFromFlow,
+  collectAncestorNodeIDs,
   createStepDraft,
   detectStepKind,
   listStepKinds,
   recipeNameFromFilename,
+  recipeStudioSnippets,
   stepSchemaForKind,
+  uniqueStepID,
 } from './recipeStudioUtils';
 
 describe('recipeStudioUtils', () => {
@@ -163,5 +166,28 @@ describe('recipeStudioUtils', () => {
 
     expect(laidOut[0].position).toEqual({ x: 100, y: 80 });
     expect(laidOut[1].position).toEqual({ x: 340, y: 80 });
+  });
+
+  it('collects only upstream dependencies for running one graph step', () => {
+    const edges = [
+      { source: 'fetch', target: 'restart' },
+      { source: 'restart', target: 'verify' },
+      { source: 'restart', target: 'notify' },
+      { source: 'unrelated', target: 'other' },
+    ];
+
+    expect([...collectAncestorNodeIDs(edges, 'verify')].sort()).toEqual(['fetch', 'restart', 'verify']);
+  });
+
+  it('generates stable unique step ids for snippets', () => {
+    const used = new Set(['collect_load', 'collect_load_2']);
+
+    expect(uniqueStepID('collect_load', used)).toBe('collect_load_3');
+    expect(uniqueStepID('123 bad id', used)).toBe('bad_id');
+  });
+
+  it('ships reusable recipe studio snippets', () => {
+    expect(recipeStudioSnippets.map((s) => s.id)).toContain('tunnel_postgres_query');
+    expect(recipeStudioSnippets.every((s) => s.steps.length > 0)).toBe(true);
   });
 });

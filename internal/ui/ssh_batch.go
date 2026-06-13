@@ -67,6 +67,12 @@ type HostExecResult struct {
 	OutputCapture string // named CUE output capture; display may suppress successful stdout
 	ErrMsg        string // transport / spawn failure (not remote stderr)
 
+	// StepIndex / StepID / StepKind are set for CUE recipe rows so streaming UIs
+	// can map host results back to graph nodes without parsing display labels.
+	StepIndex int    `json:",omitempty"` // 1-based recipe step index
+	StepID    string `json:",omitempty"`
+	StepKind  string `json:",omitempty"`
+
 	// HookPhase / HookOutput are set when a CUE step hook ran after the main result (command/script only).
 	HookPhase  string // "on_success" or "on_failure"
 	HookOutput string // captured stdout+stderr from the hook (local or remote)

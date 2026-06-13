@@ -203,6 +203,7 @@ func graphRunAIStep(ctx context.Context, run *cueRun, idx int, step cuetry.Step,
 			Skipped:  true,
 			Output:   "(skipped: when)",
 		}
+		annotateCueStepResult(&res, idx, step, cuetry.KindAI)
 		out <- res
 		return []HostExecResult{res}, nil
 	}
@@ -223,6 +224,7 @@ func graphRunAIStep(ctx context.Context, run *cueRun, idx int, step cuetry.Step,
 	}
 	historyMu.Unlock()
 	res := runCueStepAIExecute(ctx, run.Recipe, idx, step, hist, run.AISystemPrompt)
+	annotateCueStepResult(&res, idx, step, cuetry.KindAI)
 	out <- res
 	if !res.Success {
 		return []HostExecResult{res}, fmt.Errorf("ai step failed: %s", res.ErrMsg)

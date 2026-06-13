@@ -20,23 +20,27 @@ type recipeMetaEvent struct {
 }
 
 type recipeMetaPayload struct {
-	RecipePath        string         `json:"recipe_path"`
-	HostCount         int            `json:"host_count"`
-	RecipeContentHash string         `json:"recipe_content_hash"`
-	StartedAt         string         `json:"started_at"`
-	Hosts             []hosts.Record `json:"hosts,omitempty"`
+	RecipePath        string                  `json:"recipe_path"`
+	HostCount         int                     `json:"host_count"`
+	RecipeContentHash string                  `json:"recipe_content_hash"`
+	StartedAt         string                  `json:"started_at"`
+	Hosts             []hosts.Record          `json:"hosts,omitempty"`
+	Plan              string                  `json:"plan,omitempty"`
+	Graph             *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
 }
 
 // RecentRunEntry is one recent recipe run.
 type RecentRunEntry struct {
-	RecipeName        string         `json:"recipe_name"`
-	RecipePath        string         `json:"recipe_path"`
-	HostCount         int            `json:"host_count"`
-	StartedAt         string         `json:"started_at"`
-	RecordingID       string         `json:"recording_id"`
-	RecipeContentHash string         `json:"recipe_content_hash,omitempty"`
-	Edited            bool           `json:"edited"`
-	Hosts             []hosts.Record `json:"hosts,omitempty"`
+	RecipeName        string                  `json:"recipe_name"`
+	RecipePath        string                  `json:"recipe_path"`
+	HostCount         int                     `json:"host_count"`
+	StartedAt         string                  `json:"started_at"`
+	RecordingID       string                  `json:"recording_id"`
+	RecipeContentHash string                  `json:"recipe_content_hash,omitempty"`
+	Edited            bool                    `json:"edited"`
+	Hosts             []hosts.Record          `json:"hosts,omitempty"`
+	Plan              string                  `json:"plan,omitempty"`
+	Graph             *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
 }
 
 // RecentRunsResponse is returned by GET /api/v1/recipes/recent-runs.
@@ -96,6 +100,8 @@ func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request)
 			RecipeContentHash: meta.RecipeContentHash,
 			Edited:            isEdited(meta),
 			Hosts:             meta.Hosts,
+			Plan:              meta.Plan,
+			Graph:             meta.Graph,
 		})
 	}
 	sort.Slice(runs, func(i, j int) bool { return runs[i].StartedAt > runs[j].StartedAt })

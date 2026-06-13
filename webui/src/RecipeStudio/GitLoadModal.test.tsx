@@ -8,11 +8,12 @@ vi.mock('../api', () => ({
   apiGet: vi.fn(),
 }));
 
-beforeEach(() => {
-  const getComputedStyle = window.getComputedStyle.bind(window);
-  vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => getComputedStyle(elt));
+const originalGetComputedStyle = window.getComputedStyle.bind(window);
 
-  (apiGet as any).mockResolvedValue({
+beforeEach(() => {
+  vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => originalGetComputedStyle(elt));
+
+  vi.mocked(apiGet).mockResolvedValue({
     ok: true,
     json: async () => ({
       git_url: 'https://github.com/org/repo.git',

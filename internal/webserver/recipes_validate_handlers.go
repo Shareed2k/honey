@@ -14,7 +14,8 @@ import (
 
 // ValidateContentRequest is the JSON body for POST /api/v1/recipes/validate-content.
 type ValidateContentRequest struct {
-	RecipeContent map[string]interface{} `json:"recipe_content"`
+	RecipeContent    map[string]interface{} `json:"recipe_content,omitempty"`
+	RecipeContentRaw string                 `json:"recipe_content_raw,omitempty"`
 }
 
 // ValidateContentError is one validation issue.
@@ -47,12 +48,14 @@ type ValidateContentResponse struct {
 	Steps  []ResolvedStepSummary   `json:"steps,omitempty"`
 	Graph  *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
 	Errors []ValidateContentError  `json:"errors,omitempty"`
+	Risk   *cuetry.RiskReport      `json:"risk,omitempty"`
 }
 
 // GraphPlanRequest is the JSON body for POST /api/v1/recipes/graph-plan.
 type GraphPlanRequest struct {
-	Path          string                 `json:"path,omitempty"`
-	RecipeContent map[string]interface{} `json:"recipe_content,omitempty"`
+	Path             string                 `json:"path,omitempty"`
+	RecipeContent    map[string]interface{} `json:"recipe_content,omitempty"`
+	RecipeContentRaw string                 `json:"recipe_content_raw,omitempty"`
 }
 
 // RecipesParseRequest is the JSON body for POST /api/v1/recipes/parse.
@@ -93,17 +96,39 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 		writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
 		return
 	}
-	recipe, err := recipeFromContentMap(body.RecipeContent)
-	if err != nil {
-		status = "error"
-		writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
-		return
+	var recipe *cuetry.Recipe
+	if body.RecipeContentRaw != "" {
+		parsed, err := cuetry.ParseRemoteRecipe([]byte(body.RecipeContentRaw), nil)
+		if err != nil {
+			status = "error"
+			writeValidationErrors(w, []ValidateContentError{{Kind: "parse", Message: err.Error()}})
+			return
+		}
+		recipe = &parsed
+	} else if body.RecipeContent != nil {
+		var err error
+		recipe, err = recipeFromContentMap(body.RecipeContent)
+		if err != nil {
+			status = "error"
+			writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
+			return
+		}
 	}
 	if recipe == nil {
 		status = "error"
-		writeValidationErrors(w, []ValidateContentError{{Kind: "schema", Message: "recipe_content required"}})
+		writeValidationErrors(w, []ValidateContentError{{Kind: "schema", Message: "recipe_content or recipe_content_raw required"}})
 		return
 	}
+
+	hash, _ := cuetry.HashRecipeJSON(*recipe)
+	if hash != "" && s.recipeValidationCache != nil {
+		if cached, ok := s.recipeValidationCache.Get(hash); ok {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(cached)
+			return
+		}
+	}
+
 	if err := cuetry.ValidateParsedRecipe(*recipe, nil); err != nil {
 		status = "error"
 		writeValidationErrors(w, []ValidateContentError{{Kind: "validation", Message: err.Error()}})
@@ -132,11 +157,18 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 		}
 	}
 	resp := ValidateContentResponse{Plan: plan, Steps: steps}
+	risk := cuetry.AnalyzeRecipeRisk(*recipe)
+	resp.Risk = &risk
 	if mode, merr := cuetry.RecipeExecutionMode(*recipe); merr == nil && mode == cuetry.ExecutionModeGraph {
 		if gp, gerr := cuetry.BuildRecipeGraphPlan(*recipe); gerr == nil {
 			resp.Graph = gp
 		}
 	}
+
+	if hash != "" && len(resp.Errors) == 0 && s.recipeValidationCache != nil {
+		s.recipeValidationCache.Add(hash, &resp)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -151,7 +183,7 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/graph-plan [post]
 // @Security BearerAuth
-func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -199,6 +231,16 @@ func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("path or recipe_content required"), http.StatusBadRequest)
 		return
 	}
+
+	hash, _ := cuetry.HashRecipeJSON(recipe)
+	if hash != "" && s.recipeGraphCache != nil {
+		if cached, ok := s.recipeGraphCache.Get(hash); ok {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(cached)
+			return
+		}
+	}
+
 	if err := cuetry.ValidateParsedRecipe(recipe, nil); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -208,6 +250,11 @@ func (*Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
+
+	if hash != "" && s.recipeGraphCache != nil {
+		s.recipeGraphCache.Add(hash, plan)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(plan)
 }
@@ -269,4 +316,43 @@ func (*Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(RecipesParseResponse{Recipe: recipeMap})
+}
+
+// SyncASTRequest is the JSON body for POST /api/v1/recipes/sync-ast.
+type SyncASTRequest struct {
+	OriginalCUE   string                 `json:"original_cue"`
+	RecipeContent map[string]interface{} `json:"recipe_content"`
+}
+
+// SyncASTResponse is the JSON response for POST /api/v1/recipes/sync-ast.
+type SyncASTResponse struct {
+	CUE string `json:"cue"`
+}
+
+func (s *Server) handleRecipesSyncAST(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req SyncASTRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	// Convert map back to JSON bytes
+	jsonBytes, err := json.Marshal(req.RecipeContent)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	merged, err := cuetry.ApplyJSONToCUEAST([]byte(req.OriginalCUE), jsonBytes)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(SyncASTResponse{CUE: string(merged)})
 }

@@ -563,6 +563,8 @@ func resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/cue-exec [post]
 // @Security BearerAuth
+//
+//nolint:gocyclo
 func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -616,12 +618,21 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		hash, _ := cuetry.HashRecipeJSON(recipe)
+
+		planText, _, _ := cuetry.RenderDryRunPlan(recipe)
+		var graph *cuetry.RecipeGraphPlan
+		if mode, err := cuetry.RecipeExecutionMode(recipe); err == nil && mode == cuetry.ExecutionModeGraph {
+			graph, _ = cuetry.BuildRecipeGraphPlan(recipe)
+		}
+
 		rec.RecordRecipeMeta(ui.RecipeMeta{
 			RecipePath:        recipeSourcePath,
 			HostCount:         len(jobs),
 			RecipeContentHash: hash,
 			StartedAt:         time.Now().UTC(),
 			Hosts:             ui.HostsForRecipeMeta(jobs, maxWebExecRecords),
+			Plan:              planText,
+			Graph:             graph,
 		})
 	}
 

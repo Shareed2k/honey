@@ -278,6 +278,11 @@ const schemaSource = `
 		run_as?: string
 		env?: {[string]: string}
 		secrets?: {[string]: string}
+		prompts?: {[string]: close({
+			description?: string
+			type?: string
+			required?: bool
+		})}
 		k8s_debug_image?: string
 		kv_tunnel?: bool
 		max_parallel?: int

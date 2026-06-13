@@ -16,6 +16,8 @@ type Props = {
   onViewRecording: (fileName: string) => void;
   onRunAgain: () => void;
   onStartNew: () => void;
+  onRow?: (row: HostExecResultRow) => void;
+  onStatusChange?: (status: LiveState['status']) => void;
 };
 
 export function StepRun(props: Props) {
@@ -27,6 +29,7 @@ export function StepRun(props: Props) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setState({ rows: [], status: 'running' });
+    props.onStatusChange?.('running');
     setRecordingFileName(null);
 
     const env = props.envOverrides
@@ -45,6 +48,7 @@ export function StepRun(props: Props) {
 
     cueExecStream(payload, (row: HostExecResultRow) => {
       if (ctrl.signal.aborted) return;
+      props.onRow?.(row);
       setState((s) => ({ ...s, rows: [...s.rows, row] }));
     }, ctrl.signal)
       .then((footer) => {
@@ -53,11 +57,13 @@ export function StepRun(props: Props) {
           setRecordingFileName(`${footer.recording_id}.hrec.jsonl`);
         }
         setState((s) => ({ ...s, status: 'ok' }));
+        props.onStatusChange?.('ok');
       })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === 'AbortError') return;
         console.error('cueExecStream failed:', e);
         setState((s) => ({ ...s, status: 'err' }));
+        props.onStatusChange?.('err');
       });
 
     return () => {
@@ -69,6 +75,7 @@ export function StepRun(props: Props) {
   function handleCancel() {
     abortRef.current?.abort();
     setState((s) => ({ ...s, status: 'idle' }));
+    props.onStatusChange?.('idle');
   }
 
   const ok = state.rows.filter((r) => r.Success).length;

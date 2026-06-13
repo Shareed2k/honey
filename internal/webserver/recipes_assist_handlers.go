@@ -240,3 +240,90 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(RecipesAssistResponse{Reply: reply})
 }
+
+// RecipesAssistFixRequest is the JSON body for POST /api/v1/recipes/assist-fix.
+type RecipesAssistFixRequest struct {
+	RecipeContent map[string]interface{} `json:"recipe_content"`
+	Errors        []ValidateContentError `json:"errors"`
+	Model         string                 `json:"model"`
+}
+
+// RecipesGenerateRequest is the JSON body for POST /api/v1/recipes/generate.
+type RecipesGenerateRequest struct {
+	Intent string `json:"intent"`
+	Model  string `json:"model"`
+}
+
+// RecipesAIGraphResponse is the JSON body returned by AI recipe endpoints.
+type RecipesAIGraphResponse struct {
+	Recipe      map[string]interface{} `json:"recipe"`
+	Explanation string                 `json:"explanation,omitempty"`
+}
+
+func (s *Server) handleRecipesAssistFix(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if assistAPIKey() == "" {
+		httpError(w, errors.New("recipe assist is not configured"), http.StatusServiceUnavailable)
+		return
+	}
+	var req RecipesAssistFixRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	prompt := recipeAssistSystemPrompt + "\n\nThe following Honey CUE recipe failed validation:\n\nErrors:\n"
+	for _, e := range req.Errors {
+		prompt += fmt.Sprintf("- [%s] %s (Path: %s)\n", e.Kind, e.Message, e.Path)
+	}
+	prompt += "\nPlease fix it. Return a JSON object with two keys: `recipe` containing the fixed recipe JSON, and `explanation` containing a short string explaining the fix."
+
+	reply, err := s.callDirectLLM(r.Context(), "", req.Model, prompt)
+	if err != nil {
+		httpError(w, err, http.StatusBadGateway)
+		return
+	}
+
+	var parsed RecipesAIGraphResponse
+	if err := json.Unmarshal([]byte(reply), &parsed); err != nil {
+		httpError(w, fmt.Errorf("AI returned invalid JSON: %w", err), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(parsed)
+}
+
+func (s *Server) handleRecipesGenerate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if assistAPIKey() == "" {
+		httpError(w, errors.New("recipe assist is not configured"), http.StatusServiceUnavailable)
+		return
+	}
+	var req RecipesGenerateRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	prompt := recipeAssistSystemPrompt + "\n\n" + fmt.Sprintf("Generate a Honey CUE graph recipe for the following intent: %s\n\nReturn a JSON object with two keys: `recipe` containing the recipe JSON, and `explanation` containing a short explanation of how it works.", req.Intent)
+
+	reply, err := s.callDirectLLM(r.Context(), "", req.Model, prompt)
+	if err != nil {
+		httpError(w, err, http.StatusBadGateway)
+		return
+	}
+
+	var parsed RecipesAIGraphResponse
+	if err := json.Unmarshal([]byte(reply), &parsed); err != nil {
+		httpError(w, fmt.Errorf("AI returned invalid JSON: %w", err), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(parsed)
+}

@@ -116,7 +116,9 @@ func streamCueTemplateStep(ctx context.Context, run *cueRun, stepIdx int, step c
 				return nil, err
 			}
 			if !ok {
-				skipped = append(skipped, whenSkippedResult(t))
+				res := whenSkippedResult(t)
+				annotateCueStepResult(&res, stepIdx, step, cuetry.KindTemplate)
+				skipped = append(skipped, res)
 				continue
 			}
 		}
@@ -124,6 +126,11 @@ func streamCueTemplateStep(ctx context.Context, run *cueRun, stepIdx int, step c
 	}
 	var rows []HostExecResult
 	rows = append(rows, skipped...)
+	if out != nil {
+		for _, res := range skipped {
+			out <- res
+		}
+	}
 	if len(kept) == 0 {
 		return rows, nil
 	}
@@ -143,6 +150,7 @@ func streamCueTemplateStep(ctx context.Context, run *cueRun, stepIdx int, step c
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			res := runCueStepTemplateOnHost(ctx, run.Recipe, stepIdx, step, target, run.outputStore, run.outputCapture, run.recipeKV, run.SecretResolver, run.Execute)
+			annotateCueStepResult(&res, stepIdx, step, cuetry.KindTemplate)
 			mu.Lock()
 			rows = append(rows, res)
 			if !res.Success && !res.Skipped {

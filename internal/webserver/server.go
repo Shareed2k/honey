@@ -12,9 +12,11 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -73,6 +75,9 @@ type Server struct {
 	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
 	pveQemuVncMu   sync.Mutex
 	pveQemuVncByID map[string]pveQemuVncOfferSession
+
+	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
+	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
 }
 
 // NewServer builds handlers with the given auth token.
@@ -87,15 +92,20 @@ func NewServer(opts Options) (*Server, error) {
 		opts.ExecRegistry.Reconfigure(opts.Config)
 	}
 
+	valCache, _ := lru.New[string, *ValidateContentResponse](50)
+	graphCache, _ := lru.New[string, *cuetry.RecipeGraphPlan](50)
+
 	s := &Server{
-		opts:            opts,
-		metrics:         opts.Metrics,
-		mux:             http.NewServeMux(),
-		assistRL:        newSlidingRL(),
-		tunnels:         newTunnelManager(),
-		proxy:           proxy.NewManager(proxy.NewLogger(zap.L())),
-		pgPools:         postgres.NewPoolManager(),
-		fileClientCache: ui.NewClientCache(),
+		opts:                  opts,
+		metrics:               opts.Metrics,
+		mux:                   http.NewServeMux(),
+		assistRL:              newSlidingRL(),
+		tunnels:               newTunnelManager(),
+		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
+		pgPools:               postgres.NewPoolManager(),
+		fileClientCache:       ui.NewClientCache(),
+		recipeValidationCache: valCache,
+		recipeGraphCache:      graphCache,
 	}
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
@@ -113,6 +123,7 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("GET /api/v1/logs/default", s.withAuth(s.handleLogsDefault))
 	s.mux.HandleFunc("POST /api/v1/search", s.withAuth(s.handleSearch))
 	s.mux.HandleFunc("POST /api/v1/secrets/encrypt", s.withAuth(s.handleSecretsEncrypt))
+	s.mux.HandleFunc("POST /api/v1/secrets/seal", s.withAuth(s.handleSecretsSeal))
 	s.mux.HandleFunc("POST /api/v1/host-ports", s.withAuth(s.handleHostPorts))
 	s.mux.HandleFunc("GET /api/v1/tunnels", s.withAuth(s.handleTunnelsGet))
 	s.mux.HandleFunc("GET /api/v1/tunnels/{id}/logs", s.withAuth(s.handleTunnelsLogs))
@@ -131,9 +142,13 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("POST /api/v1/files/copy", s.withAuth(s.handleFilesCopy))
 	s.mux.HandleFunc("POST /api/v1/files/agent-transfer", s.withAuth(s.handleFilesAgentTransfer))
 	s.mux.HandleFunc("GET /api/v1/recipes", s.withAuth(s.handleRecipesList))
+	s.mux.HandleFunc("GET /api/v1/recipes/library", s.withAuth(s.handleRecipesLibrary))
 	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
 	s.mux.HandleFunc("POST /api/v1/recipes/assist", s.withAuth(s.handleRecipesAssist))
+	s.mux.HandleFunc("POST /api/v1/recipes/assist-fix", s.withAuth(s.handleRecipesAssistFix))
+	s.mux.HandleFunc("POST /api/v1/recipes/generate", s.withAuth(s.handleRecipesGenerate))
 	s.mux.HandleFunc("POST /api/v1/recipes/validate-content", s.withAuth(s.handleRecipesValidateContent))
+	s.mux.HandleFunc("POST /api/v1/recipes/sync-ast", s.withAuth(s.handleRecipesSyncAST))
 	s.mux.HandleFunc("POST /api/v1/recipes/graph-plan", s.withAuth(s.handleRecipesGraphPlan))
 	s.mux.HandleFunc("POST /api/v1/recipes/parse", s.withAuth(s.handleRecipesParse))
 	s.mux.HandleFunc("GET /api/v1/recipes/recent-runs", s.withAuth(s.handleRecipesRecentRuns))
@@ -149,6 +164,7 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("POST /api/v1/recordings/play", s.withAuth(s.handleRecordingsPlay))
 	s.mux.HandleFunc("DELETE /api/v1/recordings/{file_name}", s.withAuth(s.handleRecordingsDelete))
 	s.mux.HandleFunc("POST /api/v1/recordings/summarize", s.withAuth(s.handleRecordingsSummarize))
+	s.mux.HandleFunc("GET /api/v1/recordings/{id}/failed-hosts", s.withAuth(s.handleRecordingsFailedHosts))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
 	s.mux.HandleFunc("POST /api/v1/lint", s.withAuth(s.handleLint))
 	s.mux.HandleFunc("GET /api/v1/snippets", s.withAuth(s.handleSnippetsList))
