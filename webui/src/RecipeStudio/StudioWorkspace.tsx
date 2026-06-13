@@ -37,7 +37,7 @@ import {
   uniqueStepID,
   type StepDraft,
 } from './recipeStudioUtils';
-import type { HostExecResultRow } from '../api';
+import type { HostExecResultRow, RiskReport } from '../api';
 
 const CodeEditor = lazy(() => import('../CodeEditor'));
 
@@ -85,6 +85,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const [modalSelectedKeys, setModalSelectedKeys] = useState<Record<string, boolean>>({});
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [validationState, setValidationState] = useState<ValidationState>('idle');
+  const [validationRisk, setValidationRisk] = useState<RiskReport | undefined>(undefined);
   const [snippetChoice, setSnippetChoice] = useState<string | undefined>(undefined);
   const [promptsOpen, setPromptsOpen] = useState(false);
   const [pendingRun, setPendingRun] = useState<{stepId: string, hosts: HostRecord[]} | null>(null);
@@ -360,6 +361,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
     if (!rawMode && nodes.length === 0) {
       setValidationIssues([]);
       setValidationState('idle');
+      setValidationRisk(undefined);
       return;
     }
 
@@ -370,6 +372,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       const issue = { kind: 'json', message: err?.message || 'Invalid JSON' };
       setValidationIssues([issue]);
       setValidationState('invalid');
+      setValidationRisk(undefined);
       if (!quiet) {
         message.error('Validation failed: ' + issue.message);
       }
@@ -378,6 +381,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
 
     setValidating(true);
     setValidationState('validating');
+    setValidationRisk(undefined);
     try {
       const res = await apiPost('/api/v1/recipes/validate-content', { recipe_content: recipeContent });
       const data = await res.json();
@@ -386,6 +390,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
         const issues = errors.length > 0 ? errors : [{ kind: 'validation', message: res.statusText }];
         setValidationIssues(issues);
         setValidationState('invalid');
+        setValidationRisk(data.risk);
         applyValidationResultToNodes(data, issues, !quiet);
         if (!quiet) {
           message.warning('Recipe contains validation issues');
@@ -393,6 +398,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       } else {
         setValidationIssues([]);
         setValidationState('valid');
+        setValidationRisk(data.risk);
         applyValidationResultToNodes(data, [], !quiet);
         if (!quiet) {
           message.success('Recipe is fully valid & verified!');
@@ -402,6 +408,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       const issue = { kind: 'network', message: err?.message || String(err) };
       setValidationIssues([issue]);
       setValidationState('invalid');
+      setValidationRisk(undefined);
       if (!quiet) {
         message.error('Validation failed: ' + issue.message);
       }
@@ -670,6 +677,21 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
         ) : validationState === 'valid' ? (
           <Alert type="success" showIcon message="Recipe is valid" />
         ) : null}
+        
+        {validationRisk && validationRisk.score > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <Alert
+              type={validationRisk.level === 'High' ? 'error' : validationRisk.level === 'Medium' ? 'warning' : 'info'}
+              showIcon
+              message={`Risk Level: ${validationRisk.level} (Score: ${validationRisk.score})`}
+              description={
+                <ul style={{ margin: 0, paddingLeft: 20, marginTop: 8 }}>
+                  {validationRisk.findings.map((f: string, i: number) => <li key={i}>{f}</li>)}
+                </ul>
+              }
+            />
+          </div>
+        )}
       </div>
 
       <Layout style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>

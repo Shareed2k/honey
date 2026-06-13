@@ -513,13 +513,19 @@ export async function fetchRecentRuns(limit = 20): Promise<RecentRunEntry[]> {
   return j.runs ?? [];
 }
 
+export type RiskReport = {
+  score: number;
+  level: string;
+  findings: string[];
+};
+
 /**
  * Validate a structured recipe payload. Returns `{plan, steps}` on success (200), or
  * `{errors}` on a 400 validation failure. Other HTTP errors throw.
  */
 export async function validateRecipeContent(
   recipe: ParsedRecipe,
-): Promise<{ plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan } | { errors: ValidationError[] }> {
+): Promise<{ plan: string; steps: ResolvedStep[]; graph?: RecipeGraphPlan; risk?: RiskReport } | { errors: ValidationError[] }> {
   const r = await apiPost('/api/v1/recipes/validate-content', { recipe_content: recipe });
   const body = (await r.json().catch(() => ({}))) as {
     plan?: string;
@@ -527,9 +533,10 @@ export async function validateRecipeContent(
     graph?: RecipeGraphPlan;
     errors?: ValidationError[];
     error?: string;
+    risk?: RiskReport;
   };
   if (r.ok) {
-    return { plan: body.plan ?? '', steps: body.steps ?? [], graph: body.graph };
+    return { plan: body.plan ?? '', steps: body.steps ?? [], graph: body.graph, risk: body.risk };
   }
   if (r.status === 400) {
     return {
