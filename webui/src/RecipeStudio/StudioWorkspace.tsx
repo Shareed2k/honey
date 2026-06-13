@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './studio.css';
-import { Layout, Button, Drawer, Space, Typography, Select, message, Modal, Alert } from 'antd';
+import { Layout, Button, Drawer, Space, Typography, Select, message, Modal, Alert, Input } from 'antd';
 import { PlusOutlined, SaveOutlined, SyncOutlined, PlayCircleOutlined, CloudDownloadOutlined, UndoOutlined, SettingOutlined, CodeOutlined } from '@ant-design/icons';
 
 import CustomStepNode from './CustomStepNode';
@@ -22,7 +22,7 @@ import GitLoadModal from './GitLoadModal';
 import { ParameterPromptModal } from './ParameterPromptModal';
 import { StepRun } from '../RecipesTab/StepRun';
 import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
-import { apiGet, apiPost } from '../api';
+import { apiGet, apiPost, fixRecipeErrors, generateRecipe } from '../api';
 import {
   applyWaveLayout,
   buildFlowFromRecipe,
@@ -91,6 +91,11 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const [pendingRun, setPendingRun] = useState<{stepId: string, hosts: HostRecord[]} | null>(null);
   const [runExtraEnv, setRunExtraEnv] = useState<{key: string, value: string}[]>([]);
   const [runMode, setRunMode] = useState<'upstream' | 'downstream'>('upstream');
+
+  const [fixBusy, setFixBusy] = useState(false);
+  const [generateModalOpen, setGenerateModalOpen] = useState(false);
+  const [intent, setIntent] = useState("");
+  const [generateBusy, setGenerateBusy] = useState(false);
 
   // Storage selection & loading state
   const [availableRecipes, setAvailableRecipes] = useState<any[]>([]);
@@ -674,6 +679,9 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
           </Button>
         </Space>
         <Space>
+          <Button type="default" onClick={() => setGenerateModalOpen(true)}>
+            ✨ Generate
+          </Button>
           <Button
             type={rawMode ? 'primary' : 'default'}
             icon={<CodeOutlined />}
@@ -700,21 +708,45 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
         {validationState === 'validating' ? (
           <Alert type="info" showIcon message="Validating recipe..." />
         ) : validationIssues.length > 0 ? (
-          <Alert
-            type="error"
-            showIcon
-            message={`${validationIssues.length} validation issue${validationIssues.length === 1 ? '' : 's'}`}
-            description={
-              <ul className="studio-validation-list">
-                {validationIssues.slice(0, 4).map((issue, index) => (
-                  <li key={`${issue.kind || 'issue'}-${index}`}>
-                    {issue.path ? `${issue.path}: ` : ''}
-                    {issue.message}
-                  </li>
-                ))}
-              </ul>
-            }
-          />
+          <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+            <Alert
+              type="error"
+              showIcon
+              message={`${validationIssues.length} validation issue${validationIssues.length === 1 ? '' : 's'}`}
+              description={
+                <ul className="studio-validation-list">
+                  {validationIssues.slice(0, 4).map((issue, index) => (
+                    <li key={`${issue.kind || 'issue'}-${index}`}>
+                      {issue.path ? `${issue.path}: ` : ''}
+                      {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              }
+              style={{ flex: 1 }}
+            />
+            <Button
+              size="small"
+              type="primary"
+              style={{ marginLeft: 16, marginTop: 8 }}
+              loading={fixBusy}
+              onClick={async () => {
+                setFixBusy(true);
+                try {
+                  const res = await fixRecipeErrors(buildRecipeJSON(), validationIssues, "");
+                  setRawContent(JSON.stringify(res.recipe, null, 2));
+                  handleSwitchToVisual();
+                  message.success("AI Fix applied: " + res.explanation);
+                } catch (err) {
+                  message.error("AI Fix failed: " + (err as Error).message);
+                } finally {
+                  setFixBusy(false);
+                }
+              }}
+            >
+              ✨ Fix with AI
+            </Button>
+          </div>
         ) : validationState === 'valid' ? (
           <Alert type="success" showIcon message="Recipe is valid" />
         ) : null}
@@ -920,6 +952,37 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
           }
         }}
       />
+
+      <Modal
+        title="Generate Recipe with AI"
+        open={generateModalOpen}
+        onCancel={() => setGenerateModalOpen(false)}
+        okText="Generate"
+        confirmLoading={generateBusy}
+        onOk={async () => {
+          if (!intent.trim()) return;
+          setGenerateBusy(true);
+          try {
+            const res = await generateRecipe(intent, "");
+            setRawContent(JSON.stringify(res.recipe, null, 2));
+            handleSwitchToVisual(); // Render the new JSON
+            message.success("AI Generation applied: " + res.explanation);
+            setGenerateModalOpen(false);
+            setIntent("");
+          } catch (err) {
+            message.error("AI Generation failed: " + (err as Error).message);
+          } finally {
+            setGenerateBusy(false);
+          }
+        }}
+      >
+        <Input.TextArea
+          value={intent}
+          onChange={(e) => setIntent(e.target.value)}
+          placeholder="Describe what you want to automate... e.g., Restart all nginx pods"
+          rows={4}
+        />
+      </Modal>
     </Layout>
   );
 }
