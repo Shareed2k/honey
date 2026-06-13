@@ -631,6 +631,15 @@ export async function fetchRecordingsForHost(params: {
   return resp.items;
 }
 
+export async function fetchRecordingsFailedHosts(fileName: string): Promise<HostRecord[]> {
+  const r = await apiGet(`/api/v1/recordings/${encodeURIComponent(fileName.replace('.hrec.jsonl', ''))}/failed-hosts`);
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return await r.json();
+}
+
 export async function fetchRecordingEvents(fileName: string): Promise<RecordingEvent[]> {
   const r = await apiPost('/api/v1/recordings/play', { file_name: fileName });
   const j = (await r.json().catch(() => ({}))) as { events?: RecordingEvent[]; error?: string };
