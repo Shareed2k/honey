@@ -14,7 +14,8 @@ import (
 
 // ValidateContentRequest is the JSON body for POST /api/v1/recipes/validate-content.
 type ValidateContentRequest struct {
-	RecipeContent map[string]interface{} `json:"recipe_content"`
+	RecipeContent    map[string]interface{} `json:"recipe_content,omitempty"`
+	RecipeContentRaw string                 `json:"recipe_content_raw,omitempty"`
 }
 
 // ValidateContentError is one validation issue.
@@ -52,8 +53,9 @@ type ValidateContentResponse struct {
 
 // GraphPlanRequest is the JSON body for POST /api/v1/recipes/graph-plan.
 type GraphPlanRequest struct {
-	Path          string                 `json:"path,omitempty"`
-	RecipeContent map[string]interface{} `json:"recipe_content,omitempty"`
+	Path             string                 `json:"path,omitempty"`
+	RecipeContent    map[string]interface{} `json:"recipe_content,omitempty"`
+	RecipeContentRaw string                 `json:"recipe_content_raw,omitempty"`
 }
 
 // RecipesParseRequest is the JSON body for POST /api/v1/recipes/parse.
@@ -94,15 +96,27 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 		writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
 		return
 	}
-	recipe, err := recipeFromContentMap(body.RecipeContent)
-	if err != nil {
-		status = "error"
-		writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
-		return
+	var recipe *cuetry.Recipe
+	if body.RecipeContentRaw != "" {
+		parsed, err := cuetry.ParseRemoteRecipe([]byte(body.RecipeContentRaw), nil)
+		if err != nil {
+			status = "error"
+			writeValidationErrors(w, []ValidateContentError{{Kind: "parse", Message: err.Error()}})
+			return
+		}
+		recipe = &parsed
+	} else if body.RecipeContent != nil {
+		var err error
+		recipe, err = recipeFromContentMap(body.RecipeContent)
+		if err != nil {
+			status = "error"
+			writeValidationErrors(w, []ValidateContentError{{Kind: "json", Message: err.Error()}})
+			return
+		}
 	}
 	if recipe == nil {
 		status = "error"
-		writeValidationErrors(w, []ValidateContentError{{Kind: "schema", Message: "recipe_content required"}})
+		writeValidationErrors(w, []ValidateContentError{{Kind: "schema", Message: "recipe_content or recipe_content_raw required"}})
 		return
 	}
 
