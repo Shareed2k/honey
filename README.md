@@ -48,6 +48,7 @@ honey search --json --provider aws,k8s web
 | MCP server (Cursor, LM Studio, OpenCode) | [MCP Server](https://shareed2k.github.io/honey/mcp-server) |
 | Session recordings | [Recordings](https://shareed2k.github.io/honey/recordings) |
 | Web UI & AI assist | [Web UI](https://shareed2k.github.io/honey/web-ui) |
+| Run the web UI in Docker (auth token) | [contrib/docker/README.md](contrib/docker/README.md) |
 | CUE recipes | [CUE Recipes](https://shareed2k.github.io/honey/cue-recipes) |
 | Anomaly detection | [Anomaly Detection](https://shareed2k.github.io/honey/anomaly-detection) |
 | Plugin development | [Plugins](https://shareed2k.github.io/honey/plugins-development) |

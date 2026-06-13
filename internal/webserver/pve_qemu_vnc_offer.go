@@ -128,7 +128,7 @@ func (s *Server) handlePveQemuVncOffer(w http.ResponseWriter, r *http.Request) {
 // handleWebProxmoxQemuVNC upgrades to WebSocket and raw-bridges to PVE QEMU graphics vncwebsocket (RFB).
 // Query: token (honey), vnc_session (one-time id from POST /api/v1/pve-qemu-vnc-offer).
 func (s *Server) handleWebProxmoxQemuVNC(w http.ResponseWriter, r *http.Request) {
-	if !tokenFromRequest(r, s.opts.Token) {
+	if !s.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
