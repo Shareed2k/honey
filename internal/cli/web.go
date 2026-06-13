@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -23,6 +24,7 @@ var (
 	webMetricsListen      string
 	webAllowLogsCommand   bool
 	webBrowser            bool
+	webNoAuth             bool
 )
 
 var webCmd = &cobra.Command{
@@ -40,11 +42,20 @@ func init() {
 	webCmd.Flags().StringVar(&webMetricsListen, "metrics-listen", "", "Optional host:port for Prometheus /metrics (e.g. 127.0.0.1:9091)")
 	webCmd.Flags().BoolVar(&webAllowLogsCommand, "allow-logs-command", false, "Allow callers to run arbitrary remote commands via the logs streaming endpoint (disabled by default)")
 	webCmd.Flags().BoolVar(&webBrowser, "browser", true, "Open the web UI in the default browser on start")
+	webCmd.Flags().BoolVar(&webNoAuth, "no-auth", false, "Disable web UI token authentication (only for trusted networks / behind an authenticating proxy; also via HONEY_WEB_NO_AUTH)")
 	rootCmd.AddCommand(webCmd)
 }
 
 func runWeb(cmd *cobra.Command, _ []string) error {
-	token, err := webserver.AuthToken()
+	disableAuth := webNoAuth
+	if !disableAuth {
+		if b, perr := strconv.ParseBool(strings.TrimSpace(os.Getenv("HONEY_WEB_NO_AUTH"))); perr == nil {
+			disableAuth = b
+		}
+	}
+	// Resolve a stable token (persisted to the state dir so it survives restarts).
+	stateDir, _ := config.ResolveStateDir()
+	token, err := webserver.ResolveToken(stateDir)
 	if err != nil {
 		return err
 	}
@@ -56,11 +67,16 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		prom = metrics.NewRegistry(BuildVersion(), BuildCommit())
 	}
 	url := fmt.Sprintf("http://%s/?token=%s", webListen, token)
-	_, _ = fmt.Fprintf(os.Stderr, "\nHoney Web UI (Ctrl+C to stop)\n  URL:   %s\n  API:   Authorization: Bearer <token>  or  X-Honey-Token: <token>\n  WS:    /ws/ssh?token=<token>\n  Assist: OPENAI_API_KEY (+ optional OPENAI_BASE_URL)\n", url)
-	if strings.TrimSpace(webMetricsListen) != "" {
-		_, _ = fmt.Fprintf(os.Stderr, "  Metrics: http://%s/metrics\n", webMetricsListen)
+	_, _ = fmt.Fprintf(os.Stdout, "\nHoney Web UI (Ctrl+C to stop)\n  URL:   %s\n  API:   Authorization: Bearer <token>  or  X-Honey-Token: <token>\n  WS:    /ws/ssh?token=<token>\n  Assist: OPENAI_API_KEY (+ optional OPENAI_BASE_URL)\n", url)
+	if disableAuth {
+		_, _ = fmt.Fprintf(os.Stdout, "  AUTH:  DISABLED (--no-auth) — only expose on a trusted network or behind an authenticating proxy\n")
+	} else if strings.TrimSpace(os.Getenv("HONEY_WEB_TOKEN")) == "" && strings.TrimSpace(stateDir) != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "  Token: persisted in %s/web_token (stable across restarts; set HONEY_WEB_TOKEN to override)\n", stateDir)
 	}
-	_, _ = fmt.Fprintln(os.Stderr)
+	if strings.TrimSpace(webMetricsListen) != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "  Metrics: http://%s/metrics\n", webMetricsListen)
+	}
+	_, _ = fmt.Fprintln(os.Stdout)
 
 	var onReady func()
 	if webBrowser {
@@ -69,6 +85,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:         webListen,
 		Token:              token,
+		DisableAuth:        disableAuth,
 		ConfigPath:         cfgPath,
 		Config:             cfg,
 		ExecRegistry:       buildHostExecRegistry(),

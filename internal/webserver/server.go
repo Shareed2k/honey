@@ -29,6 +29,7 @@ import (
 type Options struct {
 	ListenAddr         string // e.g. 127.0.0.1:8765
 	Token              string
+	DisableAuth        bool   // when true, skip token auth entirely (trusted networks / authenticating proxy)
 	ConfigPath         string // optional explicit --config
 	Config             *config.File
 	ExecRegistry       hostexec.Registry
@@ -76,7 +77,7 @@ type Server struct {
 
 // NewServer builds handlers with the given auth token.
 func NewServer(opts Options) (*Server, error) {
-	if opts.Token == "" {
+	if opts.Token == "" && !opts.DisableAuth {
 		return nil, fmt.Errorf("empty auth token")
 	}
 	if opts.MaxUploadSize <= 0 {
@@ -178,18 +179,41 @@ func (s *Server) routes() error {
 	if err != nil {
 		return fmt.Errorf("mount embedded static assets: %w", err)
 	}
-	s.mux.Handle("/", http.FileServer(http.FS(static)))
+	s.mux.Handle("/", s.withIndexCookie(http.FileServer(http.FS(static))))
 	return nil
+}
+
+// authorized reports whether the request may access protected resources: either
+// auth is disabled, or the request carries a valid token (header/query/cookie).
+func (s *Server) authorized(r *http.Request) bool {
+	return s.opts.DisableAuth || tokenFromRequest(r, s.opts.Token)
 }
 
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !tokenFromRequest(r, s.opts.Token) {
+		if !s.authorized(r) {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 		next(w, r)
 	}
+}
+
+// withIndexCookie serves the static UI and, when a page is opened with a valid
+// ?token= query, also persists the token in the honey_proxy_token cookie. The token
+// is intentionally left in the URL (not stripped/redirected) so the SPA can read it
+// into sessionStorage — unlike the subdomain proxy, the UI itself is the consumer.
+// The cookie is a bonus: it authorizes subsequent REST/WS requests (e.g. a bare URL
+// in docker) via the cookie branch of tokenFromRequest. No-op when auth is disabled.
+func (s *Server) withIndexCookie(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.opts.DisableAuth && r.Method == http.MethodGet {
+			if q := strings.TrimSpace(r.URL.Query().Get("token")); q != "" && tokenFromRequest(r, s.opts.Token) {
+				setTokenCookie(w, r, q)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Start listens and serves until ctx is cancelled.
