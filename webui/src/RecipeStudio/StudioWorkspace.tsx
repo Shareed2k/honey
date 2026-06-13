@@ -90,6 +90,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const [promptsOpen, setPromptsOpen] = useState(false);
   const [pendingRun, setPendingRun] = useState<{stepId: string, hosts: HostRecord[]} | null>(null);
   const [runExtraEnv, setRunExtraEnv] = useState<{key: string, value: string}[]>([]);
+  const [runMode, setRunMode] = useState<'upstream' | 'downstream'>('upstream');
 
   // Storage selection & loading state
   const [availableRecipes, setAvailableRecipes] = useState<any[]>([]);
@@ -274,6 +275,34 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
     return base;
   };
 
+  const buildDownstreamRecipe = (targetId: string) => {
+    const visited = new Set<string>([targetId]);
+    const visit = (id: string) => {
+      for (const edge of edges as any[]) {
+        if (edge.source === id && !visited.has(edge.target)) {
+          visited.add(edge.target);
+          visit(edge.target);
+        }
+      }
+    };
+    visit(targetId);
+
+    const subNodes = nodes.filter((n: any) => visited.has(n.id));
+    const subEdges = edges.filter((e: any) => visited.has(e.source) && visited.has(e.target));
+
+    const base = buildRecipeFromFlow({
+      name: recipeNameFromFilename(selectedRecipe) + '-resume',
+      nodes: subNodes,
+      edges: subEdges,
+      stepData,
+    });
+    
+    if (Object.keys(recipeDefaults || {}).length > 0) {
+      (base as any).defaults = recipeDefaults;
+    }
+    return base;
+  };
+
   const modalHosts = records.filter((r) => modalSelectedKeys[recordKey(r)]);
 
   const setNodeRunStatus = (ids: Set<string>, status: NodeRunStatus | undefined) => {
@@ -318,6 +347,18 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   };
 
   const handleRunStep = (stepId: string) => {
+    setRunMode('upstream');
+    if (selectedRecords.length > 0) {
+      prepareStepRun(stepId, selectedRecords as HostRecord[]);
+    } else {
+      setPendingRunStepId(stepId);
+      setModalSelectedKeys({});
+      setHostPickerOpen(true);
+    }
+  };
+
+  const handleResumeStep = (stepId: string) => {
+    setRunMode('downstream');
     if (selectedRecords.length > 0) {
       prepareStepRun(stepId, selectedRecords as HostRecord[]);
     } else {
@@ -772,6 +813,14 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
             >
               Run Step
             </Button>
+            <Button
+              type="default"
+              icon={<PlayCircleOutlined />}
+              style={{ marginTop: 8, width: '100%' }}
+              onClick={() => handleResumeStep(selectedNodeId!)}
+            >
+              Resume from here
+            </Button>
           </>
         )}
       </Drawer>
@@ -785,7 +834,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
           <div style={{ padding: 16 }}>
             <StepRun 
               key={`${runStepId}-${runCount}`}
-              recipe={buildSubgraphRecipe(runStepId) as any}
+              recipe={(runMode === 'downstream' ? buildDownstreamRecipe(runStepId) : buildSubgraphRecipe(runStepId)) as any}
               recipeBasePath={null}
               hosts={runHosts}
               envOverrides={runExtraEnv}
