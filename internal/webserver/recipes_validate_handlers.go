@@ -47,6 +47,7 @@ type ValidateContentResponse struct {
 	Steps  []ResolvedStepSummary   `json:"steps,omitempty"`
 	Graph  *cuetry.RecipeGraphPlan `json:"graph,omitempty"`
 	Errors []ValidateContentError  `json:"errors,omitempty"`
+	Risk   *cuetry.RiskReport      `json:"risk,omitempty"`
 }
 
 // GraphPlanRequest is the JSON body for POST /api/v1/recipes/graph-plan.
@@ -142,6 +143,8 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 		}
 	}
 	resp := ValidateContentResponse{Plan: plan, Steps: steps}
+	risk := cuetry.AnalyzeRecipeRisk(*recipe)
+	resp.Risk = &risk
 	if mode, merr := cuetry.RecipeExecutionMode(*recipe); merr == nil && mode == cuetry.ExecutionModeGraph {
 		if gp, gerr := cuetry.BuildRecipeGraphPlan(*recipe); gerr == nil {
 			resp.Graph = gp
