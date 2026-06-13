@@ -12,3 +12,24 @@
 .studio-flow-controls button:hover {
   background: #1f2937 !important;
 }
+
+.studio-validation-strip {
+  background: #0f1115;
+  border-bottom: 1px solid #1f2937;
+  min-height: 0;
+}
+
+.studio-validation-strip:empty {
+  display: none;
+}
+
+.studio-validation-strip .ant-alert {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+}
+
+.studio-validation-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
