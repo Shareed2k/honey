@@ -153,3 +153,14 @@ func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
 		t.Errorf("expected cached plan 'CACHED_PLAN', got '%s'", resp.Plan)
 	}
 }
+
+func TestHandleRecipesSyncAST(t *testing.T) {
+	srv := &Server{}
+	req := httptest.NewRequest("POST", "/api/v1/recipes/sync-ast", bytes.NewBufferString(`{}`))
+	w := httptest.NewRecorder()
+	srv.handleRecipesSyncAST(w, req)
+
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("handleRecipesSyncAST not implemented")
+	}
+}
