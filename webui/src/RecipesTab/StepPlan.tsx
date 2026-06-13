@@ -12,6 +12,7 @@ import {
 import type { EnvPair, PlanState } from './types';
 import { EditForm } from './EditForm';
 import { RecipeGraphFlow } from './RecipeGraphFlow';
+import { ParameterPromptModal } from '../RecipeStudio/ParameterPromptModal';
 
 type PlanTab = 'plan' | 'graph' | 'edit';
 
@@ -36,6 +37,7 @@ export function StepPlan(props: Props) {
   const graphMode = isGraphRecipe(props.recipe);
   const [tab, setTab] = useState<PlanTab>('plan');
   const [plan, setPlan] = useState<PlanState>(null);
+  const [promptsOpen, setPromptsOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +71,12 @@ export function StepPlan(props: Props) {
   const dangerous = root || !props.recordSession;
 
   function handleExecute() {
+    const prompts = props.baseRecipe?.defaults?.prompts;
+    if (prompts && Object.keys(prompts).length > 0) {
+      setPromptsOpen(true);
+      return;
+    }
+
     const msg = dangerous
       ? 'Execute this recipe? Some steps run as root and/or session recording is off.'
       : `Execute this recipe on ${props.hostCount} host${props.hostCount === 1 ? '' : 's'}?`;
@@ -168,6 +176,19 @@ export function StepPlan(props: Props) {
           Execute on {props.hostCount} host{props.hostCount === 1 ? '' : 's'} ▶
         </Button>
       </footer>
+      <ParameterPromptModal
+        open={promptsOpen}
+        prompts={props.baseRecipe?.defaults?.prompts || {}}
+        onCancel={() => setPromptsOpen(false)}
+        onSubmit={(vals) => {
+          setPromptsOpen(false);
+          const newEnv = Object.entries(vals).map(([k, v]) => ({ key: k, value: v }));
+          props.onEnvChange([...props.envOverrides, ...newEnv]);
+          setTimeout(() => {
+            props.onExecute();
+          }, 50);
+        }}
+      />
     </div>
   );
 }
