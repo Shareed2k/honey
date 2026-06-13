@@ -1272,3 +1272,38 @@ export async function fetchLogSummary(stats: LogTemplateStat[]): Promise<string>
   const j = await r.json() as { markdown: string };
   return j.markdown;
 }
+
+export type RecipesAIGraphResponse = {
+  recipe: Record<string, unknown>;
+  explanation?: string;
+};
+
+export async function fixRecipeErrors(
+  recipeContent: Record<string, unknown>,
+  errors: any[],
+  model: string
+): Promise<RecipesAIGraphResponse> {
+  const r = await fetch('/api/v1/recipes/assist-fix', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipe_content: recipeContent, errors, model })
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return await r.json();
+}
+
+export async function generateRecipe(intent: string, model: string): Promise<RecipesAIGraphResponse> {
+  const r = await fetch('/api/v1/recipes/generate', {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ intent, model })
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  return await r.json();
+}
