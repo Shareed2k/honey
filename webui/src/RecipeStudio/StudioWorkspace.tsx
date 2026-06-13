@@ -228,7 +228,6 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
 
   // 6. Build full serializable Recipe JSON
   const buildRecipeJSON = useCallback(() => {
-    if (rawMode) return JSON.parse(rawContent);
     const base = buildRecipeFromFlow({
       name: recipeNameFromFilename(selectedRecipe),
       nodes,
@@ -239,7 +238,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       (base as any).defaults = recipeDefaults;
     }
     return base;
-  }, [edges, nodes, rawContent, rawMode, recipeDefaults, selectedRecipe, stepData]);
+  }, [edges, nodes, recipeDefaults, selectedRecipe, stepData]);
 
   const handleSwitchToRaw = async () => {
     try {
@@ -435,25 +434,29 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       return;
     }
 
-    let recipeContent: any;
-    try {
-      recipeContent = buildRecipeJSON();
-    } catch (err: any) {
-      const issue = { kind: 'json', message: err?.message || 'Invalid JSON' };
-      setValidationIssues([issue]);
-      setValidationState('invalid');
-      setValidationRisk(undefined);
-      if (!quiet) {
-        message.error('Validation failed: ' + issue.message);
+    let reqBody: any = {};
+    if (rawMode) {
+      reqBody = { recipe_content_raw: rawContent };
+    } else {
+      try {
+        reqBody = { recipe_content: buildRecipeJSON() };
+      } catch (err: any) {
+        const issue = { kind: 'json', message: err?.message || 'Invalid visual structure' };
+        setValidationIssues([issue]);
+        setValidationState('invalid');
+        setValidationRisk(undefined);
+        if (!quiet) {
+          message.error('Validation failed: ' + issue.message);
+        }
+        return;
       }
-      return;
     }
 
     setValidating(true);
     setValidationState('validating');
     setValidationRisk(undefined);
     try {
-      const res = await apiPost('/api/v1/recipes/validate-content', { recipe_content: recipeContent });
+      const res = await apiPost('/api/v1/recipes/validate-content', reqBody);
       const data = await res.json();
       const errors: ValidationIssue[] = Array.isArray(data.errors) ? data.errors : [];
       if (!res.ok || errors.length > 0) {
@@ -561,12 +564,19 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
     gitUrl?: string;
     gitBranch?: string;
   }) => {
-    const content = buildRecipeJSON();
+    let contentStr = '';
+    if (rawMode) {
+      contentStr = rawContent;
+    } else {
+      const content = buildRecipeJSON();
+      contentStr = JSON.stringify(content, null, 2);
+    }
+    
     let url = `/api/v1/recipes/store/${encodeURIComponent(options.path)}`;
     if (options.storage === 'git') {
       url += `?git_url=${encodeURIComponent(options.gitUrl || '')}&git_branch=${encodeURIComponent(options.gitBranch || '')}`;
     }
-    const res = await apiPost(url, { content: JSON.stringify(content, null, 2) });
+    const res = await apiPost(url, { content: contentStr });
     if (!res.ok) {
       const err = await res.text();
       throw new Error(err);
