@@ -3,7 +3,6 @@ package webserver
 import (
 	"net/http"
 	"strings"
-	"time"
 )
 
 // subdomainProxyWrapper intercepts requests at the highest level of the HTTP server.
@@ -37,16 +36,7 @@ func (s *Server) subdomainProxyWrapper(next http.Handler) http.Handler {
 		// The token from the URL query or header
 		if r.URL.Query().Get("token") != "" && tokenFromRequest(r, s.opts.Token) {
 			// Set the cookie for future requests
-			// #nosec G124 -- dynamic secure flag is not recognized by gosec
-			http.SetCookie(w, &http.Cookie{
-				Name:     "honey_proxy_token",
-				Value:    r.URL.Query().Get("token"),
-				Path:     "/",
-				HttpOnly: true,
-				Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", // mitigate G124
-				SameSite: http.SameSiteLaxMode,
-				Expires:  time.Now().Add(24 * time.Hour),
-			})
+			setTokenCookie(w, r, r.URL.Query().Get("token"))
 
 			// Strip the token from the URL to prevent the upstream app from seeing it
 			q := r.URL.Query()
@@ -64,7 +54,7 @@ func (s *Server) subdomainProxyWrapper(next http.Handler) http.Handler {
 		}
 
 		// Enforce authentication via the standard flow (which now checks the cookie)
-		if !tokenFromRequest(r, s.opts.Token) {
+		if !s.authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
