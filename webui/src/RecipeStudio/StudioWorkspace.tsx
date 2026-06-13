@@ -19,6 +19,7 @@ import CustomStepNode from './CustomStepNode';
 import DynamicStepForm from './DynamicStepForm';
 import StorageModal from './StorageModal';
 import GitLoadModal from './GitLoadModal';
+import { ParameterPromptModal } from './ParameterPromptModal';
 import { StepRun } from '../RecipesTab/StepRun';
 import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
 import { apiGet, apiPost } from '../api';
@@ -85,6 +86,9 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [validationState, setValidationState] = useState<ValidationState>('idle');
   const [snippetChoice, setSnippetChoice] = useState<string | undefined>(undefined);
+  const [promptsOpen, setPromptsOpen] = useState(false);
+  const [pendingRun, setPendingRun] = useState<{stepId: string, hosts: HostRecord[]} | null>(null);
+  const [runExtraEnv, setRunExtraEnv] = useState<{key: string, value: string}[]>([]);
 
   // Storage selection & loading state
   const [availableRecipes, setAvailableRecipes] = useState<any[]>([]);
@@ -284,12 +288,23 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   };
 
   const prepareStepRun = (stepId: string, hosts: HostRecord[]) => {
+    const prompts = recipeDefaults?.prompts;
+    if (prompts && Object.keys(prompts).length > 0) {
+      setPendingRun({ stepId, hosts });
+      setPromptsOpen(true);
+      return;
+    }
+    doPrepareStepRun(stepId, hosts, []);
+  };
+
+  const doPrepareStepRun = (stepId: string, hosts: HostRecord[], extraEnv: {key: string, value: string}[]) => {
     const ids = collectAncestorNodeIDs(edges, stepId);
     setNodeRunStatus(ids, 'running');
     setRunHosts(hosts);
     setRunStepId(stepId);
     setRunCount((c) => c + 1);
     setRunPanelOpen(true);
+    setRunExtraEnv(extraEnv);
   };
 
   const handleRunRow = (row: HostExecResultRow) => {
@@ -751,7 +766,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
               recipe={buildSubgraphRecipe(runStepId) as any}
               recipeBasePath={null}
               hosts={runHosts}
-              envOverrides={[]}
+              envOverrides={runExtraEnv}
               sshUser={sshUser}
               recordSession={false}
               sessionRecordingAvailable={false}
@@ -820,6 +835,20 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
           }}
         />
       </Modal>
+
+      <ParameterPromptModal
+        open={promptsOpen}
+        prompts={recipeDefaults?.prompts || {}}
+        onCancel={() => setPromptsOpen(false)}
+        onSubmit={(vals) => {
+          setPromptsOpen(false);
+          const extra = Object.entries(vals).map(([k, v]) => ({ key: k, value: v }));
+          if (pendingRun) {
+            doPrepareStepRun(pendingRun.stepId, pendingRun.hosts, extra);
+            setPendingRun(null);
+          }
+        }}
+      />
     </Layout>
   );
 }
