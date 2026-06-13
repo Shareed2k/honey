@@ -76,7 +76,7 @@ type wsResize struct {
 }
 
 func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
-	if !tokenFromRequest(r, s.opts.Token) {
+	if !s.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

@@ -41,4 +41,4 @@ ENV XDG_STATE_HOME=/data/state
 EXPOSE 8765
 
 ENTRYPOINT ["/usr/local/bin/honey"]
-CMD ["web", "--listen", "0.0.0.0:8765", "--browser=false"]
+CMD ["web", "--listen", "0.0.0.0:8765", "--browser=false", "--debug-log=/dev/stderr"]
