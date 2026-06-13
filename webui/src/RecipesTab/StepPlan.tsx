@@ -8,6 +8,7 @@ import {
   type RecipeGraphPlan,
   type ResolvedStep,
   type ValidationError,
+  type RiskReport,
 } from '../api';
 import type { EnvPair, PlanState } from './types';
 import { EditForm } from './EditForm';
@@ -31,6 +32,7 @@ type Props = {
   hostCount: number;
   onBack: () => void;
   onExecute: () => void;
+  validationRisk?: RiskReport;
 };
 
 export function StepPlan(props: Props) {
@@ -47,7 +49,7 @@ export function StepPlan(props: Props) {
       setPlan(
         'errors' in res
           ? { ok: false, errors: res.errors }
-          : { ok: true, plan: res.plan, steps: res.steps, graph: res.graph },
+          : { ok: true, plan: res.plan, steps: res.steps, graph: res.graph, risk: res.risk },
       );
     })();
     return () => {
@@ -161,6 +163,24 @@ export function StepPlan(props: Props) {
             }
           />
         ) : null}
+        
+        {(() => {
+          const risk = props.validationRisk || (plan?.ok ? plan.risk : undefined);
+          return risk && risk.score > 0 ? (
+            <div style={{ marginBottom: 16, marginTop: 16 }}>
+              <Alert
+                type={risk.level === 'High' ? 'error' : risk.level === 'Medium' ? 'warning' : 'info'}
+                showIcon
+                message={`Risk Level: ${risk.level} (Score: ${risk.score})`}
+                description={
+                  <ul style={{ margin: 0, paddingLeft: 20, marginTop: 8 }}>
+                    {risk.findings.map((f: string, i: number) => <li key={i}>{f}</li>)}
+                  </ul>
+                }
+              />
+            </div>
+          ) : null;
+        })()}
       </section>
 
       <footer className="rcp-step__footer">
