@@ -1,11 +1,16 @@
 package webserver
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/cuetry"
 )
 
 func TestValidateContent_happy(t *testing.T) {
@@ -112,5 +117,39 @@ func TestRecipesParse_disallowedPath(t *testing.T) {
 	s.withAuth(s.handleRecipesParse)(w, req)
 	if w.Code != 400 {
 		t.Fatalf("expected 400, got %d (%s)", w.Code, w.Body)
+	}
+}
+
+func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
+	// Mock a server with a pre-populated cache
+	opts := Options{Token: "test", Config: &config.File{}}
+	srv, _ := NewServer(opts)
+
+	// Create a dummy recipe content
+	content := map[string]interface{}{"name": "test"}
+
+	// We need to know the hash to inject it into the cache. We'll use a mocked hash logic or
+	// just parse it manually to get the hash.
+	recipe, _ := recipeFromContentMap(content)
+	hash, _ := cuetry.HashRecipeJSON(*recipe)
+
+	cachedResp := &ValidateContentResponse{Plan: "CACHED_PLAN"}
+	srv.recipeValidationCache.Add(hash, cachedResp)
+
+	body, _ := json.Marshal(ValidateContentRequest{RecipeContent: content})
+	req := httptest.NewRequest("POST", "/api/v1/recipes/validate-content", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.handleRecipesValidateContent(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+
+	var resp ValidateContentResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Plan != "CACHED_PLAN" {
+		t.Errorf("expected cached plan 'CACHED_PLAN', got '%s'", resp.Plan)
 	}
 }
