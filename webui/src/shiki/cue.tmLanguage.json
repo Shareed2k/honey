@@ -3,6 +3,7 @@
   "scopeName": "source.cue",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#shell-blocks" },
     { "include": "#strings" },
     { "include": "#keywords" },
     { "include": "#numbers" },
@@ -18,8 +19,53 @@
         }
       ]
     },
+    "shell-blocks": {
+      "patterns": [
+        {
+          "name": "meta.embedded.block.shell.cue",
+          "begin": "(?x)\\b(command|script)\\s*:\\s*(\"\"\")",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.cue" },
+            "2": { "name": "string.quoted.triple.cue" }
+          },
+          "end": "\"\"\"",
+          "endCaptures": {
+            "0": { "name": "string.quoted.triple.cue" }
+          },
+          "patterns": [
+            { "include": "source.shell" }
+          ]
+        },
+        {
+          "name": "meta.embedded.line.shell.cue",
+          "begin": "(?x)\\b(command|script)\\s*:\\s*(\")",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.cue" },
+            "2": { "name": "string.quoted.double.cue" }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": { "name": "string.quoted.double.cue" }
+          },
+          "patterns": [
+            { "include": "source.shell" }
+          ]
+        }
+      ]
+    },
     "strings": {
       "patterns": [
+        {
+          "name": "string.quoted.triple.cue",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.cue",
+              "match": "\\\\."
+            }
+          ]
+        },
         {
           "name": "string.quoted.double.cue",
           "begin": "\"",
@@ -38,6 +84,10 @@
         {
           "name": "keyword.control.cue",
           "match": "\\b(?:package|import|for|if|in|let|null|true|false)\\b"
+        },
+        {
+          "name": "entity.name.tag.cue",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\s*:"
         }
       ]
     },
