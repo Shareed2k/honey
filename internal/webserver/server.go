@@ -150,6 +150,7 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("POST /api/v1/recordings/play", s.withAuth(s.handleRecordingsPlay))
 	s.mux.HandleFunc("DELETE /api/v1/recordings/{file_name}", s.withAuth(s.handleRecordingsDelete))
 	s.mux.HandleFunc("POST /api/v1/recordings/summarize", s.withAuth(s.handleRecordingsSummarize))
+	s.mux.HandleFunc("GET /api/v1/recordings/{id}/failed-hosts", s.withAuth(s.handleRecordingsFailedHosts))
 	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
 	s.mux.HandleFunc("POST /api/v1/lint", s.withAuth(s.handleLint))
 	s.mux.HandleFunc("GET /api/v1/snippets", s.withAuth(s.handleSnippetsList))

@@ -346,3 +346,35 @@ func fillRecordingMeta(dst *RecordingListEntry, msg string) {
 		}
 	}
 }
+
+// handleRecordingsFailedHosts extracts the failed hosts from a specific recording.
+// @Summary Extract failed hosts from session recording
+// @Tags recordings
+// @Produce json
+// @Param id path string true "recording file ID (without extension)"
+// @Success 200 {array} hosts.Record
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 405 {string} string
+// @Router /api/v1/recordings/{id}/failed-hosts [get]
+// @Security BearerAuth
+func (s *Server) handleRecordingsFailedHosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		httpError(w, fmt.Errorf("id required"), http.StatusBadRequest)
+		return
+	}
+	events, err := recordings.LoadEvents(s.opts.RecordDir, id+".hrec.jsonl")
+	if err != nil {
+		httpError(w, err, http.StatusNotFound)
+		return
+	}
+
+	failed := recordings.ExtractFailedHosts(events)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(failed)
+}
