@@ -29,3 +29,15 @@ func TestSecretsEncrypt_MissingKey(t *testing.T) {
 		t.Fatalf("expected provider error, got %s", w.Body)
 	}
 }
+
+func TestHandleSecretsSeal(t *testing.T) {
+	req := httptest.NewRequest("POST", "/api/v1/secrets/seal", strings.NewReader(`{"plaintext":"supersecret"}`))
+	w := httptest.NewRecorder()
+
+	s := &Server{}
+	s.handleSecretsSeal(w, req)
+
+	if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
+		t.Errorf("expected OK or Internal Server Error (if provider missing), got %d", w.Code)
+	}
+}

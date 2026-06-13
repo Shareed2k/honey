@@ -55,3 +55,38 @@ func (s *Server) handleSecretsEncrypt(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(secretEncryptResponse{Encrypted: secureRef})
 }
+
+// SealSecretRequest is the request payload for sealing a secret.
+type SealSecretRequest struct {
+	Plaintext string `json:"plaintext"`
+}
+
+// SealSecretResponse is the response payload containing the sealed secret.
+type SealSecretResponse struct {
+	Sealed string `json:"sealed"`
+}
+
+func (s *Server) handleSecretsSeal(w http.ResponseWriter, r *http.Request) {
+	var req SealSecretRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	o := cuetry.SecretResolverOptionsFromHoney(s.opts.Config)
+	opts := secrets.Options{
+		SymmetricDataKey: o.SymmetricDataKey,
+		SecretsProvider:  o.SecretsProvider,
+		EncryptedKey:     o.EncryptedKey,
+		AgeIdentityFile:  o.AgeIdentityFile,
+	}
+
+	ref, err := secrets.Seal(r.Context(), opts, req.Plaintext)
+	if err != nil {
+		httpError(w, fmt.Errorf("seal failed: %w", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(SealSecretResponse{Sealed: ref})
+}

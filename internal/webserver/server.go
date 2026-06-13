@@ -113,6 +113,7 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("GET /api/v1/logs/default", s.withAuth(s.handleLogsDefault))
 	s.mux.HandleFunc("POST /api/v1/search", s.withAuth(s.handleSearch))
 	s.mux.HandleFunc("POST /api/v1/secrets/encrypt", s.withAuth(s.handleSecretsEncrypt))
+	s.mux.HandleFunc("POST /api/v1/secrets/seal", s.withAuth(s.handleSecretsSeal))
 	s.mux.HandleFunc("POST /api/v1/host-ports", s.withAuth(s.handleHostPorts))
 	s.mux.HandleFunc("GET /api/v1/tunnels", s.withAuth(s.handleTunnelsGet))
 	s.mux.HandleFunc("GET /api/v1/tunnels/{id}/logs", s.withAuth(s.handleTunnelsLogs))
