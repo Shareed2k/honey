@@ -83,9 +83,28 @@ func (f *File) Validate() error {
 			})
 		}
 	}
+	validateInventoryValues(&out, "inventory.vars", f.Inventory.Vars)
+	for name, group := range f.Inventory.Groups {
+		validateInventoryValues(&out, "inventory.groups."+name+".vars", group.Vars)
+	}
+	for name, host := range f.Inventory.Hosts {
+		validateInventoryValues(&out, "inventory.hosts."+name+".vars", host.Vars)
+	}
 
 	if len(out) > 0 {
 		return out
 	}
 	return nil
+}
+
+func validateInventoryValues(out *ValidationErrors, path string, values map[string]InventoryValue) {
+	for key, value := range values {
+		if value.IsSet() {
+			continue
+		}
+		*out = append(*out, ValidationError{
+			Path:    path + "." + key,
+			Message: "Inventory vars only support scalar string, bool, and number values.",
+		})
+	}
 }

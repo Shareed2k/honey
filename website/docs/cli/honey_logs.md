@@ -26,6 +26,7 @@ honey logs &lt;target&gt; [source] [flags]
       --anomaly-llm-model string         Model name for --anomaly-endpoint. Smaller models (3-7B) typically match or beat larger ones for binary log anomaly classification (default "llama3")
       --anomaly-model string             Path to local ONNX model file (used by embedded detector)
       --anomaly-only                     Only show lines that exceed anomaly threshold
+      --anomaly-preprocessor string      Name of preprocessor to run before anomaly detection (e.g. lshd)
       --anomaly-selftest                 Validate anomaly model/tokenizer/runtime and run a local score smoke test
       --anomaly-strict                   Fail startup if anomaly detector cannot initialize
       --anomaly-threshold float          Anomaly score threshold between 0 and 1 (default 0.9)
@@ -47,6 +48,7 @@ honey logs &lt;target&gt; [source] [flags]
       --docker-via-local string          Docker via Honey SSH: backends.local name
       --docker-via-ssh-host string       Docker via Honey SSH: explicit host
       --file string                      Remote log file or glob to tail
+      --filter stringArray               Post-discovery filter (repeatable: group:web, var:service=nginx)
   -f, --follow                           Follow logs
       --gcp-project string               GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)
       --gcp-zone string                  Limit GCP to a single zone (default: all zones)

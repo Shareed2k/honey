@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -16,12 +17,14 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/shareed2k/honey/internal/apps"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // File is the optional honey YAML configuration.
 type File struct {
 	Version       int                `yaml:"version" json:"version"`
+	Inventory     Inventory          `yaml:"inventory,omitempty" json:"inventory,omitempty"`
 	Defaults      Defaults           `yaml:"defaults" json:"defaults"`
 	Backends      Backends           `yaml:"backends" json:"backends"`
 	Transfer      TransferConfig     `yaml:"transfer" json:"transfer"`
@@ -297,6 +300,10 @@ func Load(path string) (*File, error) {
 	if err := v.Unmarshal(&f, func(dc *mapstructure.DecoderConfig) {
 		dc.TagName = "yaml"
 		dc.WeaklyTypedInput = true
+		dc.DecodeHook = mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			inventoryValueDecodeHook(),
+		)
 	}); err != nil {
 		return nil, fmt.Errorf("decode config %s: %w", path, err)
 	}
@@ -304,6 +311,16 @@ func Load(path string) (*File, error) {
 		return nil, fmt.Errorf("validate config %s: %w", path, err)
 	}
 	return &f, nil
+}
+
+func inventoryValueDecodeHook() mapstructure.DecodeHookFunc {
+	valueType := reflect.TypeOf(hosts.InventoryValue{})
+	return func(_, to reflect.Type, data any) (any, error) {
+		if to != valueType {
+			return data, nil
+		}
+		return hosts.NewInventoryValue(data)
+	}
 }
 
 // ParseYAML parses a honey config document from memory (used by web API PUT validation).

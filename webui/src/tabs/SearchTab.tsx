@@ -663,7 +663,7 @@ export function SearchTab({
       title: 'Output / error',
       key: 'output',
       render: (_: unknown, row: HostExecResultRow) => (
-        <pre style={{ margin: 0, fontSize: '0.78rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxWidth: 420 }}>
+        <pre style={{ margin: 0, fontSize: '0.78rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxWidth: '100%' }}>
           {row.ErrMsg ? <Typography.Text type="danger">{row.ErrMsg}</Typography.Text> : null}
           {row.ErrMsg && row.Output ? '\n' : null}
           {row.Output}

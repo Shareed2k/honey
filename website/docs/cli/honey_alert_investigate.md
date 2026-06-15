@@ -36,6 +36,7 @@ honey alert investigate [flags]
       --docker-socket string          Remote Docker socket (default /var/run/docker.sock on linux)
       --docker-via-local string       Docker via Honey SSH: backends.local name
       --docker-via-ssh-host string    Docker via Honey SSH: explicit host
+      --filter stringArray            Post-discovery filter (repeatable: group:web, var:service=nginx)
       --gcp-project string            GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)
       --gcp-zone string               Limit GCP to a single zone (default: all zones)
   -h, --help                          help for investigate

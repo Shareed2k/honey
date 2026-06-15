@@ -13,6 +13,7 @@ const sidebars = {
     'mcp-server',
     'recordings',
     'web-ui',
+    'inventory',
     'cue-recipes',
     'plugins',
     'plugins-development',

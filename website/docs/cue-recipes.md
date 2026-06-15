@@ -77,7 +77,7 @@ recipe: {
 
 Example: [`with_ssh_key.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/with_ssh_key.cue).
 
-Remote env injection (command/script/plugin): `HONEY_HOST_NAME`, `HONEY_HOST_PRIMARY_IP`, `HONEY_HOST_PROVIDER`, `HONEY_HOST_ZONE`, `HONEY_HOST_REGION`, and `HONEY_HOST_META_*` from host metadata.
+Remote env injection (command/script/plugin): `HONEY_HOST_NAME`, `HONEY_HOST_PRIMARY_IP`, `HONEY_HOST_PROVIDER`, `HONEY_HOST_ZONE`, `HONEY_HOST_REGION`, `HONEY_HOST_META_*` from host metadata, and `HONEY_VAR_*` from resolved inventory variables.
 
 ## Linear vs graph execution
 
@@ -170,6 +170,9 @@ Optional **`when: "<CEL expression>"`** on any step kind. The expression must ev
 | `secrets['KEY']` | string | Only keys in `defaults.secrets` / `step.secrets` |
 | `execute` | bool | `false` on dry-run / plan |
 | `recipe_name` | string | Recipe `name` |
+| `vars` | map | Resolved inventory variables for the current host |
+| `groups` | list | Resolved inventory group names for the current host |
+| `in_group(name)` | bool | True if the host matches the specified inventory group |
 | `kv_get(key)` | string | Operator recipe KV (`""` if missing) |
 | `kv_has(key)` | bool | Whether key exists in recipe KV |
 
