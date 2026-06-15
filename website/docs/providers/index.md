@@ -9,6 +9,8 @@ sidebar_position: 1
 
 Honey discovers hosts from several backends in parallel. Each page below covers **minimal authentication**, a **minimal YAML** block, and **CLI flags** when you run without a config file.
 
+After discovery, all host records can be enriched with global, group, and host-specific variables. See the [Inventory Variables](../inventory.md) guide for details on dynamic grouping and precedence.
+
 Use `honey search --provider <id>` to limit to one type. YAML backend lists use the **`backends.<kind>`** key shown on each page.
 
 | Provider | Search ID | Doc |

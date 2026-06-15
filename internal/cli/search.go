@@ -12,6 +12,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/inventory"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -29,6 +30,7 @@ var (
 	flagRefresh   bool
 	flagCacheDir  string
 	flagBackends  string
+	flagFilters   []string
 )
 
 var searchCmd = &cobra.Command{
@@ -50,6 +52,7 @@ func addSearchCoreFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
 	cmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	cmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
+	cmd.Flags().StringArrayVar(&flagFilters, "filter", nil, "Post-discovery filter (repeatable: group:web, var:service=nginx)")
 	cmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
 
 	getSearchRegistry().RegisterAllProviderFlags(cmd)
@@ -94,8 +97,13 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 		}
 	}
 
+	filters := append([]string(nil), flagFilters...)
 	if len(queryArgs) == 1 && q.NameSubstring == "" && q.NameRegex == "" {
-		q.NameSubstring = queryArgs[0]
+		if inventory.IsFilterToken(queryArgs[0]) {
+			filters = append(filters, queryArgs[0])
+		} else {
+			q.NameSubstring = queryArgs[0]
+		}
 	}
 
 	provs := buildProviders(cfg, cmd)
@@ -109,6 +117,15 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 	ctx := context.Background()
 
 	records, err := searchrun.RunSearch(ctx, q, provs, cacheDir, cacheTTL, flagNoCache, flagRefresh)
+	if err != nil {
+		return nil, "", nil, cfgPath, err
+	}
+	if cfg != nil {
+		if err := inventory.Apply(records, cfg.Inventory); err != nil {
+			return nil, "", nil, cfgPath, fmt.Errorf("apply inventory: %w", err)
+		}
+	}
+	records, err = inventory.FilterRecords(records, filters)
 	if err != nil {
 		return nil, "", nil, cfgPath, err
 	}

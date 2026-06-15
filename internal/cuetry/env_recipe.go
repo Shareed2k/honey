@@ -232,6 +232,17 @@ func appendHostEnvVars(dst map[string]string, r *hosts.Record) {
 			dst[key] = v
 		}
 	}
+	for k, v := range r.Vars {
+		suffix := sanitizeEnvKey(k)
+		if suffix == "" {
+			continue
+		}
+		key := "HONEY_VAR_" + suffix
+		val := v.String()
+		if err := validateOneEnv(key, val); err == nil {
+			dst[key] = val
+		}
+	}
 }
 
 // EffectiveEnvForRun merges defaults.env → resolved defaults.secrets → step.env → resolved step.secrets → cliEnv → host HONEY_HOST_*.

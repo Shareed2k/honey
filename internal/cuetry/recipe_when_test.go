@@ -234,3 +234,31 @@ func TestEvalWhen_withFacts(t *testing.T) {
 		t.Fatal("expected true")
 	}
 }
+
+func TestEvalWhen_withInventoryVarsAndGroups(t *testing.T) {
+	t.Parallel()
+	prog, err := CompileWhen("in_group('web') && vars.service == 'nginx' && vars.allow_restart == true && vars.restart_timeout == 30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := EvalWhen(prog, WhenEvalOpts{
+		Host: hosts.Record{
+			Name:   "web-1",
+			Groups: []string{"prod", "web"},
+			Vars: map[string]hosts.InventoryValue{
+				"service":         hosts.MustInventoryValue("nginx"),
+				"allow_restart":   hosts.MustInventoryValue(true),
+				"restart_timeout": hosts.MustInventoryValue(30),
+			},
+		},
+		Execute: true,
+		Steps:   map[string]StepView{},
+		Secrets: map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected true")
+	}
+}

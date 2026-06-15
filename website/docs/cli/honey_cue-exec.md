@@ -41,10 +41,6 @@ With global --record-dir or defaults.record_dir in config, writes one batch .hre
 invocation when recording is enabled: explicit --record-dir, or record_dir set in honey YAML
 (built-in default records/ alone does not enable cue-exec batch logs). Dry-run records the plan text; --execute records each step result.
 
-Supports `-o json` / `--output json` and `--json` to output structured, machine-readable JSON responses:
-- **Dry-run mode** (`--execute=false`) outputs `{"plan": "<raw-plan-text>"}`.
-- **Actual execution mode** (`--execute`) outputs `{"results": [<list-of-HostExecResult>]}`.
-
 ```
 honey cue-exec &lt;recipe.cue&gt; [name] [flags]
 ```
@@ -67,6 +63,7 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
       --docker-via-ssh-host string    Docker via Honey SSH: explicit host
   -e, --env stringArray               Remote env for command/script (repeat: -e KEY=value); overrides recipe env on duplicate keys
       --execute                       Run steps over SSH/SFTP (default: dry-run, print resolved plan only)
+      --filter stringArray            Post-discovery filter (repeatable: group:web, var:service=nginx)
       --gcp-project string            GCP project (or GOOGLE_CLOUD_PROJECT / GCP_PROJECT)
       --gcp-zone string               Limit GCP to a single zone (default: all zones)
   -h, --help                          help for cue-exec

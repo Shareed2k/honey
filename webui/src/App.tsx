@@ -557,7 +557,7 @@ export function App() {
 
       <Layout>
         <Layout.Content style={{ padding: '16px 20px', overflowY: 'auto', minHeight: 0 }}>
-          {tab === 'search' ? (
+          <div style={{ display: tab === 'search' ? 'block' : 'none', height: '100%' }}>
             <SearchTab
               records={records}
               selectedKeys={selectedKeys}
@@ -578,7 +578,7 @@ export function App() {
               onOpenReplayAll={openReplayAllRecordings}
               onOpenTerminal={handleOpenTerminal}
             />
-          ) : null}
+          </div>
 
           {tab === 'files' ? <FilesTab records={records} backends={backends} /> : null}
           {tab === 'backends' ? <BackendsTab backends={backends} error={backErr} /> : null}
