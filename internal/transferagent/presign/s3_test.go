@@ -35,7 +35,8 @@ func newTestS3Client(t *testing.T) *s3.Client {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
-	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
+	cfg, _ := awsconfig.LoadDefaultConfig(
+		context.Background(),
 		awsconfig.WithRegion("us-east-1"),
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKIA", "secret", "")),
 	)

@@ -28,7 +28,8 @@ func LogAudit(ev AuditEvent) {
 		preview = preview[:120] + "…"
 	}
 	sum := sha256.Sum256([]byte(ev.SQL))
-	zap.L().Info("plugin postgres",
+	zap.L().Info(
+		"plugin postgres",
 		zap.String("plugin_id", ev.PluginID),
 		zap.String("host_name", ev.HostName),
 		zap.String("action", ev.Action),

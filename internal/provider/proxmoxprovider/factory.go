@@ -12,6 +12,14 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+// ConfigProvider defines the configuration dependency required by this provider.
+type ConfigProvider interface {
+	ProxmoxBackends() []config.ProxmoxBackend
+	ProxmoxBackendSlicePtr() *[]config.ProxmoxBackend
+	SetProxmoxBackends([]config.ProxmoxBackend)
+	DockerDiscover() config.DockerDiscover
+}
+
 const overrideKey = "proxmox"
 
 func proxmoxOverride(overrides searchrun.ProviderOverrides) (o config.ProxmoxBackend) {
@@ -20,17 +28,19 @@ func proxmoxOverride(overrides searchrun.ProviderOverrides) (o config.ProxmoxBac
 }
 
 // NewFactory returns a new factory for this provider.
-func NewFactory() searchrun.ProviderFactory {
-	return proxmoxFactory{}
+func NewFactory(cfg ConfigProvider) searchrun.ProviderFactory {
+	searchrun.RegisterCRUD(proxmoxCRUD{cfg: cfg})
+	return proxmoxFactory{cfg: cfg}
 }
 
-type proxmoxFactory struct{}
+type proxmoxFactory struct {
+	cfg ConfigProvider
+}
 
-func (proxmoxFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
-	cfg := config.Get()
+func (f proxmoxFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
 	o := proxmoxOverride(overrides)
-	out := make([]hosts.Backend, 0, len(cfg.Backends.Proxmox))
-	for _, e := range cfg.Backends.Proxmox {
+	out := make([]hosts.Backend, 0, len(f.cfg.ProxmoxBackends()))
+	for _, e := range f.cfg.ProxmoxBackends() {
 		url := searchrun.FirstNonEmpty(e.URL, o.URL, cliFlags.url)
 		user := searchrun.FirstNonEmpty(e.User, o.User, cliFlags.user)
 		pass := searchrun.FirstNonEmpty(e.Password, o.Password, cliFlags.password)
@@ -54,14 +64,14 @@ func (proxmoxFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.
 				Insecure:    insecure,
 				ExecMode:    execMode,
 			},
-			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
+			searchrun.MergeDockerDiscover(f.cfg.DockerDiscover(), e.DockerDiscover),
 		)
 		out = append(out, b)
 	}
 	return out
 }
 
-func (proxmoxFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+func (f proxmoxFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
 	o := proxmoxOverride(overrides)
 	url := searchrun.FirstNonEmpty(o.URL, cliFlags.url)
 	user := searchrun.FirstNonEmpty(o.User, cliFlags.user)
@@ -82,30 +92,28 @@ func (proxmoxFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backe
 	)
 }
 
-func (proxmoxFactory) BackendRows() []config.BackendRow {
-	cfg := config.Get()
-	rows := make([]config.BackendRow, 0, len(cfg.Backends.Proxmox))
-	for _, e := range cfg.Backends.Proxmox {
+func (f proxmoxFactory) BackendRows() []config.BackendRow {
+	rows := make([]config.BackendRow, 0, len(f.cfg.ProxmoxBackends()))
+	for _, e := range f.cfg.ProxmoxBackends() {
 		rows = append(rows, config.BackendRow{Kind: "proxmox", Name: e.Name, Hint: strings.TrimSpace(e.URL)})
 	}
 	return rows
 }
 
-func (proxmoxFactory) BackendKind() string { return "proxmox" }
+func (f proxmoxFactory) BackendKind() string { return "proxmox" }
 
-func (proxmoxFactory) BackendSlicePtr() any {
-	cfg := config.Get()
-	return &cfg.Backends.Proxmox
+func (f proxmoxFactory) BackendSlicePtr() any {
+	return f.cfg.ProxmoxBackendSlicePtr()
 }
 
-func (proxmoxFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
+func (f proxmoxFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
-func (proxmoxFactory) ProviderName() string { return "proxmox" }
+func (f proxmoxFactory) ProviderName() string { return "proxmox" }
 
-func (proxmoxFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
+func (f proxmoxFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
 	return resolveProxmoxExecutor(r)
 }
 
-func (proxmoxFactory) ReconfigureFromConfig() {
+func (f proxmoxFactory) ReconfigureFromConfig() {
 	reconfigureProxmox()
 }

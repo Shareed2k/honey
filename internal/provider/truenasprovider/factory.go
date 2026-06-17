@@ -13,6 +13,14 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+// ConfigProvider defines the configuration dependency required by this provider.
+type ConfigProvider interface {
+	TrueNASBackends() []config.TrueNASBackend
+	TrueNASBackendSlicePtr() *[]config.TrueNASBackend
+	SetTrueNASBackends([]config.TrueNASBackend)
+	DockerDiscover() config.DockerDiscover
+}
+
 const overrideKey = "truenas"
 
 func truenasOverride(overrides searchrun.ProviderOverrides) (o config.TrueNASBackend) {
@@ -23,20 +31,21 @@ func truenasOverride(overrides searchrun.ProviderOverrides) (o config.TrueNASBac
 // NewFactory returns a new factory for this provider. tunnel/dialer (implemented in
 // the ui package) are injected so resolver-created API-shell executors can run the
 // port-forward and proxy upstream dial.
-func NewFactory(tunnel TunnelRunner, dialer UpstreamDialer) searchrun.ProviderFactory {
-	return truenasFactory{tunnel: tunnel, dialer: dialer}
+func NewFactory(tunnel TunnelRunner, dialer UpstreamDialer, cfg ConfigProvider) searchrun.ProviderFactory {
+	searchrun.RegisterCRUD(truenasCRUD{cfg: cfg})
+	return truenasFactory{tunnel: tunnel, dialer: dialer, cfg: cfg}
 }
 
 type truenasFactory struct {
 	tunnel TunnelRunner
 	dialer UpstreamDialer
+	cfg    ConfigProvider
 }
 
-func (truenasFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
-	cfg := config.Get()
+func (f truenasFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
 	o := truenasOverride(overrides)
-	out := make([]hosts.Backend, 0, len(cfg.Backends.TrueNAS))
-	for _, e := range cfg.Backends.TrueNAS {
+	out := make([]hosts.Backend, 0, len(f.cfg.TrueNASBackends()))
+	for _, e := range f.cfg.TrueNASBackends() {
 		url := searchrun.FirstNonEmpty(e.URL, o.URL, cliFlags.url)
 		apiKey := firstNonEmpty(e.APIKey, o.APIKey, cliFlags.apiKey, os.Getenv("TRUENAS_API_KEY"))
 		user := searchrun.FirstNonEmpty(e.Username, o.Username, cliFlags.user)
@@ -56,7 +65,7 @@ func (truenasFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.
 	return out
 }
 
-func (truenasFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+func (f truenasFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
 	o := truenasOverride(overrides)
 	url := searchrun.FirstNonEmpty(o.URL, cliFlags.url)
 	user := searchrun.FirstNonEmpty(o.Username, cliFlags.user)
@@ -71,25 +80,23 @@ func (truenasFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backe
 	}
 }
 
-func (truenasFactory) BackendRows() []config.BackendRow {
-	cfg := config.Get()
-	rows := make([]config.BackendRow, 0, len(cfg.Backends.TrueNAS))
-	for _, e := range cfg.Backends.TrueNAS {
+func (f truenasFactory) BackendRows() []config.BackendRow {
+	rows := make([]config.BackendRow, 0, len(f.cfg.TrueNASBackends()))
+	for _, e := range f.cfg.TrueNASBackends() {
 		rows = append(rows, config.BackendRow{Kind: "truenas", Name: e.Name, Hint: strings.TrimSpace(e.URL)})
 	}
 	return rows
 }
 
-func (truenasFactory) BackendKind() string { return "truenas" }
+func (f truenasFactory) BackendKind() string { return "truenas" }
 
-func (truenasFactory) BackendSlicePtr() any {
-	cfg := config.Get()
-	return &cfg.Backends.TrueNAS
+func (f truenasFactory) BackendSlicePtr() any {
+	return f.cfg.TrueNASBackendSlicePtr()
 }
 
-func (truenasFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
+func (f truenasFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
-func (truenasFactory) ProviderName() string { return "truenas" }
+func (f truenasFactory) ProviderName() string { return "truenas" }
 
 func (f truenasFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
 	if TruenasTunnelUsesAPIShell(r) {
@@ -98,7 +105,7 @@ func (f truenasFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexe
 	return nil
 }
 
-func (truenasFactory) ReconfigureFromConfig() {
+func (f truenasFactory) ReconfigureFromConfig() {
 	reconfigureTrueNAS()
 }
 

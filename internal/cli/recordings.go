@@ -168,7 +168,8 @@ var recordingsStatsCmd = &cobra.Command{
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "RECORDING\tDURATION\tIN\tOUT\tERRORS\tEXIT")
 		for _, s := range stats {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\n",
+			fmt.Fprintf(
+				w, "%s\t%s\t%s\t%s\t%d\t%d\n",
 				s.Basename, s.Duration,
 				recordings.FormatBytes(s.StdinBytes),
 				recordings.FormatBytes(s.StdoutBytes),

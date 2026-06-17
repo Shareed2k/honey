@@ -70,7 +70,8 @@ func EncryptSymmetricV1(key []byte, plaintext string) (string, error) {
 		return "", err
 	}
 	ct := aesgcm.Seal(nil, nonce, []byte(plaintext), nil)
-	return fmt.Sprintf("v1:%s:%s",
+	return fmt.Sprintf(
+		"v1:%s:%s",
 		base64.StdEncoding.EncodeToString(nonce),
 		base64.StdEncoding.EncodeToString(ct),
 	), nil

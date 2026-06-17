@@ -5,29 +5,24 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-func init() {
-	searchrun.RegisterCRUD(truenasCRUD{})
+type truenasCRUD struct {
+	cfg ConfigProvider
 }
 
-type truenasCRUD struct{}
+func (c truenasCRUD) ID() string   { return "truenas" }
+func (c truenasCRUD) Name() string { return "TrueNAS" }
 
-func (truenasCRUD) ID() string   { return "truenas" }
-func (truenasCRUD) Name() string { return "TrueNAS" }
-
-func (truenasCRUD) ListOptions() []huh.Option[string] {
-	cfg := config.Get()
-	opts := make([]huh.Option[string], 0, len(cfg.Backends.TrueNAS))
-	for i, b := range cfg.Backends.TrueNAS {
+func (c truenasCRUD) ListOptions() []huh.Option[string] {
+	opts := make([]huh.Option[string], 0, len(c.cfg.TrueNASBackends()))
+	for i, b := range c.cfg.TrueNASBackends() {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("TrueNAS: %s (%s)", b.Name, b.URL), fmt.Sprintf("truenas:%d", i)))
 	}
 	return opts
 }
 
-func (truenasCRUD) Add() error {
-	cfg := config.Get()
+func (c truenasCRUD) Add() error {
 	var name, url, user, apiKey, sshUser string
 	var insecure, inclAppliance, inclVMs, inclVirt bool
 	inclAppliance, inclVMs, inclVirt = true, true, true
@@ -45,7 +40,7 @@ func (truenasCRUD) Add() error {
 		),
 	).Run()
 	if err == nil {
-		cfg.Backends.TrueNAS = append(cfg.Backends.TrueNAS, config.TrueNASBackend{
+		c.cfg.SetTrueNASBackends(append(c.cfg.TrueNASBackends(), config.TrueNASBackend{
 			Name:             name,
 			URL:              url,
 			Username:         user,
@@ -55,17 +50,16 @@ func (truenasCRUD) Add() error {
 			IncludeAppliance: &inclAppliance,
 			IncludeVMs:       &inclVMs,
 			IncludeVirt:      &inclVirt,
-		})
+		}))
 	}
 	return err
 }
 
-func (truenasCRUD) Edit(idx int) error {
-	cfg := config.Get()
-	if idx < 0 || idx >= len(cfg.Backends.TrueNAS) {
+func (c truenasCRUD) Edit(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.TrueNASBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	b := cfg.Backends.TrueNAS[idx]
+	b := c.cfg.TrueNASBackends()[idx]
 	// Dereference *bool fields with defaults for the form.
 	inclAppliance := b.IncludeAppliance == nil || *b.IncludeAppliance
 	inclVMs := b.IncludeVMs == nil || *b.IncludeVMs
@@ -87,16 +81,18 @@ func (truenasCRUD) Edit(idx int) error {
 		b.IncludeAppliance = &inclAppliance
 		b.IncludeVMs = &inclVMs
 		b.IncludeVirt = &inclVirt
-		cfg.Backends.TrueNAS[idx] = b
+		backends := c.cfg.TrueNASBackends()
+		backends[idx] = b
+		c.cfg.SetTrueNASBackends(backends)
 	}
 	return err
 }
 
-func (truenasCRUD) Delete(idx int) error {
-	cfg := config.Get()
-	if idx < 0 || idx >= len(cfg.Backends.TrueNAS) {
+func (c truenasCRUD) Delete(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.TrueNASBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	cfg.Backends.TrueNAS = append(cfg.Backends.TrueNAS[:idx], cfg.Backends.TrueNAS[idx+1:]...)
+	backends := c.cfg.TrueNASBackends()
+	c.cfg.SetTrueNASBackends(append(backends[:idx], backends[idx+1:]...))
 	return nil
 }

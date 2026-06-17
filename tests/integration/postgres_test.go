@@ -14,7 +14,8 @@ func TestPostgresQuery_Select(t *testing.T) {
 	dsn := startPostgres(t)
 	pools := postgres.NewPoolManager()
 
-	res, err := postgres.Query(context.Background(), pools, dsn,
+	res, err := postgres.Query(
+		context.Background(), pools, dsn,
 		"SELECT 1+1 AS result", nil,
 		postgres.QueryOpts{Timeout: 5 * time.Second, Readonly: true},
 	)
@@ -34,7 +35,8 @@ func TestPostgresQuery_ReadOnly_Enforcement(t *testing.T) {
 	pools := postgres.NewPoolManager()
 
 	// Read-only query must succeed.
-	_, err := postgres.Query(context.Background(), pools, dsn,
+	_, err := postgres.Query(
+		context.Background(), pools, dsn,
 		"SELECT current_database()", nil,
 		postgres.QueryOpts{Timeout: 5 * time.Second, Readonly: true},
 	)
@@ -43,7 +45,8 @@ func TestPostgresQuery_ReadOnly_Enforcement(t *testing.T) {
 	}
 
 	// DDL must be rejected by the readonly validator before hitting the DB.
-	_, err = postgres.Query(context.Background(), pools, dsn,
+	_, err = postgres.Query(
+		context.Background(), pools, dsn,
 		"DROP TABLE IF EXISTS does_not_exist", nil,
 		postgres.QueryOpts{Timeout: 5 * time.Second, Readonly: true},
 	)
@@ -56,7 +59,8 @@ func TestPostgresQuery_Timeout(t *testing.T) {
 	dsn := startPostgres(t)
 	pools := postgres.NewPoolManager()
 
-	_, err := postgres.Query(context.Background(), pools, dsn,
+	_, err := postgres.Query(
+		context.Background(), pools, dsn,
 		"SELECT pg_sleep(5)", nil,
 		postgres.QueryOpts{Timeout: 1 * time.Millisecond, Readonly: true},
 	)
@@ -70,7 +74,8 @@ func TestPostgresPool_Reuse(t *testing.T) {
 	pools := postgres.NewPoolManager()
 
 	for i := range 2 {
-		_, err := postgres.Query(context.Background(), pools, dsn,
+		_, err := postgres.Query(
+			context.Background(), pools, dsn,
 			"SELECT 42", nil,
 			postgres.QueryOpts{Timeout: 5 * time.Second, Readonly: true},
 		)

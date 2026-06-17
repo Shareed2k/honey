@@ -44,7 +44,8 @@ var ptyProxyCmd = &cobra.Command{
 			return nil
 		}
 
-		zap.L().Debug("honey pty-proxy starting",
+		zap.L().Debug(
+			"honey pty-proxy starting",
 			zap.String("session", hello.SessionID),
 			zap.String("host", hello.Record.Name),
 			zap.String("console", hello.Console),

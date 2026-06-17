@@ -51,7 +51,8 @@ func modelIDsSortedFromList(list openai.ModelsList) []string {
 
 func (s *Server) pullAssistModelsFromUpstream(ctx context.Context) ([]string, error) {
 	client := assistNewOpenAIClient()
-	zap.L().Debug("terminal assist ListModels call",
+	zap.L().Debug(
+		"terminal assist ListModels call",
 		zap.Bool("openai_base_url_configured", assistBaseURL() != ""),
 	)
 	list, err := client.ListModels(ctx)
@@ -60,7 +61,8 @@ func (s *Server) pullAssistModelsFromUpstream(ctx context.Context) ([]string, er
 		return nil, err
 	}
 	ids := modelIDsSortedFromList(list)
-	zap.L().Debug("terminal assist ListModels ok",
+	zap.L().Debug(
+		"terminal assist ListModels ok",
 		zap.Int("raw_models", len(list.Models)),
 		zap.Int("deduped_ids", len(ids)),
 	)
@@ -76,14 +78,16 @@ func (s *Server) getAssistModelIDs(ctx context.Context, force bool) ([]string, e
 	s.assistModelsMu.Unlock()
 
 	if !expired && len(stale) > 0 {
-		zap.L().Debug("terminal assist model list cache hit",
+		zap.L().Debug(
+			"terminal assist model list cache hit",
 			zap.Int("count", len(stale)),
 			zap.Bool("force", force),
 		)
 		return stale, nil
 	}
 
-	zap.L().Debug("terminal assist model list cache miss or refresh",
+	zap.L().Debug(
+		"terminal assist model list cache miss or refresh",
 		zap.Bool("force", force),
 		zap.Bool("expired", expired),
 		zap.Int("stale_count", len(stale)),
@@ -92,7 +96,8 @@ func (s *Server) getAssistModelIDs(ctx context.Context, force bool) ([]string, e
 	ids, err := s.pullAssistModelsFromUpstream(ctx)
 	if err != nil {
 		if len(stale) > 0 {
-			zap.L().Debug("terminal assist model list using stale after upstream error",
+			zap.L().Debug(
+				"terminal assist model list using stale after upstream error",
 				zap.Error(err),
 				zap.Int("stale_count", len(stale)),
 			)
@@ -106,7 +111,8 @@ func (s *Server) getAssistModelIDs(ctx context.Context, force bool) ([]string, e
 	s.assistModelIDs = append([]string(nil), ids...)
 	s.assistModelsExp = time.Now().Add(assistModelsCacheTTL)
 	s.assistModelsMu.Unlock()
-	zap.L().Debug("terminal assist model list cache updated",
+	zap.L().Debug(
+		"terminal assist model list cache updated",
 		zap.Int("count", len(ids)),
 		zap.Duration("ttl", assistModelsCacheTTL),
 	)
@@ -141,7 +147,8 @@ func (s *Server) handleTerminalAssistModels(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		zap.L().Warn("terminal assist list models failed, returning stale cache", zap.Error(err))
 	}
-	zap.L().Debug("terminal assist GET models response",
+	zap.L().Debug(
+		"terminal assist GET models response",
 		zap.Int("returned_count", len(ids)),
 		zap.Bool("stale_with_error", err != nil),
 	)
@@ -182,7 +189,8 @@ func (s *Server) resolveAssistChatModel(ctx context.Context, requested string) (
 	if len(ids) == 0 {
 		return "", errors.New("no models available from provider: fix ListModels / OPENAI_BASE_URL, then reload the terminal")
 	}
-	zap.L().Debug("terminal assist resolve model rejected",
+	zap.L().Debug(
+		"terminal assist resolve model rejected",
 		zap.String("requested", req),
 		zap.Int("list_size", len(ids)),
 		zap.Bool("upstream_refresh_err", err != nil),

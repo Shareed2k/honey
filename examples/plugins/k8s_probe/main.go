@@ -7,9 +7,10 @@
 // the kubeconfig stored in the host record's metadata.
 //
 // Actions:
-//   version  — GET /version → cluster version JSON
-//   health   — GET /readyz  → cluster health status
-//   nodes    — GET /api/v1/nodes → node list JSON
+//
+//	version  — GET /version → cluster version JSON
+//	health   — GET /readyz  → cluster health status
+//	nodes    — GET /api/v1/nodes → node list JSON
 //
 // Example CUE recipe:
 //
@@ -35,10 +36,10 @@ type executeStepInput struct {
 }
 
 type executeStepOutput struct {
-	Success  bool   `json:"success"`
-	Stdout   string `json:"stdout,omitempty"`
-	Stderr   string `json:"stderr,omitempty"`
-	Err      string `json:"err,omitempty"`
+	Success bool   `json:"success"`
+	Stdout  string `json:"stdout,omitempty"`
+	Stderr  string `json:"stderr,omitempty"`
+	Err     string `json:"err,omitempty"`
 }
 
 func main() {}

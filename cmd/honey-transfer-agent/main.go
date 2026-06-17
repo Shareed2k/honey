@@ -251,7 +251,8 @@ func newAWSClient(ctx context.Context, a transferArgs, claims *credentialClaims)
 		strings.TrimSpace(creds["AWS_SECRET_ACCESS_KEY"]),
 		strings.TrimSpace(creds["AWS_SESSION_TOKEN"]),
 	)
-	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+	cfg, err := awsconfig.LoadDefaultConfig(
+		ctx,
 		awsconfig.WithRegion(strings.TrimSpace(a.Region)),
 		awsconfig.WithCredentialsProvider(providerCreds),
 	)

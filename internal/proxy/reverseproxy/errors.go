@@ -10,7 +10,8 @@ import (
 // NewErrorHandler returns a handler for proxy errors.
 func NewErrorHandler() func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
-		zap.L().Debug("HTTP app reverse proxy error",
+		zap.L().Debug(
+			"HTTP app reverse proxy error",
 			zap.String("method", r.Method),
 			zap.String("host", r.Host),
 			zap.String("url", r.URL.String()),

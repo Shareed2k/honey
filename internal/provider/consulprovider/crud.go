@@ -5,29 +5,24 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-func init() {
-	searchrun.RegisterCRUD(consulCRUD{})
+type consulCRUD struct {
+	cfg ConfigProvider
 }
 
-type consulCRUD struct{}
+func (c consulCRUD) ID() string   { return "consul" }
+func (c consulCRUD) Name() string { return "Consul" }
 
-func (consulCRUD) ID() string   { return "consul" }
-func (consulCRUD) Name() string { return "Consul" }
-
-func (consulCRUD) ListOptions() []huh.Option[string] {
-	cfg := config.Get()
-	opts := make([]huh.Option[string], 0, len(cfg.Backends.Consul))
-	for i, b := range cfg.Backends.Consul {
+func (c consulCRUD) ListOptions() []huh.Option[string] {
+	opts := make([]huh.Option[string], 0, len(c.cfg.ConsulBackends()))
+	for i, b := range c.cfg.ConsulBackends() {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("Consul: %s (%s)", b.Name, b.Addr), fmt.Sprintf("consul:%d", i)))
 	}
 	return opts
 }
 
-func (consulCRUD) Add() error {
-	cfg := config.Get()
+func (c consulCRUD) Add() error {
 	var name, addr, datacenter, token string
 	err := huh.NewForm(
 		huh.NewGroup(
@@ -38,22 +33,21 @@ func (consulCRUD) Add() error {
 		),
 	).Run()
 	if err == nil {
-		cfg.Backends.Consul = append(cfg.Backends.Consul, config.ConsulBackend{
+		c.cfg.SetConsulBackends(append(c.cfg.ConsulBackends(), config.ConsulBackend{
 			Name:       name,
 			Addr:       addr,
 			Datacenter: datacenter,
 			Token:      token,
-		})
+		}))
 	}
 	return err
 }
 
-func (consulCRUD) Edit(idx int) error {
-	cfg := config.Get()
-	if idx < 0 || idx >= len(cfg.Backends.Consul) {
+func (c consulCRUD) Edit(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.ConsulBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	b := cfg.Backends.Consul[idx]
+	b := c.cfg.ConsulBackends()[idx]
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Name").Value(&b.Name),
@@ -63,16 +57,18 @@ func (consulCRUD) Edit(idx int) error {
 		),
 	).Run()
 	if err == nil {
-		cfg.Backends.Consul[idx] = b
+		backends := c.cfg.ConsulBackends()
+		backends[idx] = b
+		c.cfg.SetConsulBackends(backends)
 	}
 	return err
 }
 
-func (consulCRUD) Delete(idx int) error {
-	cfg := config.Get()
-	if idx < 0 || idx >= len(cfg.Backends.Consul) {
+func (c consulCRUD) Delete(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.ConsulBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	cfg.Backends.Consul = append(cfg.Backends.Consul[:idx], cfg.Backends.Consul[idx+1:]...)
+	backends := c.cfg.ConsulBackends()
+	c.cfg.SetConsulBackends(append(backends[:idx], backends[idx+1:]...))
 	return nil
 }
