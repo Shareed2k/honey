@@ -5,29 +5,24 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-func init() {
-	searchrun.RegisterCRUD(proxmoxCRUD{})
+type proxmoxCRUD struct {
+	cfg ConfigProvider
 }
 
-type proxmoxCRUD struct{}
+func (c proxmoxCRUD) ID() string   { return "proxmox" }
+func (c proxmoxCRUD) Name() string { return "Proxmox" }
 
-func (proxmoxCRUD) ID() string   { return "proxmox" }
-func (proxmoxCRUD) Name() string { return "Proxmox" }
-
-func (proxmoxCRUD) ListOptions() []huh.Option[string] {
-	cfg := config.Get()
-	opts := make([]huh.Option[string], 0, len(cfg.Backends.Proxmox))
-	for i, b := range cfg.Backends.Proxmox {
+func (c proxmoxCRUD) ListOptions() []huh.Option[string] {
+	opts := make([]huh.Option[string], 0, len(c.cfg.ProxmoxBackends()))
+	for i, b := range c.cfg.ProxmoxBackends() {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("Proxmox: %s (%s)", b.Name, b.URL), fmt.Sprintf("proxmox:%d", i)))
 	}
 	return opts
 }
 
-func (proxmoxCRUD) Add() error {
-	cfg := config.Get()
+func (c proxmoxCRUD) Add() error {
 	var name, url, user, password, tokenID, tokenSecret, execMode string
 	var insecure bool
 	err := huh.NewForm(
@@ -50,7 +45,7 @@ func (proxmoxCRUD) Add() error {
 		),
 	).Run()
 	if err == nil {
-		cfg.Backends.Proxmox = append(cfg.Backends.Proxmox, config.ProxmoxBackend{
+		c.cfg.SetProxmoxBackends(append(c.cfg.ProxmoxBackends(), config.ProxmoxBackend{
 			Name:        name,
 			URL:         url,
 			User:        user,
@@ -59,17 +54,16 @@ func (proxmoxCRUD) Add() error {
 			TokenSecret: tokenSecret,
 			Insecure:    insecure,
 			ExecMode:    execMode,
-		})
+		}))
 	}
 	return err
 }
 
-func (proxmoxCRUD) Edit(idx int) error {
-	cfg := config.Get()
-	if idx < 0 || idx >= len(cfg.Backends.Proxmox) {
+func (c proxmoxCRUD) Edit(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.ProxmoxBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	b := cfg.Backends.Proxmox[idx]
+	b := c.cfg.ProxmoxBackends()[idx]
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Name").Value(&b.Name),
@@ -90,16 +84,18 @@ func (proxmoxCRUD) Edit(idx int) error {
 		),
 	).Run()
 	if err == nil {
-		cfg.Backends.Proxmox[idx] = b
+		backends := c.cfg.ProxmoxBackends()
+		backends[idx] = b
+		c.cfg.SetProxmoxBackends(backends)
 	}
 	return err
 }
 
-func (proxmoxCRUD) Delete(idx int) error {
-	cfg := config.Get()
-	if idx < 0 || idx >= len(cfg.Backends.Proxmox) {
+func (c proxmoxCRUD) Delete(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.ProxmoxBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	cfg.Backends.Proxmox = append(cfg.Backends.Proxmox[:idx], cfg.Backends.Proxmox[idx+1:]...)
+	backends := c.cfg.ProxmoxBackends()
+	c.cfg.SetProxmoxBackends(append(backends[:idx], backends[idx+1:]...))
 	return nil
 }

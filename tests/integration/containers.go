@@ -39,7 +39,8 @@ func startPostgres(t *testing.T) string {
 	t.Helper()
 	pgOnce.Do(func() {
 		ctx := context.Background()
-		c, err := tcpostgres.RunContainer(ctx,
+		c, err := tcpostgres.RunContainer(
+			ctx,
 			testcontainers.WithImage("postgres:16-alpine"),
 			tcpostgres.WithDatabase("testdb"),
 			tcpostgres.WithUsername("test"),
@@ -256,10 +257,13 @@ func (c *testSSHClient) Download(_, _ string) error { return fmt.Errorf("not imp
 func (c *testSSHClient) ListRemoteDir(_ string) ([]hostexec.RemoteFileEntry, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
 func (c *testSSHClient) StatRemote(_ string) (hostexec.RemoteFileEntry, error) {
 	return hostexec.RemoteFileEntry{}, fmt.Errorf("not implemented")
 }
-func (c *testSSHClient) MkdirAllRemote(_ string) error       { return fmt.Errorf("not implemented") }
+
+func (c *testSSHClient) MkdirAllRemote(_ string) error { return fmt.Errorf("not implemented") }
+
 func (c *testSSHClient) RemoveRemote(_ string, _ bool) error { return fmt.Errorf("not implemented") }
 func (c *testSSHClient) Close() error                        { return c.c.Close() }
 

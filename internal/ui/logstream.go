@@ -171,7 +171,8 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 			zap.L().Debug("anomaly detector disabled", zap.Error(err))
 			_, _ = fmt.Fprintf(os.Stderr, "warning: anomaly detector disabled: %v\n", err)
 		} else {
-			zap.L().Debug("anomaly detector initialized",
+			zap.L().Debug(
+				"anomaly detector initialized",
 				zap.String("model", opts.AnomalyModel),
 				zap.Float64("threshold", opts.AnomalyThresh),
 				zap.Int("freqWindow", opts.AnomalyFreqWindow),
@@ -210,7 +211,8 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 		defer disp.Close()
 	}
 
-	zap.L().Debug("StreamLogs start",
+	zap.L().Debug(
+		"StreamLogs start",
 		zap.Int("records", len(records)),
 		zap.Bool("follow", opts.Follow),
 		zap.Int64("tail", opts.Tail),
@@ -270,7 +272,8 @@ type logSink struct {
 }
 
 func streamOneLog(ctx context.Context, run logRun, rec hosts.Record, sink logSink) error {
-	zap.L().Debug("streamOneLog",
+	zap.L().Debug(
+		"streamOneLog",
 		zap.String("record", rec.Name),
 		zap.String("provider", rec.Provider),
 		zap.String("kind", rec.Meta["kind"]),
@@ -297,7 +300,8 @@ func streamK8sPodLogs(ctx context.Context, run logRun, rec hosts.Record, sink lo
 	if namespace == "" || podName == "" {
 		return fmt.Errorf("%s missing k8s namespace or pod_name", rec.Name)
 	}
-	zap.L().Debug("k8s pod logs",
+	zap.L().Debug(
+		"k8s pod logs",
 		zap.String("namespace", namespace),
 		zap.String("pod", podName),
 		zap.String("container", opts.Container),
@@ -350,7 +354,8 @@ func streamDockerLogs(ctx context.Context, run logRun, rec hosts.Record, sink lo
 	if err != nil {
 		return err
 	}
-	zap.L().Debug("docker container logs",
+	zap.L().Debug(
+		"docker container logs",
 		zap.String("record", rec.Name),
 		zap.String("containerID", containerID),
 	)
@@ -395,7 +400,8 @@ func streamExecutorLogs(ctx context.Context, run logRun, rec hosts.Record, sink 
 	if err != nil {
 		return err
 	}
-	zap.L().Debug("executor logs",
+	zap.L().Debug(
+		"executor logs",
 		zap.String("record", rec.Name),
 		zap.String("command", cmd),
 		zap.String("runAs", run.opts.RunAs),
@@ -557,7 +563,8 @@ func writePrefixedLine(ctx context.Context, sink logSink, line string) {
 				return
 			}
 			if res.Anomaly {
-				zap.L().Debug("anomaly detected",
+				zap.L().Debug(
+					"anomaly detected",
 					zap.String("prefix", strings.TrimSpace(sink.prefix)),
 					zap.Float64("score", res.Score),
 					zap.String("reason", res.Reason),

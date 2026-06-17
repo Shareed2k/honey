@@ -38,6 +38,70 @@ func (c configAdapter) SetAWSBackends(b []config.AWSBackend) {
 	cfg.Backends.AWS = b
 }
 
+func (c configAdapter) ConsulBackends() []config.ConsulBackend { return config.Get().Backends.Consul }
+
+func (c configAdapter) ConsulBackendSlicePtr() *[]config.ConsulBackend {
+	return &config.Get().Backends.Consul
+}
+
+func (c configAdapter) SetConsulBackends(b []config.ConsulBackend) { config.Get().Backends.Consul = b }
+
+func (c configAdapter) DockerBackends() []config.DockerBackend { return config.Get().Backends.Docker }
+
+func (c configAdapter) DockerBackendSlicePtr() *[]config.DockerBackend {
+	return &config.Get().Backends.Docker
+}
+
+func (c configAdapter) SetDockerBackends(b []config.DockerBackend) { config.Get().Backends.Docker = b }
+
+func (c configAdapter) GCPBackends() []config.GCPBackend         { return config.Get().Backends.GCP }
+func (c configAdapter) GCPBackendSlicePtr() *[]config.GCPBackend { return &config.Get().Backends.GCP }
+func (c configAdapter) SetGCPBackends(b []config.GCPBackend)     { config.Get().Backends.GCP = b }
+
+func (c configAdapter) KubernetesBackends() []config.KubernetesBackend {
+	return config.Get().Backends.Kubernetes
+}
+
+func (c configAdapter) KubernetesBackendSlicePtr() *[]config.KubernetesBackend {
+	return &config.Get().Backends.Kubernetes
+}
+
+func (c configAdapter) SetKubernetesBackends(b []config.KubernetesBackend) {
+	config.Get().Backends.Kubernetes = b
+}
+func (c configAdapter) K8sMode() string       { return config.Get().Defaults.K8sMode }
+func (c configAdapter) K8sDebugImage() string { return config.Get().Defaults.K8sDebugImage }
+
+func (c configAdapter) LocalBackends() []config.LocalBackend { return config.Get().Backends.Local }
+func (c configAdapter) LocalBackendSlicePtr() *[]config.LocalBackend {
+	return &config.Get().Backends.Local
+}
+func (c configAdapter) SetLocalBackends(b []config.LocalBackend) { config.Get().Backends.Local = b }
+
+func (c configAdapter) ProxmoxBackends() []config.ProxmoxBackend {
+	return config.Get().Backends.Proxmox
+}
+
+func (c configAdapter) ProxmoxBackendSlicePtr() *[]config.ProxmoxBackend {
+	return &config.Get().Backends.Proxmox
+}
+
+func (c configAdapter) SetProxmoxBackends(b []config.ProxmoxBackend) {
+	config.Get().Backends.Proxmox = b
+}
+
+func (c configAdapter) TrueNASBackends() []config.TrueNASBackend {
+	return config.Get().Backends.TrueNAS
+}
+
+func (c configAdapter) TrueNASBackendSlicePtr() *[]config.TrueNASBackend {
+	return &config.Get().Backends.TrueNAS
+}
+
+func (c configAdapter) SetTrueNASBackends(b []config.TrueNASBackend) {
+	config.Get().Backends.TrueNAS = b
+}
+
 func (c configAdapter) DockerDiscover() config.DockerDiscover {
 	return config.Get().Defaults.DockerDiscover
 }
@@ -48,12 +112,12 @@ func Factories(deps Deps) []searchrun.ProviderFactory {
 	adapter := configAdapter{}
 	return []searchrun.ProviderFactory{
 		awsprovider.NewFactory(adapter),
-		consulprovider.NewFactory(),
-		dockerprovider.NewFactory(deps.DockerInteractive),
-		gcp.NewFactory(),
-		k8sprovider.NewFactory(deps.K8sInteractive),
-		localprovider.NewFactory(),
-		proxmoxprovider.NewFactory(),
-		truenasprovider.NewFactory(deps.TruenasTunnel, deps.TruenasDialer),
+		consulprovider.NewFactory(adapter),
+		dockerprovider.NewFactory(deps.DockerInteractive, adapter),
+		gcp.NewFactory(adapter),
+		k8sprovider.NewFactory(deps.K8sInteractive, adapter),
+		localprovider.NewFactory(adapter),
+		proxmoxprovider.NewFactory(adapter),
+		truenasprovider.NewFactory(deps.TruenasTunnel, deps.TruenasDialer, adapter),
 	}
 }

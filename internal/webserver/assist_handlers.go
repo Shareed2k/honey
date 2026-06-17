@@ -269,7 +269,8 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 		httpError(w, errors.New("scrollback is required"), http.StatusBadRequest)
 		return
 	}
-	zap.L().Debug("terminal assist request",
+	zap.L().Debug(
+		"terminal assist request",
 		zap.String("client_ip", clientIP(r)),
 		zap.Int("max_lines", req.MaxLines),
 		zap.Bool("model_field_set", strings.TrimSpace(req.Model) != ""),
@@ -304,7 +305,8 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 		user = "Briefly suggest the next command or explain the latest output."
 	}
 
-	zap.L().Debug("terminal assist context after clip",
+	zap.L().Debug(
+		"terminal assist context after clip",
 		zap.Int("scrollback_runes", utf8.RuneCountInString(scroll)),
 		zap.Int("scrollback_lines", strings.Count(scroll, "\n")+1),
 		zap.Bool("clipped_lines", clippedLines),
@@ -313,7 +315,8 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 	)
 
 	userContent := fmt.Sprintf("User question:\n%s\n\n--- Terminal scrollback (tail) ---\n%s", user, scroll)
-	zap.L().Debug("terminal assist calling CreateChatCompletion",
+	zap.L().Debug(
+		"terminal assist calling CreateChatCompletion",
 		zap.String("model", chatModel),
 		zap.Int("max_tokens", assistMaxTokens()),
 		zap.Duration("timeout", assistUpstreamTimeout()),
@@ -326,7 +329,8 @@ func (s *Server) handleTerminalAssist(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("upstream error: %v", err), http.StatusBadGateway)
 		return
 	}
-	zap.L().Debug("terminal assist completion ok",
+	zap.L().Debug(
+		"terminal assist completion ok",
 		zap.String("model", chatModel),
 		zap.Int("reply_runes", utf8.RuneCountInString(reply)),
 		zap.Bool("scrollback_clipped_response", clippedLines || clippedRunes),

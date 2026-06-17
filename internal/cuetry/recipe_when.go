@@ -76,8 +76,10 @@ func newWhenEnv() (*cel.Env, error) {
 		cel.Variable("facts", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("vars", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("groups", cel.ListType(cel.StringType)),
-		cel.Function("in_group",
-			cel.Overload("in_group_string", []*cel.Type{cel.StringType}, cel.BoolType,
+		cel.Function(
+			"in_group",
+			cel.Overload(
+				"in_group_string", []*cel.Type{cel.StringType}, cel.BoolType,
 				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
 					key, ok := args[0].(types.String)
 					if !ok {
@@ -87,8 +89,10 @@ func newWhenEnv() (*cel.Env, error) {
 				}),
 			),
 		),
-		cel.Function("kv_get",
-			cel.Overload("kv_get_string", []*cel.Type{cel.StringType}, cel.StringType,
+		cel.Function(
+			"kv_get",
+			cel.Overload(
+				"kv_get_string", []*cel.Type{cel.StringType}, cel.StringType,
 				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
 					key, ok := args[0].(types.String)
 					if !ok {
@@ -98,8 +102,10 @@ func newWhenEnv() (*cel.Env, error) {
 				}),
 			),
 		),
-		cel.Function("kv_has",
-			cel.Overload("kv_has_string", []*cel.Type{cel.StringType}, cel.BoolType,
+		cel.Function(
+			"kv_has",
+			cel.Overload(
+				"kv_has_string", []*cel.Type{cel.StringType}, cel.BoolType,
 				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
 					key, ok := args[0].(types.String)
 					if !ok {

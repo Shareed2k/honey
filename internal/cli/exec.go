@@ -152,7 +152,8 @@ func runExec(cmd *cobra.Command, args []string) error {
 	out := make(chan engine.HostExecResult, len(jobs))
 	go func() {
 		defer close(out)
-		_ = engine.StreamSSHParallel(context.Background(), sshUser, jobs, false,
+		_ = engine.StreamSSHParallel(
+			context.Background(), sshUser, jobs, false,
 			func(_ hosts.Record, _ map[string]string) string { return finalCmd },
 			out, engine.BatchOptions{
 				MaxConc:    flagExecParallel,

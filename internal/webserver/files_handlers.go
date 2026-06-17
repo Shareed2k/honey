@@ -263,7 +263,8 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		zap.L().Warn("ignoring direct credentials in honey-managed credential mode", zap.Int("count", len(req.Credentials)))
 	}
 	transferCfg := engine.LoadTransferConfigFromConfigPath(s.opts.ConfigPath)
-	zap.L().Debug("web agent transfer request received",
+	zap.L().Debug(
+		"web agent transfer request received",
 		zap.String("source_name", req.SourceRecord.Name),
 		zap.String("source_provider", req.SourceRecord.Provider),
 		zap.String("destination_name", req.DestRecord.Name),

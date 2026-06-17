@@ -66,7 +66,8 @@ func (s *Server) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	zap.L().Debug("logs stream request",
+	zap.L().Debug(
+		"logs stream request",
 		zap.Int("records", len(req.Records)),
 		zap.String("user", user),
 		zap.Bool("follow", req.Follow),

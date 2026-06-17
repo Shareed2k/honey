@@ -6,43 +6,52 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-// NewFactory returns a new factory for this provider.
-func NewFactory() searchrun.ProviderFactory {
-	return localFactory{}
+// ConfigProvider defines the configuration dependency required by this provider.
+type ConfigProvider interface {
+	LocalBackends() []config.LocalBackend
+	LocalBackendSlicePtr() *[]config.LocalBackend
+	SetLocalBackends([]config.LocalBackend)
+	DockerDiscover() config.DockerDiscover
 }
 
-type localFactory struct{}
+// NewFactory returns a new factory for this provider.
+func NewFactory(cfg ConfigProvider) searchrun.ProviderFactory {
+	searchrun.RegisterCRUD(localCRUD{cfg: cfg})
+	return localFactory{cfg: cfg}
+}
 
-func (localFactory) FromConfig(_ searchrun.ProviderOverrides) []hosts.Backend {
-	cfg := config.Get()
-	if cfg == nil || len(cfg.Backends.Local) == 0 {
+type localFactory struct {
+	cfg ConfigProvider
+}
+
+func (f localFactory) FromConfig(_ searchrun.ProviderOverrides) []hosts.Backend {
+	if len(f.cfg.LocalBackends()) == 0 {
 		return nil
 	}
 	var out []hosts.Backend
-	for _, b := range cfg.Backends.Local {
+	for _, b := range f.cfg.LocalBackends() {
 		bk := searchrun.WithDockerDiscover(
 			&Local{
 				Name:  b.Name,
 				Hosts: b.Hosts,
 			},
-			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, b.DockerDiscover),
+			searchrun.MergeDockerDiscover(f.cfg.DockerDiscover(), b.DockerDiscover),
 		)
 		out = append(out, bk)
 	}
 	return out
 }
 
-func (localFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend {
+func (f localFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend {
 	return searchrun.WithDockerDiscover(
 		&Local{},
 		config.DockerDiscover{},
 	)
 }
 
-func (localFactory) BackendRows() []config.BackendRow {
-	cfg := config.Get()
-	rows := make([]config.BackendRow, 0, len(cfg.Backends.Local))
-	for _, b := range cfg.Backends.Local {
+func (f localFactory) BackendRows() []config.BackendRow {
+	rows := make([]config.BackendRow, 0, len(f.cfg.LocalBackends()))
+	for _, b := range f.cfg.LocalBackends() {
 		rows = append(rows, config.BackendRow{
 			Kind: "local",
 			Name: b.Name,
@@ -52,13 +61,12 @@ func (localFactory) BackendRows() []config.BackendRow {
 	return rows
 }
 
-func (localFactory) BackendKind() string {
+func (f localFactory) BackendKind() string {
 	return "local"
 }
 
-func (localFactory) BackendSlicePtr() any {
-	cfg := config.Get()
-	return &cfg.Backends.Local
+func (f localFactory) BackendSlicePtr() any {
+	return f.cfg.LocalBackendSlicePtr()
 }
 
 var (

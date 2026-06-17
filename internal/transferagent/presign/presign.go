@@ -73,7 +73,8 @@ func choosePartLayout(size, threshold int64) partLayout {
 	}
 	if size <= threshold {
 		layout := partLayout{Single: true, PartCount: 1, PartSize: size}
-		zap.L().Debug("presign: calculated layout",
+		zap.L().Debug(
+			"presign: calculated layout",
 			zap.Bool("single", layout.Single),
 			zap.Int("part_count", layout.PartCount),
 			zap.Int64("part_size", layout.PartSize),
@@ -92,7 +93,8 @@ func choosePartLayout(size, threshold int64) partLayout {
 		count = (size + partSize - 1) / partSize
 	}
 	layout := partLayout{Single: false, PartCount: int(count), PartSize: partSize}
-	zap.L().Debug("presign: calculated layout",
+	zap.L().Debug(
+		"presign: calculated layout",
 		zap.Bool("single", layout.Single),
 		zap.Int("part_count", layout.PartCount),
 		zap.Int64("part_size", layout.PartSize),
@@ -115,7 +117,8 @@ func PlanTransfer(ctx context.Context, cloud Cloud, fileSize int64, cfg Config) 
 	if cfg.URLTTL <= 0 {
 		cfg.URLTTL = time.Hour
 	}
-	zap.L().Debug("presign: planning transfer",
+	zap.L().Debug(
+		"presign: planning transfer",
 		zap.String("provider", cloud.Provider),
 		zap.String("bucket", cloud.Bucket),
 		zap.String("object", cloud.Object),
