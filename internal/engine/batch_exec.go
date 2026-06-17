@@ -33,6 +33,25 @@ const (
 	sshTransientOpAttempts     = 3
 )
 
+// StreamParallel executes a generic job list concurrently with a bounded waitgroup.
+func StreamParallel[T any](jobs []T, maxConc int, worker func(T)) {
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	sem := make(chan struct{}, maxConc)
+	var wg sync.WaitGroup
+	for i := range jobs {
+		wg.Add(1)
+		go func(job T) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			worker(job)
+		}(jobs[i])
+	}
+	wg.Wait()
+}
+
 func sshTransientBackoff(attempt int) {
 	time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
 }
@@ -95,43 +114,33 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kv
 		defer cache.CloseAll()
 	}
 
-	sem := make(chan struct{}, maxConc)
-	var wg sync.WaitGroup
-	for i := range jobs {
-		wg.Add(1)
-		go func(r hosts.Record) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			effUser := strings.TrimSpace(user)
-			if effUser == "" {
-				if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
-					effUser = u
-				}
+	StreamParallel(jobs, maxConc, func(r hosts.Record) {
+		effUser := strings.TrimSpace(user)
+		if effUser == "" {
+			if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+				effUser = u
 			}
+		}
 
-			run := func() HostExecResult {
-				if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
-					return runOneRemoteTrueNAS(ctx, effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
-				}
-				return RunOneRemoteSSH(effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
-			}
-			outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, run)
-			RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
-			op := "exec"
+		run := func() HostExecResult {
 			if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
-				op = "truenas"
+				return runOneRemoteTrueNAS(ctx, effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
 			}
-			observeSSHOperation(opts.Obs, op, hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
-			res := outcome.Result
-			if opts.Post != nil {
-				opts.Post(ctx, r, &res)
-			}
-			out <- res
-		}(jobs[i])
-	}
-	wg.Wait()
+			return RunOneRemoteSSH(effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+		}
+		outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, run)
+		RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
+		op := "exec"
+		if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
+			op = "truenas"
+		}
+		observeSSHOperation(opts.Obs, op, hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+		res := outcome.Result
+		if opts.Post != nil {
+			opts.Post(ctx, r, &res)
+		}
+		out <- res
+	})
 	return nil
 }
 
@@ -345,23 +354,14 @@ func StreamSFTPUploadParallel(ctx context.Context, user string, recs []hosts.Rec
 	if len(jobs) == 0 {
 		return nil
 	}
-	sem := make(chan struct{}, maxConc)
-	var wg sync.WaitGroup
-	for i := range jobs {
-		wg.Add(1)
-		go func(r hosts.Record) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, func() HostExecResult {
-				return runOneSFTPUpload(user, r, localAbs, remotePath, opts.Cache)
-			})
-			RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
-			observeSSHOperation(opts.Obs, "sftp_put", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
-			out <- outcome.Result
-		}(jobs[i])
-	}
-	wg.Wait()
+	StreamParallel(jobs, maxConc, func(r hosts.Record) {
+		outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, func() HostExecResult {
+			return runOneSFTPUpload(user, r, localAbs, remotePath, opts.Cache)
+		})
+		RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
+		observeSSHOperation(opts.Obs, "sftp_put", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+		out <- outcome.Result
+	})
 	return nil
 }
 
@@ -375,27 +375,18 @@ func StreamSFTPDownloadParallel(ctx context.Context, user string, jobs []SFTPDow
 	if len(jobs) == 0 {
 		return nil
 	}
-	sem := make(chan struct{}, maxConc)
-	var wg sync.WaitGroup
-	for i := range jobs {
-		wg.Add(1)
-		go func(j SFTPDownloadJob) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			if strings.TrimSpace(j.Record.PrimaryIP) == "" && (j.Record.Provider != "k8s" || j.Record.Meta["kind"] != "pod") {
-				out <- HostExecResult{Name: j.Record.Name, Provider: j.Record.Provider, Success: false, ErrMsg: "missing PrimaryIP"}
-				return
-			}
-			outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, func() HostExecResult {
-				return runOneSFTPDownload(user, j, opts.Cache)
-			})
-			RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
-			observeSSHOperation(opts.Obs, "sftp_get", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
-			out <- outcome.Result
-		}(jobs[i])
-	}
-	wg.Wait()
+	StreamParallel(jobs, maxConc, func(j SFTPDownloadJob) {
+		if strings.TrimSpace(j.Record.PrimaryIP) == "" && (j.Record.Provider != "k8s" || j.Record.Meta["kind"] != "pod") {
+			out <- HostExecResult{Name: j.Record.Name, Provider: j.Record.Provider, Success: false, ErrMsg: "missing PrimaryIP"}
+			return
+		}
+		outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, func() HostExecResult {
+			return runOneSFTPDownload(user, j, opts.Cache)
+		})
+		RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
+		observeSSHOperation(opts.Obs, "sftp_get", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+		out <- outcome.Result
+	})
 	return nil
 }
 
