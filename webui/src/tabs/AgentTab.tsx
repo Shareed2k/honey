@@ -1,11 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, Suspense, lazy } from 'react';
 import { Button, Input, List, Spin, Alert, Card, Tag, Typography, Select } from 'antd';
 import { SendOutlined, StopOutlined } from '@ant-design/icons';
 import { HttpAgent } from '@ag-ui/client';
 import type { AgentSubscriber, ToolCall, Message, Tool } from '@ag-ui/client';
 import { apiHeaders, apiPost, apiGet } from '../api';
 import type { HostRecord } from '../HostPicker';
-import { AiMarkdown } from '../AiMarkdown';
+
+const AiMarkdown = lazy(async () => import('../AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
 const { Text } = Typography;
 
@@ -201,7 +202,9 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
               return (
                 <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }}>
                   <div style={{ background: '#1f1f1f', padding: '12px 16px', borderRadius: 8, maxWidth: '90%' }}>
-                    <AiMarkdown text={msg.content || ''} />
+                    <Suspense fallback={<Spin size="small" />}>
+                      <AiMarkdown text={msg.content || ''} />
+                    </Suspense>
                   </div>
                 </div>
               );
