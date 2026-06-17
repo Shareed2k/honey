@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/sashabaranov/go-openai"
@@ -69,11 +70,12 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 			for _, tc := range msg.ToolCalls {
+				toolName := strings.TrimPrefix(tc.Function.Name, "default_api:")
 				oaiMsg.ToolCalls = append(oaiMsg.ToolCalls, openai.ToolCall{
 					ID:   tc.ID,
 					Type: openai.ToolType(tc.Type),
 					Function: openai.FunctionCall{
-						Name:      tc.Function.Name,
+						Name:      toolName,
 						Arguments: tc.Function.Arguments,
 					},
 				})
@@ -189,7 +191,8 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 					}
 					currentToolCallID = tc.ID
 
-					_ = sseWriter.WriteEvent(ctx, w, agcore.NewToolCallStartEvent(tc.ID, tc.Function.Name))
+					toolName := strings.TrimPrefix(tc.Function.Name, "default_api:")
+					_ = sseWriter.WriteEvent(ctx, w, agcore.NewToolCallStartEvent(tc.ID, toolName))
 				}
 				// ToolCallArgs
 				if tc.Function.Arguments != "" {
