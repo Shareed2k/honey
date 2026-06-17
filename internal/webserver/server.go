@@ -177,6 +177,8 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("GET /ws/ssh", s.handleWebSSH)
 	s.mux.HandleFunc("GET /ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
 
+	s.mux.HandleFunc("POST /api/v1/agent", s.withAuth(s.handleAgent))
+
 	s.mux.HandleFunc("GET /api/v1/apps", s.withAuth(s.handleAppsList))
 	s.mux.HandleFunc("GET /api/v1/proxy/sessions", s.withAuth(s.handleProxySessionsGet))
 	s.mux.HandleFunc("POST /api/v1/proxy/start", s.withAuth(s.handleProxySessionStart))

@@ -6,7 +6,7 @@ import type { MenuProps } from 'antd';
 import {
   SearchOutlined, FileOutlined, CloudOutlined, SettingOutlined,
   PlayCircleOutlined, ApiOutlined, AppstoreOutlined, DatabaseOutlined, UnorderedListOutlined,
-  CommentOutlined,
+  CommentOutlined, RobotOutlined,
 } from '@ant-design/icons';
 import {
   apiGet,
@@ -34,6 +34,7 @@ import { ConfigTab } from './tabs/ConfigTab';
 import { ApiDocsTab } from './tabs/ApiDocsTab';
 import { SearchTab } from './tabs/SearchTab';
 import { FeedbackTab } from './tabs/FeedbackTab';
+import { AgentTab } from './tabs/AgentTab';
 import { SessionReplayModal } from './SessionReplayModal';
 import {
   TerminalTabsModal,
@@ -45,7 +46,7 @@ import {
 type BackendRow = { kind: string; name: string; hint: string };
 
 
-type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback' | 'agent';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
@@ -312,6 +313,7 @@ export function App() {
     { key: 'apps',     icon: <DatabaseOutlined />,      label: 'Apps & Proxies' },
     { key: 'logs',     icon: <UnorderedListOutlined />, label: 'Logs' },
     { key: 'feedback', icon: <CommentOutlined />,       label: 'Logs Feedback' },
+    { key: 'agent',    icon: <RobotOutlined />,         label: 'AI Agent' },
     { key: 'api-docs', icon: <AppstoreOutlined />,      label: 'API Docs' },
   ];
 
@@ -617,6 +619,8 @@ export function App() {
           {tab === 'api-docs' ? <ApiDocsTab /> : null}
 
           {tab === 'feedback' ? <FeedbackTab /> : null}
+
+          {tab === 'agent' ? <AgentTab assistAvailable={!!meta?.terminal_assist_available} /> : null}
         </Layout.Content>
       </Layout>
 
