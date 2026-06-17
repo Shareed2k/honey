@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Input, List, Spin, Alert, Card, Tag, Typography } from 'antd';
+import { Button, Input, List, Spin, Alert, Card, Tag, Typography, Select } from 'antd';
 import { SendOutlined, StopOutlined } from '@ant-design/icons';
 import { HttpAgent } from '@ag-ui/client';
 import type { AgentSubscriber, ToolCall, Message, Tool } from '@ag-ui/client';
-import { apiHeaders, apiPost } from '../api';
+import { apiHeaders, apiPost, apiGet } from '../api';
 import type { HostRecord } from '../HostPicker';
 import { AiMarkdown } from '../AiMarkdown';
 
@@ -59,7 +59,33 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
   
+  const [models, setModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [modelsLoading, setModelsLoading] = useState(false);
+  
   const agentRef = useRef<HttpAgent | null>(null);
+
+  useEffect(() => {
+    if (!assistAvailable) return;
+    let cancelled = false;
+    setModelsLoading(true);
+    apiGet('/api/v1/terminal-assist/models')
+      .then(res => res.json())
+      .then((data: any) => {
+        if (cancelled) return;
+        const list = Array.isArray(data.models) ? data.models : [];
+        setModels(list);
+        if (list.length > 0) {
+          setSelectedModel(list[0]);
+        }
+      })
+      .catch(e => console.error('Failed to load models', e))
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+      
+    return () => { cancelled = true; };
+  }, [assistAvailable]);
 
   useEffect(() => {
     const url = new URL('/api/v1/agent', window.location.href);
@@ -89,7 +115,7 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
             const result = await executeTool(toolCall);
             const toolMsg: Message = { role: 'tool', toolCallId: toolCall.id, content: result };
             agent.messages = [...msgs, toolMsg];
-            await agent.runAgent({ messages: agent.messages, tools: TOOLS }, subscriber);
+            await agent.runAgent({ model: selectedModel, messages: agent.messages, tools: TOOLS }, subscriber);
         } catch (e: any) {
             setError(`Tool error: ${e.message}`);
             setStreaming(false);
@@ -105,7 +131,7 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
     };
 
     try {
-      await agentRef.current.runAgent({ messages: allMessages, tools: TOOLS }, subscriber);
+      await agentRef.current.runAgent({ model: selectedModel, messages: allMessages, tools: TOOLS }, subscriber);
     } catch (e: any) {
       setError(`Run error: ${e.message}`);
       setStreaming(false);
@@ -193,6 +219,18 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
         )}
       </div>
       <div style={{ padding: 16, borderTop: '1px solid #303030' }}>
+        <div style={{ marginBottom: 12 }}>
+          <Select
+            style={{ minWidth: 200 }}
+            size="small"
+            value={selectedModel}
+            onChange={setSelectedModel}
+            loading={modelsLoading}
+            options={models.map(m => ({ label: m, value: m }))}
+            disabled={streaming}
+            placeholder="Select a model..."
+          />
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Input.TextArea
             value={inputText}
