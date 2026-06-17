@@ -12,11 +12,24 @@ const { Text } = Typography;
 
 const TOOLS: Tool[] = [
   {
-    name: 'search_hosts',
-    description: 'Search infrastructure hosts by name.',
+    name: 'list_backends',
+    description: 'List all available infrastructure providers and backend names from the configuration file.',
     parameters: {
       type: 'object',
-      properties: { name: { type: 'string' } },
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'search_hosts',
+    description: 'Search infrastructure hosts by name, provider, or backend.',
+    parameters: {
+      type: 'object',
+      properties: { 
+        name: { type: 'string', description: 'Substring to match against host names.' },
+        providers: { type: 'string', description: 'Comma-separated list of providers (e.g. docker,aws,proxmox).' },
+        backends: { type: 'string', description: 'Comma-separated list of backend names.' },
+      },
       required: [],
     },
   },
@@ -33,8 +46,25 @@ const TOOLS: Tool[] = [
 
 async function executeTool(tc: ToolCall): Promise<string> {
   const args = JSON.parse(tc.function.arguments ?? '{}');
+  
+  if (tc.function.name === 'list_backends') {
+    const res = await apiGet('/api/v1/backends');
+    if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        return `Failed to list backends: ${j.error || res.statusText}`;
+    }
+    const data = await res.json() as { backends?: { kind: string; name: string; hint: string }[] };
+    const backends = data.backends || [];
+    if (!backends.length) return 'No backends found in configuration.';
+    return backends.map(b => `- Provider: ${b.kind} | Backend: ${b.name} | Hint: ${b.hint}`).join('\n');
+  }
+
   if (tc.function.name === 'search_hosts') {
-    const res = await apiPost('/api/v1/search', { name: args.name ?? '' });
+    const reqBody: any = { name: args.name ?? '' };
+    if (args.providers) reqBody.providers = args.providers;
+    if (args.backends) reqBody.backends = args.backends;
+    
+    const res = await apiPost('/api/v1/search', reqBody);
     if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         return `Failed to search: ${j.error || res.statusText}`;
