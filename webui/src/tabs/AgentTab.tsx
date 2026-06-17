@@ -73,7 +73,7 @@ async function executeTool(tc: ToolCall): Promise<string> {
     const data = await res.json() as { records?: HostRecord[] };
     const hosts = data.records || [];
     if (!hosts.length) return 'No hosts found.';
-    return hosts.map((h: HostRecord) => `${h.Name} (${h.PrimaryIP}, ${h.Provider})`).join('\n');
+    return hosts.map((h: HostRecord) => `${h.name} (${h.primary_ip}, ${h.provider})`).join('\n');
   }
   if (toolName === 'validate_recipe') {
     const res = await apiPost('/api/v1/recipes/validate-content', { recipe_content_raw: args.recipe_content_raw });
