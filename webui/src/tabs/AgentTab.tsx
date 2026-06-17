@@ -36,19 +36,21 @@ async function executeTool(tc: ToolCall): Promise<string> {
   if (tc.function.name === 'search_hosts') {
     const res = await apiPost('/api/v1/search', { name: args.name ?? '' });
     if (!res.ok) {
-        return `Failed to search: ${res.statusText}`;
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        return `Failed to search: ${j.error || res.statusText}`;
     }
-    const data = await res.json();
-    const hosts = (data.records ?? []) as HostRecord[];
+    const data = await res.json() as { records?: HostRecord[] };
+    const hosts = data.records || [];
     if (!hosts.length) return 'No hosts found.';
     return hosts.map((h: HostRecord) => `${h.Name} (${h.PrimaryIP}, ${h.Provider})`).join('\n');
   }
   if (tc.function.name === 'validate_recipe') {
     const res = await apiPost('/api/v1/recipes/validate-content', { recipe_content_raw: args.recipe_content_raw });
     if (!res.ok) {
-        return `Failed to validate: ${res.statusText}`;
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        return `Failed to validate: ${j.error || res.statusText}`;
     }
-    const data = await res.json();
+    const data = await res.json() as { errors?: string[] };
     return data.errors?.length ? `Errors:\n${data.errors.join('\n')}` : 'Recipe is valid.';
   }
   return `Unknown tool: ${tc.function.name}`;
@@ -67,25 +69,36 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
   const agentRef = useRef<HttpAgent | null>(null);
 
   useEffect(() => {
-    if (!assistAvailable) return;
+    if (!assistAvailable) return undefined;
     let cancelled = false;
     setModelsLoading(true);
-    apiGet('/api/v1/terminal-assist/models')
-      .then(res => res.json())
-      .then((data: any) => {
+    void (async () => {
+      try {
+        const r = await apiGet('/api/v1/terminal-assist/models');
+        const j = (await r.json().catch(() => ({}))) as { models?: string[]; error?: string };
         if (cancelled) return;
-        const list = Array.isArray(data.models) ? data.models : [];
+        
+        if (!r.ok) {
+          console.error('Failed to load models:', j.error || r.statusText);
+          return;
+        }
+        
+        const list = Array.isArray(j.models) ? j.models : [];
         setModels(list);
         if (list.length > 0) {
-          // Prefer a known good tool-calling model as default if available
           const preferred = list.find(m => m.includes('gemini-1.5-pro') || m.includes('gpt-4o') || m.includes('claude-3-5-sonnet'));
           setSelectedModel(preferred || list[0]);
         }
-      })
-      .catch(e => console.error('Failed to load models', e))
-      .finally(() => {
-        if (!cancelled) setModelsLoading(false);
-      });
+      } catch (e) {
+        if (!cancelled) {
+          console.error('Failed to load models', e);
+        }
+      } finally {
+        if (!cancelled) {
+          setModelsLoading(false);
+        }
+      }
+    })();
       
     return () => { cancelled = true; };
   }, [assistAvailable]);
