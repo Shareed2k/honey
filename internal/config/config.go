@@ -310,6 +310,7 @@ func Load(path string) (*File, error) {
 	if err := finalizeAndValidate(&f); err != nil {
 		return nil, fmt.Errorf("validate config %s: %w", path, err)
 	}
+	Set(&f)
 	return &f, nil
 }
 

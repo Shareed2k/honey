@@ -13,7 +13,7 @@ import (
 // CRUD handlers can locate the matching cfg.Backends.<kind> slice dynamically.
 type BackendConfigRegistry interface {
 	BackendKind() string
-	BackendSlicePtr(cfg *config.File) any
+	BackendSlicePtr() any
 }
 
 func (r *Registry) registerBackendSlice(kind string, getter func(cfg *config.File) reflect.Value) {
@@ -35,7 +35,8 @@ func (r *Registry) RegisteredBackendKinds() []string {
 }
 
 // GetBackendSliceByKind resolves cfg.Backends.<kind> as a reflect.Value slice.
-func (r *Registry) GetBackendSliceByKind(cfg *config.File, kind string) (reflect.Value, error) {
+func (r *Registry) GetBackendSliceByKind(kind string) (reflect.Value, error) {
+	cfg := config.Get()
 	if cfg == nil {
 		return reflect.Value{}, fmt.Errorf("nil config")
 	}

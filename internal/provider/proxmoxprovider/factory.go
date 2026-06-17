@@ -26,7 +26,8 @@ func NewFactory() searchrun.ProviderFactory {
 
 type proxmoxFactory struct{}
 
-func (proxmoxFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+func (proxmoxFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	o := proxmoxOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.Proxmox))
 	for _, e := range cfg.Backends.Proxmox {
@@ -81,7 +82,8 @@ func (proxmoxFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backe
 	)
 }
 
-func (proxmoxFactory) BackendRows(cfg *config.File) []config.BackendRow {
+func (proxmoxFactory) BackendRows() []config.BackendRow {
+	cfg := config.Get()
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.Proxmox))
 	for _, e := range cfg.Backends.Proxmox {
 		rows = append(rows, config.BackendRow{Kind: "proxmox", Name: e.Name, Hint: strings.TrimSpace(e.URL)})
@@ -91,7 +93,10 @@ func (proxmoxFactory) BackendRows(cfg *config.File) []config.BackendRow {
 
 func (proxmoxFactory) BackendKind() string { return "proxmox" }
 
-func (proxmoxFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Proxmox }
+func (proxmoxFactory) BackendSlicePtr() any {
+	cfg := config.Get()
+	return &cfg.Backends.Proxmox
+}
 
 func (proxmoxFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
@@ -101,4 +106,6 @@ func (proxmoxFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.
 	return resolveProxmoxExecutor(r)
 }
 
-func (proxmoxFactory) ReconfigureFromConfig(cfg *config.File) { reconfigureProxmox(cfg) }
+func (proxmoxFactory) ReconfigureFromConfig() {
+	reconfigureProxmox()
+}

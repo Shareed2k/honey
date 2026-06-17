@@ -80,7 +80,7 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput, reg hostexec.Registr
 	}
 	MergeSearchDefaultsFromConfig(cfg, &q)
 
-	provs := searchReg.BuildProviders(cfg, in.Overrides)
+	provs := searchReg.BuildProviders(in.Overrides)
 	want := hosts.ParseBackendNames(in.Backends)
 	if len(want) > 0 {
 		provs = hosts.FilterBackendsByNames(provs, want)

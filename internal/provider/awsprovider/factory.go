@@ -25,7 +25,8 @@ func NewFactory() searchrun.ProviderFactory {
 
 type awsFactory struct{}
 
-func (awsFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+func (awsFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	o := awsOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.AWS))
 	for _, e := range cfg.Backends.AWS {
@@ -50,7 +51,8 @@ func (awsFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
 	)
 }
 
-func (awsFactory) BackendRows(cfg *config.File) []config.BackendRow {
+func (awsFactory) BackendRows() []config.BackendRow {
+	cfg := config.Get()
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.AWS))
 	for _, e := range cfg.Backends.AWS {
 		rows = append(rows, config.BackendRow{Kind: "aws", Name: e.Name, Hint: strings.TrimSpace(e.Profile)})
@@ -60,6 +62,9 @@ func (awsFactory) BackendRows(cfg *config.File) []config.BackendRow {
 
 func (awsFactory) BackendKind() string { return "aws" }
 
-func (awsFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.AWS }
+func (awsFactory) BackendSlicePtr() any {
+	cfg := config.Get()
+	return &cfg.Backends.AWS
+}
 
 func (awsFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }

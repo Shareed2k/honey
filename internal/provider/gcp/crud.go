@@ -17,7 +17,8 @@ type gcpCRUD struct{}
 func (gcpCRUD) ID() string   { return "gcp" }
 func (gcpCRUD) Name() string { return "GCP" }
 
-func (gcpCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
+func (gcpCRUD) ListOptions() []huh.Option[string] {
+	cfg := config.Get()
 	opts := make([]huh.Option[string], 0, len(cfg.Backends.GCP))
 	for i, b := range cfg.Backends.GCP {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("GCP: %s (%s)", b.Name, b.Project), fmt.Sprintf("gcp:%d", i)))
@@ -25,7 +26,8 @@ func (gcpCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 	return opts
 }
 
-func (gcpCRUD) Add(cfg *config.File) error {
+func (gcpCRUD) Add() error {
+	cfg := config.Get()
 	var name, project, zone string
 	err := huh.NewForm(
 		huh.NewGroup(
@@ -44,7 +46,8 @@ func (gcpCRUD) Add(cfg *config.File) error {
 	return err
 }
 
-func (gcpCRUD) Edit(cfg *config.File, idx int) error {
+func (gcpCRUD) Edit(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.GCP) {
 		return fmt.Errorf("index out of bounds")
 	}
@@ -62,7 +65,8 @@ func (gcpCRUD) Edit(cfg *config.File, idx int) error {
 	return err
 }
 
-func (gcpCRUD) Delete(cfg *config.File, idx int) error {
+func (gcpCRUD) Delete(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.GCP) {
 		return fmt.Errorf("index out of bounds")
 	}

@@ -17,7 +17,8 @@ type awsCRUD struct{}
 func (awsCRUD) ID() string   { return "aws" }
 func (awsCRUD) Name() string { return "AWS" }
 
-func (awsCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
+func (awsCRUD) ListOptions() []huh.Option[string] {
+	cfg := config.Get()
 	opts := make([]huh.Option[string], 0, len(cfg.Backends.AWS))
 	for i, b := range cfg.Backends.AWS {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("AWS: %s (%s)", b.Name, b.Profile), fmt.Sprintf("aws:%d", i)))
@@ -25,7 +26,8 @@ func (awsCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 	return opts
 }
 
-func (awsCRUD) Add(cfg *config.File) error {
+func (awsCRUD) Add() error {
+	cfg := config.Get()
 	var name, profile, region string
 	err := huh.NewForm(
 		huh.NewGroup(
@@ -44,7 +46,8 @@ func (awsCRUD) Add(cfg *config.File) error {
 	return err
 }
 
-func (awsCRUD) Edit(cfg *config.File, idx int) error {
+func (awsCRUD) Edit(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.AWS) {
 		return fmt.Errorf("index out of bounds")
 	}
@@ -62,7 +65,8 @@ func (awsCRUD) Edit(cfg *config.File, idx int) error {
 	return err
 }
 
-func (awsCRUD) Delete(cfg *config.File, idx int) error {
+func (awsCRUD) Delete(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.AWS) {
 		return fmt.Errorf("index out of bounds")
 	}

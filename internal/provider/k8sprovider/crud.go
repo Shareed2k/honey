@@ -18,7 +18,8 @@ type k8sCRUD struct{}
 func (k8sCRUD) ID() string   { return "kubernetes" }
 func (k8sCRUD) Name() string { return "Kubernetes" }
 
-func (k8sCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
+func (k8sCRUD) ListOptions() []huh.Option[string] {
+	cfg := config.Get()
 	opts := make([]huh.Option[string], 0, len(cfg.Backends.Kubernetes))
 	for i, b := range cfg.Backends.Kubernetes {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("Kubernetes: %s (%s)", b.Name, b.Context), fmt.Sprintf("kubernetes:%d", i)))
@@ -26,7 +27,8 @@ func (k8sCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 	return opts
 }
 
-func (k8sCRUD) Add(cfg *config.File) error {
+func (k8sCRUD) Add() error {
+	cfg := config.Get()
 	var name, context, kubeconfig, mode, debugImage string
 	err := huh.NewForm(
 		huh.NewGroup(
@@ -49,7 +51,8 @@ func (k8sCRUD) Add(cfg *config.File) error {
 	return err
 }
 
-func (k8sCRUD) Edit(cfg *config.File, idx int) error {
+func (k8sCRUD) Edit(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.Kubernetes) {
 		return fmt.Errorf("index out of bounds")
 	}
@@ -69,7 +72,8 @@ func (k8sCRUD) Edit(cfg *config.File, idx int) error {
 	return err
 }
 
-func (k8sCRUD) Delete(cfg *config.File, idx int) error {
+func (k8sCRUD) Delete(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.Kubernetes) {
 		return fmt.Errorf("index out of bounds")
 	}

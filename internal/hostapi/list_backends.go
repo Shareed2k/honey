@@ -24,11 +24,11 @@ func ListBackends(configPath string, searchReg *searchrun.Registry) (ListBackend
 	if cfgPath == "" {
 		return out, fmt.Errorf("no config file found (set config_path, HONEY_CONFIG, or install default config)")
 	}
-	cfg, err := config.Load(cfgPath)
+	_, err = config.Load(cfgPath)
 	if err != nil {
 		return out, fmt.Errorf("config: %w", err)
 	}
 	out.ConfigPath = cfgPath
-	out.Backends = searchReg.ListBackendRows(cfg)
+	out.Backends = searchReg.ListBackendRows()
 	return out, nil
 }

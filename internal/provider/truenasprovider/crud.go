@@ -17,7 +17,8 @@ type truenasCRUD struct{}
 func (truenasCRUD) ID() string   { return "truenas" }
 func (truenasCRUD) Name() string { return "TrueNAS" }
 
-func (truenasCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
+func (truenasCRUD) ListOptions() []huh.Option[string] {
+	cfg := config.Get()
 	opts := make([]huh.Option[string], 0, len(cfg.Backends.TrueNAS))
 	for i, b := range cfg.Backends.TrueNAS {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("TrueNAS: %s (%s)", b.Name, b.URL), fmt.Sprintf("truenas:%d", i)))
@@ -25,7 +26,8 @@ func (truenasCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 	return opts
 }
 
-func (truenasCRUD) Add(cfg *config.File) error {
+func (truenasCRUD) Add() error {
+	cfg := config.Get()
 	var name, url, user, apiKey, sshUser string
 	var insecure, inclAppliance, inclVMs, inclVirt bool
 	inclAppliance, inclVMs, inclVirt = true, true, true
@@ -58,7 +60,8 @@ func (truenasCRUD) Add(cfg *config.File) error {
 	return err
 }
 
-func (truenasCRUD) Edit(cfg *config.File, idx int) error {
+func (truenasCRUD) Edit(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.TrueNAS) {
 		return fmt.Errorf("index out of bounds")
 	}
@@ -89,7 +92,8 @@ func (truenasCRUD) Edit(cfg *config.File, idx int) error {
 	return err
 }
 
-func (truenasCRUD) Delete(cfg *config.File, idx int) error {
+func (truenasCRUD) Delete(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.TrueNAS) {
 		return fmt.Errorf("index out of bounds")
 	}

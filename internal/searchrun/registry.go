@@ -14,11 +14,11 @@ import (
 type ProviderFactory interface {
 	// FromConfig returns a list of configured backends based on the user's YAML config.
 	// overrides is an opaque map; each factory extracts its own key and deserializes its section.
-	FromConfig(cfg *config.File, overrides ProviderOverrides) []hosts.Backend
+	FromConfig(overrides ProviderOverrides) []hosts.Backend
 	// Default returns a single backend instance using CLI flags / defaults when no config is provided.
 	Default(overrides ProviderOverrides) hosts.Backend
 	// BackendRows returns a summary of configured backends for listing purposes (e.g. `honey backends`).
-	BackendRows(cfg *config.File) []config.BackendRow
+	BackendRows() []config.BackendRow
 }
 
 // Registry provides access to registered provider factories.
@@ -35,8 +35,8 @@ func NewRegistry(factories []ProviderFactory) *Registry {
 	}
 	for _, f := range factories {
 		if bc, ok := f.(BackendConfigRegistry); ok {
-			r.registerBackendSlice(bc.BackendKind(), func(cfg *config.File) reflect.Value {
-				ptr := bc.BackendSlicePtr(cfg)
+			r.registerBackendSlice(bc.BackendKind(), func(_ *config.File) reflect.Value {
+				ptr := bc.BackendSlicePtr()
 				v := reflect.ValueOf(ptr)
 				if !v.IsValid() || v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Slice {
 					return reflect.Value{}
@@ -58,13 +58,14 @@ func (r *Registry) ListSearchProviderIDs(overrides ProviderOverrides) []string {
 }
 
 // ListBackendRows queries all registered providers to build a list of configured backends.
-func (r *Registry) ListBackendRows(cfg *config.File) []config.BackendRow {
+func (r *Registry) ListBackendRows() []config.BackendRow {
+	cfg := config.Get()
 	var rows []config.BackendRow
 	if cfg == nil {
 		return rows
 	}
 	for _, factory := range r.Factories {
-		rows = append(rows, factory.BackendRows(cfg)...)
+		rows = append(rows, factory.BackendRows()...)
 	}
 	return rows
 }

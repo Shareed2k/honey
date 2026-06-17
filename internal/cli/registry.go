@@ -42,8 +42,8 @@ func (r *executionRouter) ForRecord(rec hosts.Record) hostexec.Executor {
 	return &sshFallbackExecutor{}
 }
 
-func (r *executionRouter) Reconfigure(cfg *config.File) {
-	r.searchReg.ReconfigureFromConfig(cfg)
+func (r *executionRouter) Reconfigure(_ *config.File) {
+	r.searchReg.ReconfigureFromConfig()
 }
 
 func (r *executionRouter) RunSSHTunnel(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error {

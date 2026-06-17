@@ -2,8 +2,6 @@ package searchrun
 
 import (
 	"charm.land/huh/v2"
-
-	"github.com/shareed2k/honey/internal/config"
 )
 
 // ProviderCRUD defines the interface for creating, editing, and deleting backends interactively.
@@ -14,14 +12,14 @@ type ProviderCRUD interface {
 	Name() string
 
 	// ListOptions returns a list of huh options for the edit/delete menus
-	ListOptions(cfg *config.File) []huh.Option[string]
+	ListOptions() []huh.Option[string]
 
 	// Add runs the interactive prompt to add a new backend to the config
-	Add(cfg *config.File) error
+	Add() error
 	// Edit runs the interactive prompt to edit an existing backend at the given index
-	Edit(cfg *config.File, idx int) error
+	Edit(idx int) error
 	// Delete removes the backend at the given index
-	Delete(cfg *config.File, idx int) error
+	Delete(idx int) error
 }
 
 var crudHandlers []ProviderCRUD

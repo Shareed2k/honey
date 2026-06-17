@@ -17,7 +17,8 @@ type proxmoxCRUD struct{}
 func (proxmoxCRUD) ID() string   { return "proxmox" }
 func (proxmoxCRUD) Name() string { return "Proxmox" }
 
-func (proxmoxCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
+func (proxmoxCRUD) ListOptions() []huh.Option[string] {
+	cfg := config.Get()
 	opts := make([]huh.Option[string], 0, len(cfg.Backends.Proxmox))
 	for i, b := range cfg.Backends.Proxmox {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("Proxmox: %s (%s)", b.Name, b.URL), fmt.Sprintf("proxmox:%d", i)))
@@ -25,7 +26,8 @@ func (proxmoxCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 	return opts
 }
 
-func (proxmoxCRUD) Add(cfg *config.File) error {
+func (proxmoxCRUD) Add() error {
+	cfg := config.Get()
 	var name, url, user, password, tokenID, tokenSecret, execMode string
 	var insecure bool
 	err := huh.NewForm(
@@ -62,7 +64,8 @@ func (proxmoxCRUD) Add(cfg *config.File) error {
 	return err
 }
 
-func (proxmoxCRUD) Edit(cfg *config.File, idx int) error {
+func (proxmoxCRUD) Edit(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.Proxmox) {
 		return fmt.Errorf("index out of bounds")
 	}
@@ -92,7 +95,8 @@ func (proxmoxCRUD) Edit(cfg *config.File, idx int) error {
 	return err
 }
 
-func (proxmoxCRUD) Delete(cfg *config.File, idx int) error {
+func (proxmoxCRUD) Delete(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.Proxmox) {
 		return fmt.Errorf("index out of bounds")
 	}

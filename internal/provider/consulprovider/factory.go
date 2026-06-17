@@ -25,7 +25,8 @@ func NewFactory() searchrun.ProviderFactory {
 
 type consulFactory struct{}
 
-func (consulFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+func (consulFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	o := consulOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.Consul))
 	for _, e := range cfg.Backends.Consul {
@@ -52,7 +53,8 @@ func (consulFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backen
 	)
 }
 
-func (consulFactory) BackendRows(cfg *config.File) []config.BackendRow {
+func (consulFactory) BackendRows() []config.BackendRow {
+	cfg := config.Get()
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.Consul))
 	for _, e := range cfg.Backends.Consul {
 		rows = append(rows, config.BackendRow{Kind: "consul", Name: e.Name, Hint: strings.TrimSpace(e.Addr)})
@@ -62,6 +64,9 @@ func (consulFactory) BackendRows(cfg *config.File) []config.BackendRow {
 
 func (consulFactory) BackendKind() string { return "consul" }
 
-func (consulFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Consul }
+func (consulFactory) BackendSlicePtr() any {
+	cfg := config.Get()
+	return &cfg.Backends.Consul
+}
 
 func (consulFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
