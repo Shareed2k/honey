@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/ui"
 )
 
 // UploadResponse is the non-stream JSON body for POST /api/v1/upload.
 type UploadResponse struct {
-	Results []ui.HostExecResult `json:"results"`
+	Results []engine.HostExecResult `json:"results"`
 }
 
 // UploadRequestMeta is the JSON in multipart field "meta" for POST /api/v1/upload.
@@ -112,7 +112,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := ui.ExecuteSFTPUploadParallel(user, []hosts.Record{rec}, localPath, meta.RemotePath, 1)
+	results, err := engine.ExecuteSFTPUploadParallel(user, []hosts.Record{rec}, localPath, meta.RemotePath, 1)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -170,7 +170,7 @@ func (s *Server) handleUploadStream(w http.ResponseWriter, user string, rec host
 		writeLine(map[string]any{"phase": "sftp", "sent_bytes": written, "total_bytes": total})
 	}
 
-	res := ui.RunOneSFTPUploadWithProgress(user, rec, localPath, remotePath, s.fileClientCache, progress)
+	res := engine.RunOneSFTPUploadWithProgress(user, rec, localPath, remotePath, s.fileClientCache, progress)
 	if !res.Success {
 		writeLine(map[string]any{
 			"phase":   "error",
@@ -179,5 +179,5 @@ func (s *Server) handleUploadStream(w http.ResponseWriter, user string, rec host
 		})
 		return
 	}
-	writeLine(map[string]any{"phase": "done", "results": []ui.HostExecResult{res}})
+	writeLine(map[string]any{"phase": "done", "results": []engine.HostExecResult{res}})
 }

@@ -9,9 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shareed2k/honey/internal/engine"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -218,7 +219,7 @@ func (w *uiWriter) Write(p []byte) (int, error) {
 }
 
 // RunLogTUI starts the interactive log viewer.
-func RunLogTUI(ctx context.Context, user string, records []hosts.Record, opts LogOptions, cache *ClientCache) error {
+func RunLogTUI(ctx context.Context, user string, records []hosts.Record, opts LogOptions, cache *engine.ClientCache) error {
 	m := NewLogViewModel(opts)
 
 	// Create a sub-context so we can cancel log streaming when TUI exits

@@ -5,16 +5,17 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
 func TestTruenasApplianceSSHForwardEligible(t *testing.T) {
-	if !truenasApplianceSSHForwardEligible(hosts.Record{
+	if !engine.TruenasApplianceSSHForwardEligible(hosts.Record{
 		Provider: "truenas", PrimaryIP: "10.0.0.5", Meta: map[string]string{"kind": "appliance"},
 	}) {
 		t.Fatal("expected appliance+ip eligible")
 	}
-	if truenasApplianceSSHForwardEligible(hosts.Record{
+	if engine.TruenasApplianceSSHForwardEligible(hosts.Record{
 		Provider: "truenas", Meta: map[string]string{"kind": "virt_instance", "id": "x"},
 	}) {
 		t.Fatal("guest should not use ssh forward path")
@@ -23,12 +24,12 @@ func TestTruenasApplianceSSHForwardEligible(t *testing.T) {
 
 func TestReadTrueNASBridgeReady(t *testing.T) {
 	br := bufio.NewReader(bytes.NewBufferString("READY 8765\n"))
-	port, err := readTrueNASBridgeReady(br)
+	port, err := engine.ReadTrueNASBridgeReady(br)
 	if err != nil || port != 8765 {
 		t.Fatalf("port=%d err=%v", port, err)
 	}
 	br2 := bufio.NewReader(bytes.NewBufferString("noise\nREADY 9999\n"))
-	port2, err2 := readTrueNASBridgeReady(br2)
+	port2, err2 := engine.ReadTrueNASBridgeReady(br2)
 	if err2 != nil || port2 != 9999 {
 		t.Fatalf("port=%d err=%v", port2, err2)
 	}

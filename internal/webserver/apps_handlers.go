@@ -10,11 +10,11 @@ import (
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/appsecret"
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/searchrun"
-	"github.com/shareed2k/honey/internal/ui"
 )
 
 const encryptedUpstreamRedaction = "[encrypted]"
@@ -44,7 +44,7 @@ type proxyStartRequest struct {
 	Backends  string `json:"backends,omitempty"`
 }
 
-func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest, cache *ui.ClientCache, reg hostexec.Registry, searchReg *searchrun.Registry) (proxy.Dialer, io.Closer, error) {
+func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest, cache *engine.ClientCache, reg hostexec.Registry, searchReg *searchrun.Registry) (proxy.Dialer, io.Closer, error) {
 	// First run a search to find the record for this target
 	in := hostapi.SearchHostsInput{
 		Name:       app.Target,
@@ -70,7 +70,7 @@ func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, ap
 		return nil, nil, fmt.Errorf("target %q not found", app.Target)
 	}
 
-	return ui.ResolveAppDialerWithCache(sshUser, out.Records[0], cache)
+	return engine.ResolveAppDialerWithCache(sshUser, out.Records[0], cache)
 }
 
 func (s *Server) handleAppsList(w http.ResponseWriter, _ *http.Request) {

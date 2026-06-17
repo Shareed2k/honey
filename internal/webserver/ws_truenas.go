@@ -4,14 +4,13 @@ import (
 	"context"
 
 	"github.com/gorilla/websocket"
-
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
-	"github.com/shareed2k/honey/internal/ui"
 )
 
-func handleWebTrueNASShellTTY(ctx context.Context, conn *websocket.Conn, record hosts.Record, cols, rows int, recorder *ui.SessionRecorder) {
+func handleWebTrueNASShellTTY(ctx context.Context, conn *websocket.Conn, record hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
 	b, ok := truenasprovider.BackendByName(record.Meta["backend_name"])
 	if !ok {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"truenas backend not configured"}`))

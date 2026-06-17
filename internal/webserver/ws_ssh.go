@@ -12,15 +12,15 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"go.uber.org/zap"
-	"golang.org/x/crypto/ssh"
-	"k8s.io/client-go/tools/remotecommand"
-
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/ssh"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -198,8 +198,8 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	stdinPipeR, stdinPipeW := io.Pipe()
 	sess.Stdin = stdinPipeR
 	outWriter := &wsWriter{conn: conn, mu: &sync.Mutex{}}
-	sess.Stdout = ui.WrapRecordingWriter(outWriter, recorder, "stdout")
-	sess.Stderr = ui.WrapRecordingWriter(outWriter, recorder, "stderr")
+	sess.Stdout = engine.WrapRecordingWriter(outWriter, recorder, "stdout")
+	sess.Stderr = engine.WrapRecordingWriter(outWriter, recorder, "stderr")
 
 	if shellCmd != "" {
 		if err := sess.Start(shellCmd); err != nil {
@@ -251,7 +251,7 @@ func isK8sPodWebTerminal(rec hosts.Record) bool {
 	return true
 }
 
-func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, rec hosts.Record, cols, rows int, recorder *ui.SessionRecorder, reg hostexec.Registry) {
+func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder, reg hostexec.Registry) {
 	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
 	if strings.TrimSpace(rec.Meta["container_id"]) == "" {
 		err := fmt.Errorf("docker record missing container_id")
@@ -259,14 +259,14 @@ func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, 
 		_ = wsOut.writeText(`{"error":"` + escapeJSON(err.Error()) + `"}`)
 		return
 	}
-	if err := ui.DialDockerCheck(user, rec, reg); err != nil {
+	if err := engine.DialDockerCheck(user, rec, reg); err != nil {
 		recorder.RecordError(err)
 		_ = wsOut.writeText(`{"error":"` + escapeJSON(err.Error()) + `"}`)
 		return
 	}
 	stdinPipeR, stdinPipeW := io.Pipe()
 	resizeCh := make(chan ui.DockerTerminalSize, 32)
-	stdout := ui.WrapRecordingWriter(wsOut, recorder, "stdout")
+	stdout := engine.WrapRecordingWriter(wsOut, recorder, "stdout")
 
 	waitDone := make(chan error, 1)
 	go func() {
@@ -293,7 +293,7 @@ func benignDockerWSExit(err error) bool {
 	return strings.Contains(msg, "context canceled") || strings.Contains(msg, "use of closed network connection")
 }
 
-func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- ui.DockerTerminalSize, recorder *ui.SessionRecorder) {
+func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- ui.DockerTerminalSize, recorder *engine.SessionRecorder) {
 	defer close(resizeCh)
 	for {
 		mt, payload, err := conn.ReadMessage()
@@ -326,12 +326,12 @@ func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter,
 	}
 }
 
-func handleWebK8sTTY(ctx context.Context, conn *websocket.Conn, rec hosts.Record, cols, rows int, recorder *ui.SessionRecorder) {
+func handleWebK8sTTY(ctx context.Context, conn *websocket.Conn, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
 	stdinPipeR, stdinPipeW := io.Pipe()
 	resizeCh := make(chan *remotecommand.TerminalSize, 32)
 	outWriter := &wsWriter{conn: conn, mu: &sync.Mutex{}}
-	stdout := ui.WrapRecordingWriter(outWriter, recorder, "stdout")
-	stderr := ui.WrapRecordingWriter(outWriter, recorder, "stderr")
+	stdout := engine.WrapRecordingWriter(outWriter, recorder, "stdout")
+	stderr := engine.WrapRecordingWriter(outWriter, recorder, "stderr")
 	stdin := io.Reader(stdinPipeR)
 
 	waitDone := make(chan error, 1)
@@ -351,7 +351,7 @@ func handleWebK8sTTY(ctx context.Context, conn *websocket.Conn, rec hosts.Record
 	}
 }
 
-func pumpWebSocketToStdinK8s(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- *remotecommand.TerminalSize, recorder *ui.SessionRecorder) {
+func pumpWebSocketToStdinK8s(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- *remotecommand.TerminalSize, recorder *engine.SessionRecorder) {
 	defer close(resizeCh)
 	for {
 		mt, payload, err := conn.ReadMessage()
@@ -384,7 +384,7 @@ func pumpWebSocketToStdinK8s(conn *websocket.Conn, stdinPipeW *io.PipeWriter, re
 	}
 }
 
-func pumpWebSocketToStdin(conn *websocket.Conn, stdinPipeW *io.PipeWriter, sess *ssh.Session, recorder *ui.SessionRecorder) {
+func pumpWebSocketToStdin(conn *websocket.Conn, stdinPipeW *io.PipeWriter, sess *ssh.Session, recorder *engine.SessionRecorder) {
 	for {
 		mt, payload, err := conn.ReadMessage()
 		if err != nil {
@@ -441,7 +441,7 @@ func escapeJSON(s string) string {
 	return s
 }
 
-func newWebSessionRecorder(recordDir string, requestRecord bool, rec hosts.Record, user string) *ui.SessionRecorder {
+func newWebSessionRecorder(recordDir string, requestRecord bool, rec hosts.Record, user string) *engine.SessionRecorder {
 	dir := strings.TrimSpace(recordDir)
 	if dir == "" || !requestRecord {
 		return nil
@@ -455,7 +455,7 @@ func newWebSessionRecorder(recordDir string, requestRecord bool, rec hosts.Recor
 	case isProxmoxSerialWebPVE(rec):
 		mode = "proxmox"
 	}
-	r, err := ui.NewSessionRecorder(ui.SessionRecorderOptions{
+	r, err := engine.NewSessionRecorder(engine.SessionRecorderOptions{
 		Dir:      dir,
 		Trigger:  "web",
 		Mode:     mode,

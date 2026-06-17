@@ -5,6 +5,8 @@ website/.docusaurus/
 website/.npm-cache/
 website/.npm-tmp/
 
+docs/
+
 webui/node_modules/
 contrib/ansible/inventory_plugins/__pycache__
 

@@ -16,9 +16,8 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
+	"github.com/shareed2k/honey/internal/engine"
 	"go.uber.org/zap"
-
-	"github.com/shareed2k/honey/internal/ui"
 )
 
 // ptyMuxSessionName builds a tmux/zellij session name from the client-provided id.
@@ -128,7 +127,7 @@ func ptyMuxTmuxCommand(muxName string, proxyArgs []string) (*exec.Cmd, string, b
 func ptyProxyRunBridge(
 	ptmx *os.File,
 	conn *websocket.Conn,
-	recorder *ui.SessionRecorder,
+	recorder *engine.SessionRecorder,
 	hello WSHello,
 	muxName string,
 	closeTabKill chan struct{},
@@ -207,7 +206,7 @@ func ptyProxyRunBridge(
 	return ptyExited
 }
 
-func ptyProxyHandleCtrl(ptmx *os.File, recorder *ui.SessionRecorder, muxName string, closeTabKill chan struct{}, payload []byte) (stop bool) {
+func ptyProxyHandleCtrl(ptmx *os.File, recorder *engine.SessionRecorder, muxName string, closeTabKill chan struct{}, payload []byte) (stop bool) {
 	var ctrl struct {
 		Type string `json:"type"`
 		Cols int    `json:"cols"`
@@ -260,7 +259,7 @@ func ptyProxyTeardown(ptmx *os.File, cmd *exec.Cmd, muxName string, useZellij bo
 	}
 }
 
-func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, recorder *ui.SessionRecorder, configPath string) error {
+func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, recorder *engine.SessionRecorder, configPath string) error {
 	zap.L().Debug("handleWebPtyProxy: starting local multiplexer", zap.String("session_id", hello.SessionID))
 
 	bin, err := os.Executable()

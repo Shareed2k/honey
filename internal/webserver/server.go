@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2"
-	"go.uber.org/zap"
+	"github.com/shareed2k/honey/internal/engine"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostapi"
@@ -24,7 +24,7 @@ import (
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
-	"github.com/shareed2k/honey/internal/ui"
+	"go.uber.org/zap"
 )
 
 // Options configures the embedded web server.
@@ -66,7 +66,7 @@ type Server struct {
 	assistModelIDs  []string
 	assistModelsExp time.Time
 
-	fileClientCache *ui.ClientCache
+	fileClientCache *engine.ClientCache
 
 	snippetStore snippets.Store
 
@@ -103,7 +103,7 @@ func NewServer(opts Options) (*Server, error) {
 		tunnels:               newTunnelManager(),
 		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
 		pgPools:               postgres.NewPoolManager(),
-		fileClientCache:       ui.NewClientCache(),
+		fileClientCache:       engine.NewClientCache(),
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
 	}

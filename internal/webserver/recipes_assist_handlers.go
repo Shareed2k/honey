@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/shareed2k/honey/internal/engine"
+
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -177,7 +179,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 			if resErr != nil {
 				planNote = "secret resolver: " + resErr.Error()
 			} else {
-				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, ui.CueRecipeRunParams{
+				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, engine.CueRecipeRunParams{
 					Recipe:         recipe,
 					RecipeDir:      recipeDir,
 					Records:        jobs,

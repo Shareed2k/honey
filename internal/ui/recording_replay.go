@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shareed2k/honey/internal/engine"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-
 	"github.com/shareed2k/honey/internal/recordings"
 )
 
@@ -45,7 +46,7 @@ func stripAnsiReplay(s string) string {
 	return ansiEscapes.ReplaceAllString(s, "")
 }
 
-func formatHostExecReplay(r HostExecResult) string {
+func formatHostExecReplay(r engine.HostExecResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n── %s (%s)  ip=%s  ok=%v  exit=%d\n", r.Name, r.Provider, r.IP, r.Success, r.ExitCode)
 	if r.ErrMsg != "" {
@@ -99,7 +100,7 @@ func (m *replayModel) applyEvent(ev recordings.Event) {
 		if len(ev.Result) == 0 {
 			return
 		}
-		var r HostExecResult
+		var r engine.HostExecResult
 		if err := json.Unmarshal(ev.Result, &r); err != nil {
 			return
 		}

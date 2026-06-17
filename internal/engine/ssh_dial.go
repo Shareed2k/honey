@@ -1,0 +1,213 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"strings"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
+	"github.com/shareed2k/honey/internal/provider/truenasprovider"
+	"github.com/shareed2k/honey/internal/pvelxc"
+	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/truenasshell"
+)
+
+// TruenasTunnelRunner returns the ui-backed TrueNAS API-shell port-forward runner,
+// injected into the truenas provider factory by the composition root.
+// TruenasTunnelRunner ...
+func TruenasTunnelRunner() truenasprovider.TunnelRunner {
+	return truenasprovider.TunnelRunnerFunc(RunTrueNASTunnel)
+}
+
+// TruenasUpstreamDialer returns the ui-backed TrueNAS API-shell upstream dialer.
+// TruenasUpstreamDialer ...
+func TruenasUpstreamDialer() truenasprovider.UpstreamDialer {
+	return truenasprovider.UpstreamDialerFunc(DialTrueNASUpstream)
+}
+
+// RunTerminalInteractive opens an interactive session (SSH, K8s, Docker, TrueNAS API shell, or Proxmox) on os.Stdin/Stdout.
+// RunTerminalInteractive ...
+func RunTerminalInteractive(user string, r hosts.Record, console string, reg hostexec.Registry) error {
+	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
+		return RunK8sInteractiveWithRecorder(user, r, nil)
+	}
+	if hosts.IsDockerRecord(r) {
+		return RunDockerInteractiveWithRecorder(user, r, nil, reg)
+	}
+	if truenasshell.ShouldUseTrueNASShell(r, console) {
+		return RunTrueNASShellInteractive(context.Background(), console, r, nil)
+	}
+	return RunSSHInteractive(user, r, nil)
+}
+
+// RunSSHInteractive opens a login shell over crypto/ssh (respects ~/.ssh/config),
+// or a Proxmox LXC/QEMU serial PVE console when exec_mode/token match the same policy as the web UI.
+// RunSSHInteractive ...
+func RunSSHInteractive(user string, r hosts.Record, recorder *SessionRecorder) error {
+	if pvelxc.ShouldUsePVETTY(r) {
+		return runProxmoxLXCTTYInteractive(context.Background(), r, recorder)
+	}
+	host := strings.TrimSpace(r.PrimaryIP)
+	if host == "" {
+		return fmt.Errorf("no IP for selected host")
+	}
+	sshPort := 0
+	if p, ok := hosts.MetaSSHPort(&r); ok {
+		sshPort = p
+	}
+	identity := ""
+	if id, ok := hosts.MetaSSHIdentityFile(&r); ok {
+		identity = id
+	}
+	if metaUser := r.Meta["ssh_user"]; metaUser != "" && strings.TrimSpace(user) == "" {
+		user = metaUser
+	}
+	client, cleanup, err := sshclient.DialSSHClient(user, host, sshPort, identity)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	return runSSHTerminal(client, r, recorder)
+}
+
+func runProxmoxLXCTTYInteractive(ctx context.Context, r hosts.Record, recorder *SessionRecorder) error {
+	b, ok := proxmoxprovider.BackendByName(r.Meta["backend_name"])
+	if !ok {
+		return fmt.Errorf("proxmox backend not configured")
+	}
+	node := strings.TrimSpace(r.Meta["node"])
+	vmid, err := strconv.Atoi(strings.TrimSpace(r.Meta["vmid"]))
+	if err != nil || vmid <= 0 || node == "" {
+		return fmt.Errorf("proxmox record missing node or vmid")
+	}
+
+	fd := int(os.Stdin.Fd())
+	if !termIsTerminal(fd) {
+		return fmt.Errorf("stdin is not a terminal")
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "[honey] Proxmox console: press Ctrl+] to leave this session (guest autologin on tty may reopen a shell after exit).\n")
+	oldState, err := termMakeRaw(fd)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = termRestore(fd, oldState) }()
+
+	w, h, err := termGetSize(fd)
+	if err != nil {
+		w, h = 80, 24
+	}
+
+	guest := strings.TrimSpace(r.Meta["kind"])
+	if guest == "" {
+		guest = "lxc"
+	}
+	sess, err := pvelxc.OpenSession(ctx, b, guest, node, vmid, h, w)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sess.Close() }()
+
+	stopResize := sshclient.StartTerminalResize(fd, func(cols, rows int) {
+		if recorder != nil {
+			recorder.RecordResize(cols, rows)
+		}
+		_ = sess.WriteResize(rows, cols)
+	})
+	defer stopResize()
+
+	var stdin io.Reader = os.Stdin
+	var stdout io.Writer = os.Stdout
+	var rec pvelxc.Recorder
+	if recorder != nil {
+		stdin = WrapRecordingReader(os.Stdin, recorder, "stdin")
+		stdout = WrapRecordingWriter(os.Stdout, recorder, "stdout")
+		rec = recorder
+	}
+	return pvelxc.PumpStdio(ctx, sess, stdin, stdout, rec)
+}
+
+func runSSHTerminal(client *ssh.Client, r hosts.Record, recorder *SessionRecorder) error {
+	fd := int(os.Stdin.Fd())
+	if !termIsTerminal(fd) {
+		return fmt.Errorf("stdin is not a terminal")
+	}
+	oldState, err := termMakeRaw(fd)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = termRestore(fd, oldState) }()
+
+	sess, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sess.Close() }()
+
+	var shellCmd string
+	env, err := cuetry.EffectiveEnvForRun(context.Background(), false, nil, &cuetry.StepBase{}, nil, nil, &r)
+	if err == nil && len(env) > 0 {
+		for k, v := range env {
+			_ = sess.Setenv(k, v)
+		}
+		shellCmd, _ = cuetry.ShellExportPrefixForRemote(env, `exec "${SHELL:-sh}" -l || exec "${SHELL:-sh}"`)
+	}
+
+	w, h, err := termGetSize(fd)
+	if err != nil {
+		w, h = 80, 24
+	}
+	modes := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
+	if err := sess.RequestPty("xterm-256color", h, w, modes); err != nil {
+		return err
+	}
+	var stdin io.Reader = os.Stdin
+	var stdout, stderr io.Writer = os.Stdout, os.Stderr
+	if recorder != nil {
+		stdin = WrapRecordingReader(os.Stdin, recorder, "stdin")
+		stdout = WrapRecordingWriter(os.Stdout, recorder, "stdout")
+		stderr = WrapRecordingWriter(os.Stderr, recorder, "stderr")
+	}
+	sess.Stdin = stdin
+	sess.Stdout = stdout
+	sess.Stderr = stderr
+
+	var stopResize func()
+	if recorder != nil {
+		stopResize = sshclient.StartPTYResizeForwarding(fd, sess, func(cols, rows int) {
+			recorder.RecordResize(cols, rows)
+		})
+	} else {
+		stopResize = sshclient.StartPTYResizeForwarding(fd, sess, nil)
+	}
+	defer stopResize()
+
+	if shellCmd != "" {
+		if err := sess.Start(shellCmd); err != nil {
+			if recorder != nil {
+				recorder.RecordError(err)
+			}
+			return err
+		}
+	} else {
+		if err := sess.Shell(); err != nil {
+			if recorder != nil {
+				recorder.RecordError(err)
+			}
+			return err
+		}
+	}
+	waitErr := sess.Wait()
+	if waitErr != nil && recorder != nil {
+		recorder.RecordError(waitErr)
+	}
+	return waitErr
+}

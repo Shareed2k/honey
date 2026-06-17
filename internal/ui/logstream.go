@@ -13,14 +13,13 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/shareed2k/honey/internal/engine"
+
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/shareed2k/honey/internal/alerts"
 	"github.com/shareed2k/honey/internal/anomaly"
@@ -30,6 +29,9 @@ import (
 	"github.com/shareed2k/honey/internal/jsonutil"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 	"github.com/shareed2k/honey/internal/recipenotify"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type feedbackWriter struct {
@@ -120,7 +122,7 @@ type LogOptions struct {
 }
 
 // StreamLogs streams logs for records to out with stable per-record prefixes.
-func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts LogOptions, cache *ClientCache, out io.Writer) error {
+func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts LogOptions, cache *engine.ClientCache, out io.Writer) error {
 	if out == nil {
 		out = io.Discard
 	}
@@ -219,7 +221,7 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 	g, ctx := errgroup.WithContext(ctx)
 	sem := make(chan struct{}, opts.MaxConcurrency)
 	var writeMu sync.Mutex
-	run := logRun{user: user, opts: opts, cache: cache, reg: cache.reg}
+	run := logRun{user: user, opts: opts, cache: cache, reg: cache.Registry()}
 	baseSink := logSink{
 		out:         out,
 		mu:          &writeMu,
@@ -249,7 +251,7 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 type logRun struct {
 	user  string
 	opts  LogOptions
-	cache *ClientCache
+	cache *engine.ClientCache
 	reg   hostexec.Registry
 }
 
@@ -357,7 +359,7 @@ func streamDockerLogs(ctx context.Context, run logRun, rec hosts.Record, sink lo
 		return err
 	}
 	defer dc.Close()
-	native, ok := dc.(*dockerNativeClient)
+	native, ok := dc.(*engine.DockerNativeClient)
 	if !ok {
 		return fmt.Errorf("unexpected docker client type %T", dc)
 	}
@@ -437,13 +439,13 @@ func logCommand(opts LogOptions) string {
 	if unit == "" {
 		unit = strings.TrimSpace(opts.Target)
 	}
-	args := []string{"journalctl", "-u", shellSingleQuoted(unit), "-n", strconv.FormatInt(opts.Tail, 10), "--no-pager"}
+	args := []string{"journalctl", "-u", engine.ShellSingleQuoted(unit), "-n", strconv.FormatInt(opts.Tail, 10), "--no-pager"}
 	if opts.Follow {
 		args = append(args, "-f")
 	}
 	if opts.Since > 0 {
 		since := time.Now().Add(-opts.Since).Format("2006-01-02 15:04:05")
-		args = append(args, "--since", shellSingleQuoted(since))
+		args = append(args, "--since", engine.ShellSingleQuoted(since))
 	}
 	if !opts.Timestamps {
 		args = append(args, "-o", "cat")
@@ -464,7 +466,7 @@ func remoteLogSourceArg(source string) string {
 	if strings.ContainsAny(source, "*?[") {
 		return source
 	}
-	return shellSingleQuoted(source)
+	return engine.ShellSingleQuoted(source)
 }
 
 func dockerSince(d time.Duration) string {
