@@ -18,3 +18,8 @@ func defaultRegistry(opts Options) *stackunwrap.Registry {
 	}
 	return r
 }
+
+func providerAllowsEmptyEncryptedKey(providerURL string) bool {
+	p := strings.TrimSpace(providerURL)
+	return strings.HasPrefix(p, "keyring://") || strings.HasPrefix(p, "age-file://")
+}
