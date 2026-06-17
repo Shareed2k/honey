@@ -1,4 +1,4 @@
-package ui
+package engine
 
 import "github.com/shareed2k/honey/internal/cuetry"
 

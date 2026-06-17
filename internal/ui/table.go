@@ -1232,7 +1232,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			if err != nil {
 				return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nsecrets: " + err.Error()}
 			}
-			runErr := RunCueRecipeSteps(context.Background(), &buf, engine.CueRecipeRunParams{
+			runErr := engine.RunCueRecipeSteps(context.Background(), &buf, engine.CueRecipeRunParams{
 				Recipe:         recipe,
 				RecipeDir:      recipeDir,
 				Records:        targets,

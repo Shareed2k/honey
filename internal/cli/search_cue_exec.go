@@ -14,7 +14,6 @@ import (
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/recordings"
 	"github.com/shareed2k/honey/internal/safepath"
-	"github.com/shareed2k/honey/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -162,7 +161,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), engine.CueRecipeRunParams{
+	return engine.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), engine.CueRecipeRunParams{
 		Recipe:         recipe,
 		RecipeDir:      recipeDir,
 		Records:        records,
