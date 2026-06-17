@@ -2,6 +2,7 @@
 package all
 
 import (
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/provider/awsprovider"
 	"github.com/shareed2k/honey/internal/provider/consulprovider"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
@@ -24,11 +25,29 @@ type Deps struct {
 	TruenasDialer     truenasprovider.UpstreamDialer
 }
 
+type configAdapter struct{}
+
+func (c configAdapter) AWSBackends() []config.AWSBackend { return config.Get().Backends.AWS }
+func (c configAdapter) AWSBackendSlicePtr() *[]config.AWSBackend {
+	cfg := config.Get()
+	return &cfg.Backends.AWS
+}
+
+func (c configAdapter) SetAWSBackends(b []config.AWSBackend) {
+	cfg := config.Get()
+	cfg.Backends.AWS = b
+}
+
+func (c configAdapter) DockerDiscover() config.DockerDiscover {
+	return config.Get().Defaults.DockerDiscover
+}
+
 // Factories returns a slice of all built-in provider factories, wiring deps into
 // the providers that need them.
 func Factories(deps Deps) []searchrun.ProviderFactory {
+	adapter := configAdapter{}
 	return []searchrun.ProviderFactory{
-		awsprovider.NewFactory(),
+		awsprovider.NewFactory(adapter),
 		consulprovider.NewFactory(),
 		dockerprovider.NewFactory(deps.DockerInteractive),
 		gcp.NewFactory(),
