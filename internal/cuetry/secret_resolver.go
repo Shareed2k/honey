@@ -1,6 +1,7 @@
 package cuetry
 
 import (
+	"context"
 	"os"
 	"strings"
 
@@ -10,7 +11,10 @@ import (
 )
 
 // SecretResolver resolves recipe secret refs (secure:v1:…) to plaintext at execute time.
-type SecretResolver = secrets.Resolver
+type SecretResolver interface {
+	Handles(ref string) bool
+	Resolve(ctx context.Context, ref string) (string, error)
+}
 
 // SecretResolverOptions configures the default secret resolver.
 type SecretResolverOptions struct {

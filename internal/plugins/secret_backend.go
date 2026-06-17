@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shareed2k/honey/internal/cuetry/secrets/ref"
+	"github.com/shareed2k/honey/internal/cuetry/secrets"
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 )
-
-var _ ref.Backend = SecretBackend{}
 
 // SecretBackend resolves secret refs via a WASM plugin prefix.
 type SecretBackend struct {
@@ -18,12 +16,30 @@ type SecretBackend struct {
 	prefix   string
 }
 
-// SecretRefBackends returns ref.Backend adapters for plugins with the secret capability.
-func (m *Manager) SecretRefBackends() []ref.Backend {
+// SecretRefBackends returns ExtraBackend functions for plugins with the secret capability.
+func (m *Manager) SecretRefBackends() []secrets.ExtraBackend {
 	bs := m.secretBackends()
-	out := make([]ref.Backend, len(bs))
+	out := make([]secrets.ExtraBackend, len(bs))
 	for i := range bs {
-		out[i] = bs[i]
+		b := bs[i]
+		out[i] = func(ctx context.Context, ref string) (string, bool, error) {
+			if !strings.HasPrefix(strings.TrimSpace(ref), b.prefix) {
+				return "", false, nil
+			}
+			in := apiv1.ResolveSecretInput{
+				APIVersion: apiv1.APIVersion,
+				Ref:        ref,
+				PluginID:   b.pluginID,
+			}
+			var out apiv1.ResolveSecretOutput
+			if err := b.mgr.Call(ctx, b.pluginID, "resolve_secret", in, &out); err != nil {
+				return "", true, err
+			}
+			if strings.TrimSpace(out.Value) == "" {
+				return "", true, fmt.Errorf("plugins: %s: empty secret value", b.pluginID)
+			}
+			return out.Value, true, nil
+		}
 	}
 	return out
 }
@@ -46,31 +62,4 @@ func (m *Manager) secretBackends() []SecretBackend {
 		}
 	}
 	return out
-}
-
-// Name implements ref.Backend.
-func (b SecretBackend) Name() string {
-	return "plugin:" + b.pluginID
-}
-
-// Handles implements ref.Backend.
-func (b SecretBackend) Handles(ref string) bool {
-	return strings.HasPrefix(strings.TrimSpace(ref), b.prefix)
-}
-
-// Resolve implements ref.Backend.
-func (b SecretBackend) Resolve(ctx context.Context, ref string) (string, error) {
-	in := apiv1.ResolveSecretInput{
-		APIVersion: apiv1.APIVersion,
-		Ref:        ref,
-		PluginID:   b.pluginID,
-	}
-	var out apiv1.ResolveSecretOutput
-	if err := b.mgr.Call(ctx, b.pluginID, "resolve_secret", in, &out); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(out.Value) == "" {
-		return "", fmt.Errorf("plugins: %s: empty secret value", b.pluginID)
-	}
-	return out.Value, nil
 }
