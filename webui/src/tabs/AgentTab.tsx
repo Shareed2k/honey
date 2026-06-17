@@ -118,7 +118,13 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
             const result = await executeTool(toolCall);
             const toolMsg: Message = { role: 'tool', toolCallId: toolCall.id, content: result };
             agent.messages = [...msgs, toolMsg];
-            await agent.runAgent({ model: selectedModel, messages: agent.messages, tools: TOOLS }, subscriber);
+            // Ensure the URL still has the correct model
+            const url = new URL('/api/v1/agent', window.location.href);
+            url.searchParams.set('model', selectedModel);
+            if (agent instanceof HttpAgent) {
+              agent.url = url.toString();
+            }
+            await agent.runAgent({ messages: agent.messages, tools: TOOLS }, subscriber);
         } catch (e: any) {
             setError(`Tool error: ${e.message}`);
             setStreaming(false);
@@ -134,7 +140,10 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
     };
 
     try {
-      await agentRef.current.runAgent({ model: selectedModel, messages: allMessages, tools: TOOLS }, subscriber);
+      const url = new URL('/api/v1/agent', window.location.href);
+      url.searchParams.set('model', selectedModel);
+      agentRef.current.url = url.toString();
+      await agentRef.current.runAgent({ messages: allMessages, tools: TOOLS }, subscriber);
     } catch (e: any) {
       setError(`Run error: ${e.message}`);
       setStreaming(false);
