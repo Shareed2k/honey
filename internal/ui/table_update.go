@@ -163,9 +163,6 @@ func (m *model) dispatchKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == "execresults" {
 		return m.updateExecResultsKeys(msg)
 	}
-	if m.mode == "tunnel" {
-		return m.updateTunnelInputs(msg)
-	}
 	if m.mode == "agenttransferform" {
 		return m.updateAgentTransferFormKeys(msg)
 	}
@@ -246,13 +243,15 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.agentPick = "source"
 		return m, nil
 	case "t":
-		m.mode = "tunnel"
-		m.tunnelLocalPort.Reset()
-		m.tunnelRemoteHost.SetValue("localhost")
-		m.tunnelRemotePort.Reset()
-		m.tunnelFocusIndex = 0
-		m.tunnelLocalPort.Focus()
-		return m, textinput.Blink
+		if m.mode == "table" || m.mode == "filter" {
+			if r, ok := m.cursorRecord(); ok {
+				m.mode = "tunnel"
+				m.activeModel = NewTunnelModel(r, r.Provider == "k8s", m.winW, m.winH)
+				m.tbl.Blur()
+				return m, textinput.Blink
+			}
+		}
+		return m, nil
 	case "e":
 		m.mode = "execinput"
 		m.ti.Placeholder = "remote shell command (* rows only, or all executable if none marked)"
