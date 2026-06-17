@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -36,7 +35,7 @@ func TestBuildLocalHookEnv_injectsMeta(t *testing.T) {
 // TestRunCueStepHooks_defaultWhereRemote ...
 func TestRunCueStepHooks_defaultWhereRemote(t *testing.T) {
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 
 	var command string
 	client := &FakeHostClient{
