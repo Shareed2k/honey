@@ -6,14 +6,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
-
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
-	"github.com/shareed2k/honey/internal/ui"
 	"github.com/shareed2k/honey/internal/webserver"
+	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var ptyProxyConfig string
@@ -61,7 +60,7 @@ var ptyProxyCmd = &cobra.Command{
 
 		// Run Terminal Interactive handles pure SSH, Proxmox Serial, and Kubernetes pods natively
 		// using os.Stdin/Stdout/Stderr and registers for SIGWINCH to handle resizes forwarded by tmux/zellij!
-		err = ui.RunTerminalInteractive(hello.SSHUser, hello.Record, hello.Console, buildHostExecRegistry())
+		err = engine.RunTerminalInteractive(hello.SSHUser, hello.Record, hello.Console, buildHostExecRegistry())
 		if err != nil {
 			ptyProxyPauseOnError(err)
 		}

@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/postgres"
@@ -18,22 +20,22 @@ import (
 
 func TestCueStepAllTargetsTransientTransportFailed(t *testing.T) {
 	t.Parallel()
-	if cueStepAllTargetsTransientTransportFailed(nil) {
+	if engine.CueStepAllTargetsTransientTransportFailed(nil) {
 		t.Fatal("expected false for nil slice")
 	}
-	if cueStepAllTargetsTransientTransportFailed([]HostExecResult{}) {
+	if engine.CueStepAllTargetsTransientTransportFailed([]engine.HostExecResult{}) {
 		t.Fatal("expected false for empty slice")
 	}
-	if cueStepAllTargetsTransientTransportFailed([]HostExecResult{{Success: true, ErrMsg: ""}}) {
+	if engine.CueStepAllTargetsTransientTransportFailed([]engine.HostExecResult{{Success: true, ErrMsg: ""}}) {
 		t.Fatal("expected false when any host succeeded")
 	}
-	if cueStepAllTargetsTransientTransportFailed([]HostExecResult{
+	if engine.CueStepAllTargetsTransientTransportFailed([]engine.HostExecResult{
 		{Success: false, ErrMsg: "connection reset by peer"},
 		{Success: false, ErrMsg: "exit 1"},
 	}) {
 		t.Fatal("expected false when failures are not all transport-class")
 	}
-	if !cueStepAllTargetsTransientTransportFailed([]HostExecResult{
+	if !engine.CueStepAllTargetsTransientTransportFailed([]engine.HostExecResult{
 		{Success: false, ErrMsg: "connection reset by peer"},
 		{Success: false, ErrMsg: "read tcp 10.0.0.1:22: i/o timeout"},
 	}) {
@@ -47,10 +49,10 @@ func TestCueRecipeSSHPostHostResult_CheckCmd(t *testing.T) {
 			CheckCmd: "test -f /etc/ready",
 		},
 	}
-	run := &cueRun{}
-	post := cueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
+	run := &engine.CueRun{}
+	post := engine.CueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
 
-	resChecked := HostExecResult{
+	resChecked := engine.HostExecResult{
 		Output:  "HONEY_CHECK_CMD_OK",
 		Success: true,
 	}
@@ -63,7 +65,7 @@ func TestCueRecipeSSHPostHostResult_CheckCmd(t *testing.T) {
 		t.Errorf("expected clean output, got %q", resChecked.Output)
 	}
 
-	resMutated := HostExecResult{
+	resMutated := engine.HostExecResult{
 		Output:  "some regular output",
 		Success: true,
 	}
@@ -79,8 +81,8 @@ func TestCueRecipeSSHPostHostResult_CheckCmd(t *testing.T) {
 
 func TestCueRun_gatherFacts(t *testing.T) {
 	gather := true
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe: cuetry.Recipe{
 				Defaults: &cuetry.RecipeDefaults{
 					GatherFacts: &gather,
@@ -90,18 +92,18 @@ func TestCueRun_gatherFacts(t *testing.T) {
 				{Name: "h1", PrimaryIP: "1.2.3.4"},
 			},
 		},
-		facts: make(map[string]map[string]any),
+		Facts: make(map[string]map[string]any),
 	}
 
-	run.facts["h1"] = map[string]any{
+	run.Facts["h1"] = map[string]any{
 		"os":      "linux",
 		"arch":    "amd64",
 		"id":      "ubuntu",
 		"pkg_mgr": "apt",
 	}
 
-	ctx := withHostFacts(context.TODO(), run.facts)
-	retrieved := hostFactsFromContext(ctx)
+	ctx := engine.WithHostFacts(context.TODO(), run.Facts)
+	retrieved := engine.HostFactsFromContext(ctx)
 	if retrieved == nil || retrieved["h1"]["pkg_mgr"] != "apt" {
 		t.Fatal("expected facts to be propagated via context")
 	}
@@ -124,7 +126,7 @@ func (m *mockHostClient) Run(cmd string) ([]byte, error) {
 }
 
 func TestCueRun_loopFromAndHandlers(t *testing.T) {
-	cache := NewClientCache()
+	cache := engine.NewClientCache()
 	cache.SetRegistry(&hostexec.StandardRegistry{})
 	client := &mockHostClient{
 		runFunc: func(cmd string) ([]byte, error) {
@@ -136,11 +138,11 @@ func TestCueRun_loopFromAndHandlers(t *testing.T) {
 	}
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
-	key := SSHClientCacheKey("root", rec)
-	cache.clients[key] = client
+	key := engine.SSHClientCacheKey("root", rec)
+	cache.Clients()[key] = client
 
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe: cuetry.Recipe{
 				Handlers: wrapSteps(&cuetry.CommandStep{
 					StepBase: cuetry.StepBase{
@@ -153,13 +155,13 @@ func TestCueRun_loopFromAndHandlers(t *testing.T) {
 			Records: []hosts.Record{rec},
 			SSHUser: "root",
 		},
-		cache:             cache,
-		outputStore:       cuetry.NewStepOutputStore(),
-		triggeredHandlers: make(map[string]bool),
+		Cache:             cache,
+		OutputStore:       cuetry.NewStepOutputStore(),
+		TriggeredHandlers: make(map[string]bool),
 	}
 
 	// Record output for previous step to loop over
-	run.outputStore.Record("fetch-users", "h1", `[{"name":"alice"},{"name":"bob"}]`)
+	run.OutputStore.Record("fetch-users", "h1", `[{"name":"alice"},{"name":"bob"}]`)
 
 	step := &cuetry.CommandStep{
 		StepBase: cuetry.StepBase{
@@ -174,8 +176,8 @@ func TestCueRun_loopFromAndHandlers(t *testing.T) {
 		Command: "echo processed ${item}",
 	}
 
-	ch := make(chan HostExecResult, 10)
-	results, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	ch := make(chan engine.HostExecResult, 10)
+	results, err := engine.StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,13 +188,13 @@ func TestCueRun_loopFromAndHandlers(t *testing.T) {
 	}
 
 	// Verify the handler trigger registration
-	if len(run.triggeredHandlers) != 1 || !run.triggeredHandlers["restart-app"] {
-		t.Errorf("expected restart-app handler to be triggered, got %v", run.triggeredHandlers)
+	if len(run.TriggeredHandlers) != 1 || !run.TriggeredHandlers["restart-app"] {
+		t.Errorf("expected restart-app handler to be triggered, got %v", run.TriggeredHandlers)
 	}
 }
 
 func TestCueRun_loopTemplateMultilineStdout(t *testing.T) {
-	cache := NewClientCache()
+	cache := engine.NewClientCache()
 	cache.SetRegistry(&hostexec.StandardRegistry{})
 
 	var commands []string
@@ -204,19 +206,19 @@ func TestCueRun_loopTemplateMultilineStdout(t *testing.T) {
 	}
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
-	key := SSHClientCacheKey("root", rec)
-	cache.clients[key] = client
+	key := engine.SSHClientCacheKey("root", rec)
+	cache.Clients()[key] = client
 
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe:  cuetry.Recipe{},
 			Records: []hosts.Record{rec},
 			SSHUser: "root",
 		},
-		cache:       cache,
-		outputStore: cuetry.NewStepOutputStore(),
+		Cache:       cache,
+		OutputStore: cuetry.NewStepOutputStore(),
 	}
-	run.outputStore.Record("get-controllers", "h1", "10.201.0.104\n10.201.0.22\n10.201.0.102\n")
+	run.OutputStore.Record("get-controllers", "h1", "10.201.0.104\n10.201.0.22\n10.201.0.102\n")
 
 	step := &cuetry.CommandStep{
 		StepBase: cuetry.StepBase{
@@ -227,8 +229,8 @@ func TestCueRun_loopTemplateMultilineStdout(t *testing.T) {
 		Command: `echo "${item}"`,
 	}
 
-	ch := make(chan HostExecResult, 10)
-	results, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	ch := make(chan engine.HostExecResult, 10)
+	results, err := engine.StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +254,7 @@ func TestCueRun_loopTemplateMultilineStdout(t *testing.T) {
 }
 
 func TestCueRun_loopTemplateHostItem(t *testing.T) {
-	cache := NewClientCache()
+	cache := engine.NewClientCache()
 	cache.SetRegistry(&hostexec.StandardRegistry{})
 
 	var commands []string
@@ -268,20 +270,20 @@ func TestCueRun_loopTemplateHostItem(t *testing.T) {
 		{Name: "node-b", PrimaryIP: "10.0.0.2"},
 	}
 	for _, rec := range records {
-		key := SSHClientCacheKey("root", rec)
-		cache.clients[key] = client
+		key := engine.SSHClientCacheKey("root", rec)
+		cache.Clients()[key] = client
 	}
 
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe:  cuetry.Recipe{},
 			Records: records,
 			SSHUser: "root",
 		},
-		cache:       cache,
-		outputStore: cuetry.NewStepOutputStore(),
+		Cache:       cache,
+		OutputStore: cuetry.NewStepOutputStore(),
 	}
-	run.outputStore.Record("get-controllers", "node-a", "node-a\nnode-b\n")
+	run.OutputStore.Record("get-controllers", "node-a", "node-a\nnode-b\n")
 
 	step := &cuetry.CommandStep{
 		StepBase: cuetry.StepBase{
@@ -292,8 +294,8 @@ func TestCueRun_loopTemplateHostItem(t *testing.T) {
 		Command: `echo "${item}"`,
 	}
 
-	ch := make(chan HostExecResult, 10)
-	results, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	ch := make(chan engine.HostExecResult, 10)
+	results, err := engine.StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +319,7 @@ func TestCueRun_loopTemplateHostItem(t *testing.T) {
 }
 
 func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
-	cache := NewClientCache()
+	cache := engine.NewClientCache()
 	cache.SetRegistry(&hostexec.StandardRegistry{})
 	client := &mockHostClient{
 		runFunc: func(string) ([]byte, error) {
@@ -326,21 +328,21 @@ func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
 	}
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
-	cache.clients[SSHClientCacheKey("root", rec)] = client
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	cache.Clients()[engine.SSHClientCacheKey("root", rec)] = client
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe:  cuetry.Recipe{Type: "graph"},
 			Records: []hosts.Record{rec},
 			SSHUser: "root",
 			Execute: true,
 		},
-		cache:         cache,
-		outputStore:   cuetry.NewStepOutputStore(),
-		outputCapture: cuetry.NewRecipeOutputCapture(),
+		Cache:         cache,
+		OutputStore:   cuetry.NewStepOutputStore(),
+		OutputCapture: cuetry.NewRecipeOutputCapture(),
 	}
 
-	ch := make(chan HostExecResult, 10)
-	_, err := streamCueRecipeStep(context.TODO(), run, 0, &cuetry.CommandStep{
+	ch := make(chan engine.HostExecResult, 10)
+	_, err := engine.StreamCueRecipeStep(context.TODO(), run, 0, &cuetry.CommandStep{
 		StepBase: cuetry.StepBase{
 			ID:     "list",
 			Host:   "h1",
@@ -352,14 +354,14 @@ func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	streamed := <-ch
-	if streamed.OutputCapture != "raw" || cueRecipeDisplayOutput(streamed) != "[captured output: raw]" {
+	if streamed.OutputCapture != "raw" || engine.CueRecipeDisplayOutput(streamed) != "[captured output: raw]" {
 		t.Fatalf("streamed output marker missing: %+v", streamed)
 	}
-	if got, ok := run.outputCapture.Get("raw"); !ok || got != "a\nb" {
+	if got, ok := run.OutputCapture.Get("raw"); !ok || got != "a\nb" {
 		t.Fatalf("raw output = %q, ok=%v", got, ok)
 	}
 
-	_, err = streamCueRecipeStep(context.TODO(), run, 1, &cuetry.TemplateStep{
+	_, err = engine.StreamCueRecipeStep(context.TODO(), run, 1, &cuetry.TemplateStep{
 		StepBase: cuetry.StepBase{
 			ID:     "render",
 			Host:   "_",
@@ -371,18 +373,18 @@ func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(ch)
-	if got, ok := run.outputCapture.Get("items"); !ok || got != `["a","b"]` {
+	if got, ok := run.OutputCapture.Get("items"); !ok || got != `["a","b"]` {
 		t.Fatalf("items output = %q, ok=%v", got, ok)
 	}
 }
 
 func TestCueRecipeSSHPostHostResult_changedWhenFailedWhen(t *testing.T) {
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe: cuetry.Recipe{Name: "result-overrides"},
 		},
-		outputStore:   cuetry.NewStepOutputStore(),
-		outputCapture: cuetry.NewRecipeOutputCapture(),
+		OutputStore:   cuetry.NewStepOutputStore(),
+		OutputCapture: cuetry.NewRecipeOutputCapture(),
 	}
 	step := &cuetry.CommandStep{
 		StepBase: cuetry.StepBase{
@@ -391,8 +393,8 @@ func TestCueRecipeSSHPostHostResult_changedWhenFailedWhen(t *testing.T) {
 			NotifyHandler: []string{"restart"},
 		},
 	}
-	post := cueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
-	res := &HostExecResult{Success: true, Output: "bad", ExitCode: 0}
+	post := engine.CueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
+	res := &engine.HostExecResult{Success: true, Output: "bad", ExitCode: 0}
 
 	post(context.TODO(), hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}, res)
 
@@ -402,8 +404,8 @@ func TestCueRecipeSSHPostHostResult_changedWhenFailedWhen(t *testing.T) {
 	if res.Changed {
 		t.Fatalf("changed_when=false should clear changed: %+v", res)
 	}
-	if len(run.triggeredHandlers) != 0 {
-		t.Fatalf("handler should not trigger: %+v", run.triggeredHandlers)
+	if len(run.TriggeredHandlers) != 0 {
+		t.Fatalf("handler should not trigger: %+v", run.TriggeredHandlers)
 	}
 }
 
@@ -417,29 +419,29 @@ func TestRecipeHostMaxConc_serialOverridesMaxParallel(t *testing.T) {
 func TestCueRecipeDisplayOutput_suppressesSuccessfulCapturedOutput(t *testing.T) {
 	tests := []struct {
 		name string
-		res  HostExecResult
+		res  engine.HostExecResult
 		want string
 	}{
 		{
 			name: "successful captured output",
-			res:  HostExecResult{Success: true, Output: "a\nb", OutputCapture: "controllers_raw"},
+			res:  engine.HostExecResult{Success: true, Output: "a\nb", OutputCapture: "controllers_raw"},
 			want: "[captured output: controllers_raw]",
 		},
 		{
 			name: "failed captured output remains visible",
-			res:  HostExecResult{Success: false, Output: "error details", OutputCapture: "controllers_raw"},
+			res:  engine.HostExecResult{Success: false, Output: "error details", OutputCapture: "controllers_raw"},
 			want: "error details",
 		},
 		{
 			name: "uncaptured output remains visible",
-			res:  HostExecResult{Success: true, Output: "hello"},
+			res:  engine.HostExecResult{Success: true, Output: "hello"},
 			want: "hello",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := cueRecipeDisplayOutput(tt.res)
+			got := engine.CueRecipeDisplayOutput(tt.res)
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
@@ -448,7 +450,7 @@ func TestCueRecipeDisplayOutput_suppressesSuccessfulCapturedOutput(t *testing.T)
 }
 
 func TestCueRun_stepTimeout(t *testing.T) {
-	cache := NewClientCache()
+	cache := engine.NewClientCache()
 	cache.SetRegistry(&hostexec.StandardRegistry{})
 
 	var lastCmd string
@@ -460,17 +462,17 @@ func TestCueRun_stepTimeout(t *testing.T) {
 	}
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
-	key := SSHClientCacheKey("root", rec)
-	cache.clients[key] = client
+	key := engine.SSHClientCacheKey("root", rec)
+	cache.Clients()[key] = client
 
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe:  cuetry.Recipe{},
 			Records: []hosts.Record{rec},
 			SSHUser: "root",
 		},
-		cache:       cache,
-		outputStore: cuetry.NewStepOutputStore(),
+		Cache:       cache,
+		OutputStore: cuetry.NewStepOutputStore(),
 	}
 
 	step := &cuetry.CommandStep{
@@ -482,8 +484,8 @@ func TestCueRun_stepTimeout(t *testing.T) {
 		Command: "sleep 10",
 	}
 
-	ch := make(chan HostExecResult, 10)
-	_, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	ch := make(chan engine.HostExecResult, 10)
+	_, err := engine.StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +516,7 @@ func TestRunCueRecipeStepsJSON_DryRun(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	p := CueRecipeRunParams{
+	p := engine.CueRecipeRunParams{
 		Recipe:    recipe,
 		Records:   records,
 		Execute:   false,
@@ -575,7 +577,7 @@ func TestRunCueRecipeStepsJSON_Execute(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	p := CueRecipeRunParams{
+	p := engine.CueRecipeRunParams{
 		Recipe:    recipe,
 		Records:   []hosts.Record{rec},
 		Execute:   true,
@@ -590,7 +592,7 @@ func TestRunCueRecipeStepsJSON_Execute(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var resp map[string][]HostExecResult
+	var resp map[string][]engine.HostExecResult
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to unmarshal JSON output: %v, output: %s", err, buf.String())
 	}
@@ -613,7 +615,7 @@ func TestRunCueRecipeStepsJSON_Execute(t *testing.T) {
 }
 
 func TestCueRun_loopAbortedOnHookFailure(t *testing.T) {
-	cache := NewClientCache()
+	cache := engine.NewClientCache()
 	cache.SetRegistry(&hostexec.StandardRegistry{})
 
 	var commands []string
@@ -625,18 +627,18 @@ func TestCueRun_loopAbortedOnHookFailure(t *testing.T) {
 	}
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
-	cache.clients[SSHClientCacheKey("root", rec)] = client
+	cache.Clients()[engine.SSHClientCacheKey("root", rec)] = client
 
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe:  cuetry.Recipe{},
 			Records: []hosts.Record{rec},
 			SSHUser: "root",
 		},
-		cache:       cache,
-		outputStore: cuetry.NewStepOutputStore(),
+		Cache:       cache,
+		OutputStore: cuetry.NewStepOutputStore(),
 	}
-	run.outputStore.Record("get-items", "h1", "item1\nitem2\n")
+	run.OutputStore.Record("get-items", "h1", "item1\nitem2\n")
 
 	step := &cuetry.CommandStep{
 		StepBase: cuetry.StepBase{
@@ -653,8 +655,8 @@ func TestCueRun_loopAbortedOnHookFailure(t *testing.T) {
 		Command: `echo "${item}"`,
 	}
 
-	ch := make(chan HostExecResult, 10)
-	results, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	ch := make(chan engine.HostExecResult, 10)
+	results, err := engine.StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
 	close(ch)
 
 	if err == nil {
@@ -684,19 +686,19 @@ func TestCueRun_opensearchStep(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cache := NewClientCache()
+	cache := engine.NewClientCache()
 	cache.SetRegistry(&hostexec.StandardRegistry{})
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe:  cuetry.Recipe{},
 			Records: []hosts.Record{rec},
 			SSHUser: "root",
 		},
-		cache:         cache,
-		outputStore:   cuetry.NewStepOutputStore(),
-		outputCapture: cuetry.NewRecipeOutputCapture(),
+		Cache:         cache,
+		OutputStore:   cuetry.NewStepOutputStore(),
+		OutputCapture: cuetry.NewRecipeOutputCapture(),
 	}
 
 	step := &cuetry.OpensearchStep{
@@ -713,8 +715,8 @@ func TestCueRun_opensearchStep(t *testing.T) {
 		},
 	}
 
-	ch := make(chan HostExecResult, 10)
-	results, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	ch := make(chan engine.HostExecResult, 10)
+	results, err := engine.StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -724,7 +726,7 @@ func TestCueRun_opensearchStep(t *testing.T) {
 		t.Fatalf("unexpected step outcome: %+v", results)
 	}
 
-	captured, ok := run.outputCapture.Get("doc_result")
+	captured, ok := run.OutputCapture.Get("doc_result")
 	if !ok {
 		t.Fatal("missing captured output 'doc_result'")
 	}
@@ -734,7 +736,7 @@ func TestCueRun_opensearchStep(t *testing.T) {
 }
 
 func TestCueRun_postgresStep(t *testing.T) {
-	cache := NewClientCache()
+	cache := engine.NewClientCache()
 	cache.SetRegistry(&hostexec.StandardRegistry{})
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
@@ -749,8 +751,8 @@ func TestCueRun_postgresStep(t *testing.T) {
 		},
 	}
 
-	run := &cueRun{
-		CueRecipeRunParams: CueRecipeRunParams{
+	run := &engine.CueRun{
+		Params: engine.CueRecipeRunParams{
 			Recipe: cuetry.Recipe{
 				Defaults: &cuetry.RecipeDefaults{
 					Secrets: map[string]string{
@@ -763,9 +765,9 @@ func TestCueRun_postgresStep(t *testing.T) {
 			SecretResolver: mockResolver,
 			Pools:          postgres.NewPoolManager(),
 		},
-		cache:         cache,
-		outputStore:   cuetry.NewStepOutputStore(),
-		outputCapture: cuetry.NewRecipeOutputCapture(),
+		Cache:         cache,
+		OutputStore:   cuetry.NewStepOutputStore(),
+		OutputCapture: cuetry.NewRecipeOutputCapture(),
 	}
 
 	step := &cuetry.PostgresStep{
@@ -780,10 +782,10 @@ func TestCueRun_postgresStep(t *testing.T) {
 		},
 	}
 
-	run.Execute = false
+	run.Params.Execute = false
 
-	ch := make(chan HostExecResult, 10)
-	results, err := streamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	ch := make(chan engine.HostExecResult, 10)
+	results, err := engine.StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -811,4 +813,39 @@ func (m *mockSecretResolver) Resolve(_ context.Context, ref string) (string, err
 		return m.resolveFunc(ref)
 	}
 	return "", fmt.Errorf("not implemented")
+}
+
+type fakeHostClient struct {
+	closed bool
+}
+
+func (c *fakeHostClient) RunWithStreams(_ string, _ io.Reader, _ io.Writer, _ io.Writer) error {
+	return nil
+}
+func (c *fakeHostClient) Close() error               { c.closed = true; return nil }
+func (c *fakeHostClient) Download(_, _ string) error { return nil }
+func (c *fakeHostClient) Upload(_, _ string) error   { return nil }
+
+func (c *fakeHostClient) ListRemoteDir(_ string) ([]hostexec.RemoteFileEntry, error) {
+	return nil, nil
+}
+
+func (c *fakeHostClient) StatRemote(_ string) (hostexec.RemoteFileEntry, error) {
+	return hostexec.RemoteFileEntry{}, nil
+}
+
+func (c *fakeHostClient) MkdirAllRemote(_ string) error { return nil }
+
+func (c *fakeHostClient) RemoveRemote(_ string, _ bool) error { return nil }
+
+func (c *fakeHostClient) InteractiveTerminal(_ string, _ map[string]string) error { return nil }
+
+func (c *fakeHostClient) UploadContent(_ []byte, _ string, _ uint32) error { return nil }
+
+func (c *fakeHostClient) Output(_ string, _ map[string]string) ([]byte, error) {
+	return nil, nil
+}
+
+func (c *fakeHostClient) OutputWithStderr(_ string, _ map[string]string) ([]byte, []byte, error) {
+	return nil, nil, nil
 }

@@ -5,8 +5,9 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
-	tea "charm.land/bubbletea/v2"
+	"github.com/shareed2k/honey/internal/engine"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/recordings"
 )
@@ -21,11 +22,11 @@ func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
 		if msg.isCue {
 			trigger = "tui-cue-exec"
 		}
-		if rec, err := NewBatchSessionRecorder(m.recordDir, trigger, m.sshUser, msg.totalJobs); err == nil {
+		if rec, err := engine.NewBatchSessionRecorder(m.recordDir, trigger, m.sshUser, msg.totalJobs); err == nil {
 			m.batchRecorder = rec
 			if msg.isCue && rec != nil && msg.recipe != nil {
 				hash, _ := cuetry.HashRecipeJSON(*msg.recipe)
-				rec.RecordRecipeMeta(RecipeMeta{
+				rec.RecordRecipeMeta(engine.RecipeMeta{
 					RecipePath:        msg.recipePath,
 					HostCount:         msg.totalJobs,
 					RecipeContentHash: hash,
@@ -83,14 +84,14 @@ func (m *model) handleStreamDoneMsg(_ streamDoneMsg) (tea.Model, tea.Cmd) {
 		m.batchRecorder = nil
 	}
 	m.execDone = true
-	m.execResults = SortHostExecForUI(m.execResults)
+	m.execResults = engine.SortHostExecForUI(m.execResults)
 	m.clampExecScroll()
 	return m, nil
 }
 
 func (m *model) handleParallelExecDoneMsg(msg parallelExecDoneMsg) (tea.Model, tea.Cmd) {
 	if m.recordEnabled && m.recordDir != "" {
-		if rec, err := NewBatchSessionRecorder(m.recordDir, "tui-exec", m.sshUser, len(msg.results)); err == nil {
+		if rec, err := engine.NewBatchSessionRecorder(m.recordDir, "tui-exec", m.sshUser, len(msg.results)); err == nil {
 			for i := range msg.results {
 				rec.RecordHostExecResult(msg.results[i])
 			}
@@ -99,7 +100,7 @@ func (m *model) handleParallelExecDoneMsg(msg parallelExecDoneMsg) (tea.Model, t
 	}
 	m.cueResultBody = ""
 	m.cueResultTitle = "Parallel SSH results"
-	m.execResults = SortHostExecForUI(msg.results)
+	m.execResults = engine.SortHostExecForUI(msg.results)
 	m.execCmdLine = msg.cmdLine
 	m.execTargetNote = msg.targetNote
 	m.execScroll = 0

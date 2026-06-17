@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/inventory"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -133,7 +133,7 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	clientCache := ui.NewClientCache()
+	clientCache := engine.NewClientCache()
 
 	records, sshUser, cfg, cfgPath, err := runSearchCore(cmd, args)
 	if err != nil {
@@ -165,7 +165,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return enc.Encode(records)
 	case "table":
 		defer clientCache.CloseAll()
-		return ui.PrintStaticTable(records)
+		return engine.PrintStaticTable(records)
 	default:
 		recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
 		recordOnStart := recordDirFlagChanged(cmd) && strings.TrimSpace(flagRecordDir) != ""

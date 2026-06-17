@@ -10,11 +10,12 @@ import (
 	"text/template"
 
 	"github.com/prometheus/alertmanager/notify/webhook"
-	amtemplate "github.com/prometheus/alertmanager/template"
-	"github.com/spf13/cobra"
+	"github.com/shareed2k/honey/internal/engine"
 
+	amtemplate "github.com/prometheus/alertmanager/template"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -190,7 +191,7 @@ func runAlertInvestigate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run search and open TUI pre-filtered to the resolved host query.
-	clientCache := ui.NewClientCache()
+	clientCache := engine.NewClientCache()
 
 	// Set the name filter to the resolved host query for runSearchCore.
 	if !cmd.Flags().Changed("name") {

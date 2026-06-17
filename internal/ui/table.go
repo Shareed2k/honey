@@ -14,11 +14,11 @@ import (
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
+	"github.com/shareed2k/honey/internal/engine"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
-	"golang.org/x/crypto/ssh"
-
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -27,6 +27,8 @@ import (
 	"github.com/shareed2k/honey/internal/pvelxc"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/truenasshell"
+	"golang.org/x/crypto/ssh"
+
 	k8sexec "k8s.io/client-go/util/exec"
 )
 
@@ -41,7 +43,7 @@ const (
 )
 
 type parallelExecDoneMsg struct {
-	results    []HostExecResult
+	results    []engine.HostExecResult
 	cmdLine    string
 	targetNote string // how parallel exec scope was chosen (shown above results)
 }
@@ -59,8 +61,8 @@ type RunTableOptions struct {
 	Config *config.File
 	// ConfigPath is the resolved honey YAML path (may be empty); CUE agent_transfer steps with cloud_backend_ref need it.
 	ConfigPath string
-	// ClientCache is an optional shared SSH client cache. If nil, one is created.
-	ClientCache *ClientCache
+	// engine.ClientCache is an optional shared SSH client cache. If nil, one is created.
+	ClientCache *engine.ClientCache
 	// ExecRegistry is the host execution registry.
 	ExecRegistry hostexec.Registry
 	// AlertBanner is an optional one-line banner shown above the table (e.g. from `honey alert investigate`).
@@ -86,7 +88,7 @@ type model struct {
 	// selected marks table row indices for parallel SSH (see execTargets).
 	selected map[int]struct{}
 
-	execResults     []HostExecResult
+	execResults     []engine.HostExecResult
 	execCmdLine     string
 	execTargetNote  string
 	execScroll      int // Scroll position for the list view
@@ -117,7 +119,7 @@ type model struct {
 	honey         *config.File
 	configPath    string
 	// batchRecorder is non-nil while streaming parallel exec or CUE execute results when recording is on.
-	batchRecorder *SessionRecorder
+	batchRecorder *engine.SessionRecorder
 
 	// replaypick: choose a .hrec.jsonl under recordDir; on enter, lastAction=actReplay + replayFileName.
 	replayFiles      []string
@@ -127,7 +129,7 @@ type model struct {
 	replayPickScroll int
 
 	// fileClientCache is shared by agent transfer (key a) and other pooled SSH clients.
-	fileClientCache *ClientCache
+	fileClientCache *engine.ClientCache
 
 	// A → cloud → B agent transfer wizard (key a).
 	agentPick       string // "source" | "dest" | ""
@@ -326,7 +328,7 @@ func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *mod
 	tunRemote.CharLimit = 5
 	tunRemote.SetWidth(10)
 
-	fileCache := NewClientCache()
+	fileCache := engine.NewClientCache()
 	if opts.ExecRegistry != nil {
 		fileCache.SetRegistry(opts.ExecRegistry)
 	}
@@ -748,7 +750,7 @@ func (m *model) popupResultLines() []string {
 	lines = append(lines, "")
 	lines = append(lines, "--- Output ---")
 
-	if display := cueRecipeDisplayOutput(r); strings.TrimSpace(display) == "" {
+	if display := engine.CueRecipeDisplayOutput(r); strings.TrimSpace(display) == "" {
 		lines = append(lines, "(no output)")
 	} else {
 		lines = append(lines, strings.Split(display, "\n")...)
@@ -1230,7 +1232,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			if err != nil {
 				return cueRecipeDoneMsg{title: title, body: targetNote + "\n\nsecrets: " + err.Error()}
 			}
-			runErr := RunCueRecipeSteps(context.Background(), &buf, CueRecipeRunParams{
+			runErr := RunCueRecipeSteps(context.Background(), &buf, engine.CueRecipeRunParams{
 				Recipe:         recipe,
 				RecipeDir:      recipeDir,
 				Records:        targets,
@@ -1243,15 +1245,15 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 				Reg:            reg,
 			}, nil)
 			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
-				if rec, err := NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
+				if rec, err := engine.NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
 					if rec != nil {
 						hash, _ := cuetry.HashRecipeJSON(recipe)
-						rec.RecordRecipeMeta(RecipeMeta{
+						rec.RecordRecipeMeta(engine.RecipeMeta{
 							RecipePath:        absRecipe,
 							HostCount:         len(targets),
 							RecipeContentHash: hash,
 							StartedAt:         time.Now().UTC(),
-							Hosts:             HostsForRecipeMeta(targets, 200),
+							Hosts:             engine.HostsForRecipeMeta(targets, 200),
 						})
 					}
 					if runErr != nil {
@@ -1281,17 +1283,17 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 		if totalJobs < 1 {
 			totalJobs = 1
 		}
-		ch := make(chan HostExecResult, totalJobs)
+		ch := make(chan engine.HostExecResult, totalJobs)
 
 		go func() {
 			defer close(ch)
 			aiPrompt := LoadAISystemPromptFromConfigPath(configPath)
 			secRes, err := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(honey), pluginMgr)
 			if err != nil {
-				ch <- HostExecResult{Name: "cue recipe", Success: false, ErrMsg: "secrets: " + err.Error()}
+				ch <- engine.HostExecResult{Name: "cue recipe", Success: false, ErrMsg: "secrets: " + err.Error()}
 				return
 			}
-			_ = StreamCueRecipeSteps(context.Background(), CueRecipeRunParams{
+			_ = engine.StreamCueRecipeSteps(context.Background(), engine.CueRecipeRunParams{
 				Recipe:         recipe,
 				RecipeDir:      recipeDir,
 				Records:        targets,
@@ -1313,7 +1315,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			isCue:      true,
 			recipe:     &recipe,
 			recipePath: absRecipe,
-			hosts:      HostsForRecipeMeta(targets, 200),
+			hosts:      engine.HostsForRecipeMeta(targets, 200),
 		}
 	}
 }
@@ -1322,7 +1324,7 @@ type streamStartMsg struct {
 	cmdLine    string
 	targetNote string
 	totalJobs  int
-	ch         chan HostExecResult
+	ch         chan engine.HostExecResult
 	isCue      bool
 	// For cue-exec only: parsed recipe and absolute recipe path so the
 	// session recorder can attribute the recording to a recipe.
@@ -1332,8 +1334,8 @@ type streamStartMsg struct {
 }
 
 type streamResultMsg struct {
-	res HostExecResult
-	ch  chan HostExecResult
+	res engine.HostExecResult
+	ch  chan engine.HostExecResult
 }
 
 type streamDoneMsg struct{}
@@ -1349,13 +1351,13 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 
 		if len(jobs) == 0 {
 			return parallelExecDoneMsg{
-				results:    []HostExecResult{},
+				results:    []engine.HostExecResult{},
 				cmdLine:    cmdLine,
 				targetNote: targetNote + " — nothing to run",
 			}
 		}
 
-		ch := make(chan HostExecResult, len(jobs))
+		ch := make(chan engine.HostExecResult, len(jobs))
 
 		go func() {
 			defer close(ch)
@@ -1371,7 +1373,7 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 				}
 				return remoteCmd
 			}
-			_ = StreamSSHParallel(context.Background(), user, jobs, false, cmdFunc, ch, BatchOptions{Reg: reg})
+			_ = engine.StreamSSHParallel(context.Background(), user, jobs, false, cmdFunc, ch, engine.BatchOptions{Reg: reg})
 		}()
 
 		return streamStartMsg{
@@ -1383,7 +1385,7 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 	}
 }
 
-func readNextStreamResult(ch chan HostExecResult) tea.Cmd {
+func readNextStreamResult(ch chan engine.HostExecResult) tea.Cmd {
 	return func() tea.Msg {
 		res, ok := <-ch
 		if !ok {
@@ -1486,7 +1488,7 @@ func (m *model) clearParallelMarks() {
 	m.refreshTableRows(m.tbl.Cursor())
 }
 
-func (m *model) recordingOptions(trigger, mode string) *SessionRecorderOptions {
+func (m *model) recordingOptions(trigger, mode string) *engine.SessionRecorderOptions {
 	if !m.recordEnabled || strings.TrimSpace(m.recordDir) == "" {
 		return nil
 	}
@@ -1496,7 +1498,7 @@ func (m *model) recordingOptions(trigger, mode string) *SessionRecorderOptions {
 	}
 	realIdx := m.visible[row]
 	r := m.recs[realIdx]
-	return &SessionRecorderOptions{
+	return &engine.SessionRecorderOptions{
 		Dir:      m.recordDir,
 		Trigger:  trigger,
 		Mode:     mode,
@@ -1538,10 +1540,10 @@ func reportInteractiveSessionError(r hosts.Record, err error) {
 	_, _ = os.Stdin.Read(b[:])
 }
 
-func runTrueNASShellWithRecording(r hosts.Record, recordOpts *SessionRecorderOptions) error {
-	var recorder *SessionRecorder
+func runTrueNASShellWithRecording(r hosts.Record, recordOpts *engine.SessionRecorderOptions) error {
+	var recorder *engine.SessionRecorder
 	if recordOpts != nil {
-		rec, err := NewSessionRecorder(*recordOpts)
+		rec, err := engine.NewSessionRecorder(*recordOpts)
 		if err == nil {
 			recorder = rec
 		}
@@ -1549,10 +1551,10 @@ func runTrueNASShellWithRecording(r hosts.Record, recordOpts *SessionRecorderOpt
 	if recorder != nil {
 		defer recorder.Close()
 	}
-	return runTrueNASShellInteractive(context.Background(), truenasshell.ConsoleTrueNASAPI, r, recorder)
+	return engine.RunTrueNASShellInteractive(context.Background(), truenasshell.ConsoleTrueNASAPI, r, recorder)
 }
 
-func runSSHWithRecording(reg hostexec.Registry, user string, r hosts.Record, recordOpts *SessionRecorderOptions) error {
+func runSSHWithRecording(reg hostexec.Registry, user string, r hosts.Record, recordOpts *engine.SessionRecorderOptions) error {
 	if hosts.IsDockerRecord(r) {
 		if strings.TrimSpace(r.Meta["container_id"]) == "" {
 			return fmt.Errorf("docker record missing container_id")
@@ -1560,9 +1562,9 @@ func runSSHWithRecording(reg hostexec.Registry, user string, r hosts.Record, rec
 	} else if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !pvelxc.ShouldUsePVETTY(r) {
 		return fmt.Errorf("no IP for selected host")
 	}
-	var recorder *SessionRecorder
+	var recorder *engine.SessionRecorder
 	if recordOpts != nil {
-		rec, err := NewSessionRecorder(*recordOpts)
+		rec, err := engine.NewSessionRecorder(*recordOpts)
 		if err == nil {
 			recorder = rec
 		}
@@ -1571,16 +1573,16 @@ func runSSHWithRecording(reg hostexec.Registry, user string, r hosts.Record, rec
 		defer recorder.Close()
 	}
 	if hosts.IsDockerRecord(r) {
-		return runDockerInteractiveWithRecorder(user, r, recorder, reg)
+		return engine.RunDockerInteractiveWithRecorder(user, r, recorder, reg)
 	}
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
-		return runK8sInteractiveWithRecorder(user, r, recorder)
+		return engine.RunK8sInteractiveWithRecorder(user, r, recorder)
 	}
-	return runSSHInteractive(user, r, recorder)
+	return engine.RunSSHInteractive(user, r, recorder)
 }
 
 func runTunnel(reg hostexec.Registry, user string, r hosts.Record, localFwd string) error {
-	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !CanTrueNASTunnel(r) {
+	if r.PrimaryIP == "" && (r.Provider != "k8s" || r.Meta["kind"] != "pod") && !engine.CanTrueNASTunnel(r) {
 		return fmt.Errorf("no IP for selected host")
 	}
 	if localFwd == "" || !strings.Contains(localFwd, ":") {

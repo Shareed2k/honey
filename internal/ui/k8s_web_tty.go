@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	"k8s.io/client-go/tools/remotecommand"
-
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 // ResizeFromColsRows returns a terminal size for k8s remotecommand, or nil if cols or rows are non-positive.
@@ -76,14 +76,14 @@ func RunK8sPodWebTTY(
 	cols, rows int,
 	resizeCh <-chan *remotecommand.TerminalSize,
 ) error {
-	var k k8sPodExecutor
+	var k engine.K8sPodExecutor
 	client, err := k.Dial("", r)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = client.Close() }()
 
-	podClient, ok := client.(*k8sNativeClient)
+	podClient, ok := client.(*engine.K8sNativeClient)
 	if !ok {
 		return fmt.Errorf("unexpected client type %T", client)
 	}

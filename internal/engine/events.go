@@ -2,6 +2,7 @@
 package engine
 
 // EventKind identifies the type of an Event.
+// EventKind ...
 type EventKind string
 
 const (
@@ -18,11 +19,13 @@ const (
 )
 
 // Event is the interface for all engine events.
+// Event ...
 type Event interface {
 	Kind() EventKind
 }
 
 // EventStepStarted indicates a step started.
+// EventStepStarted ...
 type EventStepStarted struct {
 	StepIdx int
 }
@@ -31,6 +34,7 @@ type EventStepStarted struct {
 func (e EventStepStarted) Kind() EventKind { return EventKindStepStarted }
 
 // EventStepStdout indicates stdout output.
+// EventStepStdout ...
 type EventStepStdout struct {
 	StepIdx int
 	Output  []byte
@@ -40,6 +44,7 @@ type EventStepStdout struct {
 func (e EventStepStdout) Kind() EventKind { return EventKindStepStdout }
 
 // EventStepStderr indicates stderr output.
+// EventStepStderr ...
 type EventStepStderr struct {
 	StepIdx int
 	Output  []byte
@@ -49,6 +54,7 @@ type EventStepStderr struct {
 func (e EventStepStderr) Kind() EventKind { return EventKindStepStderr }
 
 // EventStepCompleted indicates step success.
+// EventStepCompleted ...
 type EventStepCompleted struct {
 	StepIdx int
 }
@@ -57,6 +63,7 @@ type EventStepCompleted struct {
 func (e EventStepCompleted) Kind() EventKind { return EventKindStepCompleted }
 
 // EventStepFailed indicates step failure.
+// EventStepFailed ...
 type EventStepFailed struct {
 	StepIdx int
 	Error   error

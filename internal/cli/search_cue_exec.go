@@ -7,15 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/recordings"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -131,25 +131,25 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	flagSet := recordDirFlagChanged(cmd) && strings.TrimSpace(flagRecordDir) != ""
 	yamlSet := cfg != nil && strings.TrimSpace(cfg.Defaults.RecordDir) != "" && !recordDirFlagChanged(cmd)
 	wantBatch := len(records) > 0 && (flagSet || yamlSet)
-	var rec *ui.SessionRecorder
+	var rec *engine.SessionRecorder
 	if wantBatch {
 		trigger := "cli-cue-exec-dry"
 		if flagCueExecExecute {
 			trigger = "cli-cue-exec"
 		}
 		var err error
-		rec, err = ui.NewBatchSessionRecorder(recordDir, trigger, sshUser, len(records))
+		rec, err = engine.NewBatchSessionRecorder(recordDir, trigger, sshUser, len(records))
 		if err != nil {
 			return err
 		}
 		if rec != nil {
 			hash, _ := cuetry.HashRecipeJSON(recipe)
-			rec.RecordRecipeMeta(ui.RecipeMeta{
+			rec.RecordRecipeMeta(engine.RecipeMeta{
 				RecipePath:        absRecipe,
 				HostCount:         len(records),
 				RecipeContentHash: hash,
 				StartedAt:         time.Now().UTC(),
-				Hosts:             ui.HostsForRecipeMeta(records, 200),
+				Hosts:             engine.HostsForRecipeMeta(records, 200),
 			})
 		}
 		defer func() { _ = rec.Close() }()
@@ -162,7 +162,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), ui.CueRecipeRunParams{
+	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), engine.CueRecipeRunParams{
 		Recipe:         recipe,
 		RecipeDir:      recipeDir,
 		Records:        records,
