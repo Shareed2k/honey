@@ -1,10 +1,12 @@
 package webserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sashabaranov/go-openai"
 	"go.uber.org/zap"
@@ -101,11 +103,26 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 	model := input.Model
 	if model == "" {
-		model = openai.GPT4oMini
+		ids, _ := s.getAssistModelIDs(ctx, false)
+		if len(ids) > 0 {
+			model = ids[0]
+		}
+		if model == "" {
+			model = openai.GPT4oMini
+		}
+	}
+
+	resolveCtx, resolveCancel := context.WithTimeout(ctx, 25*time.Second)
+	chatModel, err := s.resolveAssistChatModel(resolveCtx, model)
+	resolveCancel()
+	if err != nil {
+		zap.L().Error("agent model resolve failed", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	req := openai.ChatCompletionRequest{
-		Model:    model,
+		Model:    chatModel,
 		Messages: openAIMessages,
 		Stream:   true,
 	}
