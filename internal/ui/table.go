@@ -108,11 +108,7 @@ type model struct {
 	cuePreviewOpen   bool
 	cuePreviewScroll int
 
-	// Tunnel popup state
-	tunnelLocalPort  textinput.Model
-	tunnelRemoteHost textinput.Model
-	tunnelRemotePort textinput.Model
-	tunnelFocusIndex int
+	activeModel tea.Model
 
 	recordDir     string
 	recordEnabled bool
@@ -309,25 +305,6 @@ func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *mod
 	ti.CharLimit = 400
 	ti.SetWidth(60)
 
-	tunLocal := textinput.New()
-	tunLocal.Placeholder = "8080"
-	tunLocal.Prompt = ""
-	tunLocal.CharLimit = 5
-	tunLocal.SetWidth(10)
-
-	tunHost := textinput.New()
-	tunHost.Placeholder = "localhost"
-	tunHost.SetValue("localhost")
-	tunHost.Prompt = ""
-	tunHost.CharLimit = 100
-	tunHost.SetWidth(20)
-
-	tunRemote := textinput.New()
-	tunRemote.Placeholder = "8080"
-	tunRemote.Prompt = ""
-	tunRemote.CharLimit = 5
-	tunRemote.SetWidth(10)
-
 	fileCache := engine.NewClientCache()
 	if opts.ExecRegistry != nil {
 		fileCache.SetRegistry(opts.ExecRegistry)
@@ -345,10 +322,6 @@ func newModel(records []hosts.Record, sshUser string, opts RunTableOptions) *mod
 		winH:             24,
 		selected:         sel,
 		availableRecipes: config.ListDefaultRecipes(),
-		tunnelLocalPort:  tunLocal,
-		tunnelRemoteHost: tunHost,
-		tunnelRemotePort: tunRemote,
-		tunnelFocusIndex: 0,
 		recordDir:        strings.TrimSpace(opts.RecordDir),
 		recordEnabled:    strings.TrimSpace(opts.RecordDir) != "" && opts.RecordEnabled,
 		honey:            opts.Config,
@@ -805,8 +778,7 @@ func (m *model) View() tea.View {
 			m.ti.View(),
 		)
 		box += "\n" + help
-	case "tunnel":
-		box = m.viewTunnel(helpStyle)
+
 	case "execinput":
 		help := helpStyle.Render(fmt.Sprintf("enter: run   %s: paste   esc: back   q: quit", pasteShortcutHelp()))
 		_, scope := m.parallelExecTargets()
