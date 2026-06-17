@@ -114,7 +114,7 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
           return;
         }
         
-        const list = Array.isArray(j.models) ? j.models : [];
+        const list = Array.isArray(j.models) ? j.models.filter(m => !m.includes('gemini-3')) : [];
         setModels(list);
         if (list.length > 0) {
           const preferred = list.find(m => m.includes('gemini-1.5-pro') || m.includes('gpt-4o') || m.includes('claude-3-5-sonnet'));
