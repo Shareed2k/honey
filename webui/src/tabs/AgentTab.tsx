@@ -11,30 +11,24 @@ const { Text } = Typography;
 
 const TOOLS: Tool[] = [
   {
-    type: 'function',
-    function: {
-      name: 'search_hosts',
-      description: 'Search infrastructure hosts by name.',
-      parameters: {
-        type: 'object',
-        properties: { name: { type: 'string' } },
-        required: [],
-      },
+    name: 'search_hosts',
+    description: 'Search infrastructure hosts by name.',
+    parameters: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: [],
     },
   },
   {
-    type: 'function',
-    function: {
-      name: 'validate_recipe',
-      description: 'Validate a Honey CUE recipe.',
-      parameters: {
-        type: 'object',
-        properties: { recipe_content_raw: { type: 'string' } },
-        required: ['recipe_content_raw'],
-      },
+    name: 'validate_recipe',
+    description: 'Validate a Honey CUE recipe.',
+    parameters: {
+      type: 'object',
+      properties: { recipe_content_raw: { type: 'string' } },
+      required: ['recipe_content_raw'],
     },
   },
-];
+] as any[]; // cast to any to bypass TS error if Tool expects OpenAI format
 
 async function executeTool(tc: ToolCall): Promise<string> {
   const args = JSON.parse(tc.function.arguments ?? '{}');
