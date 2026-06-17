@@ -126,7 +126,7 @@ func (m *mockHostClient) Run(cmd string) ([]byte, error) {
 
 func TestCueRun_loopFromAndHandlers(t *testing.T) {
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 	client := &mockHostClient{
 		runFunc: func(cmd string) ([]byte, error) {
 			if strings.Contains(cmd, "restarting") {
@@ -194,7 +194,7 @@ func TestCueRun_loopFromAndHandlers(t *testing.T) {
 
 func TestCueRun_loopTemplateMultilineStdout(t *testing.T) {
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 
 	var commands []string
 	client := &mockHostClient{
@@ -254,7 +254,7 @@ func TestCueRun_loopTemplateMultilineStdout(t *testing.T) {
 
 func TestCueRun_loopTemplateHostItem(t *testing.T) {
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 
 	var commands []string
 	client := &mockHostClient{
@@ -319,7 +319,7 @@ func TestCueRun_loopTemplateHostItem(t *testing.T) {
 
 func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 	client := &mockHostClient{
 		runFunc: func(string) ([]byte, error) {
 			return []byte("a\nb\n"), nil
@@ -450,7 +450,7 @@ func TestCueRecipeDisplayOutput_suppressesSuccessfulCapturedOutput(t *testing.T)
 
 func TestCueRun_stepTimeout(t *testing.T) {
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 
 	var lastCmd string
 	client := &mockHostClient{
@@ -568,12 +568,7 @@ func TestRunCueRecipeStepsJSON_Execute(t *testing.T) {
 		},
 	}
 
-	mockDialer := hostexec.DialerFunc(func(_, _ string, _ int, _ string) (hostexec.HostClient, error) {
-		return client, nil
-	})
-	reg := &hostexec.StandardRegistry{
-		Dialer: mockDialer,
-	}
+	reg := &MockRegistry{Client: client}
 
 	var buf bytes.Buffer
 	p := CueRecipeRunParams{
@@ -615,7 +610,7 @@ func TestRunCueRecipeStepsJSON_Execute(t *testing.T) {
 
 func TestCueRun_loopAbortedOnHookFailure(t *testing.T) {
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 
 	var commands []string
 	client := &mockHostClient{
@@ -686,7 +681,7 @@ func TestCueRun_opensearchStep(t *testing.T) {
 	defer server.Close()
 
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
 	run := &CueRun{
@@ -736,7 +731,7 @@ func TestCueRun_opensearchStep(t *testing.T) {
 
 func TestCueRun_postgresStep(t *testing.T) {
 	cache := NewClientCache()
-	cache.SetRegistry(&hostexec.StandardRegistry{})
+	cache.SetRegistry(&MockRegistry{})
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
 

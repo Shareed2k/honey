@@ -1,9 +1,13 @@
-package engine_test
+package engine
 
 import (
+	"context"
 	"io"
+	"net"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // MockHostClient ...
@@ -45,3 +49,39 @@ func (m *MockHostClient) InteractiveTerminal(_ string, _ map[string]string) erro
 func (m *MockHostClient) RunWithStreams(_ string, _ io.Reader, _ io.Writer, _ io.Writer) error {
 	return nil
 }
+
+func (m *MockHostClient) Run(cmd string) ([]byte, error) {
+	m.RemoteCmd = cmd
+	return nil, nil
+}
+
+// MockRegistry and MockExecutor for testing
+
+type MockExecutor struct {
+	Client hostexec.HostClient
+}
+
+func (m *MockExecutor) Dial(_ string, _ hosts.Record) (hostexec.HostClient, error) {
+	return m.Client, nil
+}
+func (m *MockExecutor) RunInteractive(_ string, _ hosts.Record) error { return nil }
+func (m *MockExecutor) RunTunnel(_ context.Context, _ string, _ hosts.Record, _ string, _ io.Writer) error {
+	return nil
+}
+
+func (m *MockExecutor) DialUpstream(_ context.Context, _ string, _ hosts.Record, _ string) (net.Conn, error) {
+	return nil, nil
+}
+
+type MockRegistry struct {
+	Client hostexec.HostClient
+}
+
+func (m *MockRegistry) ForRecord(_ hosts.Record) hostexec.Executor {
+	return &MockExecutor{Client: m.Client}
+}
+func (m *MockRegistry) Reconfigure(_ *config.File) {}
+func (m *MockRegistry) RunSSHTunnel(_ context.Context, _, _ string, _ int, _ string, _ io.Writer) error {
+	return nil
+}
+func (m *MockRegistry) BorrowSSH(_ string, _ hosts.Record) (any, bool) { return nil, false }
