@@ -158,7 +158,8 @@ func graphRunOneStep(ctx context.Context, run *CueRun, out chan<- HostExecResult
 	}
 
 	if failed && step.Base().IgnoreErrors {
-		zap.L().Warn("Step failed but ignore_errors is true. Marking as succeeded to let descendants run.",
+		zap.L().Warn(
+			"Step failed but ignore_errors is true. Marking as succeeded to let descendants run.",
 			zap.String("step_id", stepID),
 		)
 		failed = false
@@ -234,7 +235,7 @@ func graphRunAIStep(ctx context.Context, run *CueRun, idx int, step cuetry.Step,
 }
 
 func graphRunTemplateStep(ctx context.Context, run *CueRun, idx int, step cuetry.Step, out chan<- HostExecResult) ([]HostExecResult, error) {
-	rows, err := StreamCueTemplateStep(ctx, run, idx, step, out)
+	rows, err := run.streamCueTemplateStep(ctx, idx, step, out)
 	if err != nil {
 		return rows, err
 	}

@@ -61,7 +61,8 @@ func (c *RecipeTunnelCoordinator) Register(stepID, user string, r hosts.Record, 
 	if release != nil {
 		c.releases = append(c.releases, release)
 	}
-	zap.L().Debug("recipe tunnel register",
+	zap.L().Debug(
+		"recipe tunnel register",
 		zap.String("step_id", stepID),
 		zap.String("host_name", r.Name),
 		zap.String("endpoint_host", ep.Host),
@@ -124,7 +125,8 @@ func TunnelDerivedKey(mode, provider, hostKey, spec string) string {
 func (c *RecipeTunnelCoordinator) LookupEndpoint(stepID, user string, r hosts.Record) (string, int, bool) {
 	ep, ok := c.Lookup(stepID, user, r)
 	if !ok || ep.Mode == "tun" || ep.Port <= 0 {
-		zap.L().Debug("recipe tunnel lookup miss",
+		zap.L().Debug(
+			"recipe tunnel lookup miss",
 			zap.String("step_id", stepID),
 			zap.String("host_name", r.Name),
 			zap.Bool("found", ok),
@@ -135,7 +137,8 @@ func (c *RecipeTunnelCoordinator) LookupEndpoint(stepID, user string, r hosts.Re
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	zap.L().Debug("recipe tunnel lookup hit",
+	zap.L().Debug(
+		"recipe tunnel lookup hit",
 		zap.String("step_id", stepID),
 		zap.String("host_name", r.Name),
 		zap.String("endpoint_host", host),

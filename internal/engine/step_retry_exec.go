@@ -37,7 +37,8 @@ func RunHostExecWithRetry(ctx context.Context, cfg cuetry.RecipeStepRetry, run f
 		backoff.WithMaxTries(uint(cfg.Attempts)),
 		backoff.WithBackOff(cuetry.BuildBackOff(cfg)),
 		backoff.WithNotify(func(err error, next time.Duration) {
-			zap.L().Debug("step retry waiting",
+			zap.L().Debug(
+				"step retry waiting",
 				zap.Uint32("attempt", attempt.Load()),
 				zap.Int("max_attempts", cfg.Attempts),
 				zap.Duration("next", next),

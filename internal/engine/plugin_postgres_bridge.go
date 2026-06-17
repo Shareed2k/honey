@@ -46,7 +46,8 @@ func (b *pluginPostgresBridge) runSQL(ctx context.Context, in apiv1.PostgresSQLI
 	if err != nil {
 		return apiv1.PostgresOutput{Failed: true, Error: err.Error()}
 	}
-	zap.L().Debug("plugin postgres query",
+	zap.L().Debug(
+		"plugin postgres query",
 		zap.String("plugin_id", b.h.PluginID),
 		zap.String("host_name", b.h.Record.Name),
 		zap.String("tunnel_step", in.TunnelStep),
@@ -173,7 +174,8 @@ func (b *pluginPostgresBridge) rewritePostgresDSN(dsn string, in apiv1.PostgresS
 	if ts := strings.TrimSpace(in.TunnelStep); ts != "" && b.h.TunnelCoord != nil {
 		th, tp, ok := b.h.TunnelCoord.LookupEndpoint(ts, b.h.SSHUser, b.h.Record)
 		if !ok {
-			zap.L().Debug("plugin postgres dsn rewrite tunnel miss",
+			zap.L().Debug(
+				"plugin postgres dsn rewrite tunnel miss",
 				zap.String("tunnel_step", ts),
 				zap.String("host_name", b.h.Record.Name),
 			)
@@ -183,7 +185,8 @@ func (b *pluginPostgresBridge) rewritePostgresDSN(dsn string, in apiv1.PostgresS
 		if portOverride == "" {
 			portOverride = strconv.Itoa(tp)
 		}
-		zap.L().Debug("plugin postgres dsn rewrite",
+		zap.L().Debug(
+			"plugin postgres dsn rewrite",
 			zap.String("tunnel_step", ts),
 			zap.String("host_name", b.h.Record.Name),
 			zap.Bool("found", true),

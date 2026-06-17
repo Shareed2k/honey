@@ -58,7 +58,8 @@ func resolveTrueNASBridgeTarget(r hosts.Record, address string) trueNASBridgeTar
 	if r.Meta["kind"] != "appliance" {
 		ip := hosts.PrimaryIPTrimmed(r)
 		if ip != "" && (remoteHost == "localhost" || remoteHost == "127.0.0.1") {
-			zap.L().Debug("Translating upstream loopback address to guest PrimaryIP",
+			zap.L().Debug(
+				"Translating upstream loopback address to guest PrimaryIP",
 				zap.String("original", remoteHost),
 				zap.String("guest_ip", ip),
 			)
@@ -97,7 +98,8 @@ func startTrueNASBridge(ctx context.Context, b truenasprovider.TrueNASBackendRun
 	if err != nil {
 		return nil, err
 	}
-	zap.L().Debug("TrueNAS API shell session opened",
+	zap.L().Debug(
+		"TrueNAS API shell session opened",
 		zap.String("target_name", targetName),
 		zap.String("shell_kind", shellRec.Meta["kind"]),
 		zap.String("backend_name", shellRec.Meta["backend_name"]),
@@ -128,7 +130,8 @@ func startTrueNASBridge(ctx context.Context, b truenasprovider.TrueNASBackendRun
 		return nil, fmt.Errorf("truenas bridge startup: %w", err)
 	}
 
-	zap.L().Debug("Writing TrueNAS python dial bridge bootstrap",
+	zap.L().Debug(
+		"Writing TrueNAS python dial bridge bootstrap",
 		zap.String("target_name", targetName),
 		zap.String("remote_host", target.Host),
 		zap.String("remote_port", target.Port),
@@ -147,7 +150,8 @@ func startTrueNASBridge(ctx context.Context, b truenasprovider.TrueNASBackendRun
 	select {
 	case err := <-readyCh:
 		if err != nil {
-			zap.L().Debug("TrueNAS python dial bridge READY failed",
+			zap.L().Debug(
+				"TrueNAS python dial bridge READY failed",
 				zap.String("target_name", targetName),
 				zap.Error(err),
 			)
@@ -181,7 +185,8 @@ func (b *trueNASBridge) Stop() {
 // DialTrueNASUpstream provides an in-memory net.Conn proxied over the API shell.
 // DialTrueNASUpstream ...
 func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address string) (net.Conn, error) {
-	zap.L().Debug("Dialing TrueNAS upstream",
+	zap.L().Debug(
+		"Dialing TrueNAS upstream",
 		zap.String("target_name", r.Name),
 		zap.String("target_kind", r.Meta["kind"]),
 		zap.String("backend_name", r.Meta["backend_name"]),
@@ -197,7 +202,8 @@ func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address 
 	}
 
 	target := resolveTrueNASBridgeTarget(r, address)
-	zap.L().Debug("TrueNAS upstream bridge target resolved",
+	zap.L().Debug(
+		"TrueNAS upstream bridge target resolved",
 		zap.String("target_name", r.Name),
 		zap.String("remote_host", target.Host),
 		zap.String("remote_port", target.Port),
@@ -215,7 +221,8 @@ func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address 
 		bridge.Stop()
 		return nil, fmt.Errorf("truenas dial connect: %w", err)
 	}
-	zap.L().Debug("TrueNAS python dial bridge connection opened",
+	zap.L().Debug(
+		"TrueNAS python dial bridge connection opened",
 		zap.String("target_name", r.Name),
 		zap.Uint32("cid", cid),
 	)

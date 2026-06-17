@@ -15,7 +15,7 @@ import (
 )
 
 // StreamCueStepCommand ...
-func StreamCueStepCommand(ctx context.Context, run *CueRun, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepCommand(ctx context.Context, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	cs, ok := step.(*cuetry.CommandStep)
 	if !ok {
 		return fmt.Errorf("internal: command step has wrong type %T", step)
@@ -76,7 +76,7 @@ func StreamCueStepCommand(ctx context.Context, run *CueRun, stepIdx int, kind st
 }
 
 // StreamCueStepPut ...
-func StreamCueStepPut(ctx context.Context, run *CueRun, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepPut(ctx context.Context, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	ps, ok := step.(*cuetry.PutStep)
 	if !ok || ps.Put == nil {
 		return fmt.Errorf("internal: put step missing put field")
@@ -99,7 +99,7 @@ func StreamCueStepPut(ctx context.Context, run *CueRun, step cuetry.Step, target
 }
 
 // StreamCueStepGet ...
-func StreamCueStepGet(ctx context.Context, run *CueRun, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepGet(ctx context.Context, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	gs, okt := step.(*cuetry.GetStep)
 	if !okt || gs.Get == nil {
 		return fmt.Errorf("internal: get step missing get field")
@@ -152,7 +152,7 @@ func StreamCueStepGet(ctx context.Context, run *CueRun, step cuetry.Step, target
 }
 
 // StreamCueStepScript ...
-func StreamCueStepScript(ctx context.Context, run *CueRun, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepScript(ctx context.Context, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	ss, ok := step.(*cuetry.ScriptStep)
 	if !ok || ss.Script == nil {
 		return fmt.Errorf("internal: script step missing script field")

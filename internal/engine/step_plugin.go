@@ -18,7 +18,7 @@ import (
 )
 
 // StreamCueStepPlugin ...
-func StreamCueStepPlugin(ctx context.Context, run *CueRun, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepPlugin(ctx context.Context, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	if run.Params.PluginMgr == nil || !run.Params.PluginMgr.Enabled() {
 		return fmt.Errorf("plugin step requires plugins.enabled in honey config")
 	}
@@ -118,7 +118,8 @@ func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind stri
 	}
 	if run.Params.Execute && pls.Plugin != nil {
 		pl := pls.Plugin
-		zap.L().Debug("plugin step starting",
+		zap.L().Debug(
+			"plugin step starting",
 			zap.Int("step_index", stepIdx),
 			zap.String("plugin_id", pl.ID),
 			zap.String("action", pl.Action),
@@ -162,7 +163,8 @@ func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind stri
 		if metrics.ObserverEnabled(obs) {
 			obs.ObservePluginExecDuration(pl.ID, pl.Action, outcome.LastAttemptDuration)
 		}
-		zap.L().Debug("plugin step finished",
+		zap.L().Debug(
+			"plugin step finished",
 			zap.Int("step_index", stepIdx),
 			zap.String("plugin_id", pl.ID),
 			zap.String("host_name", target.Name),

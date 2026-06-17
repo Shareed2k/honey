@@ -11,7 +11,7 @@ import (
 )
 
 // StreamCueStepAgentTransferWhen ...
-func StreamCueStepAgentTransferWhen(ctx context.Context, run *CueRun, i int, step cuetry.Step) ([]HostExecResult, error) {
+func (run *CueRun) streamCueStepAgentTransferWhen(ctx context.Context, i int, step cuetry.Step) ([]HostExecResult, error) {
 	ats, _ := step.(*cuetry.AgentTransferStep)
 	if ats == nil || ats.AgentTransfer == nil {
 		return nil, fmt.Errorf("step %d: internal: missing agent_transfer", i)

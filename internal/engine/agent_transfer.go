@@ -347,7 +347,8 @@ func runUploadWithHeartbeat(
 	eventMu *sync.Mutex,
 ) error {
 	uploadStart := time.Now()
-	zap.L().Debug("agent transfer upload start",
+	zap.L().Debug(
+		"agent transfer upload start",
 		zap.String("stage", stage),
 		zap.String("host", host),
 		zap.Int("attempt", attempt),
@@ -363,7 +364,8 @@ func runUploadWithHeartbeat(
 		select {
 		case err := <-errCh:
 			if err != nil {
-				zap.L().Warn("agent transfer upload failed",
+				zap.L().Warn(
+					"agent transfer upload failed",
 					zap.String("stage", stage),
 					zap.String("host", host),
 					zap.Int("attempt", attempt),
@@ -371,7 +373,8 @@ func runUploadWithHeartbeat(
 					zap.Error(err),
 				)
 			} else {
-				zap.L().Debug("agent transfer upload success",
+				zap.L().Debug(
+					"agent transfer upload success",
 					zap.String("stage", stage),
 					zap.String("host", host),
 					zap.Int("attempt", attempt),
@@ -380,7 +383,8 @@ func runUploadWithHeartbeat(
 			}
 			return err
 		case <-ticker.C:
-			zap.L().Debug("agent transfer upload progress",
+			zap.L().Debug(
+				"agent transfer upload progress",
 				zap.String("stage", stage),
 				zap.String("host", host),
 				zap.Int("attempt", attempt),
@@ -409,7 +413,8 @@ func stageAgentBinary(
 		return err
 	}
 	if needsUpload {
-		zap.L().Debug("agent transfer stage requires upload",
+		zap.L().Debug(
+			"agent transfer stage requires upload",
 			zap.String("stage", stage),
 			zap.String("host", host),
 			zap.String("reason", reason),
@@ -423,7 +428,8 @@ func stageAgentBinary(
 		stageEventMaybeLocked(eventMu, out, emit, redactions, stage, host, true, remotePath, nil, 1)
 		return nil
 	}
-	zap.L().Debug("agent transfer stage skipped upload",
+	zap.L().Debug(
+		"agent transfer stage skipped upload",
 		zap.String("stage", stage),
 		zap.String("host", host),
 		zap.String("reason", reason),
@@ -705,7 +711,8 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	}
 	srcHost := targetLabel(job.Source.Record)
 	dstHost := targetLabel(job.Destination.Record)
-	zap.L().Debug("agent transfer begin",
+	zap.L().Debug(
+		"agent transfer begin",
 		zap.String("source_host", srcHost),
 		zap.String("destination_host", dstHost),
 		zap.String("cloud_provider", strings.TrimSpace(job.Cloud.Provider)),
@@ -841,7 +848,8 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 		_ = runAgentSessionWithRetries("cleanup_object", srcHost, 1, &events, emit, redactions, cleanupSessionFn, evictSource)
 	}
 
-	zap.L().Debug("agent transfer credential envelopes minted",
+	zap.L().Debug(
+		"agent transfer credential envelopes minted",
 		zap.String("credential_provider", strings.TrimSpace(job.CredentialProvider)),
 		zap.Bool("has_source_jwe", strings.TrimSpace(srcJWE) != ""),
 		zap.Bool("has_destination_jwe", strings.TrimSpace(dstJWE) != ""),
@@ -857,7 +865,8 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	if dstHost != srcHost {
 		stageEvent(&events, emit, redactions, "cleanup_agent", dstHost, true, "removed ephemeral agent", nil, 1)
 	}
-	zap.L().Debug("agent transfer completed",
+	zap.L().Debug(
+		"agent transfer completed",
 		zap.String("source_host", srcHost),
 		zap.String("destination_host", dstHost),
 		zap.Duration("elapsed", time.Since(transferStart)),
