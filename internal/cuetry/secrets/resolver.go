@@ -10,16 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"filippo.io/age"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/hashicorp/vault/api"
 	"github.com/zalando/go-keyring"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"filippo.io/age"
 )
 
 // ExtraBackend allows registering custom secret resolvers (like plugins).
@@ -189,7 +189,7 @@ func resolveAWSSM(ctx context.Context, ref string) (string, error) {
 	return "", fmt.Errorf("aws-sm:%s: empty secret", secretID)
 }
 
-func resolveVault(ctx context.Context, ref string) (string, error) {
+func resolveVault(_ context.Context, ref string) (string, error) {
 	r := strings.TrimSpace(ref[len("vault:"):])
 	field := ""
 	if i := strings.LastIndex(r, "#"); i >= 0 {
@@ -241,7 +241,7 @@ func resolveVault(ctx context.Context, ref string) (string, error) {
 	return "", fmt.Errorf("vault: could not resolve value from %q (use path#field for keyed secrets)", r)
 }
 
-func resolveKeyring(ctx context.Context, ref string) (string, error) {
+func resolveKeyring(_ context.Context, ref string) (string, error) {
 	rest := strings.TrimSpace(ref[len("keyring://"):])
 	serviceName, user, ok := strings.Cut(rest, "/")
 	serviceName, user = strings.TrimSpace(serviceName), strings.TrimSpace(user)
