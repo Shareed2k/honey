@@ -103,6 +103,9 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 	model := input.Model
 	if model == "" {
+		model = r.URL.Query().Get("model")
+	}
+	if model == "" {
 		ids, _ := s.getAssistModelIDs(ctx, false)
 		if len(ids) > 0 {
 			model = ids[0]
