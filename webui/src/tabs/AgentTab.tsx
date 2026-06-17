@@ -77,7 +77,9 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
         const list = Array.isArray(data.models) ? data.models : [];
         setModels(list);
         if (list.length > 0) {
-          setSelectedModel(list[0]);
+          // Prefer a known good tool-calling model as default if available
+          const preferred = list.find(m => m.includes('gemini-1.5-pro') || m.includes('gpt-4o') || m.includes('claude-3-5-sonnet'));
+          setSelectedModel(preferred || list[0]);
         }
       })
       .catch(e => console.error('Failed to load models', e))
