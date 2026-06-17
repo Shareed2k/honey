@@ -646,7 +646,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if !body.Execute {
 		var buf bytes.Buffer
 		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, engine.CueRecipeRunParams{
+		runErr := engine.RunCueRecipeSteps(r.Context(), &buf, engine.CueRecipeRunParams{
 			Recipe:         recipe,
 			RecipeDir:      recipeDir,
 			Records:        jobs,
