@@ -124,9 +124,9 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
     agentRef.current.messages = allMessages;
     
     const subscriber: AgentSubscriber = {
-      onNewMessage: (msg) => setMessages(prev => [...prev.filter(m => m.id !== msg.id), msg]),
-      onMessagesChanged: (msgs) => setMessages(msgs),
-      onNewToolCall: async (toolCall, msgs, _state, agent) => {
+      onNewMessage: ({ message: msg }) => setMessages(prev => [...prev.filter(m => m.id !== msg.id), msg]),
+      onMessagesChanged: ({ messages: msgs }) => setMessages(msgs),
+      onNewToolCall: async ({ toolCall, messages: msgs, agent }) => {
         try {
             const result = await executeTool(toolCall);
             const toolMsg: Message = { role: 'tool', toolCallId: toolCall.id, content: result };
@@ -143,7 +143,7 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
             setStreaming(false);
         }
       },
-      onRunFailed: (err) => { 
+      onRunFailed: ({ error: err }) => { 
         setError(err.message); 
         setStreaming(false); 
       },
