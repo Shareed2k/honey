@@ -18,7 +18,7 @@ import (
 )
 
 // StreamCueStepOpensearch ...
-func StreamCueStepOpensearch(ctx context.Context, run *CueRun, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepOpensearch(ctx context.Context, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	os, _ := step.(*cuetry.OpensearchStep)
 	if os == nil || os.Opensearch == nil {
 		return fmt.Errorf("internal: opensearch step missing opensearch field")

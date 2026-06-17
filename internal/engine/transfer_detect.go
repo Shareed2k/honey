@@ -65,7 +65,8 @@ func DetectTransferTargetRuntime(cache *ClientCache, sshUser string, rec hosts.R
 	default:
 		return "", "", user, fmt.Errorf("unsupported target arch: %q", goarch)
 	}
-	zap.L().Debug("detected transfer target runtime",
+	zap.L().Debug(
+		"detected transfer target runtime",
 		zap.String("host_name", rec.Name),
 		zap.String("provider", rec.Provider),
 		zap.String("goos", goos),

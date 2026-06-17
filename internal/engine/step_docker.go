@@ -22,7 +22,7 @@ import (
 )
 
 // StreamCueStepDocker ...
-func StreamCueStepDocker(ctx context.Context, run *CueRun, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepDocker(ctx context.Context, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	ds, _ := step.(*cuetry.DockerStep)
 	if ds == nil || ds.Docker == nil {
 		return fmt.Errorf("internal: docker step missing docker field")
@@ -37,7 +37,8 @@ func StreamCueStepDocker(ctx context.Context, run *CueRun, _ int, step cuetry.St
 			var mCli *client.Client
 			var err error
 
-			zap.L().Debug("docker step starting",
+			zap.L().Debug(
+				"docker step starting",
 				zap.String("action", ds.Docker.Action),
 				zap.String("host_name", r.Name),
 				zap.String("primary_ip", r.PrimaryIP),

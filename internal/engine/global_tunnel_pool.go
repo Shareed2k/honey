@@ -93,7 +93,8 @@ func (p *GlobalTunnelPool) Acquire(ctx context.Context, key string, factory func
 		ep := ent.endpoint
 		refcount := ent.refcount
 		p.mu.Unlock()
-		zap.L().Debug("tunnel pool cache hit",
+		zap.L().Debug(
+			"tunnel pool cache hit",
 			zap.String("pool_key", key),
 			zap.Int("refcount", refcount),
 		)

@@ -98,7 +98,7 @@ func runCueStepTemplateOnHost(
 }
 
 // StreamCueTemplateStep ...
-func StreamCueTemplateStep(ctx context.Context, run *CueRun, stepIdx int, step cuetry.Step, out chan<- HostExecResult) ([]HostExecResult, error) {
+func (run *CueRun) streamCueTemplateStep(ctx context.Context, stepIdx int, step cuetry.Step, out chan<- HostExecResult) ([]HostExecResult, error) {
 	targets, err := cuetry.ExpandStepHosts(step.Base().Host, run.Params.Records)
 	if err != nil {
 		return nil, fmt.Errorf("step %d: %w", stepIdx, err)

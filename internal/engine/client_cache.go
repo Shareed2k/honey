@@ -106,7 +106,8 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 
 	if exists {
 		atomic.AddInt64(&c.hits, 1)
-		zap.L().Debug("ssh client cache hit",
+		zap.L().Debug(
+			"ssh client cache hit",
 			zap.String("provider", r.Provider),
 			zap.String("host_name", r.Name),
 			zap.String("host_ip", r.PrimaryIP),
@@ -116,7 +117,8 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	}
 	atomic.AddInt64(&c.misses, 1)
 	atomic.AddInt64(&c.dialAttempts, 1)
-	zap.L().Debug("ssh client cache miss (dialing new client)",
+	zap.L().Debug(
+		"ssh client cache miss (dialing new client)",
 		zap.String("provider", r.Provider),
 		zap.String("host_name", r.Name),
 		zap.String("host_ip", r.PrimaryIP),
@@ -136,7 +138,8 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 		c.mu.Unlock()
 		_ = client.Close()
 		atomic.AddInt64(&c.raceHits, 1)
-		zap.L().Debug("ssh client cache race-hit (reusing existing client)",
+		zap.L().Debug(
+			"ssh client cache race-hit (reusing existing client)",
 			zap.String("provider", r.Provider),
 			zap.String("host_name", r.Name),
 			zap.String("host_ip", r.PrimaryIP),
@@ -146,7 +149,8 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	}
 	c.clients[key] = client
 	c.mu.Unlock()
-	zap.L().Debug("ssh client cached new connection",
+	zap.L().Debug(
+		"ssh client cached new connection",
 		zap.String("provider", r.Provider),
 		zap.String("host_name", r.Name),
 		zap.String("host_ip", r.PrimaryIP),
@@ -180,7 +184,8 @@ func (c *ClientCache) AcquireLease(user string, r hosts.Record) (*ClientLease, e
 	leaseCount := c.leases[key]
 	c.mu.Unlock()
 
-	zap.L().Debug("ssh client cache lease acquired",
+	zap.L().Debug(
+		"ssh client cache lease acquired",
 		zap.String("provider", r.Provider),
 		zap.String("host_name", r.Name),
 		zap.String("host_ip", r.PrimaryIP),
@@ -247,7 +252,8 @@ func (c *ClientCache) Evict(user string, r hosts.Record) {
 		return
 	}
 	_ = client.Close()
-	zap.L().Debug("ssh client cache evicted",
+	zap.L().Debug(
+		"ssh client cache evicted",
 		zap.String("provider", r.Provider),
 		zap.String("host_name", r.Name),
 		zap.String("host_ip", r.PrimaryIP),
@@ -268,7 +274,8 @@ func (c *ClientCache) CloseAll() {
 	}
 	c.clients = make(map[string]HostClient)
 	c.leases = make(map[string]int)
-	zap.L().Debug("ssh client cache summary",
+	zap.L().Debug(
+		"ssh client cache summary",
 		zap.Int64("cache_hits", atomic.LoadInt64(&c.hits)),
 		zap.Int64("cache_misses", atomic.LoadInt64(&c.misses)),
 		zap.Int64("cache_race_hits", atomic.LoadInt64(&c.raceHits)),

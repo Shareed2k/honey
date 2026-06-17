@@ -253,7 +253,8 @@ func runAgentSessionWithRetries(
 	var lastErr error
 	for i := 1; i <= attempts; i++ {
 		attemptStart := time.Now()
-		zap.L().Debug("agent transfer session attempt start",
+		zap.L().Debug(
+			"agent transfer session attempt start",
 			zap.String("stage", stage),
 			zap.String("host", host),
 			zap.Int("attempt", i),
@@ -279,7 +280,8 @@ func runAgentSessionWithRetries(
 			case runErr = <-errCh:
 				running = false
 			case <-ticker.C:
-				zap.L().Debug("agent transfer session attempt progress",
+				zap.L().Debug(
+					"agent transfer session attempt progress",
 					zap.String("stage", stage),
 					zap.String("host", host),
 					zap.Int("attempt", i),
@@ -290,7 +292,8 @@ func runAgentSessionWithRetries(
 		}
 		ticker.Stop()
 		if runErr == nil {
-			zap.L().Debug("agent transfer session attempt success",
+			zap.L().Debug(
+				"agent transfer session attempt success",
 				zap.String("stage", stage),
 				zap.String("host", host),
 				zap.Int("attempt", i),
@@ -300,7 +303,8 @@ func runAgentSessionWithRetries(
 			return nil
 		}
 		lastErr = runErr
-		zap.L().Warn("agent transfer session attempt failed",
+		zap.L().Warn(
+			"agent transfer session attempt failed",
 			zap.String("stage", stage),
 			zap.String("host", host),
 			zap.Int("attempt", i),

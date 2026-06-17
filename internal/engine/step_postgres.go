@@ -16,7 +16,7 @@ import (
 )
 
 // StreamCueStepPostgres ...
-func StreamCueStepPostgres(ctx context.Context, run *CueRun, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepPostgres(ctx context.Context, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	pgs, _ := step.(*cuetry.PostgresStep)
 	if pgs == nil || pgs.Postgres == nil {
 		return fmt.Errorf("internal: postgres step missing postgres field")

@@ -157,14 +157,32 @@ func CueApplyRecipeSSHDialOptions(recipe cuetry.Recipe, re *cuetry.RemoteExec, t
 	return out
 }
 
-// DispatchStepByKind ...
-func DispatchStepByKind(ctx context.Context, run *CueRun, i int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	if kind == cuetry.KindTemplate {
-		_, err := StreamCueTemplateStep(ctx, run, i, step, ch)
+// ExecuteStep dispatches execution to the appropriate step logic.
+func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	switch kind {
+	case cuetry.KindTemplate:
+		_, err := run.streamCueTemplateStep(ctx, i, step, ch)
 		return err
-	}
-	if fn, ok := stepExecRegistry[kind]; ok {
-		return fn(ctx, run, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindCommand:
+		return run.streamCueStepCommand(ctx, i, kind, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindScript:
+		return run.streamCueStepScript(ctx, i, kind, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindPlugin:
+		return run.streamCueStepPlugin(ctx, i, kind, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindPut:
+		return run.streamCueStepPut(ctx, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindGet:
+		return run.streamCueStepGet(ctx, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindTunnel:
+		return run.streamCueStepTunnel(ctx, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindK8s:
+		return run.streamCueStepK8s(ctx, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindDocker:
+		return run.streamCueStepDocker(ctx, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindOpensearch:
+		return run.streamCueStepOpensearch(ctx, i, step, targets, ch, retryCfg, attemptMax)
+	case cuetry.KindPostgres:
+		return run.streamCueStepPostgres(ctx, i, step, targets, ch, retryCfg, attemptMax)
 	}
 	return nil
 }
@@ -274,7 +292,7 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 		kind := step.Kind()
 		if kind == cuetry.KindTemplate {
 			stepStart := time.Now()
-			rows, err := StreamCueTemplateStep(ctx, run, i, step, out)
+			rows, err := run.streamCueTemplateStep(ctx, i, step, out)
 			ObserveRecipeStep(p.Obs, kind, stepStart, rows, 1)
 			if len(rows) > 0 {
 				history = append(history, rows)
@@ -393,7 +411,7 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 	var attemptMax atomic.Int32
 	kind := step.Kind()
 	if kind == cuetry.KindAgentTransfer {
-		rows, err := StreamCueStepAgentTransferWhen(ctx, run, i, step)
+		rows, err := run.streamCueStepAgentTransferWhen(ctx, i, step)
 		for idx := range rows {
 			AnnotateCueStepResult(&rows[idx], i, step, kind)
 			out <- rows[idx]
@@ -460,7 +478,7 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 
 	retryCfg := cuetry.EffectiveRetry(step.Base(), run.Params.Recipe.Defaults)
 
-	stepErr := DispatchStepByKind(ctx, run, i, kind, step, targets, ch, retryCfg, &attemptMax)
+	stepErr := run.ExecuteStep(ctx, i, kind, step, targets, ch, retryCfg, &attemptMax)
 
 	close(ch)
 	<-done

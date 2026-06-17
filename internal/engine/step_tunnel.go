@@ -20,7 +20,7 @@ import (
 )
 
 // StreamCueStepTunnel ...
-func StreamCueStepTunnel(ctx context.Context, run *CueRun, stepIdx int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func (run *CueRun) streamCueStepTunnel(ctx context.Context, stepIdx int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
 	if _, ok := step.(*cuetry.TunnelStep); !ok {
 		return fmt.Errorf("internal tunnel step")
 	}
@@ -83,7 +83,8 @@ func runCueTunnelOnHost(
 		remoteHost = "localhost"
 	}
 	poolKey := tunnelPoolKey(target, sshUser, t)
-	zap.L().Debug("recipe tunnel starting",
+	zap.L().Debug(
+		"recipe tunnel starting",
 		zap.String("step_id", stepID),
 		zap.String("host_name", target.Name),
 		zap.String("provider", target.Provider),
@@ -96,7 +97,8 @@ func runCueTunnelOnHost(
 		return startTunnelForRecord(cctx, sshUser, target, t, cache)
 	})
 	if err != nil {
-		zap.L().Debug("recipe tunnel failed",
+		zap.L().Debug(
+			"recipe tunnel failed",
 			zap.String("step_id", stepID),
 			zap.String("host_name", target.Name),
 			zap.Error(err),
@@ -105,7 +107,8 @@ func runCueTunnelOnHost(
 		return res
 	}
 	tunnelCoord.Register(stepID, sshUser, target, ep, release)
-	zap.L().Debug("recipe tunnel ready",
+	zap.L().Debug(
+		"recipe tunnel ready",
 		zap.String("step_id", stepID),
 		zap.String("host_name", target.Name),
 		zap.String("listen_host", ep.Host),

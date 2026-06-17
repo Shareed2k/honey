@@ -120,9 +120,8 @@ func parseK8sResource(s string) (kind, name string) {
 }
 
 // StreamCueStepK8s ...
-func StreamCueStepK8s(
+func (run *CueRun) streamCueStepK8s(
 	ctx context.Context,
-	run *CueRun,
 	stepIdx int,
 	step cuetry.Step,
 	targets []hosts.Record,
