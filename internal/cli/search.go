@@ -106,7 +106,7 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 		}
 	}
 
-	provs := buildProviders(cfg, cmd)
+	provs := getSearchRegistry().BuildProviders(cfg, nil)
 	wantBackends := hosts.ParseBackendNames(flagBackends)
 	if len(wantBackends) > 0 {
 		provs = hosts.FilterBackendsByNames(provs, wantBackends)
