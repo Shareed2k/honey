@@ -29,7 +29,8 @@ var (
 	dockerBack []DockerBackendRuntime
 )
 
-func reconfigureDocker(cfg *config.File) {
+func reconfigureDocker() {
+	cfg := config.Get()
 	rtMu.Lock()
 	defer rtMu.Unlock()
 	dockerBack = dockerBack[:0]

@@ -175,8 +175,8 @@ func (s *Server) handleConfigBackendsDelete(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func appendBackendByKind(cfg *config.File, kind string, body []byte, searchReg *searchrun.Registry) error {
-	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
+func appendBackendByKind(_ *config.File, kind string, body []byte, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(kind)
 	if err != nil {
 		return err
 	}
@@ -188,8 +188,8 @@ func appendBackendByKind(cfg *config.File, kind string, body []byte, searchReg *
 	return nil
 }
 
-func replaceBackendByKind(cfg *config.File, kind string, idx int, body []byte, searchReg *searchrun.Registry) error {
-	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
+func replaceBackendByKind(_ *config.File, kind string, idx int, body []byte, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(kind)
 	if err != nil {
 		return err
 	}
@@ -204,8 +204,8 @@ func replaceBackendByKind(cfg *config.File, kind string, idx int, body []byte, s
 	return nil
 }
 
-func deleteBackendByKind(cfg *config.File, kind string, idx int, searchReg *searchrun.Registry) error {
-	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
+func deleteBackendByKind(_ *config.File, kind string, idx int, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(kind)
 	if err != nil {
 		return err
 	}

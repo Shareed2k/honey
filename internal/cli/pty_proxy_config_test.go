@@ -22,7 +22,7 @@ backends:
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { getSearchRegistry().ReconfigureFromConfig(nil) })
+	t.Cleanup(func() { getSearchRegistry().ReconfigureFromConfig() })
 
 	if err := loadHostexecFromHoneyConfig(cfgPath); err != nil {
 		t.Fatal(err)

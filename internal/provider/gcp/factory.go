@@ -25,7 +25,8 @@ func NewFactory() searchrun.ProviderFactory {
 
 type gcpFactory struct{}
 
-func (gcpFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+func (gcpFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	o := gcpOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.GCP))
 	for _, e := range cfg.Backends.GCP {
@@ -50,7 +51,8 @@ func (gcpFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
 	)
 }
 
-func (gcpFactory) BackendRows(cfg *config.File) []config.BackendRow {
+func (gcpFactory) BackendRows() []config.BackendRow {
+	cfg := config.Get()
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.GCP))
 	for _, e := range cfg.Backends.GCP {
 		rows = append(rows, config.BackendRow{Kind: "gcp", Name: e.Name, Hint: strings.TrimSpace(e.Project)})
@@ -60,6 +62,9 @@ func (gcpFactory) BackendRows(cfg *config.File) []config.BackendRow {
 
 func (gcpFactory) BackendKind() string { return "gcp" }
 
-func (gcpFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.GCP }
+func (gcpFactory) BackendSlicePtr() any {
+	cfg := config.Get()
+	return &cfg.Backends.GCP
+}
 
 func (gcpFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }

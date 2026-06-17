@@ -117,7 +117,7 @@ func runAddBackend(cfgPath string, cfg *config.File) error {
 		return fmt.Errorf("unknown provider %s", providerID)
 	}
 
-	if err := handler.Add(cfg); err != nil {
+	if err := handler.Add(); err != nil {
 		return err
 	}
 
@@ -134,11 +134,11 @@ func runEditBackend(cfgPath string, cfg *config.File) error {
 
 	var totalOpts int
 	for _, h := range handlers {
-		totalOpts += len(h.ListOptions(cfg))
+		totalOpts += len(h.ListOptions())
 	}
 	opts := make([]huh.Option[string], 0, totalOpts)
 	for _, h := range handlers {
-		opts = append(opts, h.ListOptions(cfg)...)
+		opts = append(opts, h.ListOptions()...)
 	}
 
 	if len(opts) == 0 {
@@ -165,7 +165,7 @@ func runEditBackend(cfgPath string, cfg *config.File) error {
 		return fmt.Errorf("unknown provider %s", providerID)
 	}
 
-	if err := handler.Edit(cfg, idx); err != nil {
+	if err := handler.Edit(idx); err != nil {
 		return err
 	}
 
@@ -182,11 +182,11 @@ func runDeleteBackend(cfgPath string, cfg *config.File) error {
 
 	var totalOpts int
 	for _, h := range handlers {
-		totalOpts += len(h.ListOptions(cfg))
+		totalOpts += len(h.ListOptions())
 	}
 	opts := make([]huh.Option[string], 0, totalOpts)
 	for _, h := range handlers {
-		opts = append(opts, h.ListOptions(cfg)...)
+		opts = append(opts, h.ListOptions()...)
 	}
 
 	if len(opts) == 0 {
@@ -219,7 +219,7 @@ func runDeleteBackend(cfgPath string, cfg *config.File) error {
 		return nil
 	}
 
-	if err := handler.Delete(cfg, idx); err != nil {
+	if err := handler.Delete(idx); err != nil {
 		return err
 	}
 

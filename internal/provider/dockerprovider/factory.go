@@ -30,7 +30,8 @@ type dockerFactory struct {
 	interactive InteractiveRunner
 }
 
-func (dockerFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+func (dockerFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	locals := cfg.Backends.Local
 	out := make([]hosts.Backend, 0, len(cfg.Backends.Docker))
 	for _, e := range cfg.Backends.Docker {
@@ -64,7 +65,8 @@ func (dockerFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backen
 	return &Docker{Config: bc}
 }
 
-func (dockerFactory) BackendRows(cfg *config.File) []config.BackendRow {
+func (dockerFactory) BackendRows() []config.BackendRow {
+	cfg := config.Get()
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.Docker))
 	for _, e := range cfg.Backends.Docker {
 		hint := strings.TrimSpace(e.Host)
@@ -78,7 +80,10 @@ func (dockerFactory) BackendRows(cfg *config.File) []config.BackendRow {
 
 func (dockerFactory) BackendKind() string { return "docker" }
 
-func (dockerFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Docker }
+func (dockerFactory) BackendSlicePtr() any {
+	cfg := config.Get()
+	return &cfg.Backends.Docker
+}
 
 func (dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
@@ -92,7 +97,9 @@ func (f dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostex
 	return nil
 }
 
-func (dockerFactory) ReconfigureFromConfig(cfg *config.File) { reconfigureDocker(cfg) }
+func (dockerFactory) ReconfigureFromConfig() {
+	reconfigureDocker()
+}
 
 func applyDockerFlags(bc *BackendConfig, overrides searchrun.ProviderOverrides) {
 	o := dockerOverride(overrides)

@@ -29,7 +29,8 @@ type k8sFactory struct {
 	interactive InteractiveRunner
 }
 
-func (k8sFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+func (k8sFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	o := k8sOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.Kubernetes))
 	for _, e := range cfg.Backends.Kubernetes {
@@ -51,7 +52,8 @@ func (k8sFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
 	return &K8s{KubeconfigPath: kpath, Context: ctx, Mode: mode, DebugImage: img}
 }
 
-func (k8sFactory) BackendRows(cfg *config.File) []config.BackendRow {
+func (k8sFactory) BackendRows() []config.BackendRow {
+	cfg := config.Get()
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.Kubernetes))
 	for _, e := range cfg.Backends.Kubernetes {
 		rows = append(rows, config.BackendRow{Kind: "kubernetes", Name: e.Name, Hint: strings.TrimSpace(e.Context)})
@@ -61,7 +63,10 @@ func (k8sFactory) BackendRows(cfg *config.File) []config.BackendRow {
 
 func (k8sFactory) BackendKind() string { return "kubernetes" }
 
-func (k8sFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Kubernetes }
+func (k8sFactory) BackendSlicePtr() any {
+	cfg := config.Get()
+	return &cfg.Backends.Kubernetes
+}
 
 func (k8sFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 

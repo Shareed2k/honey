@@ -17,7 +17,8 @@ type consulCRUD struct{}
 func (consulCRUD) ID() string   { return "consul" }
 func (consulCRUD) Name() string { return "Consul" }
 
-func (consulCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
+func (consulCRUD) ListOptions() []huh.Option[string] {
+	cfg := config.Get()
 	opts := make([]huh.Option[string], 0, len(cfg.Backends.Consul))
 	for i, b := range cfg.Backends.Consul {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("Consul: %s (%s)", b.Name, b.Addr), fmt.Sprintf("consul:%d", i)))
@@ -25,7 +26,8 @@ func (consulCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 	return opts
 }
 
-func (consulCRUD) Add(cfg *config.File) error {
+func (consulCRUD) Add() error {
+	cfg := config.Get()
 	var name, addr, datacenter, token string
 	err := huh.NewForm(
 		huh.NewGroup(
@@ -46,7 +48,8 @@ func (consulCRUD) Add(cfg *config.File) error {
 	return err
 }
 
-func (consulCRUD) Edit(cfg *config.File, idx int) error {
+func (consulCRUD) Edit(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.Consul) {
 		return fmt.Errorf("index out of bounds")
 	}
@@ -65,7 +68,8 @@ func (consulCRUD) Edit(cfg *config.File, idx int) error {
 	return err
 }
 
-func (consulCRUD) Delete(cfg *config.File, idx int) error {
+func (consulCRUD) Delete(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.Consul) {
 		return fmt.Errorf("index out of bounds")
 	}

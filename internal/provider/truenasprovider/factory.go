@@ -32,7 +32,8 @@ type truenasFactory struct {
 	dialer UpstreamDialer
 }
 
-func (truenasFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+func (truenasFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	o := truenasOverride(overrides)
 	out := make([]hosts.Backend, 0, len(cfg.Backends.TrueNAS))
 	for _, e := range cfg.Backends.TrueNAS {
@@ -70,7 +71,8 @@ func (truenasFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backe
 	}
 }
 
-func (truenasFactory) BackendRows(cfg *config.File) []config.BackendRow {
+func (truenasFactory) BackendRows() []config.BackendRow {
+	cfg := config.Get()
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.TrueNAS))
 	for _, e := range cfg.Backends.TrueNAS {
 		rows = append(rows, config.BackendRow{Kind: "truenas", Name: e.Name, Hint: strings.TrimSpace(e.URL)})
@@ -80,7 +82,10 @@ func (truenasFactory) BackendRows(cfg *config.File) []config.BackendRow {
 
 func (truenasFactory) BackendKind() string { return "truenas" }
 
-func (truenasFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.TrueNAS }
+func (truenasFactory) BackendSlicePtr() any {
+	cfg := config.Get()
+	return &cfg.Backends.TrueNAS
+}
 
 func (truenasFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
@@ -93,7 +98,9 @@ func (f truenasFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexe
 	return nil
 }
 
-func (truenasFactory) ReconfigureFromConfig(cfg *config.File) { reconfigureTrueNAS(cfg) }
+func (truenasFactory) ReconfigureFromConfig() {
+	reconfigureTrueNAS()
+}
 
 func boolDefault(v *bool, def bool) bool {
 	if v == nil {

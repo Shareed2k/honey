@@ -18,7 +18,8 @@ type localCRUD struct{}
 func (localCRUD) ID() string   { return "local" }
 func (localCRUD) Name() string { return "Local" }
 
-func (localCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
+func (localCRUD) ListOptions() []huh.Option[string] {
+	cfg := config.Get()
 	opts := make([]huh.Option[string], 0, len(cfg.Backends.Local))
 	for i, b := range cfg.Backends.Local {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("Local: %s (%d hosts)", b.Name, len(b.Hosts)), fmt.Sprintf("local:%d", i)))
@@ -26,7 +27,8 @@ func (localCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
 	return opts
 }
 
-func (localCRUD) Add(cfg *config.File) error {
+func (localCRUD) Add() error {
+	cfg := config.Get()
 	var name string
 	if err := huh.NewForm(
 		huh.NewGroup(
@@ -67,7 +69,8 @@ func (localCRUD) Add(cfg *config.File) error {
 	return nil
 }
 
-func (localCRUD) Edit(cfg *config.File, idx int) error {
+func (localCRUD) Edit(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.Local) {
 		return fmt.Errorf("index out of bounds")
 	}
@@ -129,7 +132,8 @@ func (localCRUD) Edit(cfg *config.File, idx int) error {
 	return nil
 }
 
-func (localCRUD) Delete(cfg *config.File, idx int) error {
+func (localCRUD) Delete(idx int) error {
+	cfg := config.Get()
 	if idx < 0 || idx >= len(cfg.Backends.Local) {
 		return fmt.Errorf("index out of bounds")
 	}

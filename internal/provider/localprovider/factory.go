@@ -13,7 +13,8 @@ func NewFactory() searchrun.ProviderFactory {
 
 type localFactory struct{}
 
-func (localFactory) FromConfig(cfg *config.File, _ searchrun.ProviderOverrides) []hosts.Backend {
+func (localFactory) FromConfig(_ searchrun.ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	if cfg == nil || len(cfg.Backends.Local) == 0 {
 		return nil
 	}
@@ -38,7 +39,8 @@ func (localFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend {
 	)
 }
 
-func (localFactory) BackendRows(cfg *config.File) []config.BackendRow {
+func (localFactory) BackendRows() []config.BackendRow {
+	cfg := config.Get()
 	rows := make([]config.BackendRow, 0, len(cfg.Backends.Local))
 	for _, b := range cfg.Backends.Local {
 		rows = append(rows, config.BackendRow{
@@ -54,7 +56,8 @@ func (localFactory) BackendKind() string {
 	return "local"
 }
 
-func (localFactory) BackendSlicePtr(cfg *config.File) any {
+func (localFactory) BackendSlicePtr() any {
+	cfg := config.Get()
 	return &cfg.Backends.Local
 }
 

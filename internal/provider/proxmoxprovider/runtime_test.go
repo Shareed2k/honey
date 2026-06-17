@@ -16,12 +16,14 @@ func TestProxmoxBackendByName(t *testing.T) {
 			},
 		},
 	}
-	reconfigureProxmox(cfg)
+	config.Set(cfg)
+	reconfigureProxmox()
 	b, ok := BackendByName("a")
 	if !ok || b.ExecMode != ProxmoxExecPVE {
 		t.Fatalf("got ok=%v mode=%q", ok, b.ExecMode)
 	}
-	reconfigureProxmox(nil)
+	config.Set(&config.File{})
+	reconfigureProxmox()
 	if _, ok := BackendByName("a"); ok {
 		t.Fatal("expected cleared backends")
 	}
