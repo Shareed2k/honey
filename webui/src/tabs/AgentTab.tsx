@@ -46,8 +46,9 @@ const TOOLS: Tool[] = [
 
 async function executeTool(tc: ToolCall): Promise<string> {
   const args = JSON.parse(tc.function.arguments ?? '{}');
+  const toolName = tc.function.name.replace(/^default_api:/, '');
   
-  if (tc.function.name === 'list_backends') {
+  if (toolName === 'list_backends') {
     const res = await apiGet('/api/v1/backends');
     if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
@@ -59,7 +60,7 @@ async function executeTool(tc: ToolCall): Promise<string> {
     return backends.map(b => `- Provider: ${b.kind} | Backend: ${b.name} | Hint: ${b.hint}`).join('\n');
   }
 
-  if (tc.function.name === 'search_hosts') {
+  if (toolName === 'search_hosts') {
     const reqBody: any = { name: args.name ?? '' };
     if (args.providers) reqBody.providers = args.providers;
     if (args.backends) reqBody.backends = args.backends;
@@ -74,7 +75,7 @@ async function executeTool(tc: ToolCall): Promise<string> {
     if (!hosts.length) return 'No hosts found.';
     return hosts.map((h: HostRecord) => `${h.Name} (${h.PrimaryIP}, ${h.Provider})`).join('\n');
   }
-  if (tc.function.name === 'validate_recipe') {
+  if (toolName === 'validate_recipe') {
     const res = await apiPost('/api/v1/recipes/validate-content', { recipe_content_raw: args.recipe_content_raw });
     if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
@@ -83,7 +84,7 @@ async function executeTool(tc: ToolCall): Promise<string> {
     const data = await res.json() as { errors?: string[] };
     return data.errors?.length ? `Errors:\n${data.errors.join('\n')}` : 'Recipe is valid.';
   }
-  return `Unknown tool: ${tc.function.name}`;
+  return `Unknown tool: ${toolName}`;
 }
 
 export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
