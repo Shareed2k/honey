@@ -84,6 +84,23 @@ func TestAppConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "valid recipe app",
+			app: AppConfig{
+				Name:         "restart_nginx",
+				Type:         AppTypeRecipe,
+				TargetRecipe: "scripts/nginx_restart.cue",
+			},
+			wantErr: false,
+		},
+		{
+			name: "recipe app missing target_recipe",
+			app: AppConfig{
+				Name: "restart_nginx",
+				Type: AppTypeRecipe,
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

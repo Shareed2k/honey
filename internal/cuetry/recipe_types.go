@@ -24,9 +24,13 @@ type Recipe struct {
 
 // RecipePrompt defines metadata for UI form generation.
 type RecipePrompt struct {
-	Description string `json:"description,omitempty"`
-	Type        string `json:"type,omitempty"`
-	Required    bool   `json:"required,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Type        string   `json:"type,omitempty"`
+	Required    bool     `json:"required,omitempty"`
+	Choices     []string `json:"choices,omitempty"`
+	Default     string   `json:"default,omitempty"`
+	Multi       bool     `json:"multi,omitempty"`
+	Regex       string   `json:"regex,omitempty"`
 }
 
 // RecipeDefaults holds recipe-level defaults (optional fields).

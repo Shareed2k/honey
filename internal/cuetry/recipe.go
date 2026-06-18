@@ -282,6 +282,10 @@ const schemaSource = `
 			description?: string
 			type?: string
 			required?: bool
+			choices?: [...string]
+			default?: string
+			multi?: bool
+			regex?: string
 		})}
 		k8s_debug_image?: string
 		kv_tunnel?: bool

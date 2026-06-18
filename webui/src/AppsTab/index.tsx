@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchApps } from '../api/core';
 import { fetchProxySessions, startProxySession, stopProxySession } from '../api/proxy';
 import { fetchPostgresCatalog, runPostgresQuery } from '../api/postgres';
 import { type AppConfig, type ProxySession } from '../api/types/proxy';
 import { type PostgresCatalog } from '../api/types/postgres';
 import { getToken } from '../api/core';
+import { parseDiskRecipe } from '../api/recipes';
+import { cueExecStream } from '../api/exec';
+import { type ParsedRecipe } from '../api/types/recipes';
+import { type HostExecResultRow } from '../api/types/exec';
 import CodeMirror from '@uiw/react-codemirror';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { sql as sqlLang, PostgreSQL } from '@codemirror/lang-sql';
@@ -12,6 +16,7 @@ import { keymap, type EditorView } from '@codemirror/view';
 import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
 import { Alert, Button, Card, Descriptions, Input, Modal, Pagination, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { ParameterPromptModal } from '../RecipeStudio/ParameterPromptModal';
 import './apps-tab.css';
 
 type CatalogTree = {
@@ -100,6 +105,14 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
   const APP_PAGE_SIZE = 12;
   const [sessionFilter, setSessionFilter] = useState('');
 
+  // Recipe App state
+  const [recipeApp, setRecipeApp] = useState<AppConfig | null>(null);
+  const [recipeParsed, setRecipeParsed] = useState<ParsedRecipe | null>(null);
+  const [promptsOpen, setPromptsOpen] = useState(false);
+  const [recipeRows, setRecipeRows] = useState<HostExecResultRow[]>([]);
+  const [recipeStatus, setRecipeStatus] = useState<'idle' | 'running' | 'ok' | 'err'>('idle');
+  const recipeAbortRef = useRef<AbortController | null>(null);
+
   const loadData = useCallback(async () => {
     try {
       const [appsData, sessionsData] = await Promise.all([
@@ -121,6 +134,28 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
   }, [loadData]);
 
   const handleStart = async (appName: string) => {
+    const app = apps[appName];
+    if (app?.type === 'recipe') {
+      try {
+        setLoadingApp(appName);
+        const parsed = await parseDiskRecipe(app.target_recipe || '');
+        setRecipeParsed(parsed);
+        setRecipeApp(app);
+        
+        // Open prompts if they exist, otherwise run directly
+        if (parsed.defaults?.prompts && Object.keys(parsed.defaults.prompts).length > 0) {
+          setPromptsOpen(true);
+        } else {
+          runRecipeApp(app, parsed, []);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoadingApp(null);
+      }
+      return;
+    }
+
     setLoadingApp(appName);
     setError(null);
     try {
@@ -131,6 +166,48 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
     } finally {
       setLoadingApp(null);
     }
+  };
+
+  const runRecipeApp = (app: AppConfig, parsed: ParsedRecipe, envPairs: {key: string, value: string}[]) => {
+    const ctrl = new AbortController();
+    recipeAbortRef.current = ctrl;
+    setRecipeStatus('running');
+    setRecipeRows([]);
+
+    // We don't have hosts in the UI for App execution, so we pass an empty array
+    // The recipe or app backend should handle it (or maybe they rely on the recipe's built-in target/provider)
+    // Wait, the user mentioned passing inputs to recipes.
+    // If the recipe needs hosts, we can inject a dummy record that carries the app config provider/backend
+    const records = [{
+      provider: app.provider || 'local',
+      name: 'app-target',
+      primary_ip: '127.0.0.1',
+      meta: { backend_name: app.backend || '' }
+    }];
+
+    cueExecStream({
+      recipe_path: app.target_recipe,
+      execute: true,
+      ssh_user: sshUser,
+      records: records,
+      env: envPairs.map((p) => `${p.key}=${p.value}`),
+      record_session: true,
+    }, (row) => {
+      setRecipeRows((s) => [...s, row]);
+    }, ctrl.signal)
+      .then(() => setRecipeStatus('ok'))
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.name === 'AbortError') return;
+        setRecipeStatus('err');
+      });
+  };
+
+  const closeRecipeApp = () => {
+    recipeAbortRef.current?.abort();
+    setRecipeApp(null);
+    setRecipeParsed(null);
+    setRecipeStatus('idle');
+    setRecipeRows([]);
   };
 
   const handleStop = async (id: string) => {
@@ -359,6 +436,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
               { value: 'all', label: 'All types' },
               { value: 'http', label: 'HTTP' },
               { value: 'tcp', label: 'TCP' },
+              { value: 'recipe', label: 'Recipe' },
             ]}
           />
         </Space>
@@ -654,6 +732,81 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
           </section>
         </div>
       </Modal>
+
+      {recipeApp && recipeParsed && (
+        <Modal
+          open={!!recipeApp && !promptsOpen}
+          title={`Recipe App: ${recipeApp.name}`}
+          onCancel={closeRecipeApp}
+          footer={null}
+          width={800}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <Typography.Text type="secondary">
+              Executing recipe: <code>{recipeApp.target_recipe}</code>
+            </Typography.Text>
+          </div>
+          
+          <div className="rcp-step rcp-step--run" style={{ border: '1px solid #30363d', borderRadius: 6, padding: 16 }}>
+            <header className="rcp-step__header" style={{ marginBottom: 16 }}>
+              <div className="rcp-run-summary">
+                <span>status: <strong>{recipeStatus}</strong></span>
+              </div>
+              {recipeStatus === 'running' ? (
+                <Button onClick={() => { recipeAbortRef.current?.abort(); setRecipeStatus('idle'); }}>
+                  Cancel
+                </Button>
+              ) : (
+                <Button type="primary" onClick={() => {
+                  if (recipeParsed.defaults?.prompts && Object.keys(recipeParsed.defaults.prompts).length > 0) {
+                    setPromptsOpen(true);
+                  } else {
+                    runRecipeApp(recipeApp, recipeParsed, []);
+                  }
+                }}>
+                  Run Again
+                </Button>
+              )}
+            </header>
+
+            <ul className="rcp-run__hosts">
+              {recipeRows.map((row, i) => (
+                <li
+                  key={`${row.Name}-${i}`}
+                  className={'rcp-run__host ' + (row.Success ? 'ok' : 'err')}
+                >
+                  <header>
+                    <span className="rcp-run__hostname">{row.Name}</span>
+                    <span className="rcp-run__status">
+                      {row.Success ? '✓' : `✗ exit ${row.ExitCode}`}
+                    </span>
+                  </header>
+                  {row.Output ? <pre className="rcp-run__out">{row.Output}</pre> : null}
+                  {row.ErrMsg ? <pre className="rcp-run__err">{row.ErrMsg}</pre> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Modal>
+      )}
+
+      {recipeParsed?.defaults?.prompts && (
+        <ParameterPromptModal
+          open={promptsOpen}
+          prompts={recipeParsed.defaults.prompts}
+          onCancel={() => {
+            setPromptsOpen(false);
+            if (recipeStatus === 'idle' && recipeRows.length === 0) {
+              closeRecipeApp();
+            }
+          }}
+          onSubmit={(vals) => {
+            setPromptsOpen(false);
+            const envPairs = Object.entries(vals).map(([k, v]) => ({ key: k, value: v }));
+            runRecipeApp(recipeApp!, recipeParsed, envPairs);
+          }}
+        />
+      )}
     </div>
   );
 }
