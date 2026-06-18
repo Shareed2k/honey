@@ -212,7 +212,7 @@ func (s *Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) 
 			httpError(w, err, http.StatusBadRequest)
 			return
 		}
-		if _, ok := allowedRecipePathSet()[cp]; !ok {
+		if _, ok := s.allowedRecipePathSet()[cp]; !ok {
 			httpError(w, fmt.Errorf("recipe path not allowed"), http.StatusBadRequest)
 			return
 		}
@@ -275,7 +275,7 @@ func writeValidationErrors(w http.ResponseWriter, errs []ValidateContentError) {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/parse [post]
 // @Security BearerAuth
-func (*Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -290,7 +290,7 @@ func (*Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	if _, ok := allowedRecipePathSet()[cp]; !ok {
+	if _, ok := s.allowedRecipePathSet()[cp]; !ok {
 		httpError(w, fmt.Errorf("recipe path not allowed"), http.StatusBadRequest)
 		return
 	}
