@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shareed2k/honey/internal/apps"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -89,6 +90,16 @@ func BuildJSONSchema() map[string]any {
 		}
 	}
 
+	appFields := schemaFieldsFromStruct(reflect.TypeOf(apps.AppConfig{}))
+	appProps := map[string]any{}
+	for _, f := range appFields {
+		appProps[f.Key] = jsonSchemaField(f)
+	}
+	appProps["type"] = map[string]any{
+		"type": "string",
+		"enum": []string{"http", "tcp", "recipe"},
+	}
+
 	rootProps := map[string]any{
 		"version": map[string]any{
 			"type": "integer",
@@ -101,6 +112,17 @@ func BuildJSONSchema() map[string]any {
 		"backends": map[string]any{
 			"type":                 "object",
 			"properties":           backendProps,
+			"additionalProperties": false,
+		},
+		"apps": map[string]any{
+			"type": "object",
+			"patternProperties": map[string]any{
+				"^[a-zA-Z0-9_-]+$": map[string]any{
+					"type":                 "object",
+					"properties":           appProps,
+					"additionalProperties": false,
+				},
+			},
 			"additionalProperties": false,
 		},
 	}

@@ -12,6 +12,8 @@ const (
 	AppTypeHTTP AppType = "http"
 	// AppTypeTCP indicates a raw TCP proxy.
 	AppTypeTCP AppType = "tcp"
+	// AppTypeRecipe indicates a shortcut to a CUE recipe execution.
+	AppTypeRecipe AppType = "recipe"
 )
 
 // AppConfig defines a target application accessible via Honey proxy.
@@ -21,6 +23,7 @@ type AppConfig struct {
 	Mode                string            `yaml:"mode,omitempty" json:"mode,omitempty"`
 	Target              string            `yaml:"target,omitempty" json:"target,omitempty"`
 	TargetRegex         string            `yaml:"target_regex,omitempty" json:"target_regex,omitempty"`
+	TargetRecipe        string            `yaml:"target_recipe,omitempty" json:"target_recipe,omitempty"`
 	Backend             string            `yaml:"backend,omitempty" json:"backend,omitempty"`
 	Provider            string            `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Upstream            string            `yaml:"upstream" json:"upstream" validate:"required,url"`

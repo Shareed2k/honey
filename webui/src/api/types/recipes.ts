@@ -7,11 +7,24 @@ import { GraphPlanNode, GraphPlanEdge } from './core';
 
 export type RecipeListEntry = { name: string; path: string };
 
+export type RecipePrompt = {
+  description?: string;
+  type?: string;
+  required?: boolean;
+  choices?: string[];
+  default?: string;
+  multi?: boolean;
+  regex?: string;
+};
+
 export /** Structured recipe shape that mirrors internal/cuetry.Recipe (JSON keys match Go json tags). */
 export type ParsedRecipe = {
   name: string;
   type?: string;
-  defaults?: Record<string, unknown>;
+  defaults?: {
+    prompts?: Record<string, RecipePrompt>;
+    [key: string]: unknown;
+  };
   steps: ParsedRecipeStep[];
 };
 

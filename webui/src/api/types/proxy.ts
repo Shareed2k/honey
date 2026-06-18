@@ -6,6 +6,7 @@ export interface AppConfig {
   mode?: string;
   target?: string;
   target_regex?: string;
+  target_recipe?: string;
   backend?: string;
   provider?: string;
   upstream: string;
