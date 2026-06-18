@@ -5,7 +5,7 @@ import { yaml } from '@codemirror/lang-yaml';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useEffect, useMemo } from 'react';
 import { isMap, isScalar, isSeq, parseDocument, YAMLMap, YAMLSeq } from 'yaml';
-import type { ConfigSchemaFieldSpec, ConfigUISchema } from './api';
+import type { ConfigSchemaFieldSpec, ConfigUISchema } from './api/types/config';
 
 type Props = {
   value: string;

@@ -48,7 +48,7 @@ func RecipeHostMaxConc(step cuetry.Step, defaults *cuetry.RecipeDefaults) int {
 	if re != nil && re.Serial > 0 {
 		return re.Serial
 	}
-	return cuetry.EffectiveMaxParallel(re, defaults)
+	return re.EffectiveMaxParallel(defaults)
 }
 
 // CueEnvRunOpts ...

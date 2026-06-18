@@ -1,10 +1,12 @@
 package webserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -27,7 +29,117 @@ func assistNewOpenAIClient() *openai.Client {
 	if u := assistBaseURL(); u != "" {
 		cfg.BaseURL = u
 	}
+	cfg.HTTPClient = &http.Client{
+		Transport: &geminiThoughtSignatureTransport{
+			Base: http.DefaultTransport,
+		},
+	}
 	return openai.NewClientWithConfig(cfg)
+}
+
+type geminiThoughtSignatureTransport struct {
+	Base http.RoundTripper
+}
+
+func (t *geminiThoughtSignatureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body == nil || req.Method != http.MethodPost {
+		return t.base().RoundTrip(req)
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	_ = req.Body.Close()
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err == nil {
+		if patchThoughtSignatures(payload) {
+			if patchedBody, err := json.Marshal(payload); err == nil {
+				body = patchedBody
+			}
+		}
+	}
+
+	patchedReq := req.Clone(req.Context())
+	patchedReq.Body = io.NopCloser(bytes.NewReader(body))
+	patchedReq.ContentLength = int64(len(body))
+	patchedReq.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+
+	return t.base().RoundTrip(patchedReq)
+}
+
+func (t *geminiThoughtSignatureTransport) base() http.RoundTripper {
+	if t.Base != nil {
+		return t.Base
+	}
+	return http.DefaultTransport
+}
+
+func patchThoughtSignatures(payload map[string]any) bool {
+	messages, ok := payload["messages"].([]any)
+	if !ok {
+		return false
+	}
+
+	currentTurnStart := -1
+	for i, raw := range messages {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if role, _ := msg["role"].(string); role == "user" {
+			currentTurnStart = i
+		}
+	}
+
+	if currentTurnStart == -1 {
+		return false
+	}
+
+	changed := false
+	for _, raw := range messages[currentTurnStart+1:] {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if role != "assistant" && role != "model" {
+			continue
+		}
+		toolCalls, ok := msg["tool_calls"].([]any)
+		if !ok || len(toolCalls) == 0 {
+			continue
+		}
+
+		for _, rawToolCall := range toolCalls {
+			toolCall, ok := rawToolCall.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			extraContent, _ := toolCall["extra_content"].(map[string]any)
+			if extraContent == nil {
+				extraContent = make(map[string]any)
+				toolCall["extra_content"] = extraContent
+			}
+
+			google, _ := extraContent["google"].(map[string]any)
+			if google == nil {
+				google = make(map[string]any)
+				extraContent["google"] = google
+			}
+
+			if sig, _ := google["thought_signature"].(string); sig == "" {
+				google["thought_signature"] = "skip_thought_signature_validator"
+				changed = true
+			}
+		}
+	}
+
+	return changed
 }
 
 func modelIDsSortedFromList(list openai.ModelsList) []string {

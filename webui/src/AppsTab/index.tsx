@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchApps, fetchProxySessions, startProxySession, stopProxySession, fetchPostgresCatalog, runPostgresQuery, type AppConfig, type ProxySession, type PostgresCatalog } from '../api';
-import { getToken } from '../api';
+import { fetchApps } from '../api/core';
+import { fetchProxySessions, startProxySession, stopProxySession } from '../api/proxy';
+import { fetchPostgresCatalog, runPostgresQuery } from '../api/postgres';
+import { type AppConfig, type ProxySession } from '../api/types/proxy';
+import { type PostgresCatalog } from '../api/types/postgres';
+import { getToken } from '../api/core';
 import CodeMirror from '@uiw/react-codemirror';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { sql as sqlLang, PostgreSQL } from '@codemirror/lang-sql';

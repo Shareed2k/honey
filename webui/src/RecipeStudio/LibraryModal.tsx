@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Card, Typography, Spin, Collapse } from 'antd';
-import { fetchLibraryRecipes, type LibraryCategory, type LibraryRecipe } from '../api';
+import { fetchLibraryRecipes } from '../api/recipes';
+import { type LibraryCategory } from '../api/types/core';
+import { type LibraryRecipe } from '../api/types/recipes';
 
 const { Text } = Typography;
 

@@ -142,7 +142,7 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := s.sshUser(req.SSHUser)
-	if !hosts.IsConnectableRecord(req.Record) {
+	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
@@ -184,7 +184,7 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := s.sshUser(req.SSHUser)
-	if !hosts.IsConnectableRecord(req.Record) {
+	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}

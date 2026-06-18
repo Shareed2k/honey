@@ -120,7 +120,7 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	hash, _ := cuetry.HashRecipeJSON(*recipe)
+	hash, _ := recipe.HashJSON()
 	if hash != "" && s.recipeValidationCache != nil {
 		if cached, ok := s.recipeValidationCache.Get(hash); ok {
 			w.Header().Set("Content-Type", "application/json")
@@ -232,7 +232,7 @@ func (s *Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	hash, _ := cuetry.HashRecipeJSON(recipe)
+	hash, _ := recipe.HashJSON()
 	if hash != "" && s.recipeGraphCache != nil {
 		if cached, ok := s.recipeGraphCache.Get(hash); ok {
 			w.Header().Set("Content-Type", "application/json")

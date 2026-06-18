@@ -273,7 +273,7 @@ func (s *Server) validateExecRequest(body ExecRequest) (string, error) {
 
 func (s *Server) handleRecipesSchema(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	schema := cuetry.BuildRecipeStepJSONSchema()
+	schema := cuetry.BuildStepJSONSchema()
 	_ = json.NewEncoder(w).Encode(schema)
 }
 
@@ -445,7 +445,7 @@ func buildUnconnectableExecResults(recs []hosts.Record) []engine.HostExecResult 
 	var out []engine.HostExecResult
 	for i := range recs {
 		r := recs[i]
-		if hosts.IsConnectableRecord(r) {
+		if r.IsConnectable() {
 			continue
 		}
 		out = append(out, engine.HostExecResult{
@@ -462,7 +462,7 @@ func buildUnconnectableExecResults(recs []hosts.Record) []engine.HostExecResult 
 func filterConnectableRecords(recs []hosts.Record) []hosts.Record {
 	var out []hosts.Record
 	for _, r := range recs {
-		if hosts.IsConnectableRecord(r) {
+		if r.IsConnectable() {
 			out = append(out, r)
 		}
 	}
@@ -618,7 +618,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		if rec == nil {
 			return
 		}
-		hash, _ := cuetry.HashRecipeJSON(recipe)
+		hash, _ := recipe.HashJSON()
 
 		planText, _, _ := cuetry.RenderDryRunPlan(recipe)
 		var graph *cuetry.RecipeGraphPlan

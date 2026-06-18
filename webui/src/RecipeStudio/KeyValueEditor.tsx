@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Button, Input, Space, Popover, message } from 'antd';
 import { DeleteOutlined, PlusOutlined, LockOutlined } from '@ant-design/icons';
-import { encryptSecret } from '../api';
+import { encryptSecret } from '../api/secrets';
 
 type Props = {
   value: Record<string, string>;

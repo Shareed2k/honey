@@ -91,7 +91,7 @@ func (p *Proxmox) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, er
 			}
 		}
 
-		okMatch, err := hosts.NameMatches(name, q)
+		okMatch, err := q.MatchesName(name)
 		if err != nil {
 			return nil, err
 		}

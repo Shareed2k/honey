@@ -1,16 +1,17 @@
 import { useMemo, useState } from 'react';
 import { Button, Typography } from 'antd';
 import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
+import { useWizard } from './WizardContext';
 
 type Props = {
   records: HostRecord[];
-  hosts: HostRecord[];
   onHostsChange: (h: HostRecord[]) => void;
   onNext: () => void;
   reconcileNote?: string | null;
 };
 
-export function StepHosts({ records, hosts, onHostsChange, onNext, reconcileNote }: Props) {
+export function StepHosts({ records, onHostsChange, onNext, reconcileNote }: Props) {
+  const { state: { hosts } } = useWizard();
   const [filter, setFilter] = useState('');
 
   const selectedKeys = useMemo(() => {

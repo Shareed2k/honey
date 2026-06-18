@@ -39,7 +39,7 @@ func searchSwarm(ctx context.Context, cli *client.Client, q hosts.Query, hostURI
 	for _, task := range tasks.Items {
 		svcName := serviceNames[task.ServiceID]
 		display := swarmTaskDisplayName(svcName, task)
-		ok, err := hosts.NameMatches(display, q)
+		ok, err := q.MatchesName(display)
 		if err != nil {
 			return nil, err
 		}

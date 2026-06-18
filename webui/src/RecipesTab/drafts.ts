@@ -1,6 +1,6 @@
 // webui/src/RecipesTab/drafts.ts
 import type { Draft } from './types';
-import type { ParsedRecipe } from '../api';
+import type { ParsedRecipe } from '../api/types/recipes';
 
 const KEY = 'honey.recipes.drafts.v1';
 

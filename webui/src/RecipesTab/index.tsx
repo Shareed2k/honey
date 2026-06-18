@@ -2,7 +2,8 @@
 import { useCallback, useState } from 'react';
 import { Steps, message } from 'antd';
 import type { HostRecord } from '../HostPicker';
-import { parseDiskRecipe, type ParsedRecipe, type RecentRunEntry } from '../api';
+import { parseDiskRecipe } from '../api/recipes';
+import { type ParsedRecipe, type RecentRunEntry } from '../api/types/recipes';
 import { reconcileHosts } from '../hostReconcile';
 import { SessionReplayModal } from '../SessionReplayModal';
 import { StepHosts } from './StepHosts';
@@ -10,8 +11,8 @@ import { StepRecipe } from './StepRecipe';
 import { StepPlan } from './StepPlan';
 import { StepRun } from './StepRun';
 import { saveDraft } from './drafts';
-import type { Draft, WizardStep, WizardState } from './types';
-import { INITIAL_WIZARD_STATE } from './types';
+import type { Draft, WizardStep } from './types';
+import { WizardProvider, useWizard } from './WizardContext';
 import './recipes-tab.css';
 
 type Props = {
@@ -24,56 +25,47 @@ type Props = {
   terminalAssistAvailable: boolean;
 };
 
-export function RecipesTab(props: Props) {
-  const [state, setState] = useState<WizardState>({
-    ...INITIAL_WIZARD_STATE,
-    hosts: props.selectedRecords,
-  });
-  const [baseRecipe, setBaseRecipe] = useState<ParsedRecipe | null>(null);
+function RecipesTabInner(props: Props) {
+  const { state, dispatch } = useWizard();
   const [hostReconcileNote, setHostReconcileNote] = useState<string | null>(null);
   const [replayRecord, setReplayRecord] = useState<HostRecord | null>(null);
   const [replayFileName, setReplayFileName] = useState<string | null>(null);
 
   const setHosts = useCallback(
     (h: HostRecord[]) => {
-      setState((s) => ({ ...s, hosts: h }));
+      dispatch({ type: 'SET_HOSTS', payload: h });
       props.onSelectedRecordsChange(h);
     },
-    [props],
+    [props, dispatch],
   );
 
   function go(step: WizardStep) {
-    setState((s) => ({ ...s, step }));
+    dispatch({ type: 'GO_STEP', payload: step });
   }
 
   async function pickDisk(path: string) {
     try {
       const parsed = await fetchRecipeContentParsed(path);
-      setBaseRecipe(parsed);
+      dispatch({ type: 'SET_BASE_RECIPE', payload: parsed });
       setHostReconcileNote(null);
-      setState((s) => ({ ...s, recipe: { kind: 'disk', path }, edits: parsed, step: 3 }));
+      dispatch({ type: 'SET_RECIPE_REF', payload: { kind: 'disk', path }, edits: parsed });
     } catch (e) {
       void message.error(`Could not load recipe: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   function pickDraft(d: Draft) {
-    setBaseRecipe(d.recipe);
+    dispatch({ type: 'SET_BASE_RECIPE', payload: d.recipe });
     setHostReconcileNote(null);
-    setState((s) => ({ ...s, recipe: { kind: 'draft', id: d.id }, edits: d.recipe, step: 3 }));
+    dispatch({ type: 'SET_RECIPE_REF', payload: { kind: 'draft', id: d.id }, edits: d.recipe });
   }
 
   async function pickRecent(r: RecentRunEntry) {
     try {
       const parsed = await fetchRecipeContentParsed(r.recipe_path);
-      setBaseRecipe(parsed);
+      dispatch({ type: 'SET_BASE_RECIPE', payload: parsed });
       setHostReconcileNote(null);
-      setState((s) => ({
-        ...s,
-        recipe: { kind: 'disk', path: r.recipe_path },
-        edits: parsed,
-        step: 3,
-      }));
+      dispatch({ type: 'SET_RECIPE_REF', payload: { kind: 'disk', path: r.recipe_path }, edits: parsed });
     } catch (e) {
       void message.error(`Could not load recipe: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -107,13 +99,13 @@ export function RecipesTab(props: Props) {
   }
 
   function onSaveAsDraft(name: string) {
-    if (!state.edits || !baseRecipe) return;
+    if (!state.edits || !state.baseRecipe) return;
     const d = saveDraft({
       name,
       baseRecipePath: state.recipe && state.recipe.kind === 'disk' ? state.recipe.path : '',
       recipe: state.edits,
     });
-    setState((s) => ({ ...s, recipe: { kind: 'draft', id: d.id } }));
+    dispatch({ type: 'SET_RECIPE_REF', payload: { kind: 'draft', id: d.id }, edits: state.edits });
   }
 
   return (
@@ -154,7 +146,6 @@ export function RecipesTab(props: Props) {
       {state.step === 1 ? (
         <StepHosts
           records={props.records}
-          hosts={state.hosts}
           onHostsChange={setHosts}
           onNext={() => go(2)}
           reconcileNote={hostReconcileNote}
@@ -163,7 +154,6 @@ export function RecipesTab(props: Props) {
 
       {state.step === 2 ? (
         <StepRecipe
-          current={state.recipe}
           sessionRecordingAvailable={props.sessionRecordingAvailable}
           onBack={() => go(1)}
           onPickDisk={pickDisk}
@@ -176,20 +166,10 @@ export function RecipesTab(props: Props) {
         />
       ) : null}
 
-      {state.step === 3 && state.edits && baseRecipe ? (
+      {state.step === 3 && state.edits && state.baseRecipe ? (
         <StepPlan
-          recipe={state.edits}
-          baseRecipe={baseRecipe}
-          onRecipeChange={(next) => setState((s) => ({ ...s, edits: next }))}
           onSaveAsDraft={onSaveAsDraft}
-          envOverrides={state.envOverrides}
-          onEnvChange={(env) => setState((s) => ({ ...s, envOverrides: env }))}
-          sshUser={state.sshUser}
-          onSSHUserChange={(u) => setState((s) => ({ ...s, sshUser: u }))}
-          recordSession={state.recordSession}
-          onRecordSessionChange={(v) => setState((s) => ({ ...s, recordSession: v }))}
           sessionRecordingAvailable={props.sessionRecordingAvailable}
-          hostCount={state.hosts.length}
           onBack={() => go(2)}
           onExecute={() => go(4)}
         />
@@ -197,12 +177,6 @@ export function RecipesTab(props: Props) {
 
       {state.step === 4 && state.edits ? (
         <StepRun
-          recipe={state.edits}
-          recipeBasePath={state.recipe?.kind === 'disk' ? state.recipe.path : null}
-          hosts={state.hosts}
-          envOverrides={state.envOverrides}
-          sshUser={state.sshUser}
-          recordSession={state.recordSession}
           sessionRecordingAvailable={props.sessionRecordingAvailable}
           onViewRecording={(fileName) => {
             setReplayRecord({
@@ -214,8 +188,7 @@ export function RecipesTab(props: Props) {
           }}
           onRunAgain={() => go(3)}
           onStartNew={() => {
-            setState({ ...INITIAL_WIZARD_STATE, hosts: state.hosts });
-            setBaseRecipe(null);
+            dispatch({ type: 'RESET', payload: { hosts: state.hosts } });
             setHostReconcileNote(null);
           }}
         />
@@ -233,6 +206,14 @@ export function RecipesTab(props: Props) {
         />
       ) : null}
     </div>
+  );
+}
+
+export function RecipesTab(props: Props) {
+  return (
+    <WizardProvider initialHosts={props.selectedRecords}>
+      <RecipesTabInner {...props} />
+    </WizardProvider>
   );
 }
 

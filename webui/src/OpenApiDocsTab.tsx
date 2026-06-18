@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import SwaggerUI from 'swagger-ui-react';
 import type { SwaggerRequest } from 'swagger-ui-react';
 import 'swagger-ui-react/swagger-ui.css';
-import { apiHeaders, getToken } from './api';
+import { apiHeaders, getToken } from './api/core';
 
 export function OpenApiDocsTab() {
   const [spec, setSpec] = useState<Record<string, unknown> | null>(null);

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/cuetry"
 )
 
 func TestValidateContent_happy(t *testing.T) {
@@ -131,7 +130,7 @@ func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
 	// We need to know the hash to inject it into the cache. We'll use a mocked hash logic or
 	// just parse it manually to get the hash.
 	recipe, _ := recipeFromContentMap(content)
-	hash, _ := cuetry.HashRecipeJSON(*recipe)
+	hash, _ := recipe.HashJSON()
 
 	cachedResp := &ValidateContentResponse{Plan: "CACHED_PLAN"}
 	srv.recipeValidationCache.Add(hash, cachedResp)

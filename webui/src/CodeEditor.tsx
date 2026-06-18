@@ -8,7 +8,7 @@ import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 import type { Extension } from '@codemirror/state';
 import { useMemo } from 'react';
-import { lintScript } from './api';
+import { lintScript } from './api/exec';
 
 export type EditorLanguage = 'bash' | 'python' | 'plain' | 'cue';
 

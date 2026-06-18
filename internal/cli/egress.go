@@ -100,7 +100,7 @@ func runEgress(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("host %q not found in inventory", hostArg)
 		}
 		rec := out.Records[0]
-		ip := hosts.PrimaryIPTrimmed(rec)
+		ip := rec.PrimaryIPTrimmed()
 		if ip == "" {
 			return fmt.Errorf("host %q has no IP address", rec.Name)
 		}

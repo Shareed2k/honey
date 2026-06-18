@@ -1,13 +1,8 @@
 // webui/src/RecipesTab/types.ts
 import type { HostRecord } from '../HostPicker';
-import type {
-  HostExecResultRow,
-  ParsedRecipe,
-  RecipeGraphPlan,
-  ResolvedStep,
-  RiskReport,
-  ValidationError,
-} from '../api';
+import type { HostExecResultRow } from '../api/types/exec';
+import type { ParsedRecipe, RecipeGraphPlan, ValidationError } from '../api/types/recipes';
+import type { ResolvedStep, RiskReport } from '../api/types/core';
 
 export type WizardStep = 1 | 2 | 3 | 4;
 

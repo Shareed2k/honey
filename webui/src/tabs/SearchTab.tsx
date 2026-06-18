@@ -3,21 +3,11 @@ import {
   Alert, Button, Card, Checkbox, Input, Modal, Progress, Segmented, Select, Space, Table, Tag, Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import {
-  apiPost,
-  deleteSnippet,
-  execOnHostsStream,
-  listSnippets,
-  saveSnippet,
-  uploadFormDataWithSFTPStream,
-} from '../api';
-import type {
-  ExecOnHostsBody,
-  ExecSnippet,
-  FormDataUploadProgressEvent,
-  HostExecResultRow,
-  UploadStreamServerEvent,
-} from '../api';
+import { apiPost } from '../api/core';
+import { deleteSnippet, execOnHostsStream, listSnippets, saveSnippet } from '../api/exec';
+import { uploadFormDataWithSFTPStream } from '../api/files';
+import type { ExecOnHostsBody, ExecSnippet, HostExecResultRow } from '../api/types/exec';
+import type { FormDataUploadProgressEvent, UploadStreamServerEvent } from '../api/types/files';
 import type { EditorLanguage } from '../CodeEditor';
 import { HostPicker, recordKey } from '../HostPicker';
 

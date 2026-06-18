@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Modal, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { fetchTunnels, fetchTunnelLogs, stopTunnel } from '../api';
-import type { TunnelInfo } from '../api';
+import { fetchTunnels, fetchTunnelLogs, stopTunnel } from '../api/tunnels';
+import type { TunnelInfo } from '../api/types/tunnels';
 
 interface Props {
   onNavigateToSearch: () => void;

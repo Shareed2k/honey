@@ -441,14 +441,14 @@ func stageAgentBinary(
 // HostConnectableForTransfer reports whether a record can be dialed for SSH, k8s exec, or docker exec.
 // HostConnectableForTransfer ...
 func HostConnectableForTransfer(r hosts.Record) bool {
-	return hosts.IsConnectableRecord(r)
+	return r.IsConnectable()
 }
 
 func validateAgentTransferJob(job AgentTransferJob) error {
-	if !hosts.IsConnectableRecord(job.Source.Record) {
+	if !job.Source.Record.IsConnectable() {
 		return newAgentTransferValidationError("source record has no connectable target")
 	}
-	if !hosts.IsConnectableRecord(job.Destination.Record) {
+	if !job.Destination.Record.IsConnectable() {
 		return newAgentTransferValidationError("destination record has no connectable target")
 	}
 	if job.FallbackPlan == nil && strings.TrimSpace(job.AgentLocalAbs) == "" {

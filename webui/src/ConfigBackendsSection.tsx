@@ -5,8 +5,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Alert, Button, Card, Checkbox, Divider, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { apiDelete, apiGet, apiPost, apiPutJson } from './api';
-import type { ConfigSchemaFieldSpec, ConfigUISchema } from './api';
+import { apiDelete, apiGet, apiPost, apiPutJson } from './api/core';
+import type { ConfigSchemaFieldSpec, ConfigUISchema } from './api/types/config';
 
 export type BackendsPayload = Record<string, Record<string, unknown>[] | undefined>;
 

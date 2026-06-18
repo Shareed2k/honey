@@ -23,22 +23,24 @@ import { LibraryModal } from './LibraryModal';
 import { ParameterPromptModal } from './ParameterPromptModal';
 import { StepRun } from '../RecipesTab/StepRun';
 import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
-import { apiGet, apiPost, fixRecipeErrors, generateRecipe, syncRecipeAST } from '../api';
+import { apiGet, apiPost } from '../api/core';
+import { fixRecipeErrors, generateRecipe, syncRecipeAST } from '../api/recipes';
+import { listStepKinds, stepSchemaForKind } from '../api/recipes';
 import {
+  useRecipeGraph,
   applyWaveLayout,
   buildFlowFromRecipe,
   buildRecipeFromFlow,
   collectAncestorNodeIDs,
   computeWavesFromEdges,
   createStepDraft,
-  listStepKinds,
   recipeNameFromFilename,
   recipeStudioSnippets,
-  stepSchemaForKind,
   uniqueStepID,
   type StepDraft,
-} from './recipeStudioUtils';
-import type { HostExecResultRow, RiskReport } from '../api';
+} from './useRecipeGraph';
+import type { HostExecResultRow } from '../api/types/exec';
+import type { RiskReport } from '../api/types/core';
 
 const CodeEditor = lazy(() => import('../CodeEditor'));
 
@@ -65,11 +67,9 @@ type Props = {
 };
 
 export default function StudioWorkspace({ records = [], selectedRecords = [], sshUser = 'root' }: Props) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
+  const { nodes, setNodes, onNodesChange, edges, setEdges, onEdgesChange, onConnect, stepData, setStepData, resetGraph } = useRecipeGraph();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [schema, setSchema] = useState<any>(null);
-  const [stepData, setStepData] = useState<Record<string, StepDraft>>({});
   const [validating, setValidating] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);
   const [gitLoadModalVisible, setGitLoadModalVisible] = useState(false);
@@ -195,12 +195,6 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const onNodeClick = (_: any, node: any) => {
     setSelectedNodeId(node.id);
   };
-
-  // 4. Connect Edges (Dependency mapping)
-  const onConnect = useCallback(
-    (params: Connection | Edge) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
-  );
 
   // 5. Update Node Parameters
   const handleStepDataChange = (nextData: any) => {

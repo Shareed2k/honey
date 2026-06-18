@@ -1,17 +1,15 @@
 import { describe, expect, it } from 'vitest';
-
+import { listStepKinds, stepSchemaForKind } from '../api/recipes';
 import {
   applyWaveLayout,
   buildRecipeFromFlow,
   collectAncestorNodeIDs,
   createStepDraft,
   detectStepKind,
-  listStepKinds,
   recipeNameFromFilename,
   recipeStudioSnippets,
-  stepSchemaForKind,
   uniqueStepID,
-} from './recipeStudioUtils';
+} from './useRecipeGraph';
 
 describe('recipeStudioUtils', () => {
   it('lists step kinds from backend per-kind definitions, excluding defaults', () => {

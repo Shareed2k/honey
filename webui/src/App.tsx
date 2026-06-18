@@ -8,19 +8,13 @@ import {
   PlayCircleOutlined, ApiOutlined, AppstoreOutlined, DatabaseOutlined, UnorderedListOutlined,
   CommentOutlined, RobotOutlined,
 } from '@ant-design/icons';
-import {
-  apiGet,
-  fetchRecordingsForHost,
-  fetchRecordingsList,
-  fetchRecipeContent,
-  getToken,
-  recipeAssist,
-  startTunnel,
-  fetchHostPorts,
-  fetchRecordingsFailedHosts,
-  fetchRecordingEvents,
-} from './api';
-import type { RecordingListEntry, RecordingsListResponse } from './api';
+import { apiGet, getToken } from './api/core';
+import { fetchRecordingsForHost, fetchRecordingsList, fetchRecordingsFailedHosts, fetchRecordingEvents } from './api/recordings';
+import { fetchRecipeContent } from './api/recipes';
+import { recipeAssist } from './api/assist';
+import { startTunnel } from './api/tunnels';
+import { fetchHostPorts } from './api/exec';
+import type { RecordingListEntry, RecordingsListResponse } from './api/types/recordings';
 import { recordKey } from './HostPicker';
 import type { HostRecord } from './HostPicker';
 import { RecipesTab } from './RecipesTab';

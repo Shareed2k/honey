@@ -2,8 +2,15 @@
 package cuetry
 
 import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
+
+	"github.com/shareed2k/honey/internal/cuetry/secrets"
 )
 
 // Recipe is the decoded "recipe" block from a CUE document.
@@ -74,6 +81,18 @@ type RecipeAI struct {
 	Model           string `json:"model,omitempty"`
 	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
 	MaxInputChars   int    `json:"max_input_chars,omitempty"`
+}
+
+// ResolveSystemPrompt returns the system message for a recipe ai step.
+// Precedence: non-empty ai.system_prompt in CUE, then config defaults.ai_system_prompt, then built-in default.
+func (ai *RecipeAI) ResolveSystemPrompt(configDefault string) string {
+	if ai != nil && strings.TrimSpace(ai.SystemPrompt) != "" {
+		return strings.TrimSpace(ai.SystemPrompt)
+	}
+	if strings.TrimSpace(configDefault) != "" {
+		return strings.TrimSpace(configDefault)
+	}
+	return DefaultRecipeAISystemPrompt
 }
 
 // RecipeNotifyHTTP marks HTTP default JSON POST URLs (HONEY_NOTIFY_HTTP_URL) as selected in notify.services.
@@ -331,4 +350,54 @@ type RecipeStepPostgres struct {
 	MigrationsDir string            `json:"migrations_dir,omitempty"`
 	Files         []string          `json:"files,omitempty"`
 	Output        string            `json:"output,omitempty"`
+}
+
+// CanonicalJSON returns deterministic JSON (sorted keys, no extra
+// whitespace) for the given Recipe. Two Recipes that resolve to the same plan
+// produce the same bytes here.
+func (r Recipe) CanonicalJSON() ([]byte, error) {
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("recipe canonical json: marshal: %w", err)
+	}
+	var generic any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		return nil, fmt.Errorf("recipe canonical json: reparse: %w", err)
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(generic); err != nil {
+		return nil, fmt.Errorf("recipe canonical json: re-encode: %w", err)
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// HashJSON returns "sha256:" + hex(sha256(r.CanonicalJSON())).
+// Used to compare a recording's recipe to a disk recipe and decide "edited?".
+func (r Recipe) HashJSON() (string, error) {
+	b, err := r.CanonicalJSON()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// RecipeFromJSON deserializes a canonical (or near-canonical) JSON payload back
+// into a Recipe value. Run cuetry.ValidateRemoteRecipe (or the equivalent
+// per-step validators) after this to ensure the result is well-formed.
+func RecipeFromJSON(raw []byte) (Recipe, error) {
+	var r Recipe
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		return Recipe{}, fmt.Errorf("recipe from json: %w", err)
+	}
+	return r, nil
+}
+
+// WithRecipeDir attaches the absolute recipe directory to ctx (for age-file and similar).
+func WithRecipeDir(ctx context.Context, absDir string) context.Context {
+	return secrets.WithRecipeDir(ctx, absDir)
 }

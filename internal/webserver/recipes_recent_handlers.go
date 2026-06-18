@@ -152,7 +152,7 @@ func isEdited(meta recipeMetaPayload) bool {
 	if err != nil {
 		return true
 	}
-	h, err := cuetry.HashRecipeJSON(loaded)
+	h, err := loaded.HashJSON()
 	if err != nil {
 		return true
 	}

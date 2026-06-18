@@ -19,7 +19,7 @@ func searchContainers(ctx context.Context, cli *client.Client, q hosts.Query, bc
 	out := make([]hosts.Record, 0, len(listResult.Items))
 	for _, c := range listResult.Items {
 		name := containerDisplayName(c.Names)
-		ok, err := hosts.NameMatches(name, q)
+		ok, err := q.MatchesName(name)
 		if err != nil {
 			return nil, err
 		}

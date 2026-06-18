@@ -144,7 +144,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if hosts.IsDockerRecord(hello.Record) {
+	if hello.Record.IsDocker() {
 		defer s.trackWSConnection("docker")()
 		handleWebDockerTTY(context.Background(), conn, user, hello.Record, cols, rows, recorder, s.opts.ExecRegistry)
 		return
@@ -450,7 +450,7 @@ func newWebSessionRecorder(recordDir string, requestRecord bool, rec hosts.Recor
 	switch {
 	case isK8sPodWebTerminal(rec):
 		mode = "k8s"
-	case hosts.IsDockerRecord(rec):
+	case rec.IsDocker():
 		mode = "docker"
 	case isProxmoxSerialWebPVE(rec):
 		mode = "proxmox"

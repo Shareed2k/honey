@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ParsedRecipeStep } from '../api';
+import type { ParsedRecipeStep } from '../api/types/recipes';
 import { appendRecipeStep, defaultStepForKind, stepKind, stepSupportsNotify } from './recipeStepUtils';
 
 describe('stepKind', () => {

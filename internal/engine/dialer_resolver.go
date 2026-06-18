@@ -74,7 +74,7 @@ func ResolveAppDialerWithCache(user string, rec hosts.Record, cache *ClientCache
 		return &proxy.SSHDialer{Client: client}, lease, nil
 	}
 
-	ip := hosts.PrimaryIPTrimmed(rec)
+	ip := rec.PrimaryIPTrimmed()
 	sshPort := 0
 	if p, ok := hosts.MetaSSHPort(&rec); ok {
 		sshPort = p
@@ -92,6 +92,6 @@ func ResolveAppDialerWithCache(user string, rec hosts.Record, cache *ClientCache
 }
 
 func appDialerUsesSSH(rec hosts.Record) bool {
-	ip := hosts.PrimaryIPTrimmed(rec)
+	ip := rec.PrimaryIPTrimmed()
 	return ip != "" && (rec.Provider != "k8s" || rec.Meta["kind"] != "pod") && rec.Provider != "truenas"
 }

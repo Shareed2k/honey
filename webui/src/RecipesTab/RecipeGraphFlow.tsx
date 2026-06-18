@@ -10,7 +10,8 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { GraphPlanNode, RecipeGraphPlan } from '../api';
+import type { GraphPlanNode } from '../api/types/core';
+import type { RecipeGraphPlan } from '../api/types/recipes';
 
 const COL_W = 240;
 const ROW_H = 110;

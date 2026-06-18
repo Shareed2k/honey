@@ -131,7 +131,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 
 	jobs := make([]hosts.Record, 0, len(records))
 	for _, r := range records {
-		if hosts.IsConnectableRecord(r) {
+		if r.IsConnectable() {
 			jobs = append(jobs, r)
 		}
 	}
