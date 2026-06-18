@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Form, Input, Button, message } from 'antd';
-import { apiGet } from '../api';
+import { apiGet } from '../api/core';
 
 type Props = {
   visible: boolean;

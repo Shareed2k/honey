@@ -85,11 +85,11 @@ func RunParallel(
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	var merged []Record
+	var merged RecordSet
 	for _, sl := range results {
-		merged = append(merged, sl...)
+		merged = merged.MergeDedupe(sl)
 	}
-	return MergeDedupe(merged), nil
+	return merged, nil
 }
 
 func filterProviders(q Query, provs []Backend) []Backend {

@@ -39,7 +39,7 @@ func RunTerminalInteractive(user string, r hosts.Record, console string, reg hos
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
 		return RunK8sInteractiveWithRecorder(user, r, nil)
 	}
-	if hosts.IsDockerRecord(r) {
+	if r.IsDocker() {
 		return RunDockerInteractiveWithRecorder(user, r, nil, reg)
 	}
 	if truenasshell.ShouldUseTrueNASShell(r, console) {

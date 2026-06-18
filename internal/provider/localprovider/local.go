@@ -32,7 +32,7 @@ func (l *Local) Search(_ context.Context, q hosts.Query) ([]hosts.Record, error)
 	var out []hosts.Record
 
 	for _, h := range l.Hosts {
-		ok, err := hosts.NameMatches(h.Name, q)
+		ok, err := q.MatchesName(h.Name)
 		if err != nil {
 			return nil, err
 		}

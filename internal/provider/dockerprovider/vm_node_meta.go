@@ -31,7 +31,7 @@ func vmNodeMeta(vm hosts.Record, discover bool) map[string]string {
 			meta["docker_discover_vm_ip"] = ip
 		}
 	}
-	if ext := hosts.ExternalIP(vm); ext != "" {
+	if ext := vm.ExternalIP(); ext != "" {
 		meta["docker_vm_external_ip"] = ext
 		if discover {
 			meta["docker_discover_vm_external_ip"] = ext
@@ -57,7 +57,7 @@ func applyVMNodeRecordFields(rec *hosts.Record, vm hosts.Record) {
 		return
 	}
 	internal := strings.TrimSpace(vm.PrimaryIP)
-	external := hosts.ExternalIP(vm)
+	external := vm.ExternalIP()
 	if external != "" {
 		rec.PrimaryIP = external
 		if internal != "" && internal != external {

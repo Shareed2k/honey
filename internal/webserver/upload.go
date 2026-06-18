@@ -96,7 +96,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rec := meta.Record
-	if !hosts.IsConnectableRecord(rec) {
+	if !rec.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}

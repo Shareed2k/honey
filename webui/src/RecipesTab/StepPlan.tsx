@@ -1,50 +1,40 @@
 // webui/src/RecipesTab/StepPlan.tsx
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Checkbox, Collapse, Input, Modal, Spin, Tabs, Typography } from 'antd';
-import {
-  isGraphRecipe,
-  validateRecipeContent,
-  type ParsedRecipe,
-  type RecipeGraphPlan,
-  type ResolvedStep,
-  type ValidationError,
-  type RiskReport,
-} from '../api';
+import { isGraphRecipe, validateRecipeContent } from '../api/recipes';
+import { type ParsedRecipe, type RecipeGraphPlan, type ValidationError } from '../api/types/recipes';
+import { type ResolvedStep, type RiskReport } from '../api/types/core';
 import type { EnvPair, PlanState } from './types';
 import { EditForm } from './EditForm';
 import { RecipeGraphFlow } from './RecipeGraphFlow';
 import { ParameterPromptModal } from '../RecipeStudio/ParameterPromptModal';
+import { useWizard } from './WizardContext';
 
 type PlanTab = 'plan' | 'graph' | 'edit';
 
 type Props = {
-  recipe: ParsedRecipe;
-  baseRecipe: ParsedRecipe;
-  onRecipeChange: (next: ParsedRecipe) => void;
   onSaveAsDraft: (name: string) => void;
-  envOverrides: EnvPair[];
-  onEnvChange: (env: EnvPair[]) => void;
-  sshUser: string;
-  onSSHUserChange: (u: string) => void;
-  recordSession: boolean;
-  onRecordSessionChange: (v: boolean) => void;
   sessionRecordingAvailable: boolean;
-  hostCount: number;
   onBack: () => void;
   onExecute: () => void;
   validationRisk?: RiskReport;
 };
 
 export function StepPlan(props: Props) {
-  const graphMode = isGraphRecipe(props.recipe);
+  const { state, dispatch } = useWizard();
+  const { edits: recipe, baseRecipe, envOverrides, sshUser, recordSession, hosts } = state;
+  const hostCount = hosts.length;
+
+  const graphMode = recipe ? isGraphRecipe(recipe) : false;
   const [tab, setTab] = useState<PlanTab>('plan');
   const [plan, setPlan] = useState<PlanState>(null);
   const [promptsOpen, setPromptsOpen] = useState(false);
 
   useEffect(() => {
+    if (!recipe) return;
     let cancelled = false;
     (async () => {
-      const res = await validateRecipeContent(props.recipe);
+      const res = await validateRecipeContent(recipe);
       if (cancelled) return;
       setPlan(
         'errors' in res
@@ -55,7 +45,7 @@ export function StepPlan(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [props.recipe]);
+  }, [recipe]);
 
   const handleEditErrors = useCallback((errors: ValidationError[]) => {
     setPlan({ ok: false, errors });
@@ -68,12 +58,14 @@ export function StepPlan(props: Props) {
     [],
   );
 
+  if (!recipe || !baseRecipe) return null;
+
   const hasErrors = plan && !plan.ok;
-  const root = props.recipe.steps.some((s) => s.run_as === 'root');
-  const dangerous = root || !props.recordSession;
+  const root = recipe.steps.some((s) => s.run_as === 'root');
+  const dangerous = root || !recordSession;
 
   function handleExecute() {
-    const prompts = props.baseRecipe?.defaults?.prompts;
+    const prompts = baseRecipe?.defaults?.prompts;
     if (prompts && Object.keys(prompts).length > 0) {
       setPromptsOpen(true);
       return;
@@ -81,7 +73,7 @@ export function StepPlan(props: Props) {
 
     const msg = dangerous
       ? 'Execute this recipe? Some steps run as root and/or session recording is off.'
-      : `Execute this recipe on ${props.hostCount} host${props.hostCount === 1 ? '' : 's'}?`;
+      : `Execute this recipe on ${hostCount} host${hostCount === 1 ? '' : 's'}?`;
     Modal.confirm({
       title: 'Execute recipe',
       content: msg,
@@ -115,9 +107,9 @@ export function StepPlan(props: Props) {
         <GraphView plan={plan} />
       ) : (
         <EditForm
-          recipe={props.recipe}
-          baseRecipe={props.baseRecipe}
-          onChange={props.onRecipeChange}
+          recipe={recipe}
+          baseRecipe={baseRecipe}
+          onChange={(next) => dispatch({ type: 'SET_EDITS', payload: next })}
           onErrors={handleEditErrors}
           onValidated={handleEditValidated}
           onSaveAsDraft={props.onSaveAsDraft}
@@ -130,27 +122,27 @@ export function StepPlan(props: Props) {
           ghost
           items={[{
             key: 'env',
-            label: `Env overrides (${props.envOverrides.length})`,
-            children: <EnvEditor pairs={props.envOverrides} onChange={props.onEnvChange} />,
+            label: `Env overrides (${envOverrides.length})`,
+            children: <EnvEditor pairs={envOverrides} onChange={(env) => dispatch({ type: 'SET_ENV_OVERRIDES', payload: env })} />,
           }]}
         />
         <label className="rcp-field">
           ssh_user
           <Input
-            value={props.sshUser}
-            onChange={(e) => props.onSSHUserChange(e.target.value)}
+            value={sshUser}
+            onChange={(e) => dispatch({ type: 'SET_SSH_USER', payload: e.target.value })}
           />
         </label>
         <div className="rcp-field rcp-field--checkbox">
           <Checkbox
-            checked={props.recordSession}
+            checked={recordSession}
             disabled={!props.sessionRecordingAvailable}
-            onChange={(e) => props.onRecordSessionChange(e.target.checked)}
+            onChange={(e) => dispatch({ type: 'SET_RECORD_SESSION', payload: e.target.checked })}
           >
             record session
           </Checkbox>
         </div>
-        {props.recordSession && !props.sessionRecordingAvailable ? (
+        {recordSession && !props.sessionRecordingAvailable ? (
           <Alert
             type="warning"
             message={
@@ -193,17 +185,17 @@ export function StepPlan(props: Props) {
           disabled={!!hasErrors}
           onClick={handleExecute}
         >
-          Execute on {props.hostCount} host{props.hostCount === 1 ? '' : 's'} ▶
+          Execute on {hostCount} host{hostCount === 1 ? '' : 's'} ▶
         </Button>
       </footer>
       <ParameterPromptModal
         open={promptsOpen}
-        prompts={props.baseRecipe?.defaults?.prompts || {}}
+        prompts={baseRecipe?.defaults?.prompts || {}}
         onCancel={() => setPromptsOpen(false)}
         onSubmit={(vals) => {
           setPromptsOpen(false);
           const newEnv = Object.entries(vals).map(([k, v]) => ({ key: k, value: v }));
-          props.onEnvChange([...props.envOverrides, ...newEnv]);
+          dispatch({ type: 'SET_ENV_OVERRIDES', payload: [...envOverrides, ...newEnv] });
           setTimeout(() => {
             props.onExecute();
           }, 50);

@@ -1,7 +1,5 @@
-export type StepKindOption = {
-  kind: string;
-  label: string;
-};
+import { useState, useCallback } from 'react';
+import { useNodesState, useEdgesState, addEdge, Connection, Edge } from '@xyflow/react';
 
 export type StepDraft = Record<string, unknown> & {
   id: string;
@@ -9,8 +7,8 @@ export type StepDraft = Record<string, unknown> & {
   host: string;
 };
 
-type FlowNodeLike = { id: string };
-type FlowEdgeLike = { source: string; target: string };
+export type FlowNodeLike = { id: string };
+export type FlowEdgeLike = { source: string; target: string };
 
 export type RecipeStudioSnippet = {
   id: string;
@@ -18,7 +16,8 @@ export type RecipeStudioSnippet = {
   steps: StepDraft[];
   edges: FlowEdgeLike[];
 };
-type PositionedNode = {
+
+export type PositionedNode = {
   id: string;
   position: { x: number; y: number };
   data?: { wave?: number } & Record<string, unknown>;
@@ -30,28 +29,9 @@ const WAVE_X0 = 100;
 const WAVE_Y0 = 80;
 
 const preferredKindOrder = [
-  'command',
-  'script',
-  'put',
-  'get',
-  'template',
-  'plugin',
-  'tunnel',
-  'ai',
-  'agent_transfer',
-  'docker',
-  'k8s',
-  'postgres',
-  'opensearch',
+  'command', 'script', 'put', 'get', 'template', 'plugin', 'tunnel', 'ai',
+  'agent_transfer', 'docker', 'k8s', 'postgres', 'opensearch',
 ];
-
-const kindLabels: Record<string, string> = {
-  ai: 'AI',
-  k8s: 'Kubernetes',
-  postgres: 'Postgres',
-  opensearch: 'OpenSearch',
-  agent_transfer: 'Agent Transfer',
-};
 
 export const recipeStudioSnippets: RecipeStudioSnippet[] = [
   {
@@ -160,55 +140,6 @@ export const recipeStudioSnippets: RecipeStudioSnippet[] = [
   },
 ];
 
-// listStepKinds reads the per-kind definitions emitted by BuildRecipeStepJSONSchema
-// (definitions: { command: {...}, postgres: {...}, ..., defaults: {...} }). "defaults"
-// is the recipe-level block, not a step kind, so it is excluded.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function listStepKinds(schema: any): StepKindOption[] {
-  const names = new Set<string>();
-
-  for (const key of Object.keys(schema?.definitions ?? {})) {
-    if (key !== 'defaults') {
-      names.add(key);
-    }
-  }
-
-  return [...names]
-    .sort((a, b) => kindSortIndex(a) - kindSortIndex(b) || a.localeCompare(b))
-    .map((kind) => ({ kind, label: kindLabels[kind] || titleCase(kind) }));
-}
-
-// resolveRefs inlines all local $ref ("#/$defs/Name" or "#/definitions/Name") using
-// the schema's own $defs/definitions table, so the form (which does not resolve refs)
-// can render nested object fields. Cycles are broken by tracking visited refs.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function resolveRefs(node: any, defs: Record<string, any>, seen: Set<string> = new Set()): any {
-  if (Array.isArray(node)) {
-    return node.map((n) => resolveRefs(n, defs, seen));
-  }
-  if (!node || typeof node !== 'object') {
-    return node;
-  }
-  if (typeof node.$ref === 'string') {
-    const name = node.$ref.replace(/^#\/(\$defs|definitions)\//, '');
-    if (seen.has(name) || !defs[name]) {
-      return { type: 'object' };
-    }
-    const next = new Set(seen);
-    next.add(name);
-    return resolveRefs(defs[name], defs, next);
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const out: any = {};
-  for (const [k, v] of Object.entries(node)) {
-    if (k === '$defs' || k === 'definitions') {
-      continue;
-    }
-    out[k] = resolveRefs(v, defs, seen);
-  }
-  return out;
-}
-
 export function detectStepKind(step: Record<string, unknown>): string {
   for (const kind of preferredKindOrder) {
     const value = step[kind];
@@ -229,17 +160,8 @@ export function createStepDraft(kind: string, id: string): StepDraft {
   return draft;
 }
 
-// stepSchemaForKind returns the self-contained, ref-resolved object schema for one
-// step kind (or "defaults"). definitions[kind] is the full reflected struct schema
-// for that kind; its internal $ref entries are inlined so the form can render them.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function stepSchemaForKind(schema: any, kind?: string): any {
-  if (!kind || !schema?.definitions?.[kind]) {
-    return schema;
-  }
-  const def = schema.definitions[kind];
-  const defs = def.$defs ?? def.definitions ?? {};
-  return resolveRefs(def, defs);
+function isEmptyObject(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length === 0;
 }
 
 export function buildRecipeFromFlow(input: {
@@ -395,18 +317,38 @@ export function applyWaveLayout<T extends PositionedNode>(nodes: T[]): T[] {
   });
 }
 
-function kindSortIndex(kind: string): number {
-  const index = preferredKindOrder.indexOf(kind);
-  return index === -1 ? preferredKindOrder.length : index;
-}
+// -----------------------------------------------------------------------------
+// The Custom Hook
+// -----------------------------------------------------------------------------
 
-function titleCase(value: string): string {
-  return value
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
+export function useRecipeGraph() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
+  const [stepData, setStepData] = useState<Record<string, StepDraft>>({});
 
-function isEmptyObject(value: unknown): boolean {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length === 0;
+  const onConnect = useCallback(
+    (params: Connection | Edge) => setEdges((eds) => addEdge(params, eds)),
+    [setEdges]
+  );
+
+  const resetGraph = useCallback(() => {
+    setNodes([]);
+    setEdges([]);
+    setStepData({});
+  }, [setNodes, setEdges, setStepData]);
+
+  return {
+    nodes,
+    setNodes,
+    onNodesChange,
+    edges,
+    setEdges,
+    onEdgesChange,
+    onConnect,
+    stepData,
+    setStepData,
+    resetGraph,
+  };
 }

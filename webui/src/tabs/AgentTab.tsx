@@ -3,7 +3,7 @@ import { Button, Input, List, Spin, Alert, Card, Tag, Typography, Select } from 
 import { SendOutlined, StopOutlined } from '@ant-design/icons';
 import { HttpAgent } from '@ag-ui/client';
 import type { AgentSubscriber, ToolCall, Message, Tool } from '@ag-ui/client';
-import { apiHeaders, apiPost, apiGet } from '../api';
+import { apiHeaders, apiPost, apiGet } from '../api/core';
 import type { HostRecord } from '../HostPicker';
 
 const AiMarkdown = lazy(async () => import('../AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
@@ -114,7 +114,7 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
           return;
         }
         
-        const list = Array.isArray(j.models) ? j.models.filter(m => !m.includes('gemini-3')) : [];
+        const list = Array.isArray(j.models) ? j.models : [];
         setModels(list);
         if (list.length > 0) {
           const preferred = list.find(m => m.includes('gemini-1.5-pro') || m.includes('gpt-4o') || m.includes('claude-3-5-sonnet'));

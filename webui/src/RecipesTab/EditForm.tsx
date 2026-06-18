@@ -1,16 +1,10 @@
 // webui/src/RecipesTab/EditForm.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input, Select } from 'antd';
-import {
-  validateRecipeContent,
-  type ParsedRecipe,
-  type ParsedRecipeEnvFrom,
-  type ParsedRecipeStep,
-  type ParsedRecipeStepTemplate,
-  type RecipeGraphPlan,
-  type ResolvedStep,
-  type ValidationError,
-} from '../api';
+import { validateRecipeContent } from '../api/recipes';
+import { type ParsedRecipe, type ParsedRecipeEnvFrom, type ParsedRecipeStep, type RecipeGraphPlan, type ValidationError } from '../api/types/recipes';
+import { type ParsedRecipeStepTemplate } from '../api/types/logs';
+import { type ResolvedStep } from '../api/types/core';
 import {
   ADD_STEP_KINDS,
   appendRecipeStep,

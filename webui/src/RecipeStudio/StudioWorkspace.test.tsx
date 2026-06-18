@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { ConfigProvider, theme, message } from 'antd';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import StudioWorkspace from './StudioWorkspace';
-import { apiGet, apiPost } from '../api';
+import { apiGet, apiPost } from '../api/core';
 
 vi.mock('../api', () => ({
   apiGet: vi.fn(),

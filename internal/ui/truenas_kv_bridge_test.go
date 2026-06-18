@@ -40,7 +40,7 @@ func TestTruenasEnterUsesAPIForExec(t *testing.T) {
 	if tableEnterAction(r) != actTrueNASAPI {
 		t.Fatal("expected API action for truenas enter")
 	}
-	if !hosts.IsConnectableRecord(r) {
+	if !r.IsConnectable() {
 		t.Fatal("expected connectable without IP")
 	}
 }

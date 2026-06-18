@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Button, Flex, InputNumber, Input, Popover, Select, Splitter, Typography } from 'antd';
-import { apiGet, apiPost, getToken } from './api';
+import { apiGet, apiPost, getToken } from './api/core';
 
 type HostRecord = {
   provider: string;

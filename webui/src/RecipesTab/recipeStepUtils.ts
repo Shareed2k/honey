@@ -1,5 +1,5 @@
-import type { ParsedRecipe, ParsedRecipeStep } from '../api';
-import { isGraphRecipe } from '../api';
+import type { ParsedRecipe, ParsedRecipeStep } from '../api/types/recipes';
+import { isGraphRecipe } from '../api/recipes';
 
 export type RecipeStepKind =
   | 'command'

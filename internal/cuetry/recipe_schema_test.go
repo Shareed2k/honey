@@ -5,7 +5,7 @@ import (
 )
 
 func TestBuildRecipeStepJSONSchema(t *testing.T) {
-	schema := BuildRecipeStepJSONSchema()
+	schema := BuildStepJSONSchema()
 
 	if schema["type"] != "object" {
 		t.Fatalf("expected type object")

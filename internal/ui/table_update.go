@@ -8,7 +8,6 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/recordings"
 )
 
@@ -25,7 +24,7 @@ func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
 		if rec, err := engine.NewBatchSessionRecorder(m.recordDir, trigger, m.sshUser, msg.totalJobs); err == nil {
 			m.batchRecorder = rec
 			if msg.isCue && rec != nil && msg.recipe != nil {
-				hash, _ := cuetry.HashRecipeJSON(*msg.recipe)
+				hash, _ := msg.recipe.HashJSON()
 				rec.RecordRecipeMeta(engine.RecipeMeta{
 					RecipePath:        msg.recipePath,
 					HostCount:         msg.totalJobs,

@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/invopop/jsonschema"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -104,12 +105,39 @@ func (b StepBase) cloned() StepBase {
 	return cp
 }
 
+const (
+	minRecipeMaxParallel = 1
+	maxRecipeMaxParallel = 128
+)
+
 // RemoteExec holds SSH / fan-out options for steps that target remote hosts.
 type RemoteExec struct {
 	SSHPort       int    `json:"ssh_port,omitempty" jsonschema:"default=22"`
 	SSHPrivateKey string `json:"ssh_private_key,omitempty"`
 	MaxParallel   int    `json:"max_parallel,omitempty" jsonschema:"default=0"`
 	Serial        int    `json:"serial,omitempty"`
+}
+
+// EffectiveMaxParallel returns host-level parallelism for a step (SSH/SFTP batch).
+// Step max_parallel overrides defaults; zero means caller should use its package default (32).
+func (r *RemoteExec) EffectiveMaxParallel(defaults *RecipeDefaults) int {
+	if r != nil && r.MaxParallel > 0 {
+		return r.MaxParallel
+	}
+	if defaults != nil && defaults.MaxParallel > 0 {
+		return defaults.MaxParallel
+	}
+	return 0
+}
+
+func validateMaxParallelField(where string, n int) error {
+	if n == 0 {
+		return nil
+	}
+	if n < minRecipeMaxParallel || n > maxRecipeMaxParallel {
+		return fmt.Errorf("cuetry: %s.max_parallel must be between %d and %d", where, minRecipeMaxParallel, maxRecipeMaxParallel)
+	}
+	return nil
 }
 
 // Remote lets a *RemoteExec (and thus every embedding remote step) satisfy RemoteStep.
@@ -220,4 +248,34 @@ func (w *StepWrapper) UnmarshalJSON(data []byte) error {
 	}
 	w.Step = step
 	return nil
+}
+
+// BuildStepJSONSchema reflects each registered concrete step kind into its own
+// definition, so every kind exposes exactly its own fields (e.g. template/ai have no
+// ssh_port / max_parallel). The result is consumed by the RecipeStudio frontend.
+func BuildStepJSONSchema() map[string]any {
+	reflector := jsonschema.Reflector{ExpandedStruct: true}
+	definitions := make(map[string]any)
+
+	for _, inst := range reflectStepInstances() {
+		definitions[inst.Kind] = reflectToMap(&reflector, inst.Step)
+	}
+	definitions["defaults"] = reflectToMap(&reflector, &RecipeDefaults{})
+
+	return map[string]any{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"type":        "object",
+		"definitions": definitions,
+	}
+}
+
+// reflectToMap reflects v into a JSON Schema and decodes it into a generic map.
+// The schema is self-contained: nested types live under $defs and are referenced
+// via $ref, which the frontend (recipeStudioUtils) resolves per kind.
+func reflectToMap(reflector *jsonschema.Reflector, v any) map[string]any {
+	schema := reflector.Reflect(v)
+	b, _ := json.Marshal(schema)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
 }

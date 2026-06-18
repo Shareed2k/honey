@@ -26,7 +26,7 @@ func RunCueStepAIExecute(ctx context.Context, recipe cuetry.Recipe, stepIdx int,
 		maxIn = ai.MaxInputChars
 	}
 	transcript = TruncateCueTranscript(transcript, maxIn)
-	system := cuetry.ResolveRecipeAISystemPrompt(ai, aiSystemPromptFromCfg)
+	system := ai.ResolveSystemPrompt(aiSystemPromptFromCfg)
 	userBody := strings.TrimSpace(ai.Prompt) + "\n\n--- Transcript ---\n" + transcript
 
 	model := strings.TrimSpace(ai.Model)

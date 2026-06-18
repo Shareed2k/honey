@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import {
-  fetchRecentRuns,
-  fetchRecipes,
-  type RecentRunEntry,
-  type RecipeListEntry,
-} from '../api';
+import { fetchRecentRuns } from '../api/core';
+import { fetchRecipes } from '../api/recipes';
+import { type RecentRunEntry, type RecipeListEntry } from '../api/types/recipes';
 import { loadDrafts, deleteDraft } from './drafts';
-import type { Draft, RecipeRef } from './types';
+import type { Draft } from './types';
+import { useWizard } from './WizardContext';
 
 type Props = {
   onBack: () => void;
@@ -20,10 +18,10 @@ type Props = {
   onViewSource: (path: string, name: string) => void;
   onAiAssist: (path: string, name: string) => void;
   sessionRecordingAvailable: boolean;
-  current: RecipeRef | null;
 };
 
 export function StepRecipe(props: Props) {
+  const { state: { recipe: current } } = useWizard();
   const [recent, setRecent] = useState<RecentRunEntry[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [recipes, setRecipes] = useState<RecipeListEntry[]>([]);

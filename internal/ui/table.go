@@ -1219,7 +1219,7 @@ func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote strin
 			if recordEnabled && strings.TrimSpace(recordDir) != "" && len(targets) > 0 {
 				if rec, err := engine.NewBatchSessionRecorder(recordDir, "tui-cue-exec-dry", sshUser, len(targets)); err == nil {
 					if rec != nil {
-						hash, _ := cuetry.HashRecipeJSON(recipe)
+						hash, _ := recipe.HashJSON()
 						rec.RecordRecipeMeta(engine.RecipeMeta{
 							RecipePath:        absRecipe,
 							HostCount:         len(targets),
@@ -1371,7 +1371,7 @@ func readNextStreamResult(ch chan engine.HostExecResult) tea.Cmd {
 // one table row is marked (*), only marked executable rows are used.
 // If nothing is marked, every executable row is used.
 func isExecutableHost(r hosts.Record) bool {
-	return hosts.IsConnectableRecord(r)
+	return r.IsConnectable()
 }
 
 func (m *model) parallelExecTargets() ([]hosts.Record, string) {
@@ -1501,7 +1501,7 @@ func reportInteractiveSessionError(r hosts.Record, err error) {
 	}
 	errLabel := "SSH Connection Error"
 	switch {
-	case hosts.IsDockerRecord(r):
+	case r.IsDocker():
 		errLabel = "Docker exec error"
 	case r.Provider == "truenas":
 		errLabel = "TrueNAS API shell error"
@@ -1527,7 +1527,7 @@ func runTrueNASShellWithRecording(r hosts.Record, recordOpts *engine.SessionReco
 }
 
 func runSSHWithRecording(reg hostexec.Registry, user string, r hosts.Record, recordOpts *engine.SessionRecorderOptions) error {
-	if hosts.IsDockerRecord(r) {
+	if r.IsDocker() {
 		if strings.TrimSpace(r.Meta["container_id"]) == "" {
 			return fmt.Errorf("docker record missing container_id")
 		}
@@ -1544,7 +1544,7 @@ func runSSHWithRecording(reg hostexec.Registry, user string, r hosts.Record, rec
 	if recorder != nil {
 		defer recorder.Close()
 	}
-	if hosts.IsDockerRecord(r) {
+	if r.IsDocker() {
 		return engine.RunDockerInteractiveWithRecorder(user, r, recorder, reg)
 	}
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {

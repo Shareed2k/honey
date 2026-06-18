@@ -46,7 +46,7 @@ type DockerNativeClient struct {
 
 // Dial connects to the Docker container and returns a DockerNativeClient.
 func (e *DockerExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
-	if !hosts.IsDockerRecord(r) {
+	if !r.IsDocker() {
 		return nil, fmt.Errorf("record is not a connectable docker container")
 	}
 	containerID, err := ContainerIDFromRecord(r.Meta["container_id"])

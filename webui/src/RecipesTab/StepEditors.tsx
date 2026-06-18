@@ -1,14 +1,8 @@
 import { useState } from 'react';
 import { Checkbox, Input, InputNumber, Select } from 'antd';
-import type {
-  ParsedRecipeAgentTransfer,
-  ParsedRecipeFileTransfer,
-  ParsedRecipeNotify,
-  ParsedRecipePlugin,
-  ParsedRecipeStep,
-  ParsedRecipeStepRetry,
-  ParsedRecipeTunnel,
-} from '../api';
+import type { ParsedRecipeAgentTransfer, ParsedRecipeFileTransfer } from '../api/types/files';
+import type { ParsedRecipeNotify, ParsedRecipePlugin, ParsedRecipeStep, ParsedRecipeStepRetry } from '../api/types/recipes';
+import type { ParsedRecipeTunnel } from '../api/types/tunnels';
 import {
   AGENT_TRANSFER_CLOUD_PROVIDERS,
   dependsText,

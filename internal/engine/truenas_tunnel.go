@@ -56,7 +56,7 @@ func resolveTrueNASBridgeTarget(r hosts.Record, address string) trueNASBridgeTar
 
 	// When the bridge runs on the TrueNAS appliance, target loopback means the guest's IP.
 	if r.Meta["kind"] != "appliance" {
-		ip := hosts.PrimaryIPTrimmed(r)
+		ip := r.PrimaryIPTrimmed()
 		if ip != "" && (remoteHost == "localhost" || remoteHost == "127.0.0.1") {
 			zap.L().Debug(
 				"Translating upstream loopback address to guest PrimaryIP",
@@ -193,7 +193,7 @@ func DialTrueNASUpstream(ctx context.Context, _ string, r hosts.Record, address 
 		zap.String("address", address),
 	)
 
-	if r.Provider != "truenas" || !hosts.IsTrueNASAPIShellRecord(r) {
+	if r.Provider != "truenas" || !r.IsTrueNASAPIShell() {
 		return nil, fmt.Errorf("truenas dial: record does not support API shell")
 	}
 	b, ok := truenasprovider.BackendByName(r.Meta["backend_name"])
@@ -553,8 +553,8 @@ func CanTrueNASTunnel(r hosts.Record) bool {
 	if r.Provider != "truenas" {
 		return false
 	}
-	if hosts.PrimaryIPTrimmed(r) != "" {
+	if r.PrimaryIPTrimmed() != "" {
 		return true
 	}
-	return hosts.IsTrueNASAPIShellRecord(r)
+	return r.IsTrueNASAPIShell()
 }

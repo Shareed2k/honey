@@ -114,7 +114,7 @@ func (g *GCP) Search(ctx context.Context, q hosts.Query) (out []hosts.Record, er
 
 func instanceToRecord(inst *computepb.Instance, q hosts.Query) (hosts.Record, bool, error) {
 	name := inst.GetName()
-	ok, err := hosts.NameMatches(name, q)
+	ok, err := q.MatchesName(name)
 	if err != nil {
 		return hosts.Record{}, false, err
 	}

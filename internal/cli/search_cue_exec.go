@@ -142,7 +142,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if rec != nil {
-			hash, _ := cuetry.HashRecipeJSON(recipe)
+			hash, _ := recipe.HashJSON()
 			rec.RecordRecipeMeta(engine.RecipeMeta{
 				RecipePath:        absRecipe,
 				HostCount:         len(records),

@@ -1,7 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Input, Space, Typography } from 'antd';
-import { apiGet, apiPut, fetchConfigSchema } from '../api';
-import type { ConfigUISchema } from '../api';
+import { apiGet, apiPut } from '../api/core';
+import { fetchConfigSchema } from '../api/config';
+import type { ConfigUISchema } from '../api/types/config';
 import { ConfigBackendsSection } from '../ConfigBackendsSection';
 
 const RawYamlEditor = lazy(() =>
