@@ -112,7 +112,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	allowed := allowedRecipePathSet()
+	allowed := s.allowedRecipePathSet()
 	if _, ok := allowed[cp]; !ok {
 		httpError(w, fmt.Errorf("recipe_path not allowed"), http.StatusBadRequest)
 		return

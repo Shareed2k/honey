@@ -83,7 +83,7 @@ func TestRecipesParse_diskRecipe(t *testing.T) {
 	// "not allowed" error — that's fine, swap to whatever path is available.
 	// You may need to pre-configure Options to point at a fixture dir; see how
 	// other tests in this file do it.
-	allowed := allowedRecipePathSet()
+	allowed := s.allowedRecipePathSet()
 	var pickedPath string
 	for p := range allowed {
 		pickedPath = p

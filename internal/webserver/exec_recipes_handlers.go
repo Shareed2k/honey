@@ -96,11 +96,24 @@ type CueExecExecuteResponse struct {
 	Results []engine.HostExecResult `json:"results"`
 }
 
-func allowedRecipePathSet() map[string]struct{} {
+func (s *Server) allowedRecipePathSet() map[string]struct{} {
 	out := make(map[string]struct{})
 	for _, p := range config.ListDefaultRecipes() {
 		if cp, err := filepath.Abs(filepath.Clean(p)); err == nil {
 			out[cp] = struct{}{}
+		}
+	}
+	if s != nil && s.opts.Config != nil {
+		for _, app := range s.opts.Config.Apps {
+			p := strings.TrimSpace(app.TargetRecipe)
+			if p != "" {
+				if !filepath.IsAbs(p) && s.opts.ConfigPath != "" {
+					p = filepath.Join(filepath.Dir(s.opts.ConfigPath), p)
+				}
+				if cp, err := filepath.Abs(filepath.Clean(p)); err == nil {
+					out[cp] = struct{}{}
+				}
+			}
 		}
 	}
 	return out
@@ -121,7 +134,7 @@ func normalizeRecipePath(p string) (string, error) {
 // @Success 200 {object} RecipesListResponse
 // @Router /api/v1/recipes [get]
 // @Security BearerAuth
-func (*Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -157,7 +170,7 @@ func (*Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/view [post]
 // @Security BearerAuth
-func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -172,7 +185,7 @@ func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	allowed := allowedRecipePathSet()
+	allowed := s.allowedRecipePathSet()
 	if _, ok := allowed[cp]; !ok {
 		httpError(w, fmt.Errorf("recipe path not allowed"), http.StatusBadRequest)
 		return
@@ -511,7 +524,7 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 // the parsed/validated recipe, its on-disk source path (empty for inline),
 // and the recipe's directory (empty for inline). All errors are caller-fixable
 // (HTTP 400 from the handler).
-func resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
+func (s *Server) resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
 	switch {
 	case body.RecipeContent != nil:
 		if strings.TrimSpace(body.RecipePath) != "" {
@@ -534,7 +547,7 @@ func resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts
 		if err != nil {
 			return cuetry.Recipe{}, "", "", err
 		}
-		allowedPaths := allowedRecipePathSet()
+		allowedPaths := s.allowedRecipePathSet()
 		if _, ok := allowedPaths[cp]; !ok {
 			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_path not allowed")
 		}
@@ -584,7 +597,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = pluginMgr.Close() }()
 
-	recipe, recipeSourcePath, recipeDir, err := resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
+	recipe, recipeSourcePath, recipeDir, err := s.resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
