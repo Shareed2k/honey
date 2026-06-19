@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchApps } from '../api/core';
+import { fetchApps, apiHeaders } from '../api/core';
 import { fetchProxySessions, startProxySession, stopProxySession } from '../api/proxy';
 import { fetchPostgresCatalog, runPostgresQuery } from '../api/postgres';
 import { type AppConfig, type ProxySession } from '../api/types/proxy';
@@ -168,38 +168,52 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
     }
   };
 
-  const runRecipeApp = (app: AppConfig, parsed: ParsedRecipe, envPairs: {key: string, value: string}[]) => {
+  const runRecipeApp = async (app: AppConfig, parsed: ParsedRecipe, envPairs: {key: string, value: string}[]) => {
     const ctrl = new AbortController();
     recipeAbortRef.current = ctrl;
     setRecipeStatus('running');
     setRecipeRows([]);
 
-    // We don't have hosts in the UI for App execution, so we pass an empty array
-    // The recipe or app backend should handle it (or maybe they rely on the recipe's built-in target/provider)
-    // Wait, the user mentioned passing inputs to recipes.
-    // If the recipe needs hosts, we can inject a dummy record that carries the app config provider/backend
-    const records = [{
-      provider: app.provider || 'local',
-      name: 'app-target',
-      primary_ip: '127.0.0.1',
-      meta: { backend_name: app.backend || '' }
-    }];
-
-    cueExecStream({
-      recipe_path: app.target_recipe,
-      execute: true,
-      ssh_user: sshUser,
-      records: records,
-      env: envPairs.map((p) => `${p.key}=${p.value}`),
-      record_session: true,
-    }, (row) => {
-      setRecipeRows((s) => [...s, row]);
-    }, ctrl.signal)
-      .then(() => setRecipeStatus('ok'))
-      .catch((e: unknown) => {
-        if (e instanceof Error && e.name === 'AbortError') return;
-        setRecipeStatus('err');
+    try {
+      const searchBody = {
+        name: app.target || '',
+        name_regex: app.target_regex || '',
+        providers: app.provider || '',
+        backends: app.backend || '',
+      };
+      const r = await fetch('/api/v1/search', {
+        method: 'POST',
+        headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(searchBody),
       });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || r.statusText);
+      }
+      const data = await r.json();
+      const records = data.records || [];
+
+      if (records.length === 0) {
+        throw new Error(`No hosts found matching target "${app.target || app.target_regex}"`);
+      }
+
+      await cueExecStream({
+        recipe_path: app.target_recipe,
+        execute: true,
+        ssh_user: sshUser,
+        records: records,
+        env: envPairs.map((p) => `${p.key}=${p.value}`),
+        record_session: true,
+      }, (row) => {
+        setRecipeRows((s) => [...s, row]);
+      }, ctrl.signal);
+
+      setRecipeStatus('ok');
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === 'AbortError') return;
+      setRecipeRows((s) => [...s, { Name: 'Error', Success: false, ErrMsg: e instanceof Error ? e.message : String(e), Provider: 'web', ExitCode: 1, Output: '' } as HostExecResultRow]);
+      setRecipeStatus('err');
+    }
   };
 
   const closeRecipeApp = () => {

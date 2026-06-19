@@ -69,7 +69,7 @@ recipe: {
 				echo "Environments: ${ENV_TARGETS}"
 				echo "Force Mode: ${FORCE_MODE}"
 				echo "Notify IP: ${NOTIFY_IP}"
-				"""
+			"""
 		},
 	]
 }
