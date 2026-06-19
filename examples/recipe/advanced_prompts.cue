@@ -26,8 +26,8 @@ recipe: {
 			"API_ENDPOINT": {
 				description:       "Select a public API endpoint"
 				type:              "string"
-				choices_url:       "https://api.publicapis.org/entries"
-				choices_json_path: "$.entries[*].API"
+				choices_url:       "https://api.ipify.org/?format=json"
+				choices_json_path: "$.ip"
 				required:          true
 			}
 		}

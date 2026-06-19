@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Form, Input, Select, Checkbox, Upload, Button, message } from 'antd';
+import type { UploadFile } from 'antd';
 import { UploadOutlined, ClearOutlined } from '@ant-design/icons';
 import type { RecipePrompt } from '../api/types/recipes';
 import { apiHeaders } from '../api/core';
@@ -60,30 +61,55 @@ function RemoteSelect({ prompt, value, onChange }: { prompt: RecipePrompt; value
 }
 
 function FileUpload({ value, onChange }: { value?: unknown; onChange?: (val: unknown) => void }) {
-  const valObj = value as Record<string, unknown> | undefined;
+  const [fileList, setFileList] = useState<UploadFile[]>(() => {
+    const valObj = value as Record<string, unknown> | undefined;
+    if (valObj && valObj.id) {
+      return [
+        {
+          uid: String(valObj.id),
+          name: String(valObj.filename),
+          status: 'done',
+          response: valObj,
+        }
+      ];
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    if (!value) {
+      setFileList([]);
+    } else {
+      const valObj = value as Record<string, unknown>;
+      setFileList([
+        {
+          uid: String(valObj.id),
+          name: String(valObj.filename),
+          status: 'done',
+          response: valObj,
+        }
+      ]);
+    }
+  }, [value]);
+
   return (
     <Upload
       name="file"
       action="/api/v1/recipes/prompts/upload"
       headers={apiHeaders()}
       maxCount={1}
+      fileList={fileList}
       onChange={(info) => {
+        setFileList(info.fileList);
         if (info.file.status === 'done') {
           onChange?.(info.file.response);
         } else if (info.file.status === 'error') {
           message.error(`${info.file.name} file upload failed.`);
+          onChange?.(null);
         } else if (info.file.status === 'removed') {
           onChange?.(null);
         }
       }}
-      fileList={valObj ? [
-        {
-          uid: String(valObj.id),
-          name: String(valObj.filename),
-          status: 'done' as const,
-          response: valObj,
-        }
-      ] : []}
     >
       <Button icon={<UploadOutlined />}>Click to Upload</Button>
     </Upload>
