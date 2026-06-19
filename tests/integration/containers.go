@@ -670,12 +670,18 @@ func startK3s(t *testing.T) []byte {
 
 		// Rewrite the host/port to point to localhost mapped port
 		host, err := c.Host(ctx)
-		if err == nil {
-			port, err := c.MappedPort(ctx, "6443")
-			if err == nil {
-				kubeConfigBytes = bytes.ReplaceAll(kubeConfigBytes, []byte("https://127.0.0.1:6443"), []byte(fmt.Sprintf("https://%s:%s", host, port.Port())))
-			}
+		if err != nil {
+			k3sStartErr = fmt.Errorf("get host: %w", err)
+			return
 		}
+
+		port, err := c.MappedPort(ctx, "6443")
+		if err != nil {
+			k3sStartErr = fmt.Errorf("get mapped port: %w", err)
+			return
+		}
+
+		kubeConfigBytes = bytes.ReplaceAll(kubeConfigBytes, []byte("https://127.0.0.1:6443"), []byte(fmt.Sprintf("https://%s:%s", host, port.Port())))
 
 		k3sKubeConfig = kubeConfigBytes
 
