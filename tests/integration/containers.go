@@ -34,6 +34,7 @@ import (
 )
 
 
+
 func init() {
 	if os.Getenv("DOCKER_HOST") == "" {
 		home, _ := os.UserHomeDir()
@@ -49,6 +50,21 @@ func init() {
 			}
 		}
 	}
+}
+
+var (
+	cleanupMu    sync.Mutex
+	cleanupFuncs []func()
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	cleanupMu.Lock()
+	for _, f := range cleanupFuncs {
+		f()
+	}
+	cleanupMu.Unlock()
+	os.Exit(code)
 }
 
 // ── PostgreSQL ───────────────────────────────────────────────────────────────
@@ -83,6 +99,9 @@ func startPostgres(t *testing.T) string {
 			return
 		}
 		pgConnStr = s
+		cleanupMu.Lock()
+		cleanupFuncs = append(cleanupFuncs, func() { _ = c.Terminate(context.Background()) })
+		cleanupMu.Unlock()
 	})
 	if pgStartErr != nil {
 		t.Skipf("start postgres skipped: %v", pgStartErr)
@@ -133,6 +152,9 @@ func startClickHouse(t *testing.T) string {
 			return
 		}
 		chDSN = fmt.Sprintf("clickhouse://default:test@%s:%s/testdb", host, port.Port())
+		cleanupMu.Lock()
+		cleanupFuncs = append(cleanupFuncs, func() { _ = c.Terminate(context.Background()) })
+		cleanupMu.Unlock()
 	})
 	if chStartErr != nil {
 		t.Skipf("start clickhouse skipped: %v", chStartErr)
@@ -190,6 +212,9 @@ func startOpenSearch(t *testing.T) string {
 			return
 		}
 		osAddr = fmt.Sprintf("https://%s:%s", host, port.Port())
+		cleanupMu.Lock()
+		cleanupFuncs = append(cleanupFuncs, func() { _ = c.Terminate(context.Background()) })
+		cleanupMu.Unlock()
 	})
 	if osStartErr != nil {
 		t.Skipf("start opensearch skipped: %v", osStartErr)
@@ -273,6 +298,9 @@ func startSSH(t *testing.T) (host string, port int, keyFile string) {
 		}
 		sshHost = h
 		sshPort = int(p.Num())
+		cleanupMu.Lock()
+		cleanupFuncs = append(cleanupFuncs, func() { _ = c.Terminate(context.Background()) })
+		cleanupMu.Unlock()
 	})
 	if sshStartErr != nil {
 		t.Skipf("start ssh skipped: %v", sshStartErr)
