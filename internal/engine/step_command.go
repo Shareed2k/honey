@@ -34,7 +34,7 @@ func (run *CueRun) streamCueStepCommand(ctx context.Context, stepIdx int, kind s
 		}
 		mainCmd := strings.TrimSpace(cs.Command)
 		if interp := strings.TrimSpace(cs.Interpreter); interp != "" {
-			mainCmd = fmt.Sprintf("%s -c %s", interp, ShellSingleQuote(mainCmd))
+			mainCmd = fmt.Sprintf("%s -c %s", interp, ShellSingleQuoted(mainCmd))
 		}
 		var combined string
 		if b.CheckCmd != "" {
@@ -48,7 +48,7 @@ func (run *CueRun) streamCueStepCommand(ctx context.Context, stepIdx int, kind s
 				combined = fmt.Sprintf(
 					"command -v timeout >/dev/null 2>&1 || { echo '__HONEY_TIMEOUT_MISSING__' >&2; exit 124; }; timeout %s sh -c %s",
 					d.String(),
-					ShellSingleQuote(combined),
+					ShellSingleQuoted(combined),
 				)
 			}
 		}
@@ -195,7 +195,7 @@ func (run *CueRun) streamCueStepScript(ctx context.Context, stepIdx int, kind st
 				finalCmd = fmt.Sprintf(
 					"command -v timeout >/dev/null 2>&1 || { echo '__HONEY_TIMEOUT_MISSING__' >&2; exit 124; }; timeout %s sh -c %s",
 					d.String(),
-					ShellSingleQuote(finalCmd),
+					ShellSingleQuoted(finalCmd),
 				)
 			}
 		}
@@ -223,7 +223,7 @@ func RunCueStepCommand(out io.Writer, recipe cuetry.Recipe, execute bool, cliEnv
 	if cs != nil {
 		command = cs.Command
 		if interp := strings.TrimSpace(cs.Interpreter); interp != "" {
-			command = fmt.Sprintf("%s -c %s", interp, ShellSingleQuote(command))
+			command = fmt.Sprintf("%s -c %s", interp, ShellSingleQuoted(command))
 		}
 	}
 	runAs := cuetry.EffectiveRunAs(step.Base(), recipe.Defaults)

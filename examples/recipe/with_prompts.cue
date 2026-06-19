@@ -75,16 +75,34 @@ recipe: {
 			host: "*"
 			command: """
 				bash -s << 'EOF'
-				echo "${ACTION} Начинаем выполнение сложного скрипта..."
-				if [ -d "/etc" ]; then
-					echo "Папка /etc существует!"
-				fi
-				
-				for i in {1..3}; do
-					echo "Итерация $i"
-				done
+					echo "${ACTION} Начинаем выполнение сложного скрипта..."
+					if [ -d "/etc" ]; then
+						echo "Папка /etc существует!"
+					fi
+					
+					for i in {1..3}; do
+						echo "Итерация $i"
+					done
 				EOF
+				"""
+		},
+		{
+			host: "*"
+			command: """
+				import sys
+				print("Привет из Python!")
+				for i in range(3):
+					print(f"Итерация {i}")
 			"""
+			interpreter: "python3"
+		},
+		{
+			host: "*"
+			command: """
+				set -eo pipefail
+				echo "Это работает в bash!"
+			"""
+			interpreter: "bash"
 		}
 	]
 }
