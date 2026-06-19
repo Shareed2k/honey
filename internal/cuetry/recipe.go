@@ -62,6 +62,7 @@ const schemaSource = `
 	})
 	run_as?:  string
 	command?: string
+	interpreter?: string
 	render?:  string
 	put?: close({
 		local:  string

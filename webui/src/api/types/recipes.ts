@@ -70,6 +70,7 @@ export type ParsedRecipeStep = {
   depends?: string[];
   host: string;
   command?: string;
+  interpreter?: string;
   script?: ParsedRecipeFileTransfer;
   ai?: { model?: string; prompt?: string; system_prompt?: string; max_output_tokens?: number; max_input_chars?: number };
   template?: ParsedRecipeStepTemplate;

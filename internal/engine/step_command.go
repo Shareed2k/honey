@@ -33,6 +33,9 @@ func (run *CueRun) streamCueStepCommand(ctx context.Context, stepIdx int, kind s
 			env[k] = v
 		}
 		mainCmd := strings.TrimSpace(cs.Command)
+		if interp := strings.TrimSpace(cs.Interpreter); interp != "" {
+			mainCmd = fmt.Sprintf("%s -c %s", interp, ShellSingleQuote(mainCmd))
+		}
 		var combined string
 		if b.CheckCmd != "" {
 			combined = fmt.Sprintf("if %s; then echo 'HONEY_CHECK_CMD_OK'; else %s; fi", strings.TrimSpace(b.CheckCmd), mainCmd)
@@ -178,7 +181,7 @@ func (run *CueRun) streamCueStepScript(ctx context.Context, stepIdx int, kind st
 		for k, v := range kv {
 			env[k] = v
 		}
-		remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
+		remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env, ss.Interpreter)
 		if err != nil {
 			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
 		}
@@ -219,6 +222,9 @@ func RunCueStepCommand(out io.Writer, recipe cuetry.Recipe, execute bool, cliEnv
 	command := ""
 	if cs != nil {
 		command = cs.Command
+		if interp := strings.TrimSpace(cs.Interpreter); interp != "" {
+			command = fmt.Sprintf("%s -c %s", interp, ShellSingleQuote(command))
+		}
 	}
 	runAs := cuetry.EffectiveRunAs(step.Base(), recipe.Defaults)
 	if !execute {
@@ -351,7 +357,7 @@ func RunCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, exe
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
-			remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env)
+			remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env, ss.Interpreter)
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
