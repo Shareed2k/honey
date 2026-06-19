@@ -208,3 +208,125 @@ recipe: {
 	assert.True(t, results[1].Success) // Command step success
 	assert.Contains(t, results[1].Output, "hello from local")
 }
+
+func TestRecipeE2E_ScriptStep(t *testing.T) {
+	sshH, sshP, keyFile := startSSH(t)
+	reg := &testRegistry{Dialer: newTestDialer(sshH, sshP, keyFile)}
+	rec := hosts.CloneWithMetaSSHPort(hosts.Record{Provider: "test", Name: "ssh-test", PrimaryIP: sshH}, sshP)
+
+	tmpDir := t.TempDir()
+	localScript := filepath.Join(tmpDir, "test.sh")
+	err := os.WriteFile(localScript, []byte("#!/bin/sh\necho \"Script executed successfully\"\n"), 0755)
+	require.NoError(t, err)
+
+	cueContent := `
+recipe: {
+	name: "test-script-step"
+	type: "linear"
+	steps: [
+		{
+			host: "*"
+			script: {
+				local: "` + localScript + `"
+				remote: "/tmp/remote_script.sh"
+			}
+		}
+	]
+}
+`
+	recipe, err := cuetry.ParseRemoteRecipe([]byte(cueContent), nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	outCh := make(chan engine.HostExecResult, 10)
+	params := engine.CueRecipeRunParams{
+		Recipe:    recipe,
+		RecipeDir: tmpDir,
+		Records:   []hosts.Record{rec},
+		SSHUser:   "testuser",
+		Execute:   true,
+		Reg:       reg,
+	}
+
+	go func() {
+		defer close(outCh)
+		err := engine.StreamCueRecipeSteps(ctx, params, outCh)
+		assert.NoError(t, err)
+	}()
+
+	var results []engine.HostExecResult
+	for res := range outCh {
+		results = append(results, res)
+	}
+
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Success, "Expected success: %s", results[0].ErrMsg)
+	assert.Contains(t, results[0].Output, "Script executed successfully")
+}
+
+func TestRecipeE2E_GetStep(t *testing.T) {
+	sshH, sshP, keyFile := startSSH(t)
+	reg := &testRegistry{Dialer: newTestDialer(sshH, sshP, keyFile)}
+	rec := hosts.CloneWithMetaSSHPort(hosts.Record{Provider: "test", Name: "ssh-test", PrimaryIP: sshH}, sshP)
+
+	tmpDir := t.TempDir()
+	
+	cueContent := `
+recipe: {
+	name: "test-get-step"
+	type: "linear"
+	steps: [
+		{
+			host: "*"
+			command: "echo 'file contents' > /tmp/to_download.txt"
+		},
+		{
+			host: "*"
+			get: {
+				remote: "/tmp/to_download.txt"
+				local: "` + tmpDir + `/ssh-test_to_download.txt"
+			}
+		}
+	]
+}
+`
+	recipe, err := cuetry.ParseRemoteRecipe([]byte(cueContent), nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	outCh := make(chan engine.HostExecResult, 10)
+	params := engine.CueRecipeRunParams{
+		Recipe:    recipe,
+		RecipeDir: tmpDir,
+		Records:   []hosts.Record{rec},
+		SSHUser:   "testuser",
+		Execute:   true,
+		Reg:       reg,
+	}
+
+	go func() {
+		defer close(outCh)
+		err := engine.StreamCueRecipeSteps(ctx, params, outCh)
+		assert.NoError(t, err)
+	}()
+
+	var results []engine.HostExecResult
+	for res := range outCh {
+		results = append(results, res)
+	}
+
+	require.Len(t, results, 2)
+	assert.True(t, results[0].Success)
+	assert.True(t, results[1].Success, "Expected success: %s", results[1].ErrMsg)
+
+	// Since we download to a directory, it will be saved as "ssh-test_to_download.txt" 
+	// based on the CueGetLocalIsDirectory logic.
+	downloadedFile := filepath.Join(tmpDir, "ssh-test_to_download.txt")
+	content, err := os.ReadFile(downloadedFile)
+	require.NoError(t, err)
+	assert.Equal(t, "file contents\n", string(content))
+}
