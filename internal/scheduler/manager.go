@@ -5,6 +5,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -53,7 +54,7 @@ type Options struct {
 // Manager builds and runs all cron schedules derived from recipe apps.
 type Manager struct {
 	opts    Options
-	tsk     *tasker.Tasker
+	taskers []*tasker.Tasker // one per unique timezone
 	count   int
 	entries []ScheduleEntry
 }
@@ -66,18 +67,20 @@ func New(opts Options) (*Manager, error) {
 	}
 
 	m := &Manager{opts: opts}
-
-	tsk := tasker.New(tasker.Option{Tz: "UTC", Verbose: false})
-
-	m.register(tsk)
-
-	m.tsk = tsk
+	m.register()
 	return m, nil
 }
 
-// Run blocks and runs the cron scheduler until ctx is cancelled.
+// Run blocks and runs all cron schedulers until ctx is cancelled.
+// All but the last tasker are run in background goroutines; the last one blocks.
 func (m *Manager) Run(ctx context.Context) {
-	m.tsk.WithContext(ctx).Run()
+	for i, t := range m.taskers {
+		if i < len(m.taskers)-1 {
+			go t.WithContext(ctx).Run()
+		} else {
+			t.WithContext(ctx).Run() // last one blocks
+		}
+	}
 }
 
 // Entries returns all registered schedule entries (used by the list API).
@@ -85,10 +88,12 @@ func (m *Manager) Entries() []ScheduleEntry {
 	return m.entries
 }
 
-// Start begins the cron scheduler in a background goroutine and returns immediately.
-// The scheduler stops when ctx is cancelled.
+// Start begins all cron schedulers in background goroutines and returns immediately.
+// The schedulers stop when ctx is cancelled.
 func (m *Manager) Start(ctx context.Context) {
-	go m.tsk.WithContext(ctx).Run()
+	for _, t := range m.taskers {
+		go t.WithContext(ctx).Run()
+	}
 }
 
 // TaskCount returns the number of cron tasks that were registered.
@@ -97,7 +102,15 @@ func (m *Manager) TaskCount() int {
 }
 
 // register iterates all apps, parses recipe schedules, and registers gronx tasks.
-func (m *Manager) register(tsk *tasker.Tasker) {
+// One tasker.Tasker is created per unique timezone; they are stored in m.taskers.
+// If m.opts.Config is nil, register is a no-op (used by LoadScheduleEntries).
+func (m *Manager) register() {
+	if m.opts.Config == nil {
+		return
+	}
+
+	tzTaskers := map[string]*tasker.Tasker{}
+
 	for appName, app := range m.opts.Config.Apps {
 		if app.Type != apps.AppTypeRecipe || strings.TrimSpace(app.TargetRecipe) == "" {
 			continue
@@ -144,7 +157,17 @@ func (m *Manager) register(tsk *tasker.Tasker) {
 			capturedRecipePath := recipePath
 			capturedRecipe := recipe
 
-			tsk.Task(capturedSchedule.Cron, func(ctx context.Context) (int, error) {
+			// Look up or create the tasker for this schedule's timezone.
+			tz := strings.TrimSpace(capturedSchedule.TimeZone)
+			if tz == "" {
+				tz = "UTC"
+			}
+			if _, ok := tzTaskers[tz]; !ok {
+				tzTaskers[tz] = tasker.New(tasker.Option{Tz: tz, Verbose: false})
+			}
+			t := tzTaskers[tz]
+
+			t.Task(capturedSchedule.Cron, func(ctx context.Context) (int, error) {
 				if err := m.executeSchedule(
 					ctx,
 					capturedAppName,
@@ -176,8 +199,13 @@ func (m *Manager) register(tsk *tasker.Tasker) {
 				zap.String("app", capturedAppName),
 				zap.String("schedule", capturedScheduleName),
 				zap.String("cron", capturedSchedule.Cron),
+				zap.String("tz", tz),
 			)
 		}
+	}
+
+	for _, t := range tzTaskers {
+		m.taskers = append(m.taskers, t)
 	}
 }
 
@@ -195,7 +223,6 @@ func (m *Manager) executeSchedule(
 	if err != nil {
 		return fmt.Errorf("open plugins: %w", err)
 	}
-	defer func() { _ = pluginMgr.Close() }()
 
 	// Resolve target hosts.
 	searchIn := &hostapi.SearchHostsInput{
@@ -273,6 +300,7 @@ func (m *Manager) executeSchedule(
 	// Always submit async; if queue is nil, run inline (dev / no-queue mode).
 	run := func() {
 		defer func() {
+			_ = pluginMgr.Close()
 			if rec != nil {
 				_ = rec.Close()
 			}
@@ -281,7 +309,7 @@ func (m *Manager) executeSchedule(
 		ch := make(chan engine.HostExecResult, 64)
 		go func() {
 			defer close(ch)
-			_ = engine.StreamCueRecipeSteps(context.Background(), runParams, ch)
+			_ = engine.StreamCueRecipeSteps(ctx, runParams, ch)
 		}()
 
 		for res := range ch {
@@ -293,6 +321,15 @@ func (m *Manager) executeSchedule(
 
 	if m.opts.Queue != nil {
 		if qErr := m.opts.Queue.Submit(run); qErr != nil {
+			if errors.Is(qErr, queue.ErrQueueFull) {
+				zap.L().Warn("scheduler: queue full, skipping tick",
+					zap.String("app", appName),
+					zap.String("schedule", scheduleName),
+				)
+				_ = pluginMgr.Close()
+				return nil
+			}
+			_ = pluginMgr.Close()
 			return fmt.Errorf("submit to queue: %w", qErr)
 		}
 		return nil
@@ -311,8 +348,8 @@ func LoadScheduleEntries(cfg *config.File, configPath string) ([]ScheduleEntry, 
 		return nil, nil
 	}
 	// Reuse register() logic via a temporary manager.
+	// No taskers are needed — we only want the parsed entries.
 	m := &Manager{opts: Options{Config: cfg, ConfigPath: configPath}}
-	tsk := tasker.New(tasker.Option{})
-	m.register(tsk)
+	m.register()
 	return m.entries, nil
 }
