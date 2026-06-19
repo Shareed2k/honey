@@ -53,7 +53,7 @@ export async function fetchRecipeContent(path: string): Promise<string> {
   return j.content ?? '';
 }
 
-export async function syncRecipeAST(originalCUE: string, recipeContent: any): Promise<string> {
+export async function syncRecipeAST(originalCUE: string, recipeContent: Record<string, unknown>): Promise<string> {
   const r = await apiPost('/api/v1/recipes/sync-ast', { original_cue: originalCUE, recipe_content: recipeContent });
   if (!r.ok) {
     const j = (await r.json().catch(() => ({}))) as { error?: string };
@@ -78,7 +78,7 @@ export async function parseDiskRecipe(path: string): Promise<ParsedRecipe> {
 
 export async function fixRecipeErrors(
   recipeContent: Record<string, unknown>,
-  errors: any[],
+  errors: unknown[],
   model: string
 ): Promise<RecipesAIGraphResponse> {
   const r = await fetch('/api/v1/recipes/assist-fix', {

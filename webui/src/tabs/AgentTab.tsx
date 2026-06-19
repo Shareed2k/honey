@@ -42,7 +42,7 @@ const TOOLS: Tool[] = [
       required: ['recipe_content_raw'],
     },
   },
-] as any[]; // cast to any to bypass TS error if Tool expects OpenAI format
+] as unknown[]; // cast to any to bypass TS error if Tool expects OpenAI format
 
 async function executeTool(tc: ToolCall): Promise<string> {
   const args = JSON.parse(tc.function.arguments ?? '{}');
@@ -61,7 +61,7 @@ async function executeTool(tc: ToolCall): Promise<string> {
   }
 
   if (toolName === 'search_hosts') {
-    const reqBody: any = { name: args.name ?? '' };
+    const reqBody: Record<string, unknown> = { name: args.name ?? '' };
     if (args.providers) reqBody.providers = args.providers;
     if (args.backends) reqBody.backends = args.backends;
     
@@ -169,8 +169,8 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
               agent.url = url.toString();
             }
             await agent.runAgent({ messages: agent.messages, tools: TOOLS }, subscriber);
-        } catch (e: any) {
-            setError(`Tool error: ${e.message}`);
+        } catch (e: unknown) {
+            setError(`Tool error: ${(e as Error).message}`);
             setStreaming(false);
         }
       },
@@ -188,8 +188,8 @@ export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
       url.searchParams.set('model', selectedModel);
       agentRef.current.url = url.toString();
       await agentRef.current.runAgent({ messages: allMessages, tools: TOOLS }, subscriber);
-    } catch (e: any) {
-      setError(`Run error: ${e.message}`);
+    } catch (e: unknown) {
+      setError(`Run error: ${(e as Error).message}`);
       setStreaming(false);
     }
   };

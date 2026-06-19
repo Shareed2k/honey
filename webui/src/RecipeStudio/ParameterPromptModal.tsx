@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Form, Input, Select, Checkbox, Upload, Button, message, Space } from 'antd';
+import React, { useEffect, useState } from 'react';
+import { Modal, Form, Input, Select, Checkbox, Upload, Button, message } from 'antd';
 import { UploadOutlined, ClearOutlined } from '@ant-design/icons';
 import type { RecipePrompt } from '../api/types/recipes';
 import { apiHeaders } from '../api/core';
 import { JSONPath } from 'jsonpath-plus';
+import type { Rule } from 'antd/es/form';
 
 type Props = {
   open: boolean;
@@ -13,7 +14,7 @@ type Props = {
   onSubmit: (values: Record<string, string>) => void;
 };
 
-function RemoteSelect({ prompt, value, onChange }: { prompt: RecipePrompt; value?: any; onChange?: (val: any) => void }) {
+function RemoteSelect({ prompt, value, onChange }: { prompt: RecipePrompt; value?: unknown; onChange?: (val: unknown) => void }) {
   const [options, setOptions] = useState<{label: string, value: string}[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -39,14 +40,16 @@ function RemoteSelect({ prompt, value, onChange }: { prompt: RecipePrompt; value
         }
         const mapped = Array.isArray(results) ? results.map(item => {
           if (typeof item === 'object' && item !== null) {
-            return { label: item.name || item.value || JSON.stringify(item), value: item.value || JSON.stringify(item) };
+            const label = (item as Record<string, unknown>).name || (item as Record<string, unknown>).value || JSON.stringify(item);
+            const val = (item as Record<string, unknown>).value || JSON.stringify(item);
+            return { label: String(label), value: String(val) };
           }
           return { label: String(item), value: String(item) };
         }) : [];
         setOptions(mapped);
       })
       .catch(err => {
-        message.error(`Failed to load choices: ${err.message}`);
+        message.error(`Failed to load choices: ${(err as Error).message}`);
       })
       .finally(() => setLoading(false));
   }, [prompt.choices_url, prompt.choices_json_path]);
@@ -56,7 +59,8 @@ function RemoteSelect({ prompt, value, onChange }: { prompt: RecipePrompt; value
   );
 }
 
-function FileUpload({ value, onChange }: { value?: any; onChange?: (val: any) => void }) {
+function FileUpload({ value, onChange }: { value?: unknown; onChange?: (val: unknown) => void }) {
+  const valObj = value as Record<string, unknown> | undefined;
   return (
     <Upload
       name="file"
@@ -72,12 +76,12 @@ function FileUpload({ value, onChange }: { value?: any; onChange?: (val: any) =>
           onChange?.(null);
         }
       }}
-      fileList={value ? [
+      fileList={valObj ? [
         {
-          uid: value.id,
-          name: value.filename,
+          uid: String(valObj.id),
+          name: String(valObj.filename),
           status: 'done' as const,
-          response: value,
+          response: valObj,
         }
       ] : []}
     >
@@ -89,44 +93,44 @@ function FileUpload({ value, onChange }: { value?: any; onChange?: (val: any) =>
 export function ParameterPromptModal({ open, prompts, recipeName, onCancel, onSubmit }: Props) {
   const [form] = Form.useForm();
 
-  const getInitialValues = () => {
-    const vals: Record<string, any> = {};
-    const params = new URLSearchParams(window.location.search);
-    let cached: Record<string, any> = {};
-    if (recipeName) {
-      try {
-        cached = JSON.parse(localStorage.getItem(`honey_prompt_cache_${recipeName}`) || '{}');
-      } catch (e) {}
-    }
-
-    for (const [key, def] of Object.entries(prompts)) {
-      let val = def.default;
-      if (cached[key] !== undefined) val = cached[key];
-      
-      const qVal = params.get(`prompt.${key}`);
-      if (qVal !== null) val = qVal;
-
-      if (def.type === 'boolean') {
-        vals[key] = val === 'true' || val === true;
-      } else if (def.multi && typeof val === 'string') {
-        vals[key] = val.split(',').map((s) => s.trim());
-      } else if (val !== undefined) {
-        vals[key] = val;
-      }
-    }
-    return vals;
-  };
-
   useEffect(() => {
-    if (open) {
-      form.resetFields();
-      form.setFieldsValue(getInitialValues());
-    }
+    if (!open) return;
+
+    const getInitialValues = () => {
+      const vals: Record<string, unknown> = {};
+      const params = new URLSearchParams(window.location.search);
+      let cached: Record<string, unknown> = {};
+      if (recipeName) {
+        try {
+          cached = JSON.parse(localStorage.getItem(`honey_prompt_cache_${recipeName}`) || '{}');
+        } catch { /* ignore */ }
+      }
+  
+      for (const [key, def] of Object.entries(prompts)) {
+        let val: unknown = def.default;
+        if (cached[key] !== undefined) val = cached[key];
+        
+        const qVal = params.get(`prompt.${key}`);
+        if (qVal !== null) val = qVal;
+  
+        if (def.type === 'boolean') {
+          vals[key] = val === 'true' || val === true;
+        } else if (def.multi && typeof val === 'string') {
+          vals[key] = val.split(',').map((s) => s.trim());
+        } else if (val !== undefined) {
+          vals[key] = val;
+        }
+      }
+      return vals;
+    };
+
+    form.resetFields();
+    form.setFieldsValue(getInitialValues());
   }, [open, form, prompts, recipeName]);
 
-  const handleFinish = (values: Record<string, any>) => {
+  const handleFinish = (values: Record<string, unknown>) => {
     if (recipeName) {
-      const toCache: Record<string, any> = {};
+      const toCache: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(values)) {
         if (prompts[k]?.type !== 'file' && prompts[k]?.type !== 'password') {
           toCache[k] = v;
@@ -138,11 +142,12 @@ export function ParameterPromptModal({ open, prompts, recipeName, onCancel, onSu
     const transformed: Record<string, string> = {};
     for (const [k, v] of Object.entries(values)) {
       const def = prompts[k];
-      if (def?.type === 'file' && v && v.id) {
-        transformed[`HONEY_PROMPT_${k}`] = String(v.id);
-        transformed[`HONEY_FILE_${k}`] = String(v.path);
-        transformed[`HONEY_FILE_${k}_FILENAME`] = String(v.filename);
-        transformed[`HONEY_FILE_${k}_SHA`] = String(v.sha);
+      const valObj = v as Record<string, unknown>;
+      if (def?.type === 'file' && valObj && valObj.id) {
+        transformed[`HONEY_PROMPT_${k}`] = String(valObj.id);
+        transformed[`HONEY_FILE_${k}`] = String(valObj.path);
+        transformed[`HONEY_FILE_${k}_FILENAME`] = String(valObj.filename);
+        transformed[`HONEY_FILE_${k}_SHA`] = String(valObj.sha);
       } else if (Array.isArray(v)) {
         transformed[k] = v.join(',');
       } else if (typeof v === 'boolean') {
@@ -159,9 +164,7 @@ export function ParameterPromptModal({ open, prompts, recipeName, onCancel, onSu
   const handleClearCache = () => {
     if (recipeName) {
       localStorage.removeItem(`honey_prompt_cache_${recipeName}`);
-      message.success('Cache cleared. Loading defaults...');
-      form.resetFields();
-      form.setFieldsValue(getInitialValues());
+      message.success('Cache cleared. Please close and reopen the prompt.');
     }
   };
 
@@ -184,7 +187,7 @@ export function ParameterPromptModal({ open, prompts, recipeName, onCancel, onSu
     >
       <Form form={form} layout="vertical" onFinish={handleFinish}>
         {Object.entries(prompts).map(([key, def]) => {
-          const rules: any[] = [];
+          const rules: Rule[] = [];
           if (def.required) {
             rules.push({ required: true, message: `Please input ${key}` });
           }

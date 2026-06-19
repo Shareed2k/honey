@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
 import type { HostRecord } from '../HostPicker';
 import type { ParsedRecipe } from '../api/types/recipes';
-import type { WizardState, WizardStep, RecipeRef, EnvPair, Draft } from './types';
+import type { WizardState, WizardStep, RecipeRef, EnvPair } from './types';
 import { INITIAL_WIZARD_STATE } from './types';
 
 type WizardAction =
@@ -62,6 +62,7 @@ export function WizardProvider({ children, initialHosts = [] }: { children: Reac
   return <WizardContext.Provider value={{ state, dispatch }}>{children}</WizardContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useWizard() {
   const ctx = useContext(WizardContext);
   if (!ctx) {
