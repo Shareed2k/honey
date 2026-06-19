@@ -15,11 +15,19 @@ import (
 
 // Recipe is the decoded "recipe" block from a CUE document.
 type Recipe struct {
-	Name     string          `json:"name"`
-	Type     string          `json:"type,omitempty"`
-	Defaults *RecipeDefaults `json:"defaults,omitempty"`
-	Steps    []StepWrapper   `json:"steps"`
-	Handlers []StepWrapper   `json:"handlers,omitempty"`
+	Name     string                   `json:"name"`
+	Type     string                   `json:"type,omitempty"`
+	Webhooks map[string]RecipeWebhook `json:"webhooks,omitempty"`
+	Defaults *RecipeDefaults          `json:"defaults,omitempty"`
+	Steps    []StepWrapper            `json:"steps"`
+	Handlers []StepWrapper            `json:"handlers,omitempty"`
+}
+
+// RecipeWebhook defines a webhook trigger for a recipe.
+type RecipeWebhook struct {
+	AuthSecret string            `json:"auth_secret,omitempty"`
+	Extract    map[string]string `json:"extract,omitempty"`
+	Async      *bool             `json:"async,omitempty"`
 }
 
 // RecipePrompt defines metadata for UI form generation.

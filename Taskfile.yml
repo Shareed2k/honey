@@ -171,5 +171,7 @@ tasks:
 
   test:integration:
     desc: Run integration tests with testcontainers
+    vars:
+      TESTCONTAINERS_RYUK_DISABLED: "false"
     cmds:
       - go test -tags integration -timeout 10m -v ./tests/integration/...

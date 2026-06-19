@@ -272,9 +272,15 @@ const schemaSource = `
 	})
 	notify_handler?: [...string]
 })
+#Webhook: close({
+	auth_secret?:  string
+	extract?:      {[string]: string}
+	async?:        bool
+})
 #Recipe: close({
 	name:  string
 	type?: "linear" | "graph"
+	webhooks?: {[string]: #Webhook}
 	defaults?: close({
 		run_as?: string
 		env?: {[string]: string}
