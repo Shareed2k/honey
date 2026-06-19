@@ -33,11 +33,30 @@ import (
 	"github.com/shareed2k/honey/internal/webserver"
 )
 
+
+func init() {
+	if os.Getenv("DOCKER_HOST") == "" {
+		home, _ := os.UserHomeDir()
+		sockets := []string{
+			filepath.Join(home, ".colima", "default", "docker.sock"),
+			filepath.Join(home, ".colima", "docker.sock"),
+			filepath.Join(home, ".orbstack", "run", "docker.sock"),
+		}
+		for _, sock := range sockets {
+			if _, err := os.Stat(sock); err == nil {
+				os.Setenv("DOCKER_HOST", "unix://"+sock)
+				break
+			}
+		}
+	}
+}
+
 // ── PostgreSQL ───────────────────────────────────────────────────────────────
 
 var (
-	pgOnce    sync.Once
-	pgConnStr string
+	pgOnce     sync.Once
+	pgConnStr  string
+	pgStartErr error
 )
 
 func startPostgres(t *testing.T) string {
@@ -55,22 +74,28 @@ func startPostgres(t *testing.T) string {
 			),
 		)
 		if err != nil {
-			t.Fatalf("start postgres: %v", err)
+			pgStartErr = err
+			return
 		}
 		s, err := c.ConnectionString(ctx, "sslmode=disable")
 		if err != nil {
-			t.Fatalf("postgres connection string: %v", err)
+			pgStartErr = err
+			return
 		}
 		pgConnStr = s
 	})
+	if pgStartErr != nil {
+		t.Skipf("start postgres skipped: %v", pgStartErr)
+	}
 	return pgConnStr
 }
 
 // ── ClickHouse ───────────────────────────────────────────────────────────────
 
 var (
-	chOnce sync.Once
-	chDSN  string
+	chOnce     sync.Once
+	chDSN      string
+	chStartErr error
 )
 
 func startClickHouse(t *testing.T) string {
@@ -94,26 +119,33 @@ func startClickHouse(t *testing.T) string {
 			Started:          true,
 		})
 		if err != nil {
-			t.Fatalf("start clickhouse: %v", err)
+			chStartErr = err
+			return
 		}
 		host, err := c.Host(ctx)
 		if err != nil {
-			t.Fatalf("clickhouse host: %v", err)
+			chStartErr = err
+			return
 		}
 		port, err := c.MappedPort(ctx, "9000")
 		if err != nil {
-			t.Fatalf("clickhouse port: %v", err)
+			chStartErr = err
+			return
 		}
 		chDSN = fmt.Sprintf("clickhouse://default:test@%s:%s/testdb", host, port.Port())
 	})
+	if chStartErr != nil {
+		t.Skipf("start clickhouse skipped: %v", chStartErr)
+	}
 	return chDSN
 }
 
 // ── OpenSearch ───────────────────────────────────────────────────────────────
 
 var (
-	osOnce sync.Once
-	osAddr string
+	osOnce     sync.Once
+	osAddr     string
+	osStartErr error
 )
 
 func startOpenSearch(t *testing.T) string {
@@ -144,18 +176,24 @@ func startOpenSearch(t *testing.T) string {
 			Started:          true,
 		})
 		if err != nil {
-			t.Fatalf("start opensearch: %v", err)
+			osStartErr = err
+			return
 		}
 		host, err := c.Host(ctx)
 		if err != nil {
-			t.Fatalf("opensearch host: %v", err)
+			osStartErr = err
+			return
 		}
 		port, err := c.MappedPort(ctx, "9200")
 		if err != nil {
-			t.Fatalf("opensearch port: %v", err)
+			osStartErr = err
+			return
 		}
 		osAddr = fmt.Sprintf("https://%s:%s", host, port.Port())
 	})
+	if osStartErr != nil {
+		t.Skipf("start opensearch skipped: %v", osStartErr)
+	}
 	return osAddr
 }
 
@@ -166,6 +204,7 @@ var (
 	sshHost    string
 	sshPort    int
 	sshKeyFile string
+	sshStartErr error
 )
 
 func startSSH(t *testing.T) (host string, port int, keyFile string) {
@@ -174,26 +213,31 @@ func startSSH(t *testing.T) (host string, port int, keyFile string) {
 		// Generate ED25519 keypair for test auth.
 		pub, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			t.Fatalf("generate ssh key: %v", err)
+			sshStartErr = err
+			return
 		}
 		sshPub, err := gossh.NewPublicKey(pub)
 		if err != nil {
-			t.Fatalf("ssh public key: %v", err)
+			sshStartErr = err
+			return
 		}
 		authorizedKey := string(gossh.MarshalAuthorizedKey(sshPub))
 
 		// Write private key to temp file (OpenSSH PEM format).
 		privPEMBlock, err := gossh.MarshalPrivateKey(priv, "")
 		if err != nil {
-			t.Fatalf("marshal ssh private key: %v", err)
+			sshStartErr = err
+			return
 		}
 		keyPath, err := os.CreateTemp("", "integration_test_ed25519_*")
 		if err != nil {
-			t.Fatalf("create key temp file: %v", err)
+			sshStartErr = err
+			return
 		}
 		keyPath.Close()
 		if err := os.WriteFile(keyPath.Name(), pem.EncodeToMemory(privPEMBlock), 0o600); err != nil {
-			t.Fatalf("write ssh key: %v", err)
+			sshStartErr = err
+			return
 		}
 		sshKeyFile = keyPath.Name()
 
@@ -214,19 +258,25 @@ func startSSH(t *testing.T) (host string, port int, keyFile string) {
 			Started:          true,
 		})
 		if err != nil {
-			t.Fatalf("start ssh: %v", err)
+			sshStartErr = err
+			return
 		}
 		h, err := c.Host(ctx)
 		if err != nil {
-			t.Fatalf("ssh host: %v", err)
+			sshStartErr = err
+			return
 		}
 		p, err := c.MappedPort(ctx, "2222")
 		if err != nil {
-			t.Fatalf("ssh port: %v", err)
+			sshStartErr = err
+			return
 		}
 		sshHost = h
 		sshPort = int(p.Num())
 	})
+	if sshStartErr != nil {
+		t.Skipf("start ssh skipped: %v", sshStartErr)
+	}
 	return sshHost, sshPort, sshKeyFile
 }
 
