@@ -123,6 +123,7 @@ require (
 	github.com/MirrexOne/unqueryvet v1.5.4 // indirect
 	github.com/OpenPeeDeeP/depguard/v2 v2.2.1 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
+	github.com/adhocore/gronx v1.20.0 // indirect
 	github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20260617132514-63fc8900f3a5 // indirect
 	github.com/alecthomas/chroma/v2 v2.24.1 // indirect
 	github.com/alecthomas/go-check-sumtype v0.3.1 // indirect

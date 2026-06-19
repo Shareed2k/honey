@@ -1,0 +1,277 @@
+// Package scheduler provides a cron-based trigger layer for CUE recipe apps.
+// It scans the honey config for apps whose target recipe has one or more
+// RecipeSchedule entries and registers a gronx task for each one.
+package scheduler
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/adhocore/gronx/pkg/tasker"
+	"go.uber.org/zap"
+
+	"github.com/shareed2k/honey/internal/apps"
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/postgres"
+	"github.com/shareed2k/honey/internal/queue"
+	"github.com/shareed2k/honey/internal/safepath"
+	"github.com/shareed2k/honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/ui"
+)
+
+// Options configures the Manager.
+type Options struct {
+	ConfigPath     string
+	Config         *config.File
+	ExecRegistry   hostexec.Registry
+	SearchRegistry *searchrun.Registry
+	RecordDir      string
+	Queue          queue.Queue
+	Metrics        *metrics.Registry
+	Pools          *postgres.PoolManager
+}
+
+// Manager builds and runs all cron schedules derived from recipe apps.
+type Manager struct {
+	opts  Options
+	tsk   *tasker.Tasker
+	count int
+}
+
+// New creates a Manager and registers all eligible recipe schedule tasks.
+// It returns an error if no config is provided or no tasks could be registered.
+func New(opts Options) (*Manager, error) {
+	if opts.Config == nil {
+		return nil, fmt.Errorf("scheduler: config is required")
+	}
+
+	m := &Manager{opts: opts}
+
+	tsk := tasker.New(tasker.Option{Tz: "UTC", Verbose: false})
+
+	m.register(tsk)
+
+	m.tsk = tsk
+	return m, nil
+}
+
+// Run blocks and runs the cron scheduler until ctx is cancelled.
+func (m *Manager) Run(ctx context.Context) {
+	m.tsk.WithContext(ctx).Run()
+}
+
+// TaskCount returns the number of cron tasks that were registered.
+func (m *Manager) TaskCount() int {
+	return m.count
+}
+
+// register iterates all apps, parses recipe schedules, and registers gronx tasks.
+func (m *Manager) register(tsk *tasker.Tasker) {
+	for appName, app := range m.opts.Config.Apps {
+		if app.Type != apps.AppTypeRecipe || strings.TrimSpace(app.TargetRecipe) == "" {
+			continue
+		}
+
+		recipePath := strings.TrimSpace(app.TargetRecipe)
+		if !filepath.IsAbs(recipePath) && m.opts.ConfigPath != "" {
+			recipePath = filepath.Join(filepath.Dir(m.opts.ConfigPath), recipePath)
+		}
+
+		raw, err := safepath.ReadFile(recipePath)
+		if err != nil {
+			zap.L().Warn("scheduler: skipping app — cannot read recipe",
+				zap.String("app", appName),
+				zap.String("path", recipePath),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		recipe, err := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{})
+		if err != nil {
+			zap.L().Warn("scheduler: skipping app — cannot parse recipe",
+				zap.String("app", appName),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		for schedName, sched := range recipe.Schedules {
+			if strings.TrimSpace(sched.Cron) == "" {
+				zap.L().Warn("scheduler: skipping schedule — empty cron expression",
+					zap.String("app", appName),
+					zap.String("schedule", schedName),
+				)
+				continue
+			}
+
+			// Capture loop variables for the closure.
+			capturedApp := app
+			capturedAppName := appName
+			capturedSchedule := sched
+			capturedScheduleName := schedName
+			capturedRecipePath := recipePath
+			capturedRecipe := recipe
+
+			tsk.Task(capturedSchedule.Cron, func(ctx context.Context) (int, error) {
+				if err := m.executeSchedule(
+					ctx,
+					capturedAppName,
+					capturedScheduleName,
+					capturedApp,
+					capturedRecipe,
+					capturedRecipePath,
+					capturedSchedule,
+				); err != nil {
+					zap.L().Error("scheduler: schedule execution failed",
+						zap.String("app", capturedAppName),
+						zap.String("schedule", capturedScheduleName),
+						zap.Error(err),
+					)
+					return 1, err
+				}
+				return 0, nil
+			})
+
+			m.count++
+			zap.L().Info("scheduler: registered cron task",
+				zap.String("app", capturedAppName),
+				zap.String("schedule", capturedScheduleName),
+				zap.String("cron", capturedSchedule.Cron),
+			)
+		}
+	}
+}
+
+// executeSchedule runs the recipe for a single cron trigger, mirroring the webhook
+// handler pattern: search hosts, build run params, submit to queue async.
+func (m *Manager) executeSchedule(
+	ctx context.Context,
+	appName, scheduleName string,
+	app apps.AppConfig,
+	recipe cuetry.Recipe,
+	recipePath string,
+	sched cuetry.RecipeSchedule,
+) error {
+	pluginMgr, err := plugins.Open(ctx, m.opts.Config)
+	if err != nil {
+		return fmt.Errorf("open plugins: %w", err)
+	}
+	defer func() { _ = pluginMgr.Close() }()
+
+	// Resolve target hosts.
+	searchIn := &hostapi.SearchHostsInput{
+		ConfigPath: m.opts.ConfigPath,
+		Name:       app.Target,
+		Providers:  app.Provider,
+	}
+	if app.Target == "" && app.TargetRegex != "" {
+		searchIn.NameRegex = app.TargetRegex
+	}
+
+	searchOut, err := hostapi.SearchHosts(ctx, searchIn, m.opts.ExecRegistry, m.opts.SearchRegistry)
+	if err != nil {
+		return fmt.Errorf("search hosts: %w", err)
+	}
+
+	if len(searchOut.Records) == 0 {
+		return fmt.Errorf("no target hosts found for app %q", appName)
+	}
+
+	// Merge schedule-level env on top of any global defaults.
+	cliEnv := make(map[string]string, len(sched.Env))
+	for k, v := range sched.Env {
+		cliEnv[k] = v
+	}
+
+	secRes, _ := cuetry.NewSecretResolverWithPlugins(
+		cuetry.SecretResolverOptionsFromHoney(m.opts.Config), pluginMgr,
+	)
+	aiPrompt := ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath)
+
+	sshUser := ""
+	if m.opts.Config != nil && m.opts.Config.Defaults.SSHUser != "" {
+		sshUser = m.opts.Config.Defaults.SSHUser
+	}
+
+	runParams := engine.CueRecipeRunParams{
+		Recipe:         recipe,
+		RecipeDir:      filepath.Dir(recipePath),
+		Records:        searchOut.Records,
+		SSHUser:        sshUser,
+		CLIEnv:         cliEnv,
+		ConfigPath:     m.opts.ConfigPath,
+		AISystemPrompt: aiPrompt,
+		SecretResolver: secRes,
+		PluginMgr:      pluginMgr,
+		Execute:        true,
+		Obs:            m.opts.Metrics,
+		Reg:            m.opts.ExecRegistry,
+		Pools:          m.opts.Pools,
+	}
+
+	// Build an optional session recorder.
+	var rec *engine.SessionRecorder
+	if strings.TrimSpace(m.opts.RecordDir) != "" {
+		trigger := fmt.Sprintf("cron-%s-%s", appName, scheduleName)
+		rec, err = engine.NewBatchSessionRecorder(m.opts.RecordDir, trigger, sshUser, len(searchOut.Records))
+		if err != nil {
+			zap.L().Warn("scheduler: could not create session recorder",
+				zap.String("app", appName),
+				zap.String("schedule", scheduleName),
+				zap.Error(err),
+			)
+			rec = nil
+		} else {
+			hash, _ := recipe.HashJSON()
+			rec.RecordRecipeMeta(engine.RecipeMeta{
+				RecipePath:        recipePath,
+				HostCount:         len(searchOut.Records),
+				RecipeContentHash: hash,
+				StartedAt:         time.Now().UTC(),
+				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, 100),
+			})
+		}
+	}
+
+	// Always submit async; if queue is nil, run inline (dev / no-queue mode).
+	run := func() {
+		defer func() {
+			if rec != nil {
+				_ = rec.Close()
+			}
+		}()
+
+		ch := make(chan engine.HostExecResult, 64)
+		go func() {
+			defer close(ch)
+			_ = engine.StreamCueRecipeSteps(context.Background(), runParams, ch)
+		}()
+
+		for res := range ch {
+			if rec != nil {
+				rec.RecordHostExecResult(res)
+			}
+		}
+	}
+
+	if m.opts.Queue != nil {
+		if qErr := m.opts.Queue.Submit(run); qErr != nil {
+			return fmt.Errorf("submit to queue: %w", qErr)
+		}
+		return nil
+	}
+
+	// Inline fallback (blocking).
+	run()
+	return nil
+}
