@@ -4,7 +4,6 @@ package integration
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -331,20 +330,6 @@ recipe: {
 	assert.Equal(t, "file contents\n", string(content))
 }
 
-type testSecretResolver map[string]string
-
-func (m testSecretResolver) Handles(ref string) bool {
-	_, ok := m[ref]
-	return ok
-}
-
-func (m testSecretResolver) Resolve(_ context.Context, ref string) (string, error) {
-	if val, ok := m[ref]; ok {
-		return val, nil
-	}
-	return "", fmt.Errorf("secret not found")
-}
-
 func TestRecipeE2E_PostgresStep(t *testing.T) {
 	pgDSN := startPostgres(t)
 	// Create an empty registry, database steps do not require ssh dialers
@@ -374,7 +359,7 @@ recipe: {
 	defer cancel()
 
 	// Mock SecretResolver to return our container's DSN
-	secretResolver := testSecretResolver{
+	secretResolver := cuetry.StaticSecretResolver{
 		"my_db": pgDSN,
 	}
 
@@ -459,4 +444,57 @@ recipe: {
 	require.Len(t, results, 1)
 	assert.True(t, results[0].Success, "Expected success: %s", results[0].ErrMsg)
 	assert.Contains(t, results[0].Output, "indexed")
+}
+
+func TestRecipeE2E_LocalSteps(t *testing.T) {
+	reg := &testRegistry{}
+	rec := hosts.Record{Provider: "test", Name: "local-test"}
+
+	cueContentOnlyTemplate := `
+recipe: {
+	name: "test-template-step"
+	type: "linear"
+	steps: [
+		{
+			host: "_"
+			template: {
+				template: "Hello {{ .Records.Target.Name }}"
+				data: {
+					Records: {
+						Target: { Name: "local-test" }
+					}
+				}
+			}
+		}
+	]
+}
+`
+	recipeTmpl, err := cuetry.ParseRemoteRecipe([]byte(cueContentOnlyTemplate), nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	outCh := make(chan engine.HostExecResult, 10)
+	params := engine.CueRecipeRunParams{
+		Recipe:  recipeTmpl,
+		Records: []hosts.Record{rec},
+		Execute: true,
+		Reg:     reg,
+	}
+
+	go func() {
+		defer close(outCh)
+		err := engine.StreamCueRecipeSteps(ctx, params, outCh)
+		assert.NoError(t, err)
+	}()
+
+	var results []engine.HostExecResult
+	for res := range outCh {
+		results = append(results, res)
+	}
+
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Success, "Expected success: %s", results[0].ErrMsg)
+	assert.Equal(t, "Hello local-test", results[0].Output)
 }
