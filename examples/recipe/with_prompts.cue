@@ -93,7 +93,7 @@ recipe: {
 				print("Привет из Python!")
 				for i in range(3):
 					print(f"Итерация {i}")
-			"""
+				"""
 			interpreter: "python3"
 		},
 		{
@@ -101,7 +101,7 @@ recipe: {
 			command: """
 				set -eo pipefail
 				echo "Это работает в bash!"
-			"""
+				"""
 			interpreter: "bash"
 		}
 	]

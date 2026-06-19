@@ -47,8 +47,7 @@ export default function StorageModal({ visible, currentRecipeName, onCancel, onS
   };
 
   return (
-    <Modal
-      title="Save Recipe Draft"
+    <Modal maskClosable={false}       title="Save Recipe Draft"
       open={visible}
       onCancel={onCancel}
       footer={null}

@@ -357,8 +357,7 @@ function EditorModal({
   };
 
   return (
-    <Modal
-      open
+    <Modal maskClosable={false}       open
       title={`${editor.index === null ? 'Add' : 'Edit'} ${editor.kind}`}
       onCancel={onClose}
       footer={null}

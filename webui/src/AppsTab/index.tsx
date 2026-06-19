@@ -589,8 +589,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
         )}
       </section>
 
-      <Modal
-        open={!!sqlSession}
+      <Modal maskClosable={false}         open={!!sqlSession}
         title={sqlSession ? `SQL Editor — ${sqlSession.app.name}` : 'SQL Editor'}
         onCancel={() => setSqlSession(null)}
         footer={null}
@@ -748,8 +747,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
       </Modal>
 
       {recipeApp && recipeParsed && (
-        <Modal
-          open={!!recipeApp && !promptsOpen}
+        <Modal maskClosable={false}           open={!!recipeApp && !promptsOpen}
           title={`Recipe App: ${recipeApp.name}`}
           onCancel={closeRecipeApp}
           footer={null}

@@ -26,8 +26,7 @@ export function LibraryModal({ open, onCancel, onSelect }: Props) {
   }, [open]);
 
   return (
-    <Modal
-      title="Recipe Library"
+    <Modal maskClosable={false}       title="Recipe Library"
       open={open}
       onCancel={onCancel}
       footer={null}

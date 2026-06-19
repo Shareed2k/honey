@@ -67,8 +67,7 @@ export function TunnelsTab({ onNavigateToSearch }: Props) {
       ) : (
         <Table dataSource={tunnelsList} columns={columns} rowKey="id" size="small" pagination={false} />
       )}
-      <Modal
-        open={!!tunnelLogOpen}
+      <Modal maskClosable={false}         open={!!tunnelLogOpen}
         title="Tunnel Logs"
         footer={<Button onClick={() => setTunnelLogOpen(null)}>Close</Button>}
         onCancel={() => setTunnelLogOpen(null)}
