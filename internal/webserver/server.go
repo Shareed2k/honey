@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/shareed2k/honey/internal/engine"
 
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -57,7 +58,7 @@ type Options struct {
 type Server struct {
 	opts     Options
 	metrics  *metrics.Registry
-	mux      *http.ServeMux
+	router   chi.Router
 	assistRL *slidingRL
 	tunnels  *tunnelManager
 	proxy    *proxy.Manager
@@ -106,7 +107,7 @@ func NewServer(opts Options) (*Server, error) {
 	s := &Server{
 		opts:                  opts,
 		metrics:               opts.Metrics,
-		mux:                   http.NewServeMux(),
+		router:                chi.NewRouter(),
 		assistRL:              newSlidingRL(),
 		tunnels:               newTunnelManager(),
 		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
@@ -125,92 +126,130 @@ func NewServer(opts Options) (*Server, error) {
 }
 
 func (s *Server) routes() error {
-	s.mux.HandleFunc("GET /api/v1/meta", s.withAuth(s.handleMeta))
-	s.mux.HandleFunc("GET /api/v1/openapi.json", s.withAuth(s.handleOpenAPIJSON))
-	s.mux.HandleFunc("GET /api/v1/providers", s.withAuth(s.handleProviders))
-	s.mux.HandleFunc("GET /api/v1/backends", s.withAuth(s.handleBackends))
-	s.mux.HandleFunc("GET /api/v1/logs/default", s.withAuth(s.handleLogsDefault))
-	s.mux.HandleFunc("POST /api/v1/search", s.withAuth(s.handleSearch))
-	s.mux.HandleFunc("POST /api/v1/secrets/encrypt", s.withAuth(s.handleSecretsEncrypt))
-	s.mux.HandleFunc("POST /api/v1/secrets/seal", s.withAuth(s.handleSecretsSeal))
-	s.mux.HandleFunc("POST /api/v1/host-ports", s.withAuth(s.handleHostPorts))
-	s.mux.HandleFunc("GET /api/v1/tunnels", s.withAuth(s.handleTunnelsGet))
-	s.mux.HandleFunc("GET /api/v1/tunnels/{id}/logs", s.withAuth(s.handleTunnelsLogs))
-	s.mux.HandleFunc("POST /api/v1/tunnels", s.withAuth(s.handleTunnelsPost))
-	s.mux.HandleFunc("DELETE /api/v1/tunnels/{id}", s.withAuth(s.handleTunnelsDelete))
-	s.mux.HandleFunc("GET /api/v1/config/backends", s.withAuth(s.handleConfigBackendsGet))
-	s.mux.HandleFunc("POST /api/v1/config/backends/{kind}", s.withAuth(s.handleConfigBackendsPost))
-	s.mux.HandleFunc("PUT /api/v1/config/backends/{kind}/{index}", s.withAuth(s.handleConfigBackendsPut))
-	s.mux.HandleFunc("DELETE /api/v1/config/backends/{kind}/{index}", s.withAuth(s.handleConfigBackendsDelete))
-	s.mux.HandleFunc("GET /api/v1/config/schema", s.withAuth(s.handleConfigSchema))
-	s.mux.HandleFunc("GET /api/v1/config", s.withAuth(s.handleConfigGet))
-	s.mux.HandleFunc("PUT /api/v1/config", s.withAuth(s.handleConfigPut))
-	s.mux.HandleFunc("POST /api/v1/upload", s.withAuth(s.handleUpload))
-	s.mux.HandleFunc("POST /api/v1/files/local/list", s.withAuth(s.handleFilesLocalList))
-	s.mux.HandleFunc("POST /api/v1/files/remote/list", s.withAuth(s.handleFilesRemoteList))
-	s.mux.HandleFunc("POST /api/v1/files/copy", s.withAuth(s.handleFilesCopy))
-	s.mux.HandleFunc("POST /api/v1/files/agent-transfer", s.withAuth(s.handleFilesAgentTransfer))
-	s.mux.HandleFunc("GET /api/v1/recipes", s.withAuth(s.handleRecipesList))
-	s.mux.HandleFunc("GET /api/v1/recipes/library", s.withAuth(s.handleRecipesLibrary))
-	s.mux.HandleFunc("POST /api/v1/recipes/view", s.withAuth(s.handleRecipesView))
-	s.mux.HandleFunc("POST /api/v1/recipes/assist", s.withAuth(s.handleRecipesAssist))
-	s.mux.HandleFunc("POST /api/v1/recipes/assist-fix", s.withAuth(s.handleRecipesAssistFix))
-	s.mux.HandleFunc("POST /api/v1/recipes/generate", s.withAuth(s.handleRecipesGenerate))
-	s.mux.HandleFunc("POST /api/v1/recipes/validate-content", s.withAuth(s.handleRecipesValidateContent))
-	s.mux.HandleFunc("POST /api/v1/recipes/sync-ast", s.withAuth(s.handleRecipesSyncAST))
-	s.mux.HandleFunc("POST /api/v1/recipes/graph-plan", s.withAuth(s.handleRecipesGraphPlan))
-	s.mux.HandleFunc("POST /api/v1/recipes/parse", s.withAuth(s.handleRecipesParse))
-	s.mux.HandleFunc("POST /api/v1/recipes/prompts/upload", s.withAuth(s.handleRecipesPromptsUpload))
-	s.mux.HandleFunc("POST /api/v1/recipes/prompts/choices", s.withAuth(s.handleRecipesPromptsChoices))
-	s.mux.HandleFunc("POST /api/v1/webhooks/{app_name}/{webhook_name}", s.handleRecipeWebhook)
-	s.mux.HandleFunc("GET /api/v1/webhooks/results/{id}", s.withAuth(s.handleRecipeWebhookResult))
-	s.mux.HandleFunc("GET /api/v1/recipes/recent-runs", s.withAuth(s.handleRecipesRecentRuns))
-	s.mux.HandleFunc("GET /api/v1/recipes/schema", s.withAuth(s.handleRecipesSchema))
-	s.mux.HandleFunc("GET /api/v1/recipes/studio-config", s.withAuth(s.handleRecipesStudioConfig))
-	s.mux.HandleFunc("GET /api/v1/recipes/store", s.withAuth(s.handleRecipesStoreList))
-	s.mux.HandleFunc("POST /api/v1/recipes/store/git-list", s.withAuth(s.handleRecipesStoreGitList))
-	s.mux.HandleFunc("POST /api/v1/recipes/store/git-load", s.withAuth(s.handleRecipesStoreGitLoad))
-	s.mux.HandleFunc("GET /api/v1/recipes/store/{name}", s.withAuth(s.handleRecipesStoreGet))
-	s.mux.HandleFunc("POST /api/v1/recipes/store/{name}", s.withAuth(s.handleRecipesStoreSave))
-	s.mux.HandleFunc("DELETE /api/v1/recipes/store/{name}", s.withAuth(s.handleRecipesStoreDelete))
-	s.mux.HandleFunc("GET /api/v1/recordings", s.withAuth(s.handleRecordingsList))
-	s.mux.HandleFunc("POST /api/v1/recordings/play", s.withAuth(s.handleRecordingsPlay))
-	s.mux.HandleFunc("DELETE /api/v1/recordings/{file_name}", s.withAuth(s.handleRecordingsDelete))
-	s.mux.HandleFunc("POST /api/v1/recordings/summarize", s.withAuth(s.handleRecordingsSummarize))
-	s.mux.HandleFunc("GET /api/v1/recordings/{id}/failed-hosts", s.withAuth(s.handleRecordingsFailedHosts))
-	s.mux.HandleFunc("POST /api/v1/exec", s.withAuth(s.handleExec))
-	s.mux.HandleFunc("POST /api/v1/lint", s.withAuth(s.handleLint))
-	s.mux.HandleFunc("GET /api/v1/snippets", s.withAuth(s.handleSnippetsList))
-	s.mux.HandleFunc("POST /api/v1/snippets", s.withAuth(s.handleSnippetsSave))
-	s.mux.HandleFunc("DELETE /api/v1/snippets/{id}", s.withAuth(s.handleSnippetsDelete))
-	s.mux.HandleFunc("POST /api/v1/cue-exec", s.withAuth(s.handleCueExec))
-	s.mux.HandleFunc("POST /api/v1/terminal-assist", s.withAuth(s.handleTerminalAssist))
-	s.mux.HandleFunc("GET /api/v1/terminal-assist/models", s.withAuth(s.handleTerminalAssistModels))
-	s.mux.HandleFunc("POST /api/v1/pve-qemu-vnc-offer", s.withAuth(s.handlePveQemuVncOffer))
-	s.mux.HandleFunc("GET /ws/ssh", s.handleWebSSH)
-	s.mux.HandleFunc("GET /ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
+	s.router.Route("/api/v1", func(r chi.Router) {
+		r.Use(s.authMiddleware)
 
-	s.mux.HandleFunc("POST /api/v1/agent", s.withAuth(s.handleAgent))
+		r.Get("/meta", s.handleMeta)
+		r.Get("/openapi.json", s.handleOpenAPIJSON)
+		r.Get("/providers", s.handleProviders)
+		r.Get("/backends", s.handleBackends)
+		r.Get("/logs/default", s.handleLogsDefault)
+		r.Post("/search", s.handleSearch)
+		r.Post("/secrets/encrypt", s.handleSecretsEncrypt)
+		r.Post("/secrets/seal", s.handleSecretsSeal)
+		r.Post("/host-ports", s.handleHostPorts)
 
-	s.mux.HandleFunc("GET /api/v1/apps", s.withAuth(s.handleAppsList))
-	s.mux.HandleFunc("GET /api/v1/proxy/sessions", s.withAuth(s.handleProxySessionsGet))
-	s.mux.HandleFunc("POST /api/v1/proxy/start", s.withAuth(s.handleProxySessionStart))
-	s.mux.HandleFunc("DELETE /api/v1/proxy/sessions/{id}", s.withAuth(s.handleProxySessionDelete))
-	s.mux.HandleFunc("GET /api/v1/postgres/catalog", s.withAuth(s.handlePostgresCatalog))
-	s.mux.HandleFunc("POST /api/v1/postgres/query", s.withAuth(s.handlePostgresQuery))
+		r.Route("/tunnels", func(tr chi.Router) {
+			tr.Get("/", s.handleTunnelsGet)
+			tr.Get("/{id}/logs", s.handleTunnelsLogs)
+			tr.Post("/", s.handleTunnelsPost)
+			tr.Delete("/{id}", s.handleTunnelsDelete)
+		})
 
-	s.mux.HandleFunc("POST /api/v1/logs/stream", s.withAuth(s.handleLogsStream))
-	s.mux.HandleFunc("GET /api/v1/logs/feedback", s.withAuth(s.handleLogsFeedbackGet))
-	s.mux.HandleFunc("POST /api/v1/logs/feedback", s.withAuth(s.handleLogsFeedbackSave))
-	s.mux.HandleFunc("POST /api/v1/logs/feedback/suggest", s.withAuth(s.handleLogsFeedbackSuggest))
-	s.mux.HandleFunc("POST /api/v1/logs/rca", s.withAuth(s.handleLogsRCA))
-	s.mux.HandleFunc("POST /api/v1/logs/summary", s.withAuth(s.handleLogsSummary))
+		r.Route("/config", func(cr chi.Router) {
+			cr.Get("/backends", s.handleConfigBackendsGet)
+			cr.Post("/backends/{kind}", s.handleConfigBackendsPost)
+			cr.Put("/backends/{kind}/{index}", s.handleConfigBackendsPut)
+			cr.Delete("/backends/{kind}/{index}", s.handleConfigBackendsDelete)
+			cr.Get("/schema", s.handleConfigSchema)
+			cr.Get("/", s.handleConfigGet)
+			cr.Put("/", s.handleConfigPut)
+		})
+
+		r.Post("/upload", s.handleUpload)
+		r.Route("/files", func(fr chi.Router) {
+			fr.Post("/local/list", s.handleFilesLocalList)
+			fr.Post("/remote/list", s.handleFilesRemoteList)
+			fr.Post("/copy", s.handleFilesCopy)
+			fr.Post("/agent-transfer", s.handleFilesAgentTransfer)
+		})
+
+		r.Route("/recipes", func(rr chi.Router) {
+			rr.Get("/", s.handleRecipesList)
+			rr.Get("/library", s.handleRecipesLibrary)
+			rr.Post("/view", s.handleRecipesView)
+			rr.Post("/assist", s.handleRecipesAssist)
+			rr.Post("/assist-fix", s.handleRecipesAssistFix)
+			rr.Post("/generate", s.handleRecipesGenerate)
+			rr.Post("/validate-content", s.handleRecipesValidateContent)
+			rr.Post("/sync-ast", s.handleRecipesSyncAST)
+			rr.Post("/graph-plan", s.handleRecipesGraphPlan)
+			rr.Post("/parse", s.handleRecipesParse)
+			rr.Post("/prompts/upload", s.handleRecipesPromptsUpload)
+			rr.Post("/prompts/choices", s.handleRecipesPromptsChoices)
+			rr.Get("/recent-runs", s.handleRecipesRecentRuns)
+			rr.Get("/schema", s.handleRecipesSchema)
+			rr.Get("/studio-config", s.handleRecipesStudioConfig)
+
+			rr.Route("/store", func(str chi.Router) {
+				str.Get("/", s.handleRecipesStoreList)
+				str.Post("/git-list", s.handleRecipesStoreGitList)
+				str.Post("/git-load", s.handleRecipesStoreGitLoad)
+				str.Get("/{name}", s.handleRecipesStoreGet)
+				str.Post("/{name}", s.handleRecipesStoreSave)
+				str.Delete("/{name}", s.handleRecipesStoreDelete)
+			})
+		})
+
+		r.Route("/recordings", func(rcr chi.Router) {
+			rcr.Get("/", s.handleRecordingsList)
+			rcr.Post("/play", s.handleRecordingsPlay)
+			rcr.Delete("/{file_name}", s.handleRecordingsDelete)
+			rcr.Post("/summarize", s.handleRecordingsSummarize)
+			rcr.Get("/{id}/failed-hosts", s.handleRecordingsFailedHosts)
+		})
+
+		r.Post("/exec", s.handleExec)
+		r.Post("/lint", s.handleLint)
+		r.Route("/snippets", func(snr chi.Router) {
+			snr.Get("/", s.handleSnippetsList)
+			snr.Post("/", s.handleSnippetsSave)
+			snr.Delete("/{id}", s.handleSnippetsDelete)
+		})
+
+		r.Post("/cue-exec", s.handleCueExec)
+		r.Post("/terminal-assist", s.handleTerminalAssist)
+		r.Get("/terminal-assist/models", s.handleTerminalAssistModels)
+		r.Post("/pve-qemu-vnc-offer", s.handlePveQemuVncOffer)
+
+		r.Post("/agent", s.handleAgent)
+		r.Get("/apps", s.handleAppsList)
+
+		r.Route("/proxy", func(pr chi.Router) {
+			pr.Get("/sessions", s.handleProxySessionsGet)
+			pr.Post("/start", s.handleProxySessionStart)
+			pr.Delete("/sessions/{id}", s.handleProxySessionDelete)
+		})
+
+		r.Route("/postgres", func(pgr chi.Router) {
+			pgr.Get("/catalog", s.handlePostgresCatalog)
+			pgr.Post("/query", s.handlePostgresQuery)
+		})
+
+		r.Route("/logs", func(lr chi.Router) {
+			lr.Post("/stream", s.handleLogsStream)
+			lr.Get("/feedback", s.handleLogsFeedbackGet)
+			lr.Post("/feedback", s.handleLogsFeedbackSave)
+			lr.Post("/feedback/suggest", s.handleLogsFeedbackSuggest)
+			lr.Post("/rca", s.handleLogsRCA)
+			lr.Post("/summary", s.handleLogsSummary)
+		})
+
+		// Webhook results need auth
+		r.Get("/webhooks/results/{id}", s.handleRecipeWebhookResult)
+	})
+
+	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
+	s.router.Post("/api/v1/webhooks/{app_name}/{webhook_name}", s.handleRecipeWebhook)
+
+	s.router.Get("/ws/ssh", s.handleWebSSH)
+	s.router.Get("/ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return fmt.Errorf("mount embedded static assets: %w", err)
 	}
-	s.mux.Handle("/", s.withIndexCookie(http.FileServer(http.FS(static))))
+	s.router.Handle("/*", s.withIndexCookie(http.FileServer(http.FS(static))))
 	return nil
 }
 
@@ -220,6 +259,17 @@ func (s *Server) authorized(r *http.Request) bool {
 	return s.opts.DisableAuth || tokenFromRequest(r, s.opts.Token)
 }
 
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.authorized(r) {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withAuth is a wrapper for tests that directly invoke handler functions
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorized(r) {
@@ -249,7 +299,7 @@ func (s *Server) withIndexCookie(next http.Handler) http.Handler {
 
 // Start listens and serves until ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
-	handler := http.Handler(s.mux)
+	handler := http.Handler(s.router)
 	if s.metrics != nil {
 		handler = s.metrics.Middleware(handler)
 	}

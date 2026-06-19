@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/webserver/recipestore"
@@ -62,7 +64,7 @@ type StoreLoadResponse struct {
 }
 
 func (s *Server) handleRecipesStoreGet(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
+	name := chi.URLParam(r, "name")
 	if strings.TrimSpace(name) == "" {
 		httpError(w, fmt.Errorf("recipe name is required"), http.StatusBadRequest)
 		return
@@ -129,7 +131,7 @@ type saveRecipeRequest struct {
 }
 
 func (s *Server) handleRecipesStoreSave(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
+	name := chi.URLParam(r, "name")
 	if strings.TrimSpace(name) == "" {
 		httpError(w, fmt.Errorf("recipe name is required"), http.StatusBadRequest)
 		return
@@ -149,7 +151,7 @@ func (s *Server) handleRecipesStoreSave(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleRecipesStoreDelete(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
+	name := chi.URLParam(r, "name")
 	if strings.TrimSpace(name) == "" {
 		httpError(w, fmt.Errorf("recipe name is required"), http.StatusBadRequest)
 		return

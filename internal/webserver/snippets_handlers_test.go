@@ -41,7 +41,7 @@ func TestSnippetsSaveListDelete(t *testing.T) {
 
 	// Save
 	rec := httptest.NewRecorder()
-	s.withAuth(s.handleSnippetsSave)(rec, snippetReq(t, http.MethodPost, "/api/v1/snippets",
+	s.router.ServeHTTP(rec, snippetReq(t, http.MethodPost, "/api/v1/snippets",
 		snippets.ExecSnippet{Name: "uptime", Mode: "command", Command: "uptime"}))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("save: want 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -56,7 +56,7 @@ func TestSnippetsSaveListDelete(t *testing.T) {
 
 	// List
 	rec = httptest.NewRecorder()
-	s.withAuth(s.handleSnippetsList)(rec, snippetReq(t, http.MethodGet, "/api/v1/snippets", nil))
+	s.router.ServeHTTP(rec, snippetReq(t, http.MethodGet, "/api/v1/snippets", nil))
 	var list []snippets.ExecSnippet
 	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
 		t.Fatal(err)
@@ -68,8 +68,7 @@ func TestSnippetsSaveListDelete(t *testing.T) {
 	// Delete
 	rec = httptest.NewRecorder()
 	req := snippetReq(t, http.MethodDelete, "/api/v1/snippets/"+saved.ID, nil)
-	req.SetPathValue("id", saved.ID)
-	s.withAuth(s.handleSnippetsDelete)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete: want 200, got %d", rec.Code)
 	}
@@ -77,8 +76,7 @@ func TestSnippetsSaveListDelete(t *testing.T) {
 	// Delete unknown → 404
 	rec = httptest.NewRecorder()
 	req = snippetReq(t, http.MethodDelete, "/api/v1/snippets/nope", nil)
-	req.SetPathValue("id", "nope")
-	s.withAuth(s.handleSnippetsDelete)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("delete unknown: want 404, got %d", rec.Code)
 	}
@@ -95,7 +93,7 @@ func TestSnippetsSaveValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()
-		s.withAuth(s.handleSnippetsSave)(rec, snippetReq(t, http.MethodPost, "/api/v1/snippets", tc))
+		s.router.ServeHTTP(rec, snippetReq(t, http.MethodPost, "/api/v1/snippets", tc))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("want 400 for %+v, got %d", tc, rec.Code)
 		}

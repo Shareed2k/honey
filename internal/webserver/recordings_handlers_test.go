@@ -24,7 +24,7 @@ func TestHandleRecordingsDelete(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer tok")
 	req.SetPathValue("file_name", name)
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecordingsDelete)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}

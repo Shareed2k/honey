@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/appsecret"
 	"github.com/shareed2k/honey/internal/config"
@@ -190,7 +192,7 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleProxySessionDelete(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := chi.URLParam(r, "id")
 	if err := s.proxy.Stop(id); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 		return

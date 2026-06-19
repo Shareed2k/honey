@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
@@ -177,7 +179,7 @@ func (m *tunnelManager) stop(id string) error {
 // @Router /api/v1/tunnels/{id}/logs [get]
 // @Security BearerAuth
 func (s *Server) handleTunnelsLogs(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := chi.URLParam(r, "id")
 	if id == "" {
 		httpError(w, fmt.Errorf("missing tunnel id"), http.StatusBadRequest)
 		return
@@ -253,7 +255,7 @@ func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
 // @Router /api/v1/tunnels/{id} [delete]
 // @Security BearerAuth
 func (s *Server) handleTunnelsDelete(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := chi.URLParam(r, "id")
 	if id == "" {
 		httpError(w, fmt.Errorf("missing tunnel id"), http.StatusBadRequest)
 		return

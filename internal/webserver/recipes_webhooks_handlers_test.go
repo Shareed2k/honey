@@ -97,7 +97,7 @@ recipe: {
 	srv.webhookQueue = q
 
 	// Create test server
-	ts := httptest.NewServer(srv.mux)
+	ts := httptest.NewServer(srv.router)
 	defer ts.Close()
 
 	payload := []byte(`{"payload": {"var": "hello-webhook"}}`)
@@ -182,7 +182,7 @@ recipe: {
 	}
 	srv.webhookQueue = q
 
-	ts := httptest.NewServer(srv.mux)
+	ts := httptest.NewServer(srv.router)
 	defer ts.Close()
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/webhooks/app1/hook1", bytes.NewBufferString("{}"))

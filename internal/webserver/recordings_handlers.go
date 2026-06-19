@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/recordings"
@@ -216,7 +218,7 @@ func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) 
 		httpError(w, fmt.Errorf("session recording is not enabled"), http.StatusBadRequest)
 		return
 	}
-	name := strings.TrimSpace(r.PathValue("file_name"))
+	name := strings.TrimSpace(chi.URLParam(r, "file_name"))
 	if err := recordings.ValidateBaseName(name); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -363,7 +365,7 @@ func (s *Server) handleRecordingsFailedHosts(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	id := r.PathValue("id")
+	id := chi.URLParam(r, "id")
 	if id == "" {
 		httpError(w, fmt.Errorf("id required"), http.StatusBadRequest)
 		return

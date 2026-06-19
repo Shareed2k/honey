@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/snippets"
@@ -85,7 +87,7 @@ func (s *Server) handleSnippetsSave(w http.ResponseWriter, r *http.Request) {
 // @Router /api/v1/snippets/{id} [delete]
 // @Security BearerAuth
 func (s *Server) handleSnippetsDelete(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimSpace(r.PathValue("id"))
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
 	err := s.snippetStore.Delete(r.Context(), id)
 	if errors.Is(err, snippets.ErrNotFound) {
 		httpError(w, err, http.StatusNotFound)

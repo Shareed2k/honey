@@ -36,7 +36,7 @@ func TestProvidersEndpoint(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/providers", nil)
 	req.Header.Set("Authorization", "Bearer tok")
-	s.withAuth(s.handleProviders)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -78,7 +78,7 @@ func TestConfigBackendsCRUD(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/api/v1/config/backends", nil)
 		auth(req)
-		s.withAuth(s.handleConfigBackendsGet)(rec, req)
+		s.router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET backends %d: %s", rec.Code, rec.Body.String())
 		}
@@ -99,7 +99,7 @@ func TestConfigBackendsCRUD(t *testing.T) {
 		req.SetPathValue("kind", "gcp")
 		req.Header.Set("Content-Type", "application/json")
 		auth(req)
-		s.withAuth(s.handleConfigBackendsPost)(rec, req)
+		s.router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("POST %d: %s", rec.Code, rec.Body.String())
 		}
@@ -128,7 +128,7 @@ func TestConfigBackendsCRUD(t *testing.T) {
 		req.SetPathValue("kind", "gcp")
 		req.SetPathValue("index", "0")
 		auth(req)
-		s.withAuth(s.handleConfigBackendsPut)(rec, req)
+		s.router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("PUT %d: %s", rec.Code, rec.Body.String())
 		}
@@ -148,7 +148,7 @@ func TestConfigBackendsCRUD(t *testing.T) {
 		req.SetPathValue("kind", "gcp")
 		req.SetPathValue("index", "1")
 		auth(req)
-		s.withAuth(s.handleConfigBackendsDelete)(rec, req)
+		s.router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("DELETE %d: %s", rec.Code, rec.Body.String())
 		}
@@ -188,7 +188,7 @@ func TestConfigBackendsPutPathValues(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		s.mux.ServeHTTP(w, r)
+		s.router.ServeHTTP(w, r)
 	}))
 	defer srv.Close()
 
