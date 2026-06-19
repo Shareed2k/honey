@@ -55,54 +55,36 @@ func (s *Server) handlePostgresCatalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	dbs, err := postgres.Query(ctx, s.pgPools, dsn, `SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname`, nil, postgres.QueryOpts{Timeout: 10 * time.Second, Readonly: true})
+	repo := postgres.NewCatalogRepository(s.pgPools)
+
+	dbs, err := repo.GetDatabases(ctx, dsn)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
-	sch, err := postgres.Query(ctx, s.pgPools, dsn, `SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('pg_catalog','information_schema') ORDER BY schema_name`, nil, postgres.QueryOpts{Timeout: 10 * time.Second, Readonly: true})
+	sch, err := repo.GetSchemas(ctx, dsn)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
-	tb, err := postgres.Query(ctx, s.pgPools, dsn, `SELECT table_schema, table_name FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('pg_catalog','information_schema') ORDER BY table_schema, table_name`, nil, postgres.QueryOpts{Timeout: 10 * time.Second, Readonly: true})
+	tb, err := repo.GetTables(ctx, dsn)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
-	col, err := postgres.Query(ctx, s.pgPools, dsn, `SELECT table_schema, table_name, column_name FROM information_schema.columns WHERE table_schema NOT IN ('pg_catalog','information_schema') ORDER BY table_schema, table_name, ordinal_position`, nil, postgres.QueryOpts{Timeout: 10 * time.Second, Readonly: true})
+	col, err := repo.GetColumns(ctx, dsn)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
-	out := postgresCatalogResponse{Tables: map[string][]string{}, Columns: map[string][]string{}}
-	for _, r := range dbs.Rows {
-		if v, ok := r["datname"].(string); ok {
-			out.Databases = append(out.Databases, v)
-		}
+	out := postgresCatalogResponse{
+		Databases: dbs,
+		Schemas:   sch,
+		Tables:    tb,
+		Columns:   col,
 	}
-	for _, r := range sch.Rows {
-		if v, ok := r["schema_name"].(string); ok {
-			out.Schemas = append(out.Schemas, v)
-		}
-	}
-	for _, r := range tb.Rows {
-		schema, sok := r["table_schema"].(string)
-		table, tok := r["table_name"].(string)
-		if sok && tok {
-			out.Tables[schema] = append(out.Tables[schema], table)
-		}
-	}
-	for _, r := range col.Rows {
-		schema, sok := r["table_schema"].(string)
-		table, tok := r["table_name"].(string)
-		column, cok := r["column_name"].(string)
-		if sok && tok && cok {
-			key := schema + "." + table
-			out.Columns[key] = append(out.Columns[key], column)
-		}
-	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
 }
