@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -32,8 +33,6 @@ import (
 	"github.com/shareed2k/honey/internal/sshclient"
 	"github.com/shareed2k/honey/internal/webserver"
 )
-
-
 
 func init() {
 	if os.Getenv("DOCKER_HOST") == "" {
@@ -225,10 +224,10 @@ func startOpenSearch(t *testing.T) string {
 // ── SSH ──────────────────────────────────────────────────────────────────────
 
 var (
-	sshOnce    sync.Once
-	sshHost    string
-	sshPort    int
-	sshKeyFile string
+	sshOnce     sync.Once
+	sshHost     string
+	sshPort     int
+	sshKeyFile  string
 	sshStartErr error
 )
 
@@ -548,4 +547,123 @@ func (e *testExecutor) DialUpstream(ctx context.Context, user string, r hosts.Re
 
 func (c *testSSHClient) SupportsKVTunnel() bool {
 	return false
+}
+
+// ── Docker-in-Docker ─────────────────────────────────────────────────────────
+
+var (
+	dindOnce     sync.Once
+	dindHost     string
+	dindStartErr error
+)
+
+func startDinD(t *testing.T) string {
+	t.Helper()
+	dindOnce.Do(func() {
+		ctx := context.Background()
+		req := testcontainers.ContainerRequest{
+			Image:        "docker:dind",
+			ExposedPorts: []string{"2375/tcp"},
+			Privileged:   true,
+			Env: map[string]string{
+				"DOCKER_TLS_CERTDIR": "", // Disable TLS for testing
+			},
+			WaitingFor: wait.ForListeningPort("2375/tcp").WithStartupTimeout(60 * time.Second),
+		}
+		c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
+		if err != nil {
+			dindStartErr = err
+			return
+		}
+		host, err := c.Host(ctx)
+		if err != nil {
+			dindStartErr = err
+			return
+		}
+		port, err := c.MappedPort(ctx, "2375")
+		if err != nil {
+			dindStartErr = err
+			return
+		}
+		dindHost = fmt.Sprintf("tcp://%s:%s", host, port.Port())
+
+		cleanupMu.Lock()
+		cleanupFuncs = append(cleanupFuncs, func() { _ = c.Terminate(context.Background()) })
+		cleanupMu.Unlock()
+	})
+	if dindStartErr != nil {
+		t.Skipf("start dind skipped: %v", dindStartErr)
+	}
+	return dindHost
+}
+
+// ── K3s ──────────────────────────────────────────────────────────────────────
+
+var (
+	k3sOnce       sync.Once
+	k3sKubeConfig []byte
+	k3sStartErr   error
+)
+
+func startK3s(t *testing.T) []byte {
+	t.Helper()
+	k3sOnce.Do(func() {
+		ctx := context.Background()
+		req := testcontainers.ContainerRequest{
+			Image:        "rancher/k3s:latest",
+			ExposedPorts: []string{"6443/tcp"},
+			Privileged:   true,
+			Cmd: []string{
+				"server",
+				"--disable=traefik",
+				"--disable=servicelb",
+				"--disable=metrics-server",
+			},
+			WaitingFor: wait.ForLog("Node controller sync successful").WithStartupTimeout(120 * time.Second),
+		}
+		c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
+		if err != nil {
+			k3sStartErr = err
+			return
+		}
+
+		// Read the kubeconfig from the container
+		r, err := c.CopyFileFromContainer(ctx, "/etc/rancher/k3s/k3s.yaml")
+		if err != nil {
+			k3sStartErr = fmt.Errorf("copy kubeconfig: %w", err)
+			return
+		}
+		defer r.Close()
+
+		kubeConfigBytes, err := io.ReadAll(r)
+		if err != nil {
+			k3sStartErr = fmt.Errorf("read kubeconfig: %w", err)
+			return
+		}
+
+		// Rewrite the host/port to point to localhost mapped port
+		host, err := c.Host(ctx)
+		if err == nil {
+			port, err := c.MappedPort(ctx, "6443")
+			if err == nil {
+				kubeConfigBytes = bytes.ReplaceAll(kubeConfigBytes, []byte("https://127.0.0.1:6443"), []byte(fmt.Sprintf("https://%s:%s", host, port.Port())))
+			}
+		}
+
+		k3sKubeConfig = kubeConfigBytes
+
+		cleanupMu.Lock()
+		cleanupFuncs = append(cleanupFuncs, func() { _ = c.Terminate(context.Background()) })
+		cleanupMu.Unlock()
+	})
+	if k3sStartErr != nil {
+		t.Skipf("start k3s skipped: %v", k3sStartErr)
+	}
+	return k3sKubeConfig
 }
