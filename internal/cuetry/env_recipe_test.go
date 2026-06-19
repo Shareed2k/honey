@@ -16,7 +16,7 @@ func TestValidateRecipeEnvMap_badKey(t *testing.T) {
 }
 
 func TestValidateRecipeEnvMap_badValue(t *testing.T) {
-	if err := ValidateRecipeEnvMap(map[string]string{"OK": "a\nb"}); err == nil {
+	if err := ValidateRecipeEnvMap(map[string]string{"OK": "a\x00b"}); err == nil {
 		t.Fatal("expected error")
 	}
 }

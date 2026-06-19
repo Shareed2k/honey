@@ -37,8 +37,8 @@ func validateOneEnv(k, v string) error {
 	if !envNamePattern.MatchString(k) {
 		return fmt.Errorf("env key %q must match %s (POSIX-style names)", k, envNamePattern.String())
 	}
-	if strings.ContainsAny(v, "\x00\n\r") {
-		return fmt.Errorf("env value for %q must not contain NUL, LF, or CR", k)
+	if strings.ContainsAny(v, "\x00") {
+		return fmt.Errorf("env value for %q must not contain NUL", k)
 	}
 	if len(v) > maxEnvValueLen {
 		return fmt.Errorf("env value for %q exceeds %d bytes", k, maxEnvValueLen)
@@ -85,8 +85,8 @@ func validateOneSecretRef(k, ref string, allowedPrefixes []string) error {
 	if ref == "" {
 		return fmt.Errorf("secrets: empty ref for key %q", k)
 	}
-	if strings.ContainsAny(ref, "\x00\n\r") {
-		return fmt.Errorf("secrets ref for %q must not contain NUL, LF, or CR", k)
+	if strings.ContainsAny(ref, "\x00") {
+		return fmt.Errorf("secrets ref for %q must not contain NUL", k)
 	}
 	if len(ref) > maxSecretRefLen {
 		return fmt.Errorf("secrets ref for %q exceeds %d bytes", k, maxSecretRefLen)
