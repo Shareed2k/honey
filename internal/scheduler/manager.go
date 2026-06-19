@@ -163,6 +163,13 @@ func (m *Manager) register() {
 				tz = "UTC"
 			}
 			if _, ok := tzTaskers[tz]; !ok {
+				if _, err := time.LoadLocation(tz); err != nil {
+					zap.L().Warn("scheduler: invalid timezone, skipping these schedules",
+						zap.String("timezone", tz),
+						zap.Error(err),
+					)
+					continue
+				}
 				tzTaskers[tz] = tasker.New(tasker.Option{Tz: tz, Verbose: false})
 			}
 			t := tzTaskers[tz]
@@ -236,10 +243,12 @@ func (m *Manager) executeSchedule(
 
 	searchOut, err := hostapi.SearchHosts(ctx, searchIn, m.opts.ExecRegistry, m.opts.SearchRegistry)
 	if err != nil {
+		_ = pluginMgr.Close()
 		return fmt.Errorf("search hosts: %w", err)
 	}
 
 	if len(searchOut.Records) == 0 {
+		_ = pluginMgr.Close()
 		return fmt.Errorf("no target hosts found for app %q", appName)
 	}
 
@@ -331,9 +340,15 @@ func (m *Manager) executeSchedule(
 					zap.String("schedule", scheduleName),
 				)
 				_ = pluginMgr.Close()
+				if rec != nil {
+					_ = rec.Close()
+				}
 				return nil
 			}
 			_ = pluginMgr.Close()
+			if rec != nil {
+				_ = rec.Close()
+			}
 			return fmt.Errorf("submit to queue: %w", qErr)
 		}
 		return nil
