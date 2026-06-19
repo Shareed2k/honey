@@ -26,7 +26,7 @@ func TestRecipesViewUnauthorized(t *testing.T) {
 	body := bytes.NewBufferString(`{"path":"/tmp/x.cue"}`)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/view", body)
-	s.withAuth(s.handleRecipesView)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
 	}
@@ -46,7 +46,7 @@ func TestRecipesViewRejectsDisallowedPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/view", bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer tok")
-	s.withAuth(s.handleRecipesView)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -70,7 +70,7 @@ func TestExecRejectsEmptyRecords(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/exec", bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer tok")
-	s.withAuth(s.handleExec)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -138,7 +138,7 @@ func TestRecipesListAndViewAllowedPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes", nil)
 	req.Header.Set("Authorization", "Bearer tok")
-	s.withAuth(s.handleRecipesList)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: expected 200, got %d %s", rec.Code, rec.Body.String())
 	}
@@ -155,7 +155,7 @@ func TestRecipesListAndViewAllowedPath(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/view", bytes.NewReader(viewBody))
 	req2.Header.Set("Authorization", "Bearer tok")
-	s.withAuth(s.handleRecipesView)(rec2, req2)
+	s.router.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("view: expected 200, got %d %s", rec2.Code, rec2.Body.String())
 	}
@@ -195,7 +195,7 @@ func TestHandleCueExec_recipeContent_dryRun(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleCueExec)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}
@@ -228,7 +228,7 @@ func TestHandleCueExec_recipeContent_invalidHost(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleCueExec)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d (%s)", w.Code, w.Body)
 	}

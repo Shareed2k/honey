@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
@@ -31,8 +33,8 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appName := r.PathValue("app_name")
-	webhookName := r.PathValue("webhook_name")
+	appName := chi.URLParam(r, "app_name")
+	webhookName := chi.URLParam(r, "webhook_name")
 
 	if s.opts.Config == nil || s.opts.Config.Apps == nil {
 		httpError(w, fmt.Errorf("no apps configured"), http.StatusNotFound)
@@ -289,7 +291,7 @@ func (s *Server) handleRecipeWebhookResult(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	id := r.PathValue("id")
+	id := chi.URLParam(r, "id")
 	if id == "" {
 		httpError(w, fmt.Errorf("missing id"), http.StatusBadRequest)
 		return

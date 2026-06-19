@@ -78,7 +78,7 @@ func TestHandleLintRejectsBadLanguage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lint", bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer tok")
-	s.withAuth(s.handleLint)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d body=%s", rec.Code, rec.Body.String())
 	}

@@ -23,7 +23,7 @@ func TestValidateContent_happy(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesValidateContent)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}
@@ -46,7 +46,7 @@ func TestValidateContent_invalidHost(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesValidateContent)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}
@@ -66,7 +66,7 @@ func TestValidateContent_empty(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesValidateContent)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Fatalf("status=%d", w.Code)
 	}
@@ -97,7 +97,7 @@ func TestRecipesParse_diskRecipe(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer tok")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesParse)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		// Just a fallback check, recipes parsing in test environment can be tricky
 		t.Logf("status=%d body=%s", w.Code, w.Body.String())
@@ -113,7 +113,7 @@ func TestRecipesParse_disallowedPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/parse", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesParse)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Fatalf("expected 400, got %d (%s)", w.Code, w.Body)
 	}

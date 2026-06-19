@@ -20,7 +20,7 @@ func TestSecretsEncrypt_MissingKey(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleSecretsEncrypt)(w, req)
+	s.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
