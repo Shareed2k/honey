@@ -2,7 +2,6 @@ package engine
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,10 +54,10 @@ func writeAgentSessionLine(w io.Writer, v any) error {
 	return err
 }
 
-func readAgentSessionLine(r *bufio.Reader, maxBytes int) ([]byte, error) {
+func readAgentSessionLine(r *bufio.Reader) ([]byte, error) {
 	part, err := r.ReadBytes('\n')
-	if len(part) > maxBytes {
-		return nil, fmt.Errorf("line exceeds maximum size %d", maxBytes)
+	if len(part) > honeyAgentSessionMaxLine {
+		return nil, fmt.Errorf("line exceeds maximum size %d", honeyAgentSessionMaxLine)
 	}
 	if err != nil {
 		if err == io.EOF && len(part) > 0 {
@@ -103,138 +102,6 @@ func outdatedAgentSessionError(runErr error, stderr string) error {
 
 // runHoneyTransferAgentSession runs one remote agent process in "session" mode: ephemeral ECDH
 // private key stays in the agent process memory only (no key file). Protocol is newline-delimited JSON.
-func runHoneyTransferAgentSession(
-	client HostClient,
-	agentRemoteAbs string,
-	mintJWE func(publicJWK string) (string, error),
-	postBootstrap []agentSessionHostMsg,
-) (mintedJWE string, err error) {
-	cmd := shellQuote(agentRemoteAbs) + " session"
-
-	stdoutR, stdoutW := io.Pipe()
-	stdinR, stdinW := io.Pipe()
-	var stderrBuf bytes.Buffer
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- client.RunWithStreams(cmd, stdinR, stdoutW, &stderrBuf)
-		_ = stdoutW.Close()
-	}()
-
-	waitRemote := func() error {
-		_ = stdinW.Close()
-		return <-errCh
-	}
-
-	br := bufio.NewReaderSize(stdoutR, 256*1024)
-	readRes := func() (agentSessionWireResult, error) {
-		line, rerr := readAgentSessionLine(br, honeyAgentSessionMaxLine)
-		if rerr != nil {
-			return agentSessionWireResult{}, rerr
-		}
-		var res agentSessionWireResult
-		if uerr := json.Unmarshal(line, &res); uerr != nil {
-			return agentSessionWireResult{}, fmt.Errorf("parse result line: %w (line=%q)", uerr, shortenAgentSessionErr(string(line), 400))
-		}
-		return res, nil
-	}
-
-	keyLine, err := readAgentSessionLine(br, honeyAgentSessionMaxLine)
-	if err != nil {
-		runErr := waitRemote()
-		se := strings.TrimSpace(stderrBuf.String())
-		if errors.Is(err, io.EOF) {
-			return "", outdatedAgentSessionError(runErr, se)
-		}
-		return "", fmt.Errorf("read key line: %w", err)
-	}
-	var key agentSessionKeyReady
-	if err := json.Unmarshal(keyLine, &key); err != nil {
-		_ = waitRemote()
-		return "", fmt.Errorf("parse key line: %w", err)
-	}
-	if strings.TrimSpace(key.Type) != "key_ready" {
-		_ = waitRemote()
-		return "", fmt.Errorf("invalid session key line type %q", key.Type)
-	}
-	if key.Protocol != honeyAgentSessionProtocolVersion {
-		_ = waitRemote()
-		return "", fmt.Errorf(
-			"%w (got_protocol=%d expected_protocol=%d)",
-			outdatedAgentSessionError(nil, stderrBuf.String()),
-			key.Protocol,
-			honeyAgentSessionProtocolVersion,
-		)
-	}
-	if strings.TrimSpace(key.PublicJWK) == "" {
-		_ = waitRemote()
-		return "", fmt.Errorf("missing public_jwk in key line")
-	}
-	jwe, err := mintJWE(key.PublicJWK)
-	if err != nil {
-		_ = waitRemote()
-		return "", err
-	}
-	mintedJWE = jwe
-	bootstrap := agentSessionHostMsg{Op: "bootstrap", CredsJWE: jwe}
-	if err := writeAgentSessionLine(stdinW, bootstrap); err != nil {
-		_ = waitRemote()
-		return mintedJWE, err
-	}
-	bootRes, err := readRes()
-	if err != nil {
-		_ = waitRemote()
-		return mintedJWE, err
-	}
-	if !bootRes.OK {
-		_ = waitRemote()
-		return mintedJWE, fmt.Errorf("bootstrap: %s", bootRes.Error)
-	}
-	for _, op := range postBootstrap {
-		op := op
-		if strings.TrimSpace(op.Op) == "" {
-			continue
-		}
-		if err := writeAgentSessionLine(stdinW, op); err != nil {
-			_ = waitRemote()
-			return mintedJWE, err
-		}
-		opRes, err := readRes()
-		if err != nil {
-			_ = waitRemote()
-			return mintedJWE, err
-		}
-		if !opRes.OK {
-			_ = waitRemote()
-			return mintedJWE, fmt.Errorf("%s: %s", strings.TrimSpace(op.Op), opRes.Error)
-		}
-	}
-	if err := writeAgentSessionLine(stdinW, agentSessionHostMsg{Op: "close"}); err != nil {
-		_ = waitRemote()
-		return mintedJWE, err
-	}
-	closeAck, err := readRes()
-	if err != nil {
-		_ = waitRemote()
-		return mintedJWE, err
-	}
-	if !closeAck.OK {
-		_ = waitRemote()
-		return mintedJWE, fmt.Errorf("close: %s", closeAck.Error)
-	}
-	_, _ = io.Copy(io.Discard, br)
-
-	_ = stdinW.Close()
-	runErr := <-errCh
-	if runErr != nil {
-		se := strings.TrimSpace(stderrBuf.String())
-		if se != "" {
-			return mintedJWE, fmt.Errorf("remote session: %w (stderr=%s)", runErr, se)
-		}
-		return mintedJWE, fmt.Errorf("remote session: %w", runErr)
-	}
-	return mintedJWE, nil
-}
 
 // evictOnTransientRetry is optional; when non-nil it is called with the failed attempt
 // index before the next attempt after a failure classified as IsSSHConnTransientError.
