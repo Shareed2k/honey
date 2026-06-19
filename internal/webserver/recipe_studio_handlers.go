@@ -15,13 +15,13 @@ import (
 	"github.com/shareed2k/honey/internal/webserver/recipestore"
 )
 
-func (s *Server) recipeStore(_ *http.Request, gitOpts *config.StudioConfig) recipestore.RecipeStore {
+func (api *RecipesAPI) recipeStore(_ *http.Request, gitOpts *config.StudioConfig) recipestore.RecipeStore {
 	var dir string
 	switch {
-	case s.opts.Config != nil && s.opts.Config.Defaults.Studio.RecipesPath != "":
-		dir = s.opts.Config.Defaults.Studio.RecipesPath
-	case s.opts.ConfigPath != "":
-		dir = filepath.Join(filepath.Dir(s.opts.ConfigPath), "recipes")
+	case api.opts.Config != nil && api.opts.Config.Defaults.Studio.RecipesPath != "":
+		dir = api.opts.Config.Defaults.Studio.RecipesPath
+	case api.opts.ConfigPath != "":
+		dir = filepath.Join(filepath.Dir(api.opts.ConfigPath), "recipes")
 	default:
 		dir = "examples/recipe"
 	}
@@ -29,8 +29,8 @@ func (s *Server) recipeStore(_ *http.Request, gitOpts *config.StudioConfig) reci
 	var gitCfg config.StudioConfig
 	if gitOpts != nil && gitOpts.GitURL != "" {
 		gitCfg = *gitOpts
-	} else if s.opts.Config != nil {
-		gitCfg = s.opts.Config.Defaults.Studio
+	} else if api.opts.Config != nil {
+		gitCfg = api.opts.Config.Defaults.Studio
 	}
 
 	if gitCfg.GitURL != "" {
@@ -41,8 +41,8 @@ func (s *Server) recipeStore(_ *http.Request, gitOpts *config.StudioConfig) reci
 	return recipestore.NewLocalRecipeStore(dir)
 }
 
-func (s *Server) handleRecipesStoreList(w http.ResponseWriter, r *http.Request) {
-	store := s.recipeStore(r, nil)
+func (api *RecipesAPI) handleRecipesStoreList(w http.ResponseWriter, r *http.Request) {
+	store := api.recipeStore(r, nil)
 	list, err := store.List(r.Context())
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
@@ -63,13 +63,13 @@ type StoreLoadResponse struct {
 	Errors []ValidateContentError  `json:"errors,omitempty"`
 }
 
-func (s *Server) handleRecipesStoreGet(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesStoreGet(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if strings.TrimSpace(name) == "" {
 		httpError(w, fmt.Errorf("recipe name is required"), http.StatusBadRequest)
 		return
 	}
-	store := s.recipeStore(r, nil)
+	store := api.recipeStore(r, nil)
 	content, err := store.Get(r.Context(), name)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
@@ -130,7 +130,7 @@ type saveRecipeRequest struct {
 	config.StudioConfig
 }
 
-func (s *Server) handleRecipesStoreSave(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesStoreSave(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if strings.TrimSpace(name) == "" {
 		httpError(w, fmt.Errorf("recipe name is required"), http.StatusBadRequest)
@@ -141,7 +141,7 @@ func (s *Server) handleRecipesStoreSave(w http.ResponseWriter, r *http.Request) 
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	store := s.recipeStore(r, &req.StudioConfig)
+	store := api.recipeStore(r, &req.StudioConfig)
 	if err := store.Save(r.Context(), name, req.Content); err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -150,13 +150,13 @@ func (s *Server) handleRecipesStoreSave(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write([]byte(`{"success":true}`))
 }
 
-func (s *Server) handleRecipesStoreDelete(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesStoreDelete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if strings.TrimSpace(name) == "" {
 		httpError(w, fmt.Errorf("recipe name is required"), http.StatusBadRequest)
 		return
 	}
-	store := s.recipeStore(r, nil)
+	store := api.recipeStore(r, nil)
 	if err := store.Delete(r.Context(), name); err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -174,14 +174,14 @@ type gitLoadResponse struct {
 	Content string `json:"content"`
 }
 
-func (s *Server) handleRecipesStoreGitList(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesStoreGitList(w http.ResponseWriter, r *http.Request) {
 	var req config.StudioConfig
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil && err != io.EOF {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
 
-	store := s.recipeStore(r, &req)
+	store := api.recipeStore(r, &req)
 	list, err := store.List(r.Context())
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
@@ -192,7 +192,7 @@ func (s *Server) handleRecipesStoreGitList(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(list)
 }
 
-func (s *Server) handleRecipesStoreGitLoad(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesStoreGitLoad(w http.ResponseWriter, r *http.Request) {
 	var req gitLoadRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -204,7 +204,7 @@ func (s *Server) handleRecipesStoreGitLoad(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	store := s.recipeStore(r, &req.StudioConfig)
+	store := api.recipeStore(r, &req.StudioConfig)
 	content, err := store.Get(r.Context(), req.Path)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
@@ -215,9 +215,9 @@ func (s *Server) handleRecipesStoreGitLoad(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(gitLoadResponse{Content: content})
 }
 
-func (s *Server) handleRecipesStudioConfig(w http.ResponseWriter, _ *http.Request) {
+func (api *RecipesAPI) handleRecipesStudioConfig(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	cfg := s.opts.Config
+	cfg := api.opts.Config
 	resp := map[string]any{}
 	if cfg != nil {
 		resp["recipes_path"] = cfg.Defaults.Studio.RecipesPath

@@ -78,7 +78,7 @@ type RecipesParseResponse struct {
 // @Failure 400 {object} ValidateContentResponse
 // @Router /api/v1/recipes/validate-content [post]
 // @Security BearerAuth
-func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesValidateContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -86,8 +86,8 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 	start := time.Now()
 	status := "ok"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.ObserveRecipeValidate(status, time.Since(start))
+		if api.metrics != nil {
+			api.metrics.ObserveRecipeValidate(status, time.Since(start))
 		}
 	}()
 	var body ValidateContentRequest
@@ -121,8 +121,8 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 	}
 
 	hash, _ := recipe.HashJSON()
-	if hash != "" && s.recipeValidationCache != nil {
-		if cached, ok := s.recipeValidationCache.Get(hash); ok {
+	if hash != "" && api.recipeValidationCache != nil {
+		if cached, ok := api.recipeValidationCache.Get(hash); ok {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(cached)
 			return
@@ -165,8 +165,8 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	if hash != "" && len(resp.Errors) == 0 && s.recipeValidationCache != nil {
-		s.recipeValidationCache.Add(hash, &resp)
+	if hash != "" && len(resp.Errors) == 0 && api.recipeValidationCache != nil {
+		api.recipeValidationCache.Add(hash, &resp)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -183,7 +183,7 @@ func (s *Server) handleRecipesValidateContent(w http.ResponseWriter, r *http.Req
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/graph-plan [post]
 // @Security BearerAuth
-func (s *Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -212,7 +212,7 @@ func (s *Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) 
 			httpError(w, err, http.StatusBadRequest)
 			return
 		}
-		if _, ok := s.allowedRecipePathSet()[cp]; !ok {
+		if _, ok := api.allowedRecipePathSet()[cp]; !ok {
 			httpError(w, fmt.Errorf("recipe path not allowed"), http.StatusBadRequest)
 			return
 		}
@@ -233,8 +233,8 @@ func (s *Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) 
 	}
 
 	hash, _ := recipe.HashJSON()
-	if hash != "" && s.recipeGraphCache != nil {
-		if cached, ok := s.recipeGraphCache.Get(hash); ok {
+	if hash != "" && api.recipeGraphCache != nil {
+		if cached, ok := api.recipeGraphCache.Get(hash); ok {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(cached)
 			return
@@ -251,8 +251,8 @@ func (s *Server) handleRecipesGraphPlan(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if hash != "" && s.recipeGraphCache != nil {
-		s.recipeGraphCache.Add(hash, plan)
+	if hash != "" && api.recipeGraphCache != nil {
+		api.recipeGraphCache.Add(hash, plan)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -275,7 +275,7 @@ func writeValidationErrors(w http.ResponseWriter, errs []ValidateContentError) {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/parse [post]
 // @Security BearerAuth
-func (s *Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -290,7 +290,7 @@ func (s *Server) handleRecipesParse(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	if _, ok := s.allowedRecipePathSet()[cp]; !ok {
+	if _, ok := api.allowedRecipePathSet()[cp]; !ok {
 		httpError(w, fmt.Errorf("recipe path not allowed"), http.StatusBadRequest)
 		return
 	}
@@ -329,7 +329,7 @@ type SyncASTResponse struct {
 	CUE string `json:"cue"`
 }
 
-func (s *Server) handleRecipesSyncAST(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesSyncAST(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return

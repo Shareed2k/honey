@@ -120,15 +120,21 @@ func parseK8sResource(s string) (kind, name string) {
 }
 
 // StreamCueStepK8s ...
-func (run *CueRun) streamCueStepK8s(
-	ctx context.Context,
-	stepIdx int,
-	step cuetry.Step,
-	targets []hosts.Record,
-	ch chan<- HostExecResult,
-	retryCfg cuetry.RecipeStepRetry,
-	attemptMax *atomic.Int32,
-) error {
+func init() {
+	RegisterStepExecutor(cuetry.KindK8s, &K8sExecutor{})
+}
+
+// K8sExecutor executes the corresponding recipe step.
+type K8sExecutor struct{}
+
+// ExecuteDryRun executes a dry run of the step.
+func (e *K8sExecutor) ExecuteDryRun(_ *StepContext) error {
+	return nil
+}
+
+// ExecuteStream streams the step execution.
+func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	if _, ok := step.(*cuetry.K8sStep); !ok {
 		return fmt.Errorf("internal: k8s step missing k8s field")
 	}

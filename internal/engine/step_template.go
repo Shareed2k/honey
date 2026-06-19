@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 
@@ -97,78 +96,16 @@ func runCueStepTemplateOnHost(
 	}
 }
 
-// StreamCueTemplateStep ...
-func (run *CueRun) streamCueTemplateStep(ctx context.Context, stepIdx int, step cuetry.Step, out chan<- HostExecResult) ([]HostExecResult, error) {
-	targets, err := cuetry.ExpandStepHosts(step.Base().Host, run.Params.Records)
-	if err != nil {
-		return nil, fmt.Errorf("step %d: %w", stepIdx, err)
-	}
-	prog, err := compileStepWhen(step)
-	if err != nil {
-		return nil, err
-	}
-	kv := KvReaderFromCoordinator(run.RecipeKV)
-	var kept []hosts.Record
-	var skipped []HostExecResult
-	for _, t := range targets {
-		if prog != nil {
-			ok, err := evalStepWhen(ctx, prog, run.Params.Recipe, step, t, nil, run.OutputStore, run.Params.SecretResolver, kv, nil, run.Params.Execute)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				res := WhenSkippedResult(t)
-				AnnotateCueStepResult(&res, stepIdx, step, cuetry.KindTemplate)
-				skipped = append(skipped, res)
-				continue
-			}
-		}
-		kept = append(kept, t)
-	}
-	var rows []HostExecResult
-	rows = append(rows, skipped...)
-	if out != nil {
-		for _, res := range skipped {
-			out <- res
-		}
-	}
-	if len(kept) == 0 {
-		return rows, nil
-	}
-	maxConc := RecipeHostMaxConc(step, run.Params.Recipe.Defaults)
-	if maxConc <= 0 {
-		maxConc = 8
-	}
-	sem := make(chan struct{}, maxConc)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var stepErr error
-	for _, target := range kept {
-		target := target
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			res := runCueStepTemplateOnHost(ctx, run.Params.Recipe, stepIdx, step, target, run.OutputStore, run.OutputCapture, run.RecipeKV, run.Params.SecretResolver, run.Params.Execute)
-			AnnotateCueStepResult(&res, stepIdx, step, cuetry.KindTemplate)
-			mu.Lock()
-			rows = append(rows, res)
-			if !res.Success && !res.Skipped {
-				stepErr = fmt.Errorf("template failed on %s: %s", target.Name, res.ErrMsg)
-			}
-			mu.Unlock()
-			if out != nil {
-				out <- res
-			}
-		}()
-	}
-	wg.Wait()
-	return rows, stepErr
+func init() {
+	RegisterStepExecutor(cuetry.KindTemplate, &TemplateExecutor{})
 }
 
-// RunCueStepTemplateDry ...
-func RunCueStepTemplateDry(out io.Writer, execute bool, i int, step cuetry.Step) error {
+// TemplateExecutor executes the corresponding recipe step.
+type TemplateExecutor struct{}
+
+// ExecuteDryRun executes a dry run of the step.
+func (e *TemplateExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, execute, i, step := sc.Out, sc.Execute, sc.Index, sc.Step
 	if execute {
 		return nil
 	}
@@ -199,6 +136,60 @@ func RunCueStepTemplateDry(out io.Writer, execute bool, i int, step cuetry.Step)
 		i, step.Base().Host, capture, preview)
 	WriteCueStepNotifyDryLine(out, step)
 	return nil
+}
+
+// ExecuteStream streams the step execution.
+func (e *TemplateExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, stepIdx, step, ch := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.ResultCh
+	targets := sc.Targets
+
+	if len(targets) == 0 {
+		return nil
+	}
+
+	maxConc := RecipeHostMaxConc(step, run.Params.Recipe.Defaults)
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	sem := make(chan struct{}, maxConc)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var stepErr error
+
+	for _, target := range targets {
+		target := target
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			res := runCueStepTemplateOnHost(
+				ctx,
+				run.Params.Recipe,
+				stepIdx,
+				step,
+				target,
+				run.OutputStore,
+				run.OutputCapture,
+				run.RecipeKV,
+				run.Params.SecretResolver,
+				run.Params.Execute,
+			)
+
+			mu.Lock()
+			if !res.Success && !res.Skipped {
+				stepErr = fmt.Errorf("template failed on %s: %s", target.Name, res.ErrMsg)
+			}
+			mu.Unlock()
+
+			if ch != nil {
+				ch <- res
+			}
+		}()
+	}
+	wg.Wait()
+	return stepErr
 }
 
 func recordTemplateCapture(

@@ -31,8 +31,8 @@ type PromptUploadResponse struct {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/prompts/upload [post]
 // @Security BearerAuth
-func (s *Server) handleRecipesPromptsUpload(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(s.opts.MaxUploadSize); err != nil {
+func (api *RecipesAPI) handleRecipesPromptsUpload(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(api.opts.MaxUploadSize); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
@@ -66,7 +66,7 @@ func (s *Server) handleRecipesPromptsUpload(w http.ResponseWriter, r *http.Reque
 	hash := sha256.New()
 	mw := io.MultiWriter(out, hash)
 
-	if _, err := io.Copy(mw, io.LimitReader(f, s.opts.MaxUploadSize)); err != nil {
+	if _, err := io.Copy(mw, io.LimitReader(f, api.opts.MaxUploadSize)); err != nil {
 		_ = out.Close()
 		_ = os.RemoveAll(tmpDir)
 		httpError(w, err, http.StatusInternalServerError)
@@ -106,7 +106,7 @@ type PromptChoicesRequest struct {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/prompts/choices [post]
 // @Security BearerAuth
-func (s *Server) handleRecipesPromptsChoices(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesPromptsChoices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

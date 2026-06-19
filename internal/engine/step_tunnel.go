@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -20,7 +19,16 @@ import (
 )
 
 // StreamCueStepTunnel ...
-func (run *CueRun) streamCueStepTunnel(ctx context.Context, stepIdx int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func init() {
+	RegisterStepExecutor(cuetry.KindTunnel, &TunnelExecutor{})
+}
+
+// TunnelExecutor executes the corresponding recipe step.
+type TunnelExecutor struct{}
+
+// ExecuteStream streams the step execution.
+func (e *TunnelExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	if _, ok := step.(*cuetry.TunnelStep); !ok {
 		return fmt.Errorf("internal tunnel step")
 	}
@@ -302,8 +310,9 @@ func tunnelDryRunJSON(t *cuetry.RecipeStepTunnel) string {
 	return string(b)
 }
 
-// RunCueStepTunnelDry ...
-func RunCueStepTunnelDry(out io.Writer, recipe cuetry.Recipe, i int, step cuetry.Step, targets []hosts.Record) error {
+// ExecuteDryRun executes a dry run of the step.
+func (e *TunnelExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, recipe, i, step, targets := sc.Out, sc.Recipe, sc.Index, sc.Step, sc.Targets
 	WriteCueStepNotifyDryLine(out, step)
 	WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 	for _, target := range targets {

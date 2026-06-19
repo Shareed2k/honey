@@ -35,18 +35,20 @@ func TestClipRunesForRecipeAssist(t *testing.T) {
 
 func TestHandleRecipesAIFixAndGenerate(t *testing.T) {
 	// We just test the signature and auth/method bounds since we don't have an OpenAI key in tests.
-	srv := &Server{}
+	srv, _ := NewServer(Options{Token: "dummy", ListenAddr: "127.0.0.1:0"})
 
 	req1 := httptest.NewRequest("POST", "/api/v1/recipes/assist-fix", bytes.NewBufferString(`{}`))
+	req1.Header.Set("Authorization", "Bearer dummy")
 	w1 := httptest.NewRecorder()
-	srv.handleRecipesAssistFix(w1, req1)
+	srv.router.ServeHTTP(w1, req1)
 	if w1.Code == http.StatusNotFound {
 		t.Errorf("handleRecipesAssistFix not implemented")
 	}
 
 	req2 := httptest.NewRequest("POST", "/api/v1/recipes/generate", bytes.NewBufferString(`{}`))
+	req2.Header.Set("Authorization", "Bearer dummy")
 	w2 := httptest.NewRecorder()
-	srv.handleRecipesGenerate(w2, req2)
+	srv.router.ServeHTTP(w2, req2)
 	if w2.Code == http.StatusNotFound {
 		t.Errorf("handleRecipesGenerate not implemented")
 	}

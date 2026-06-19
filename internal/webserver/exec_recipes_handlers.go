@@ -134,7 +134,7 @@ func normalizeRecipePath(p string) (string, error) {
 // @Success 200 {object} RecipesListResponse
 // @Router /api/v1/recipes [get]
 // @Security BearerAuth
-func (s *Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -170,7 +170,7 @@ func (s *Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/view [post]
 // @Security BearerAuth
-func (s *Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -185,7 +185,7 @@ func (s *Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	allowed := s.allowedRecipePathSet()
+	allowed := api.allowedRecipePathSet()
 	if _, ok := allowed[cp]; !ok {
 		httpError(w, fmt.Errorf("recipe path not allowed"), http.StatusBadRequest)
 		return
@@ -284,7 +284,7 @@ func (s *Server) validateExecRequest(body ExecRequest) (string, error) {
 	return mode, nil
 }
 
-func (s *Server) handleRecipesSchema(w http.ResponseWriter, _ *http.Request) {
+func (api *RecipesAPI) handleRecipesSchema(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	schema := cuetry.BuildStepJSONSchema()
 	_ = json.NewEncoder(w).Encode(schema)
@@ -524,7 +524,7 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 // the parsed/validated recipe, its on-disk source path (empty for inline),
 // and the recipe's directory (empty for inline). All errors are caller-fixable
 // (HTTP 400 from the handler).
-func (s *Server) resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
+func (api *RecipesAPI) resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
 	switch {
 	case body.RecipeContent != nil:
 		if strings.TrimSpace(body.RecipePath) != "" {
@@ -547,7 +547,7 @@ func (s *Server) resolveCueExecRecipe(body CueExecRequest, records []hosts.Recor
 		if err != nil {
 			return cuetry.Recipe{}, "", "", err
 		}
-		allowedPaths := s.allowedRecipePathSet()
+		allowedPaths := api.allowedRecipePathSet()
 		if _, ok := allowedPaths[cp]; !ok {
 			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_path not allowed")
 		}
@@ -579,7 +579,7 @@ func (s *Server) resolveCueExecRecipe(body CueExecRequest, records []hosts.Recor
 // @Security BearerAuth
 //
 //nolint:gocyclo
-func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -590,14 +590,14 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pluginMgr, err := plugins.Open(r.Context(), s.opts.Config)
+	pluginMgr, err := plugins.Open(r.Context(), api.opts.Config)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
 	defer func() { _ = pluginMgr.Close() }()
 
-	recipe, recipeSourcePath, recipeDir, err := s.resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
+	recipe, recipeSourcePath, recipeDir, err := api.resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -624,8 +624,8 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	}
 	mergeK8sDebugImageFromRecipe(recipe, jobs)
 
-	user := s.sshUser(body.SSHUser)
-	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
+	user := api.sshUser(body.SSHUser)
+	wantRec := strings.TrimSpace(api.opts.RecordDir) != "" && body.RecordSession
 
 	recordRecipeMeta := func(rec *engine.SessionRecorder) {
 		if rec == nil {
@@ -650,7 +650,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	secRes, secErr := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(s.opts.Config), pluginMgr)
+	secRes, secErr := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), pluginMgr)
 	if secErr != nil {
 		httpError(w, secErr, http.StatusInternalServerError)
 		return
@@ -658,26 +658,26 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 
 	if !body.Execute {
 		var buf bytes.Buffer
-		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
+		aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 		runErr := engine.RunCueRecipeSteps(r.Context(), &buf, engine.CueRecipeRunParams{
 			Recipe:         recipe,
 			RecipeDir:      recipeDir,
 			Records:        jobs,
 			SSHUser:        user,
 			CLIEnv:         cliEnv,
-			ConfigPath:     s.opts.ConfigPath,
+			ConfigPath:     api.opts.ConfigPath,
 			AISystemPrompt: aiPrompt,
 			SecretResolver: secRes,
 			PluginMgr:      pluginMgr,
 			Execute:        false,
-			Obs:            s.metrics,
-			Reg:            s.opts.ExecRegistry,
-			Pools:          s.pgPools,
+			Obs:            api.metrics,
+			Reg:            api.opts.ExecRegistry,
+			Pools:          api.pgPools,
 		}, nil)
 		var rec *engine.SessionRecorder
 		if wantRec {
 			var err error
-			rec, err = engine.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec-dry", user, len(jobs))
+			rec, err = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-cue-exec-dry", user, len(jobs))
 			if err != nil {
 				httpError(w, err, http.StatusInternalServerError)
 				return
@@ -708,7 +708,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		var rec *engine.SessionRecorder
 		if wantRec {
 			var err error
-			rec, err = engine.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec", user, len(jobs))
+			rec, err = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-cue-exec", user, len(jobs))
 			if err != nil {
 				httpError(w, err, http.StatusInternalServerError)
 				return
@@ -719,21 +719,21 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		ch := make(chan engine.HostExecResult, cueExecChannelCap)
 		go func() {
 			defer close(ch)
-			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
+			aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 			if err := engine.StreamCueRecipeSteps(r.Context(), engine.CueRecipeRunParams{
 				Recipe:         recipe,
 				RecipeDir:      recipeDir,
 				Records:        jobs,
 				SSHUser:        user,
 				CLIEnv:         cliEnv,
-				ConfigPath:     s.opts.ConfigPath,
+				ConfigPath:     api.opts.ConfigPath,
 				AISystemPrompt: aiPrompt,
 				SecretResolver: secRes,
 				PluginMgr:      pluginMgr,
 				Execute:        true,
-				Obs:            s.metrics,
-				Reg:            s.opts.ExecRegistry,
-				Pools:          s.pgPools,
+				Obs:            api.metrics,
+				Reg:            api.opts.ExecRegistry,
+				Pools:          api.pgPools,
 			}, ch); err != nil {
 				ch <- engine.HostExecResult{
 					Name:     "cue-exec",
@@ -750,7 +750,7 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	var rec *engine.SessionRecorder
 	if wantRec {
 		var err error
-		rec, err = engine.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec", user, len(jobs))
+		rec, err = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-cue-exec", user, len(jobs))
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
@@ -762,21 +762,21 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	errCh := make(chan error, 1)
 	go func() {
 		defer close(ch)
-		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
+		aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 		errCh <- engine.StreamCueRecipeSteps(r.Context(), engine.CueRecipeRunParams{
 			Recipe:         recipe,
 			RecipeDir:      recipeDir,
 			Records:        jobs,
 			SSHUser:        user,
 			CLIEnv:         cliEnv,
-			ConfigPath:     s.opts.ConfigPath,
+			ConfigPath:     api.opts.ConfigPath,
 			AISystemPrompt: aiPrompt,
 			SecretResolver: secRes,
 			PluginMgr:      pluginMgr,
 			Execute:        true,
-			Obs:            s.metrics,
-			Reg:            s.opts.ExecRegistry,
-			Pools:          s.pgPools,
+			Obs:            api.metrics,
+			Reg:            api.opts.ExecRegistry,
+			Pools:          api.pgPools,
 		}, ch)
 	}()
 	var results []engine.HostExecResult

@@ -55,7 +55,7 @@ func StreamCueRecipeStepsGraph(ctx context.Context, run *CueRun, out chan<- Host
 			hid := handler.Step.Base().ID
 			if run.TriggeredHandlers[hid] {
 				zap.L().Info("running handler", zap.String("id", hid))
-				_, _ = StreamCueRecipeStep(ctx, run, -1, handler.Step, out)
+				_, _ = StreamCueRecipeStep(ctx, run, -1, handler.Step, nil, out)
 			}
 		}
 	}
@@ -136,16 +136,27 @@ func graphRunOneStep(ctx context.Context, run *CueRun, out chan<- HostExecResult
 	stepID := sg.IndexToID[idx]
 	kind := step.Kind()
 
+	stateMu.Lock()
+	succeeded := make(map[int]bool, len(state))
+	for j, st := range state {
+		if st == cuetry.StepRunSucceeded {
+			succeeded[j] = true
+		}
+	}
+	stateMu.Unlock()
+
+	historyMu.Lock()
+	var hist [][]HostExecResult
+	for _, j := range sg.AncestorHistoryOrder(idx, succeeded) {
+		if h := historyByIndex[j]; len(h) > 0 {
+			hist = append(hist, h)
+		}
+	}
+	historyMu.Unlock()
+
 	var rows []HostExecResult
 	var stepErr error
-	switch kind {
-	case cuetry.KindAI:
-		rows, stepErr = graphRunAIStep(ctx, run, idx, step, sg, state, historyByIndex, stateMu, historyMu, out)
-	case cuetry.KindTemplate:
-		rows, stepErr = graphRunTemplateStep(ctx, run, idx, step, out)
-	default:
-		rows, stepErr = StreamCueRecipeStep(ctx, run, idx, step, out)
-	}
+	rows, stepErr = StreamCueRecipeStep(ctx, run, idx, step, hist, out)
 
 	failed := stepErr != nil
 	if !failed && len(rows) > 0 {
@@ -190,56 +201,6 @@ func graphRunOneStep(ctx context.Context, run *CueRun, out chan<- HostExecResult
 		body := FormatCueStepHostResultsForNotify(idx+1, rows)
 		CueStepNotifyRemote(ctx, run.Params.Recipe, idx+1, kind, step.Base().Notify, body)
 	}
-}
-
-func graphRunAIStep(ctx context.Context, run *CueRun, idx int, step cuetry.Step, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, stateMu *sync.Mutex, historyMu *sync.Mutex, out chan<- HostExecResult) ([]HostExecResult, error) {
-	kv := KvReaderFromCoordinator(run.RecipeKV)
-	ok, whenErr := EvalAIStepWhen(ctx, run.Params.Recipe, step, run.OutputStore, run.Params.SecretResolver, kv, run.Params.CLIEnv, run.Params.Execute)
-	if whenErr != nil {
-		return nil, whenErr
-	}
-	if !ok {
-		res := HostExecResult{
-			Name:     fmt.Sprintf("Step %d | ai", idx+1),
-			Provider: "local",
-			Skipped:  true,
-			Output:   "(skipped: when)",
-		}
-		AnnotateCueStepResult(&res, idx, step, cuetry.KindAI)
-		out <- res
-		return []HostExecResult{res}, nil
-	}
-	stateMu.Lock()
-	succeeded := make(map[int]bool, len(state))
-	for j, st := range state {
-		if st == cuetry.StepRunSucceeded {
-			succeeded[j] = true
-		}
-	}
-	stateMu.Unlock()
-	historyMu.Lock()
-	var hist [][]HostExecResult
-	for _, j := range sg.AncestorHistoryOrder(idx, succeeded) {
-		if h := historyByIndex[j]; len(h) > 0 {
-			hist = append(hist, h)
-		}
-	}
-	historyMu.Unlock()
-	res := RunCueStepAIExecute(ctx, run.Params.Recipe, idx, step, hist, run.Params.AISystemPrompt)
-	AnnotateCueStepResult(&res, idx, step, cuetry.KindAI)
-	out <- res
-	if !res.Success {
-		return []HostExecResult{res}, fmt.Errorf("ai step failed: %s", res.ErrMsg)
-	}
-	return []HostExecResult{res}, nil
-}
-
-func graphRunTemplateStep(ctx context.Context, run *CueRun, idx int, step cuetry.Step, out chan<- HostExecResult) ([]HostExecResult, error) {
-	rows, err := run.streamCueTemplateStep(ctx, idx, step, out)
-	if err != nil {
-		return rows, err
-	}
-	return rows, nil
 }
 
 func logGraphStepFinished(stepID string, kind string, st cuetry.StepRunState, err error) {

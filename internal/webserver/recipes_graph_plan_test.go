@@ -24,7 +24,7 @@ func TestHandleRecipesGraphPlan_requiresGraph(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/graph-plan", bytes.NewReader([]byte(body)))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
-	s.handleRecipesGraphPlan(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -40,7 +40,7 @@ func TestHandleRecipesGraphPlan_ok(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/graph-plan", bytes.NewReader([]byte(body)))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
-	s.handleRecipesGraphPlan(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}

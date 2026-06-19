@@ -153,16 +153,6 @@ func runCueRecipeStepsExecute(ctx context.Context, out io.Writer, p CueRecipeRun
 func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record, sshUser string, execute bool, cliEnv map[string]string, configPath string, i int, step cuetry.Step, secretResolver cuetry.SecretResolver, pluginMgr *plugins.Manager) error {
 	zap.L().Debug("evaluating cue step", zap.Int("step_index", i), zap.String("host", step.Base().Host))
 	kind := step.Kind()
-	var err error
-	if kind == cuetry.KindAgentTransfer {
-		return RunCueStepAgentTransferDry(out, records, sshUser, configPath, i, step)
-	}
-	if kind == cuetry.KindAI {
-		return RunCueStepAIDry(out, recipe, execute, i, step)
-	}
-	if kind == cuetry.KindTemplate {
-		return RunCueStepTemplateDry(out, execute, i, step)
-	}
 	var targets []hosts.Record
 	if CueRecipeLoopUsesItemHost(step) && !execute {
 		targets = []hosts.Record{{
@@ -171,33 +161,40 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 			PrimaryIP: "${item}",
 		}}
 	} else {
-		targets, err = cuetry.ExpandStepHosts(step.Base().Host, records)
-		if err != nil {
-			return fmt.Errorf("step %d: %w", i, err)
-		}
+		// Some steps (like AI) might not have a host field and will fail to expand.
+		// That's fine, we pass the targets anyway and let the Executor handle the error if it needs to.
+		targets, _ = cuetry.ExpandStepHosts(step.Base().Host, records)
 	}
+
 	targets = CueApplyRecipeSSHDialOptions(recipe, RemoteOpts(step), targets)
-	if !execute && strings.TrimSpace(step.Base().When) != "" {
+	if !execute && strings.TrimSpace(step.Base().When) != "" && len(targets) > 0 {
 		if err := WriteWhenDryLines(out, i, step, recipe, targets, nil, cliEnv, false); err != nil {
 			return err
 		}
 	}
-	switch kind {
-	case cuetry.KindCommand:
-		return RunCueStepCommand(out, recipe, execute, cliEnv, i, step, targets)
-	case cuetry.KindPut:
-		return RunCueStepPut(out, recipe, recipeDir, execute, i, step, targets)
-	case cuetry.KindGet:
-		return RunCueStepGet(out, recipe, recipeDir, execute, i, step, targets)
-	case cuetry.KindScript:
-		return RunCueStepScript(out, recipeDir, recipe, execute, cliEnv, i, step, targets)
-	case cuetry.KindPlugin:
-		return RunCueStepPluginDry(out, recipe, recipeDir, cliEnv, sshUser, secretResolver, pluginMgr, i, step, targets)
-	case cuetry.KindTunnel:
-		return RunCueStepTunnelDry(out, recipe, i, step, targets)
-	case cuetry.KindDocker:
-		return RunCueStepDockerDry(out, recipe, i, step, targets)
-	default:
-		return nil
+
+	sc := &StepContext{
+		Ctx:            context.Background(),
+		Out:            out,
+		Recipe:         recipe,
+		RecipeDir:      recipeDir,
+		Records:        records,
+		Targets:        targets,
+		SSHUser:        sshUser,
+		Execute:        execute,
+		CLIEnv:         cliEnv,
+		ConfigPath:     configPath,
+		Index:          i,
+		Step:           step,
+		Kind:           kind,
+		SecretResolver: secretResolver,
+		PluginMgr:      pluginMgr,
 	}
+
+	exec, err := GetStepExecutor(kind)
+	if err == nil {
+		return exec.ExecuteDryRun(sc)
+	}
+
+	return fmt.Errorf("step %d: unsupported step kind for dry run: %q", i, kind)
 }

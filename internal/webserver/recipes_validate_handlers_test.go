@@ -138,9 +138,10 @@ func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
 	body, _ := json.Marshal(ValidateContentRequest{RecipeContent: content})
 	req := httptest.NewRequest("POST", "/api/v1/recipes/validate-content", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test")
 	w := httptest.NewRecorder()
 
-	srv.handleRecipesValidateContent(w, req)
+	srv.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", w.Code)
@@ -154,10 +155,11 @@ func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
 }
 
 func TestHandleRecipesSyncAST(t *testing.T) {
-	srv := &Server{}
+	srv, _ := NewServer(Options{Token: "dummy", ListenAddr: "127.0.0.1:0"})
 	req := httptest.NewRequest("POST", "/api/v1/recipes/sync-ast", bytes.NewBufferString(`{}`))
+	req.Header.Set("Authorization", "Bearer dummy")
 	w := httptest.NewRecorder()
-	srv.handleRecipesSyncAST(w, req)
+	srv.router.ServeHTTP(w, req)
 
 	if w.Code == http.StatusNotFound {
 		t.Fatalf("handleRecipesSyncAST not implemented")

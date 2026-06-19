@@ -157,34 +157,37 @@ func CueApplyRecipeSSHDialOptions(recipe cuetry.Recipe, re *cuetry.RemoteExec, t
 	return out
 }
 
-// ExecuteStep dispatches execution to the appropriate step logic.
-func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
-	switch kind {
-	case cuetry.KindTemplate:
-		_, err := run.streamCueTemplateStep(ctx, i, step, ch)
-		return err
-	case cuetry.KindCommand:
-		return run.streamCueStepCommand(ctx, i, kind, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindScript:
-		return run.streamCueStepScript(ctx, i, kind, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindPlugin:
-		return run.streamCueStepPlugin(ctx, i, kind, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindPut:
-		return run.streamCueStepPut(ctx, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindGet:
-		return run.streamCueStepGet(ctx, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindTunnel:
-		return run.streamCueStepTunnel(ctx, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindK8s:
-		return run.streamCueStepK8s(ctx, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindDocker:
-		return run.streamCueStepDocker(ctx, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindOpensearch:
-		return run.streamCueStepOpensearch(ctx, i, step, targets, ch, retryCfg, attemptMax)
-	case cuetry.KindPostgres:
-		return run.streamCueStepPostgres(ctx, i, step, targets, ch, retryCfg, attemptMax)
+// ExecuteStep dispatches execution to the appropriate step logic via StepExecutors.
+func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cuetry.Step, targets []hosts.Record, history [][]HostExecResult, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+	exec, err := GetStepExecutor(kind)
+	if err != nil {
+		return fmt.Errorf("execute step: %w", err)
 	}
-	return nil
+
+	sc := &StepContext{
+		Ctx:            ctx,
+		Run:            run,
+		Recipe:         run.Params.Recipe,
+		RecipeDir:      run.Params.RecipeDir,
+		Records:        run.Params.Records,
+		Targets:        targets,
+		SSHUser:        run.Params.SSHUser,
+		Execute:        run.Params.Execute,
+		CLIEnv:         run.Params.CLIEnv,
+		ConfigPath:     run.Params.ConfigPath,
+		Index:          i,
+		Step:           step,
+		Kind:           kind,
+		SecretResolver: run.Params.SecretResolver,
+		PluginMgr:      run.Params.PluginMgr,
+		RetryCfg:       retryCfg,
+		AttemptMax:     attemptMax,
+		ResultCh:       ch,
+		History:        history,
+		AISystemPrompt: run.Params.AISystemPrompt,
+	}
+
+	return exec.ExecuteStream(sc)
 }
 
 // CueGetLocalIsDirectory ...
@@ -289,51 +292,8 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	var history [][]HostExecResult
 	for i, ws := range p.Recipe.Steps {
 		step := ws.Step
-		kind := step.Kind()
-		if kind == cuetry.KindTemplate {
-			stepStart := time.Now()
-			rows, err := run.streamCueTemplateStep(ctx, i, step, out)
-			ObserveRecipeStep(p.Obs, kind, stepStart, rows, 1)
-			if len(rows) > 0 {
-				history = append(history, rows)
-			}
-			if err != nil {
-				runErr = err
-				return err
-			}
-			continue
-		}
-		if kind == cuetry.KindAI {
-			stepStart := time.Now()
-			kv := KvReaderFromCoordinator(run.RecipeKV)
-			ok, whenErr := EvalAIStepWhen(ctx, p.Recipe, step, run.OutputStore, p.SecretResolver, kv, p.CLIEnv, p.Execute)
-			if whenErr != nil {
-				runErr = whenErr
-				return whenErr
-			}
-			if !ok {
-				res := HostExecResult{
-					Name:     fmt.Sprintf("Step %d | ai", i+1),
-					Provider: "local",
-					Skipped:  true,
-					Output:   "(skipped: when)",
-				}
-				AnnotateCueStepResult(&res, i, step, kind)
-				out <- res
-				rows := []HostExecResult{res}
-				ObserveRecipeStep(p.Obs, kind, stepStart, rows, 1)
-				history = append(history, rows)
-				continue
-			}
-			res := RunCueStepAIExecute(ctx, p.Recipe, i, step, history, p.AISystemPrompt)
-			AnnotateCueStepResult(&res, i, step, kind)
-			out <- res
-			rows := []HostExecResult{res}
-			ObserveRecipeStep(p.Obs, kind, stepStart, rows, 1)
-			history = append(history, rows)
-			continue
-		}
-		rows, err := StreamCueRecipeStep(ctx, run, i, step, out)
+
+		rows, err := StreamCueRecipeStep(ctx, run, i, step, history, out)
 		if len(rows) > 0 {
 			history = append(history, rows)
 		}
@@ -363,7 +323,7 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 		}
 		if step.Base().NotifyEnabled() && err == nil && len(rows) > 0 {
 			body := FormatCueStepHostResultsForNotify(i+1, rows)
-			CueStepNotifyRemote(ctx, p.Recipe, i+1, kind, step.Base().Notify, body)
+			CueStepNotifyRemote(ctx, p.Recipe, i+1, step.Kind(), step.Base().Notify, body)
 		}
 	}
 
@@ -375,7 +335,7 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 			if run.TriggeredHandlers[hid] {
 				zap.L().Info("running handler", zap.String("id", hid))
 				// Execute the handler step. Use step index -1 to indicate it is a handler.
-				_, _ = StreamCueRecipeStep(ctx, run, -1, handler.Step, out)
+				_, _ = StreamCueRecipeStep(ctx, run, -1, handler.Step, history, out)
 			}
 		}
 	}
@@ -406,20 +366,10 @@ func CueStepAllTargetsTransientTransportFailed(results []HostExecResult) bool {
 }
 
 // StreamCueRecipeStep ...
-func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.Step, out chan<- HostExecResult) ([]HostExecResult, error) {
+func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.Step, history [][]HostExecResult, out chan<- HostExecResult) ([]HostExecResult, error) {
 	stepStart := time.Now()
 	var attemptMax atomic.Int32
 	kind := step.Kind()
-	if kind == cuetry.KindAgentTransfer {
-		rows, err := run.streamCueStepAgentTransferWhen(ctx, i, step)
-		for idx := range rows {
-			AnnotateCueStepResult(&rows[idx], i, step, kind)
-			out <- rows[idx]
-		}
-		RecordGraphStepStdout(run.Params.Recipe, step, kind, run.OutputStore, rows)
-		ObserveRecipeStep(run.Params.Obs, kind, stepStart, rows, 1)
-		return rows, err
-	}
 
 	var targets []hosts.Record
 	var err error
@@ -434,7 +384,7 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 	targets = CueApplyRecipeSSHDialOptions(run.Params.Recipe, RemoteOpts(step), targets)
 
 	if strings.TrimSpace(step.Base().Loop) != "" || step.Base().LoopFrom != nil {
-		return StreamCueLoopStep(ctx, run, i, step, targets, out)
+		return StreamCueLoopStep(ctx, run, i, step, targets, history, out)
 	}
 
 	kv := KvReaderFromCoordinator(run.RecipeKV)
@@ -478,7 +428,7 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 
 	retryCfg := cuetry.EffectiveRetry(step.Base(), run.Params.Recipe.Defaults)
 
-	stepErr := run.ExecuteStep(ctx, i, kind, step, targets, ch, retryCfg, &attemptMax)
+	stepErr := run.ExecuteStep(ctx, i, kind, step, targets, history, ch, retryCfg, &attemptMax)
 
 	close(ch)
 	<-done
@@ -550,7 +500,7 @@ func CueRecipeLoopItems(run *CueRun, step cuetry.Step, target hosts.Record) ([]s
 }
 
 // StreamCueLoopStep ...
-func StreamCueLoopStep(ctx context.Context, run *CueRun, i int, step cuetry.Step, targets []hosts.Record, out chan<- HostExecResult) ([]HostExecResult, error) {
+func StreamCueLoopStep(ctx context.Context, run *CueRun, i int, step cuetry.Step, targets []hosts.Record, history [][]HostExecResult, out chan<- HostExecResult) ([]HostExecResult, error) {
 	var stepResults []HostExecResult
 	for _, t := range targets {
 		items, err := CueRecipeLoopItems(run, step, t)
@@ -590,7 +540,7 @@ func StreamCueLoopStep(ctx context.Context, run *CueRun, i int, step cuetry.Step
 				TriggeredHandlers: run.TriggeredHandlers,
 			}
 
-			subResults, err := StreamCueRecipeStep(ctx, loopRun, i, loopStep, out)
+			subResults, err := StreamCueRecipeStep(ctx, loopRun, i, loopStep, history, out)
 			if err == nil {
 				for _, r := range subResults {
 					if r.HookFailed {

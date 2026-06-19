@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 
 	"github.com/cenkalti/backoff/v5"
 	"github.com/moby/moby/api/types/container"
@@ -22,7 +21,16 @@ import (
 )
 
 // StreamCueStepDocker ...
-func (run *CueRun) streamCueStepDocker(ctx context.Context, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func init() {
+	RegisterStepExecutor(cuetry.KindDocker, &DockerExecutor{})
+}
+
+// DockerExecutor executes the corresponding recipe step.
+type DockerExecutor struct{}
+
+// ExecuteStream streams the step execution.
+func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	ds, _ := step.(*cuetry.DockerStep)
 	if ds == nil || ds.Docker == nil {
 		return fmt.Errorf("internal: docker step missing docker field")
@@ -278,8 +286,9 @@ func executeDockerStop(ctx context.Context, cli *client.Client, s *cuetry.Docker
 	return string(res), nil
 }
 
-// RunCueStepDockerDry ...
-func RunCueStepDockerDry(out io.Writer, recipe cuetry.Recipe, i int, step cuetry.Step, targets []hosts.Record) error {
+// ExecuteDryRun executes a dry run of the step.
+func (e *DockerExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, recipe, i, step, targets := sc.Out, sc.Recipe, sc.Index, sc.Step, sc.Targets
 	runAs := cuetry.EffectiveRunAs(step.Base(), recipe.Defaults)
 	ds, _ := step.(*cuetry.DockerStep)
 	action := ""

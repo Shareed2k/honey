@@ -3,19 +3,37 @@ package engine
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-// StreamCueStepCommand ...
-func (run *CueRun) streamCueStepCommand(ctx context.Context, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func init() {
+	RegisterStepExecutor(cuetry.KindCommand, &CommandExecutor{})
+	RegisterStepExecutor(cuetry.KindPut, &PutExecutor{})
+	RegisterStepExecutor(cuetry.KindGet, &GetExecutor{})
+	RegisterStepExecutor(cuetry.KindScript, &ScriptExecutor{})
+}
+
+// CommandExecutor executes the corresponding recipe step.
+type CommandExecutor struct{}
+
+// PutExecutor executes the corresponding recipe step.
+type PutExecutor struct{}
+
+// GetExecutor executes the corresponding recipe step.
+type GetExecutor struct{}
+
+// ScriptExecutor executes the corresponding recipe step.
+type ScriptExecutor struct{}
+
+// ExecuteStream streams the step execution.
+func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	cs, ok := step.(*cuetry.CommandStep)
 	if !ok {
 		return fmt.Errorf("internal: command step has wrong type %T", step)
@@ -78,8 +96,9 @@ func (run *CueRun) streamCueStepCommand(ctx context.Context, stepIdx int, kind s
 	})
 }
 
-// StreamCueStepPut ...
-func (run *CueRun) streamCueStepPut(ctx context.Context, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+// ExecuteStream streams the step execution.
+func (e *PutExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	ps, ok := step.(*cuetry.PutStep)
 	if !ok || ps.Put == nil {
 		return fmt.Errorf("internal: put step missing put field")
@@ -101,8 +120,9 @@ func (run *CueRun) streamCueStepPut(ctx context.Context, step cuetry.Step, targe
 	})
 }
 
-// StreamCueStepGet ...
-func (run *CueRun) streamCueStepGet(ctx context.Context, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+// ExecuteStream streams the step execution.
+func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	gs, okt := step.(*cuetry.GetStep)
 	if !okt || gs.Get == nil {
 		return fmt.Errorf("internal: get step missing get field")
@@ -154,8 +174,9 @@ func (run *CueRun) streamCueStepGet(ctx context.Context, step cuetry.Step, targe
 	})
 }
 
-// StreamCueStepScript ...
-func (run *CueRun) streamCueStepScript(ctx context.Context, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+// ExecuteStream streams the step execution.
+func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	ss, ok := step.(*cuetry.ScriptStep)
 	if !ok || ss.Script == nil {
 		return fmt.Errorf("internal: script step missing script field")
@@ -216,8 +237,9 @@ func (run *CueRun) streamCueStepScript(ctx context.Context, stepIdx int, kind st
 	})
 }
 
-// RunCueStepCommand ...
-func RunCueStepCommand(out io.Writer, recipe cuetry.Recipe, execute bool, cliEnv map[string]string, i int, step cuetry.Step, targets []hosts.Record) error {
+// ExecuteDryRun executes a dry run of the step.
+func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, recipe, execute, cliEnv, i, step, targets := sc.Out, sc.Recipe, sc.Execute, sc.CLIEnv, sc.Index, sc.Step, sc.Targets
 	cs, _ := step.(*cuetry.CommandStep)
 	command := ""
 	if cs != nil {
@@ -255,8 +277,9 @@ func RunCueStepCommand(out io.Writer, recipe cuetry.Recipe, execute bool, cliEnv
 	return nil
 }
 
-// RunCueStepPut ...
-func RunCueStepPut(out io.Writer, recipe cuetry.Recipe, recipeDir string, execute bool, i int, step cuetry.Step, targets []hosts.Record) error {
+// ExecuteDryRun executes a dry run of the step.
+func (e *PutExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, recipe, recipeDir, execute, i, step, targets := sc.Out, sc.Recipe, sc.RecipeDir, sc.Execute, sc.Index, sc.Step, sc.Targets
 	ps, _ := step.(*cuetry.PutStep)
 	if ps == nil || ps.Put == nil {
 		return fmt.Errorf("step %d: internal: missing put", i)
@@ -281,8 +304,9 @@ func RunCueStepPut(out io.Writer, recipe cuetry.Recipe, recipeDir string, execut
 	return nil
 }
 
-// RunCueStepGet ...
-func RunCueStepGet(out io.Writer, recipe cuetry.Recipe, recipeDir string, execute bool, i int, step cuetry.Step, targets []hosts.Record) error {
+// ExecuteDryRun executes a dry run of the step.
+func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, recipe, recipeDir, execute, i, step, targets := sc.Out, sc.Recipe, sc.RecipeDir, sc.Execute, sc.Index, sc.Step, sc.Targets
 	gs, _ := step.(*cuetry.GetStep)
 	if gs == nil || gs.Get == nil {
 		return fmt.Errorf("step %d: internal: missing get", i)
@@ -330,8 +354,9 @@ func RunCueStepGet(out io.Writer, recipe cuetry.Recipe, recipeDir string, execut
 	return nil
 }
 
-// RunCueStepScript ...
-func RunCueStepScript(out io.Writer, recipeDir string, recipe cuetry.Recipe, execute bool, cliEnv map[string]string, i int, step cuetry.Step, targets []hosts.Record) error {
+// ExecuteDryRun executes a dry run of the step.
+func (e *ScriptExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, recipeDir, recipe, execute, cliEnv, i, step, targets := sc.Out, sc.RecipeDir, sc.Recipe, sc.Execute, sc.CLIEnv, sc.Index, sc.Step, sc.Targets
 	ss, _ := step.(*cuetry.ScriptStep)
 	if ss == nil || ss.Script == nil {
 		return fmt.Errorf("step %d: internal: missing script", i)

@@ -176,7 +176,7 @@ func TestCueRun_loopFromAndHandlers(t *testing.T) {
 	}
 
 	ch := make(chan HostExecResult, 10)
-	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, nil, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestCueRun_loopTemplateMultilineStdout(t *testing.T) {
 	}
 
 	ch := make(chan HostExecResult, 10)
-	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, nil, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestCueRun_loopTemplateHostItem(t *testing.T) {
 	}
 
 	ch := make(chan HostExecResult, 10)
-	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, nil, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
 			Output: "raw",
 		},
 		Command: "printf data",
-	}, ch)
+	}, nil, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestCueRun_stepOutputCaptureAndRender(t *testing.T) {
 			Output: "items",
 		},
 		Render: `{{ .outputs.raw.stdout_lines | compact | toJson }}`,
-	}, ch)
+	}, nil, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestCueRun_stepTimeout(t *testing.T) {
 	}
 
 	ch := make(chan HostExecResult, 10)
-	_, err := StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	_, err := StreamCueRecipeStep(context.TODO(), run, 0, step, nil, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +650,7 @@ func TestCueRun_loopAbortedOnHookFailure(t *testing.T) {
 	}
 
 	ch := make(chan HostExecResult, 10)
-	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, nil, ch)
 	close(ch)
 
 	if err == nil {
@@ -710,7 +710,7 @@ func TestCueRun_opensearchStep(t *testing.T) {
 	}
 
 	ch := make(chan HostExecResult, 10)
-	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, nil, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -779,7 +779,7 @@ func TestCueRun_postgresStep(t *testing.T) {
 	run.Params.Execute = false
 
 	ch := make(chan HostExecResult, 10)
-	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, ch)
+	results, err := StreamCueRecipeStep(context.TODO(), run, 0, step, nil, ch)
 	if err != nil {
 		t.Fatal(err)
 	}
