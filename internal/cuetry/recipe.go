@@ -277,10 +277,16 @@ const schemaSource = `
 	extract?:      {[string]: string}
 	async?:        bool
 })
+#Schedule: close({
+	cron:      string
+	timezone?: string
+	env?:      {[string]: string}
+})
 #Recipe: close({
 	name:  string
 	type?: "linear" | "graph"
-	webhooks?: {[string]: #Webhook}
+	webhooks?:  {[string]: #Webhook}
+	schedules?: {[string]: #Schedule}
 	defaults?: close({
 		run_as?: string
 		env?: {[string]: string}
