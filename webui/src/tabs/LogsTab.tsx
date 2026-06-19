@@ -556,8 +556,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
       </div>
 
       <Suspense fallback={<Spin size="large" style={{ display: 'block', margin: '40px auto' }} />}>
-        <Modal
-          title="Root Cause Analysis Diagnosis"
+        <Modal maskClosable={false}           title="Root Cause Analysis Diagnosis"
           open={rcaOpen}
           onCancel={() => setRcaOpen(false)}
           footer={null}

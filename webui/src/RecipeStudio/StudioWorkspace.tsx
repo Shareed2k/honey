@@ -987,8 +987,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
         }}
       />
 
-      <Modal
-        title="Select hosts to run on"
+      <Modal maskClosable={false}         title="Select hosts to run on"
         open={hostPickerOpen}
         onCancel={() => setHostPickerOpen(false)}
         onOk={handleModalRun}
@@ -1020,8 +1019,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
         }}
       />
 
-      <Modal
-        title="Generate Recipe with AI"
+      <Modal maskClosable={false}         title="Generate Recipe with AI"
         open={generateModalOpen}
         onCancel={() => setGenerateModalOpen(false)}
         okText="Generate"

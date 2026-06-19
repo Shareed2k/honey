@@ -385,8 +385,7 @@ export function SessionReplayModal({
   const duration = useMemo(() => (events.length ? events[events.length - 1].time_ms || 0 : 0), [events]);
 
   return (
-    <Modal
-      open
+    <Modal maskClosable={false}       open
       title={`Replay${
         record.primary_ip?.trim()
           ? ` — ${record.name} (${record.primary_ip})`

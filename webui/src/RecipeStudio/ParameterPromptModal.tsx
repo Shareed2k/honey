@@ -51,8 +51,7 @@ export function ParameterPromptModal({ open, prompts, onCancel, onSubmit }: Prop
   };
 
   return (
-    <Modal
-      title="Recipe Parameters Required"
+    <Modal maskClosable={false}       title="Recipe Parameters Required"
       open={open}
       onCancel={onCancel}
       onOk={() => form.submit()}

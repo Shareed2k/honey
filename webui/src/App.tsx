@@ -691,8 +691,7 @@ export function App() {
             }}
           />
         ) : (
-          <Modal
-            open
+          <Modal maskClosable={false}             open
             title="Session replay"
             onCancel={() => setReplayRecord(null)}
             footer={<Button onClick={() => setReplayRecord(null)}>Close</Button>}
@@ -704,8 +703,7 @@ export function App() {
       ) : null}
 
       {/* Tunnel creation modal */}
-      <Modal
-        open={!!tunnelOpen}
+      <Modal maskClosable={false}         open={!!tunnelOpen}
         title={tunnelOpen ? `Port Forward / Tunnel — ${tunnelOpen.record.name}` : 'Port Forward / Tunnel'}
         onCancel={() => setTunnelOpen(null)}
         footer={null}
@@ -756,8 +754,7 @@ export function App() {
       </Modal>
 
       {/* Recipe preview modal */}
-      <Modal
-        open={!!recipePreview}
+      <Modal maskClosable={false}         open={!!recipePreview}
         title={recipePreview?.title}
         onCancel={() => setRecipePreview(null)}
         footer={<Button onClick={() => setRecipePreview(null)}>Close</Button>}
@@ -777,8 +774,7 @@ export function App() {
 
       {/* Recipe AI assist modal */}
       {recipeAssistOpen ? (
-        <Modal
-          open
+        <Modal maskClosable={false}           open
           title={`AI explain: ${recipeAssistOpen.name}`}
           onCancel={() => closeRecipeAssist()}
           footer={<Button onClick={() => closeRecipeAssist()}>Close</Button>}

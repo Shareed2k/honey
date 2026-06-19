@@ -854,8 +854,7 @@ export function SearchTab({
           </Button>
           <Button onClick={clearExecOutput}>Clear results</Button>
         </Space>
-        <Modal
-          title="Save snippet"
+        <Modal maskClosable={false}           title="Save snippet"
           open={saveSnippetOpen}
           onOk={() => void doSaveSnippet()}
           onCancel={() => setSaveSnippetOpen(false)}
@@ -1051,8 +1050,7 @@ export function SearchTab({
       </Typography.Text>
 
       {/* Upload modal */}
-      <Modal
-        open={uploadModalOpen}
+      <Modal maskClosable={false}         open={uploadModalOpen}
         title="SFTP upload"
         onCancel={closeUploadModal}
         footer={<Button onClick={closeUploadModal}>Close</Button>}

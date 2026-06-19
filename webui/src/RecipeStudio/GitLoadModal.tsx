@@ -67,8 +67,7 @@ export default function GitLoadModal({ visible, onCancel, onLoad }: Props) {
   };
 
   return (
-    <Modal
-      title="Load Recipe from Git"
+    <Modal maskClosable={false}       title="Load Recipe from Git"
       open={visible}
       onCancel={onCancel}
       footer={null}
