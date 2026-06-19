@@ -13,17 +13,22 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pkg/sftp"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"github.com/shareed2k/honey/internal/webserver"
 )
@@ -252,7 +257,32 @@ func (c *testSSHClient) RunWithStreams(cmd string, stdin io.Reader, stdout, stde
 	return sess.Run(cmd)
 }
 
-func (c *testSSHClient) Upload(_, _ string) error   { return fmt.Errorf("not implemented") }
+func (c *testSSHClient) Upload(localPath, remotePath string) error {
+	sftpClient, err := sftp.NewClient(c.c)
+	if err != nil {
+		return err
+	}
+	defer sftpClient.Close()
+
+	in, err := os.Open(localPath)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	if err := sftpClient.MkdirAll(filepath.ToSlash(filepath.Dir(remotePath))); err != nil {
+		return err
+	}
+
+	out, err := sftpClient.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
 func (c *testSSHClient) Download(_, _ string) error { return fmt.Errorf("not implemented") }
 func (c *testSSHClient) ListRemoteDir(_ string) ([]hostexec.RemoteFileEntry, error) {
 	return nil, fmt.Errorf("not implemented")
@@ -288,8 +318,8 @@ func dialSSHTestContainer(user, containerHost string, containerPort int, keyFile
 }
 
 // newTestDialer returns a DialerFunc that connects to the test SSH container.
-func newTestDialer(containerHost string, containerPort int, keyFile string) hostexec.DialerFunc {
-	return hostexec.DialerFunc(func(user, _ string, _ int, _ string) (hostexec.HostClient, error) {
+func newTestDialer(containerHost string, containerPort int, keyFile string) DialerFunc {
+	return DialerFunc(func(user, _ string, _ int, _ string) (hostexec.HostClient, error) {
 		client, err := dialSSHTestContainer(user, containerHost, containerPort, keyFile)
 		if err != nil {
 			return nil, err
@@ -299,8 +329,8 @@ func newTestDialer(containerHost string, containerPort int, keyFile string) host
 }
 
 // newTestTunnelRunner returns a TunnelRunnerFunc that connects via the test SSH container.
-func newTestTunnelRunner(containerHost string, containerPort int, keyFile string) hostexec.TunnelRunnerFunc {
-	return hostexec.TunnelRunnerFunc(func(ctx context.Context, user, _ string, _ int, localFwd string, out io.Writer) error {
+func newTestTunnelRunner(containerHost string, containerPort int, keyFile string) TunnelRunnerFunc {
+	return TunnelRunnerFunc(func(ctx context.Context, user, _ string, _ int, localFwd string, out io.Writer) error {
 		localPortStr, remoteHost, remotePortStr, err := sshclient.ParseLocalForward(localFwd)
 		if err != nil {
 			return fmt.Errorf("parse local forward: %w", err)
@@ -383,3 +413,61 @@ func newTestServer(t *testing.T, opts webserver.Options) string {
 
 // authHeader returns the Authorization header for the test token.
 func authHeader() string { return "Bearer test-token" }
+
+type DialerFunc func(user, host string, port int, keyFile string) (hostexec.HostClient, error)
+
+func (f DialerFunc) Dial(user, host string, port int, keyFile string) (hostexec.HostClient, error) {
+	return f(user, host, port, keyFile)
+}
+
+type TunnelRunnerFunc func(ctx context.Context, user, host string, port int, localFwd string, out io.Writer) error
+
+type testRegistry struct {
+	Dialer DialerFunc
+	Tunnel TunnelRunnerFunc
+}
+
+func (r *testRegistry) ForRecord(rec hosts.Record) hostexec.Executor {
+	return &testExecutor{reg: r, rec: rec}
+}
+
+func (r *testRegistry) Reconfigure(cfg *config.File) {}
+
+func (r *testRegistry) RunSSHTunnel(ctx context.Context, user, host string, sshPort int, localFwd string, out io.Writer) error {
+	if r.Tunnel != nil {
+		return r.Tunnel(ctx, user, host, sshPort, localFwd, out)
+	}
+	return fmt.Errorf("Tunnel not implemented")
+}
+
+func (r *testRegistry) BorrowSSH(user string, hop hosts.Record) (any, bool) {
+	return nil, false
+}
+
+type testExecutor struct {
+	reg *testRegistry
+	rec hosts.Record
+}
+
+func (e *testExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
+	return e.reg.Dialer(user, "", 0, "")
+}
+
+func (e *testExecutor) RunInteractive(user string, r hosts.Record) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (e *testExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
+	if e.reg.Tunnel != nil {
+		return e.reg.Tunnel(ctx, user, "", 0, localFwd, out)
+	}
+	return fmt.Errorf("not implemented")
+}
+
+func (e *testExecutor) DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (c *testSSHClient) SupportsKVTunnel() bool {
+	return false
+}
