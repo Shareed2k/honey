@@ -8,10 +8,11 @@ import (
 )
 
 func TestHandleRecipesLibrary(t *testing.T) {
-	srv := &Server{}
+	srv, _ := NewServer(Options{Token: "dummy", ListenAddr: "127.0.0.1:0"})
 	req := httptest.NewRequest("GET", "/api/v1/recipes/library", nil)
+	req.Header.Set("Authorization", "Bearer dummy")
 	w := httptest.NewRecorder()
-	srv.handleRecipesLibrary(w, req)
+	srv.router.ServeHTTP(w, req)
 
 	if w.Code == http.StatusNotFound {
 		t.Fatalf("handleRecipesLibrary not implemented")

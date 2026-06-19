@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,7 +17,16 @@ import (
 )
 
 // StreamCueStepPlugin ...
-func (run *CueRun) streamCueStepPlugin(ctx context.Context, stepIdx int, kind string, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func init() {
+	RegisterStepExecutor(cuetry.KindPlugin, &PluginExecutor{})
+}
+
+// PluginExecutor executes the corresponding recipe step.
+type PluginExecutor struct{}
+
+// ExecuteStream streams the step execution.
+func (e *PluginExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	if run.Params.PluginMgr == nil || !run.Params.PluginMgr.Enabled() {
 		return fmt.Errorf("plugin step requires plugins.enabled in honey config")
 	}
@@ -199,8 +207,9 @@ func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind stri
 	return res
 }
 
-// RunCueStepPluginDry ...
-func RunCueStepPluginDry(out io.Writer, recipe cuetry.Recipe, recipeDir string, cliEnv map[string]string, sshUser string, secretResolver cuetry.SecretResolver, pluginMgr *plugins.Manager, i int, step cuetry.Step, targets []hosts.Record) error {
+// ExecuteDryRun executes a dry run of the step.
+func (e *PluginExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, recipe, recipeDir, cliEnv, sshUser, secretResolver, pluginMgr, i, step, targets := sc.Out, sc.Recipe, sc.RecipeDir, sc.CLIEnv, sc.SSHUser, sc.SecretResolver, sc.PluginMgr, sc.Index, sc.Step, sc.Targets
 	pls, _ := step.(*cuetry.PluginStep)
 	pl := (*cuetry.RecipeStepPlugin)(nil)
 	if pls != nil {

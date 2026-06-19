@@ -2,14 +2,12 @@ package engine
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"sync/atomic"
 
 	"github.com/opensearch-project/opensearch-go/v2"
 	"github.com/opensearch-project/opensearch-go/v2/opensearchapi"
@@ -18,7 +16,21 @@ import (
 )
 
 // StreamCueStepOpensearch ...
-func (run *CueRun) streamCueStepOpensearch(ctx context.Context, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func init() {
+	RegisterStepExecutor(cuetry.KindOpensearch, &OpensearchExecutor{})
+}
+
+// OpensearchExecutor executes the corresponding recipe step.
+type OpensearchExecutor struct{}
+
+// ExecuteDryRun executes a dry run of the step.
+func (e *OpensearchExecutor) ExecuteDryRun(_ *StepContext) error {
+	return nil
+}
+
+// ExecuteStream streams the step execution.
+func (e *OpensearchExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	os, _ := step.(*cuetry.OpensearchStep)
 	if os == nil || os.Opensearch == nil {
 		return fmt.Errorf("internal: opensearch step missing opensearch field")

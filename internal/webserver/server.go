@@ -126,8 +126,12 @@ func NewServer(opts Options) (*Server, error) {
 }
 
 func (s *Server) routes() error {
+	recipesAPI := NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.recipeValidationCache, s.recipeGraphCache)
+
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
+
+		r.Mount("/recipes", recipesAPI.Routes())
 
 		r.Get("/meta", s.handleMeta)
 		r.Get("/openapi.json", s.handleOpenAPIJSON)
@@ -164,33 +168,6 @@ func (s *Server) routes() error {
 			fr.Post("/agent-transfer", s.handleFilesAgentTransfer)
 		})
 
-		r.Route("/recipes", func(rr chi.Router) {
-			rr.Get("/", s.handleRecipesList)
-			rr.Get("/library", s.handleRecipesLibrary)
-			rr.Post("/view", s.handleRecipesView)
-			rr.Post("/assist", s.handleRecipesAssist)
-			rr.Post("/assist-fix", s.handleRecipesAssistFix)
-			rr.Post("/generate", s.handleRecipesGenerate)
-			rr.Post("/validate-content", s.handleRecipesValidateContent)
-			rr.Post("/sync-ast", s.handleRecipesSyncAST)
-			rr.Post("/graph-plan", s.handleRecipesGraphPlan)
-			rr.Post("/parse", s.handleRecipesParse)
-			rr.Post("/prompts/upload", s.handleRecipesPromptsUpload)
-			rr.Post("/prompts/choices", s.handleRecipesPromptsChoices)
-			rr.Get("/recent-runs", s.handleRecipesRecentRuns)
-			rr.Get("/schema", s.handleRecipesSchema)
-			rr.Get("/studio-config", s.handleRecipesStudioConfig)
-
-			rr.Route("/store", func(str chi.Router) {
-				str.Get("/", s.handleRecipesStoreList)
-				str.Post("/git-list", s.handleRecipesStoreGitList)
-				str.Post("/git-load", s.handleRecipesStoreGitLoad)
-				str.Get("/{name}", s.handleRecipesStoreGet)
-				str.Post("/{name}", s.handleRecipesStoreSave)
-				str.Delete("/{name}", s.handleRecipesStoreDelete)
-			})
-		})
-
 		r.Route("/recordings", func(rcr chi.Router) {
 			rcr.Get("/", s.handleRecordingsList)
 			rcr.Post("/play", s.handleRecordingsPlay)
@@ -207,7 +184,7 @@ func (s *Server) routes() error {
 			snr.Delete("/{id}", s.handleSnippetsDelete)
 		})
 
-		r.Post("/cue-exec", s.handleCueExec)
+		r.Post("/cue-exec", recipesAPI.handleCueExec)
 		r.Post("/terminal-assist", s.handleTerminalAssist)
 		r.Get("/terminal-assist/models", s.handleTerminalAssistModels)
 		r.Post("/pve-qemu-vnc-offer", s.handlePveQemuVncOffer)
@@ -236,11 +213,11 @@ func (s *Server) routes() error {
 		})
 
 		// Webhook results need auth
-		r.Get("/webhooks/results/{id}", s.handleRecipeWebhookResult)
+		r.Get("/webhooks/results/{id}", recipesAPI.handleRecipeWebhookResult)
 	})
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
-	s.router.Post("/api/v1/webhooks/{app_name}/{webhook_name}", s.handleRecipeWebhook)
+	s.router.Post("/api/v1/webhooks/{app_name}/{webhook_name}", recipesAPI.handleRecipeWebhook)
 
 	s.router.Get("/ws/ssh", s.handleWebSSH)
 	s.router.Get("/ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
@@ -278,6 +255,10 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func (s *Server) allowAssistRequest(ip string, maxRPM int) bool {
+	return s.assistRL.allow(ip, maxRPM)
 }
 
 // withIndexCookie serves the static UI and, when a page is opened with a valid

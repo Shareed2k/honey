@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -16,7 +15,21 @@ import (
 )
 
 // StreamCueStepPostgres ...
-func (run *CueRun) streamCueStepPostgres(ctx context.Context, _ int, step cuetry.Step, targets []hosts.Record, ch chan<- HostExecResult, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) error {
+func init() {
+	RegisterStepExecutor(cuetry.KindPostgres, &PostgresExecutor{})
+}
+
+// PostgresExecutor executes the corresponding recipe step.
+type PostgresExecutor struct{}
+
+// ExecuteDryRun executes a dry run of the step.
+func (e *PostgresExecutor) ExecuteDryRun(_ *StepContext) error {
+	return nil
+}
+
+// ExecuteStream streams the step execution.
+func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	pgs, _ := step.(*cuetry.PostgresStep)
 	if pgs == nil || pgs.Postgres == nil {
 		return fmt.Errorf("internal: postgres step missing postgres field")

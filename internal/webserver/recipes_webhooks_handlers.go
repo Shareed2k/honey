@@ -27,7 +27,7 @@ import (
 // handleRecipeWebhook handles incoming Rundeck-style webhooks for recipe apps.
 //
 //nolint:gocyclo
-func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -36,12 +36,12 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 	appName := chi.URLParam(r, "app_name")
 	webhookName := chi.URLParam(r, "webhook_name")
 
-	if s.opts.Config == nil || s.opts.Config.Apps == nil {
+	if api.opts.Config == nil || api.opts.Config.Apps == nil {
 		httpError(w, fmt.Errorf("no apps configured"), http.StatusNotFound)
 		return
 	}
 
-	app, ok := s.opts.Config.Apps[appName]
+	app, ok := api.opts.Config.Apps[appName]
 	if !ok || app.Type != apps.AppTypeRecipe || strings.TrimSpace(app.TargetRecipe) == "" {
 		httpError(w, fmt.Errorf("app not found or not a valid recipe app"), http.StatusNotFound)
 		return
@@ -49,8 +49,8 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Resolve and parse recipe
 	recipePath := strings.TrimSpace(app.TargetRecipe)
-	if !filepath.IsAbs(recipePath) && s.opts.ConfigPath != "" {
-		recipePath = filepath.Join(filepath.Dir(s.opts.ConfigPath), recipePath)
+	if !filepath.IsAbs(recipePath) && api.opts.ConfigPath != "" {
+		recipePath = filepath.Join(filepath.Dir(api.opts.ConfigPath), recipePath)
 	}
 
 	raw, err := safepath.ReadFile(recipePath)
@@ -59,7 +59,7 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pluginMgr, err := plugins.Open(r.Context(), s.opts.Config)
+	pluginMgr, err := plugins.Open(r.Context(), api.opts.Config)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -80,7 +80,7 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Authentication
 	if authSecret := strings.TrimSpace(webhook.AuthSecret); authSecret != "" {
-		secRes, err := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(s.opts.Config), pluginMgr)
+		secRes, err := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), pluginMgr)
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
@@ -134,7 +134,7 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	searchIn := &hostapi.SearchHostsInput{
-		ConfigPath: s.opts.ConfigPath,
+		ConfigPath: api.opts.ConfigPath,
 		Name:       target,
 		Providers:  app.Provider,
 	}
@@ -142,7 +142,7 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 		searchIn.NameRegex = app.TargetRegex
 	}
 
-	searchOut, err := hostapi.SearchHosts(r.Context(), searchIn, s.opts.ExecRegistry, s.opts.SearchRegistry)
+	searchOut, err := hostapi.SearchHosts(r.Context(), searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
 	if err != nil {
 		httpError(w, fmt.Errorf("search hosts: %w", err), http.StatusBadRequest)
 		return
@@ -154,30 +154,30 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5. Prepare Run Parameters
-	secRes, _ := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(s.opts.Config), pluginMgr)
-	aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
+	secRes, _ := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), pluginMgr)
+	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 
 	runParams := engine.CueRecipeRunParams{
 		Recipe:         recipe,
 		RecipeDir:      filepath.Dir(recipePath),
 		Records:        searchOut.Records,
-		SSHUser:        s.sshUser(""), // Or default
+		SSHUser:        api.sshUser(""), // Or default
 		CLIEnv:         envMap,
-		ConfigPath:     s.opts.ConfigPath,
+		ConfigPath:     api.opts.ConfigPath,
 		AISystemPrompt: aiPrompt,
 		SecretResolver: secRes,
 		PluginMgr:      pluginMgr,
 		Execute:        true,
-		Obs:            s.metrics,
-		Reg:            s.opts.ExecRegistry,
-		Pools:          s.pgPools,
+		Obs:            api.metrics,
+		Reg:            api.opts.ExecRegistry,
+		Pools:          api.pgPools,
 	}
 
 	// Session Recorder
 	var rec *engine.SessionRecorder
-	wantRec := strings.TrimSpace(s.opts.RecordDir) != ""
+	wantRec := strings.TrimSpace(api.opts.RecordDir) != ""
 	if wantRec {
-		rec, err = engine.NewBatchSessionRecorder(s.opts.RecordDir, "web-webhook-"+webhookName, runParams.SSHUser, len(searchOut.Records))
+		rec, err = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-webhook-"+webhookName, runParams.SSHUser, len(searchOut.Records))
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
@@ -196,7 +196,7 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 	isAsync := webhook.Async != nil && *webhook.Async
 
 	if isAsync {
-		if s.webhookQueue == nil {
+		if api.webhookQueue == nil {
 			if rec != nil {
 				rec.RecordError(fmt.Errorf("webhook queue not initialized"))
 				_ = rec.Close()
@@ -205,7 +205,7 @@ func (s *Server) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		err := s.webhookQueue.Submit(func() {
+		err := api.webhookQueue.Submit(func() {
 			defer func() {
 				if rec != nil {
 					_ = rec.Close()
@@ -285,7 +285,7 @@ type WebhookResultResponse struct {
 }
 
 // handleRecipeWebhookResult returns the async results of a webhook execution from recordings.
-func (s *Server) handleRecipeWebhookResult(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipeWebhookResult(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -297,12 +297,12 @@ func (s *Server) handleRecipeWebhookResult(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if s.opts.RecordDir == "" {
+	if api.opts.RecordDir == "" {
 		httpError(w, fmt.Errorf("session recording is not enabled on this server"), http.StatusNotImplemented)
 		return
 	}
 
-	events, err := recordings.LoadEvents(s.opts.RecordDir, id+".hrec.jsonl")
+	events, err := recordings.LoadEvents(api.opts.RecordDir, id+".hrec.jsonl")
 	if err != nil {
 		httpError(w, fmt.Errorf("read recording: %w", err), http.StatusNotFound)
 		return

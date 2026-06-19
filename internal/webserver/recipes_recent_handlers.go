@@ -56,7 +56,7 @@ type RecentRunsResponse struct {
 // @Success 200 {object} RecentRunsResponse
 // @Router /api/v1/recipes/recent-runs [get]
 // @Security BearerAuth
-func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -67,7 +67,7 @@ func (s *Server) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Request)
 			limit = n
 		}
 	}
-	dir := strings.TrimSpace(s.opts.RecordDir)
+	dir := strings.TrimSpace(api.opts.RecordDir)
 	if dir == "" {
 		writeJSONOK(w, RecentRunsResponse{Runs: []RecentRunEntry{}})
 		return

@@ -1,47 +1,19 @@
 package engine
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"strings"
+	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 )
 
-// StreamCueStepAgentTransferWhen ...
-func (run *CueRun) streamCueStepAgentTransferWhen(ctx context.Context, i int, step cuetry.Step) ([]HostExecResult, error) {
-	ats, _ := step.(*cuetry.AgentTransferStep)
-	if ats == nil || ats.AgentTransfer == nil {
-		return nil, fmt.Errorf("step %d: internal: missing agent_transfer", i)
-	}
-	at := ats.AgentTransfer
-	srcHosts, err := cuetry.ExpandStepHosts(step.Base().Host, run.Params.Records)
-	if err != nil {
-		return nil, fmt.Errorf("step %d: %w", i, err)
-	}
-	dstHosts, err := cuetry.ExpandStepHosts(at.DestHost, run.Params.Records)
-	if err != nil {
-		return nil, fmt.Errorf("step %d dest_host: %w", i, err)
-	}
-	if len(srcHosts) != 1 || len(dstHosts) != 1 {
-		return StreamCueStepAgentTransfer(ctx, run.Params.Records, run.Params.SSHUser, run.Params.ConfigPath, i, step, run.Cache)
-	}
-	src := srcHosts[0]
-	dst := dstHosts[0]
-	kv := KvReaderFromCoordinator(run.RecipeKV)
-	ok, err := EvalAgentTransferWhen(ctx, run.Params.Recipe, step, src, dst, run.OutputStore, run.Params.SecretResolver, kv, run.Params.CLIEnv, run.Params.Execute)
-	if err != nil {
-		return nil, fmt.Errorf("step %d: %w", i, err)
-	}
-	if !ok {
-		res := WhenSkippedResult(src)
-		res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
-		return []HostExecResult{res}, nil
-	}
-	return StreamCueStepAgentTransfer(ctx, run.Params.Records, run.Params.SSHUser, run.Params.ConfigPath, i, step, run.Cache)
+func init() {
+	RegisterStepExecutor(cuetry.KindAgentTransfer, &AgentTransferExecutor{})
 }
+
+// AgentTransferExecutor executes the corresponding recipe step.
+type AgentTransferExecutor struct{}
 
 // AgentTransferCloudFromRecipe ...
 func AgentTransferCloudFromRecipe(c *cuetry.RecipeAgentTransferCloud) AgentCloudBackend {
@@ -96,8 +68,10 @@ func SummarizeAgentTransferEvents(events []AgentTransferEvent) string {
 	return s
 }
 
-// RunCueStepAgentTransferDry ...
-func RunCueStepAgentTransferDry(out io.Writer, records []hosts.Record, sshUser, configPath string, i int, step cuetry.Step) error {
+// ExecuteDryRun executes a dry run of the step.
+func (e *AgentTransferExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, records, sshUser, configPath, i, step := sc.Out, sc.Records, sc.SSHUser, sc.ConfigPath, sc.Index, sc.Step
+
 	ats, _ := step.(*cuetry.AgentTransferStep)
 	if ats == nil || ats.AgentTransfer == nil {
 		return fmt.Errorf("step %d: internal: missing agent_transfer", i)
@@ -148,20 +122,23 @@ func RunCueStepAgentTransferDry(out io.Writer, records []hosts.Record, sshUser, 
 	return nil
 }
 
-// StreamCueStepAgentTransfer ...
-func StreamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, sshUser, configPath string, i int, step cuetry.Step, cache *ClientCache) ([]HostExecResult, error) {
+// ExecuteStream streams the step execution.
+func (e *AgentTransferExecutor) ExecuteStream(sc *StepContext) error {
+	run, ctx, i, step, ch := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.ResultCh
+	records, sshUser, configPath, cache := sc.Records, sc.SSHUser, sc.ConfigPath, sc.Run.Cache
+
 	ats, _ := step.(*cuetry.AgentTransferStep)
 	if ats == nil || ats.AgentTransfer == nil {
-		return nil, fmt.Errorf("step %d: internal: missing agent_transfer", i)
+		return fmt.Errorf("step %d: internal: missing agent_transfer", i)
 	}
 	at := ats.AgentTransfer
 	srcHosts, err := cuetry.ExpandStepHosts(step.Base().Host, records)
 	if err != nil {
-		return nil, fmt.Errorf("step %d: %w", i, err)
+		return fmt.Errorf("step %d: %w", i, err)
 	}
 	dstHosts, err := cuetry.ExpandStepHosts(at.DestHost, records)
 	if err != nil {
-		return nil, fmt.Errorf("step %d dest_host: %w", i, err)
+		return fmt.Errorf("step %d dest_host: %w", i, err)
 	}
 	if len(srcHosts) != 1 || len(dstHosts) != 1 {
 		msg := fmt.Sprintf("need exactly one source and one dest host; got src=%d dst=%d", len(srcHosts), len(dstHosts))
@@ -171,10 +148,27 @@ func StreamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, ssh
 			ErrMsg:   msg,
 			Provider: "local",
 		}
-		return []HostExecResult{res}, fmt.Errorf("step %d: %s", i, msg)
+		AnnotateCueStepResult(&res, i, step, cuetry.KindAgentTransfer)
+		ch <- res
+		return fmt.Errorf("step %d: %s", i, msg)
 	}
 	src := srcHosts[0]
 	dst := dstHosts[0]
+
+	stepStart := time.Now()
+	kv := KvReaderFromCoordinator(run.RecipeKV)
+	ok, err := EvalAgentTransferWhen(ctx, run.Params.Recipe, step, src, dst, run.OutputStore, run.Params.SecretResolver, kv, run.Params.CLIEnv, run.Params.Execute)
+	if err != nil {
+		return fmt.Errorf("step %d: %w", i, err)
+	}
+	if !ok {
+		res := WhenSkippedResult(src)
+		res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
+		AnnotateCueStepResult(&res, i, step, cuetry.KindAgentTransfer)
+		ch <- res
+		ObserveRecipeStep(run.Params.Obs, cuetry.KindAgentTransfer, stepStart, []HostExecResult{res}, 1)
+		return nil
+	}
 	cloud := AgentTransferCloudFromRecipe(at.Cloud)
 	ref := CloudBackendRefFromRecipe(at.CloudBackendRef)
 	hints, err := ResolveAgentTransferSigningHints(configPath, cloud, ref)
@@ -186,7 +180,9 @@ func StreamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, ssh
 			Success:  false,
 			ErrMsg:   err.Error(),
 		}
-		return []HostExecResult{res}, fmt.Errorf("step %d: %w", i, err)
+		AnnotateCueStepResult(&res, i, step, cuetry.KindAgentTransfer)
+		ch <- res
+		return fmt.Errorf("step %d: %w", i, err)
 	}
 	events, err := RunAgentTransferWithFallback(ctx, cache, sshUser, "", "", "", strings.TrimSpace(at.AgentRemoteDir),
 		src, dst, strings.TrimSpace(at.SourcePath), strings.TrimSpace(at.DestPath),
@@ -203,7 +199,9 @@ func StreamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, ssh
 			ErrMsg:   err.Error(),
 			Output:   outStr,
 		}
-		return []HostExecResult{res}, fmt.Errorf("step %d agent_transfer: %w", i, err)
+		AnnotateCueStepResult(&res, i, step, cuetry.KindAgentTransfer)
+		ch <- res
+		return fmt.Errorf("step %d agent_transfer: %w", i, err)
 	}
 	res := HostExecResult{
 		Name:     fmt.Sprintf("Step %d | %s", i+1, resName),
@@ -212,5 +210,7 @@ func StreamCueStepAgentTransfer(ctx context.Context, records []hosts.Record, ssh
 		Success:  true,
 		Output:   outStr,
 	}
-	return []HostExecResult{res}, nil
+	AnnotateCueStepResult(&res, i, step, cuetry.KindAgentTransfer)
+	ch <- res
+	return nil
 }

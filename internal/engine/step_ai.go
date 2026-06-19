@@ -3,15 +3,100 @@ package engine
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/shareed2k/honey/internal/aichat"
 	"github.com/shareed2k/honey/internal/cuetry"
 )
 
-// RunCueStepAIExecute ...
+func init() {
+	RegisterStepExecutor(cuetry.KindAI, &AIExecutor{})
+}
+
+// AIExecutor executes the corresponding recipe step.
+type AIExecutor struct{}
+
+// ExecuteDryRun executes a dry run of the step.
+func (e *AIExecutor) ExecuteDryRun(sc *StepContext) error {
+	out, execute, i, step := sc.Out, sc.Execute, sc.Index, sc.Step
+	if execute {
+		return nil
+	}
+
+	base := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
+	if base == "" {
+		base = "(default https://api.openai.com/v1)"
+	} else {
+		base = "(OPENAI_BASE_URL set)"
+	}
+
+	var model string
+	if as, ok := step.(*cuetry.AIStep); ok && as.AI != nil && strings.TrimSpace(as.AI.Model) != "" {
+		model = strings.TrimSpace(as.AI.Model)
+	} else if m := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); m != "" {
+		model = "(from OPENAI_MODEL)"
+	} else {
+		model = aichat.DefaultModel + " (built-in default)"
+	}
+
+	_, _ = fmt.Fprintf(out, "step %d: kind=ai host=%q %s model=%s (requires OPENAI_API_KEY to execute; summarizes all prior step outputs in one request)\n",
+		i, step.Base().Host, base, model)
+	WriteCueStepNotifyDryLine(out, step)
+
+	ai, _ := step.(*cuetry.AIStep)
+	if ai != nil && ai.AI != nil {
+		preview := strings.TrimSpace(ai.AI.Prompt)
+		if len(preview) > 120 {
+			preview = preview[:119] + "…"
+		}
+		capture := ""
+		if outName := strings.TrimSpace(step.Base().Output); outName != "" {
+			capture = fmt.Sprintf(" capture=%q", outName)
+		}
+		_, _ = fmt.Fprintf(out, "step %d: kind=ai target=local%s prompt=%q\n", i, capture, preview)
+	}
+
+	return nil
+}
+
+// ExecuteStream streams the step execution.
+func (e *AIExecutor) ExecuteStream(sc *StepContext) error {
+	ctx, run, i, step, history, aiSystemPrompt, out := sc.Ctx, sc.Run, sc.Index, sc.Step, sc.History, sc.AISystemPrompt, sc.ResultCh
+
+	stepStart := time.Now()
+	kv := KvReaderFromCoordinator(run.RecipeKV)
+	ok, whenErr := EvalAIStepWhen(ctx, run.Params.Recipe, step, run.OutputStore, run.Params.SecretResolver, kv, run.Params.CLIEnv, run.Params.Execute)
+	if whenErr != nil {
+		return whenErr
+	}
+
+	if !ok {
+		res := HostExecResult{
+			Name:     fmt.Sprintf("Step %d | ai", i+1),
+			Provider: "local",
+			Skipped:  true,
+			Output:   "(skipped: when)",
+		}
+		AnnotateCueStepResult(&res, i, step, cuetry.KindAI)
+		out <- res
+		ObserveRecipeStep(run.Params.Obs, cuetry.KindAI, stepStart, []HostExecResult{res}, 1)
+		return nil
+	}
+
+	res := RunCueStepAIExecute(ctx, run.Params.Recipe, i, step, history, aiSystemPrompt)
+	AnnotateCueStepResult(&res, i, step, cuetry.KindAI)
+	out <- res
+	ObserveRecipeStep(run.Params.Obs, cuetry.KindAI, stepStart, []HostExecResult{res}, 1)
+
+	if !res.Success {
+		return fmt.Errorf("%s", res.ErrMsg)
+	}
+	return nil
+}
+
+// RunCueStepAIExecute performs the actual AI model completion based on recipe context.
 func RunCueStepAIExecute(ctx context.Context, recipe cuetry.Recipe, stepIdx int, step cuetry.Step, history [][]HostExecResult, aiSystemPromptFromCfg string) HostExecResult {
 	stepNo := stepIdx + 1
 	prefix := fmt.Sprintf("Step %d | ai", stepNo)
@@ -42,41 +127,15 @@ func RunCueStepAIExecute(ctx context.Context, recipe cuetry.Recipe, stepIdx int,
 			ErrMsg:   err.Error(),
 		}
 	}
-	out := text
+	output := text
 	if step.Base().NotifyEnabled() {
-		out += CueStepNotifyAppendSuffix(ctx, recipe, stepNo, cuetry.KindAI, step.Base().Notify, text)
+		output += CueStepNotifyAppendSuffix(ctx, recipe, stepNo, cuetry.KindAI, step.Base().Notify, text)
 	}
 	return HostExecResult{
 		Name:     prefix,
 		Provider: "local",
 		IP:       "-",
 		Success:  true,
-		Output:   out,
+		Output:   output,
 	}
-}
-
-// RunCueStepAIDry ...
-func RunCueStepAIDry(out io.Writer, _ cuetry.Recipe, execute bool, i int, step cuetry.Step) error {
-	if execute {
-		return nil
-	}
-	base := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
-	if base == "" {
-		base = "(default https://api.openai.com/v1)"
-	} else {
-		base = "(OPENAI_BASE_URL set)"
-	}
-	var model string
-	if as, ok := step.(*cuetry.AIStep); ok && as.AI != nil && strings.TrimSpace(as.AI.Model) != "" {
-		m := strings.TrimSpace(as.AI.Model)
-		model = m
-	} else if m := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); m != "" {
-		model = "(from OPENAI_MODEL)"
-	} else {
-		model = aichat.DefaultModel + " (built-in default)"
-	}
-	_, _ = fmt.Fprintf(out, "step %d: kind=ai host=%q %s model=%s (requires OPENAI_API_KEY to execute; summarizes all prior step outputs in one request)\n",
-		i, step.Base().Host, base, model)
-	WriteCueStepNotifyDryLine(out, step)
-	return nil
 }
