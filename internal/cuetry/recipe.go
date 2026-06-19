@@ -284,6 +284,8 @@ const schemaSource = `
 			type?: string
 			required?: bool
 			choices?: [...string]
+			choices_url?: string
+			choices_json_path?: string
 			default?: string
 			multi?: bool
 			regex?: string

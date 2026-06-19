@@ -1008,6 +1008,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       <ParameterPromptModal
         open={promptsOpen}
         prompts={recipeDefaults?.prompts || {}}
+        recipeName={recipeName}
         onCancel={() => setPromptsOpen(false)}
         onSubmit={(vals) => {
           setPromptsOpen(false);

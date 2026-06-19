@@ -806,6 +806,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
         <ParameterPromptModal
           open={promptsOpen}
           prompts={recipeParsed.defaults.prompts}
+          recipeName={recipeApp?.target_recipe}
           onCancel={() => {
             setPromptsOpen(false);
             if (recipeStatus === 'idle' && recipeRows.length === 0) {
