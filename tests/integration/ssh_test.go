@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/webserver"
 )
@@ -29,7 +28,7 @@ func newSSHTestServer(t *testing.T) (httpClient *http.Client, baseURL string) {
 	t.Helper()
 	sshH, sshP, keyFile := startSSH(t)
 
-	reg := &hostexec.StandardRegistry{
+	reg := &testRegistry{
 		Dialer: newTestDialer(sshH, sshP, keyFile),
 		Tunnel: newTestTunnelRunner(sshH, sshP, keyFile),
 	}
