@@ -6,6 +6,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
@@ -28,6 +29,15 @@ import (
 	"github.com/shareed2k/honey/internal/ui"
 )
 
+// ScheduleEntry is a resolved schedule derived from one app's recipe.
+type ScheduleEntry struct {
+	AppName      string
+	ScheduleName string
+	RecipePath   string
+	Schedule     cuetry.RecipeSchedule
+	App          apps.AppConfig
+}
+
 // Options configures the Manager.
 type Options struct {
 	ConfigPath     string
@@ -42,9 +52,10 @@ type Options struct {
 
 // Manager builds and runs all cron schedules derived from recipe apps.
 type Manager struct {
-	opts  Options
-	tsk   *tasker.Tasker
-	count int
+	opts    Options
+	tsk     *tasker.Tasker
+	count   int
+	entries []ScheduleEntry
 }
 
 // New creates a Manager and registers all eligible recipe schedule tasks.
@@ -67,6 +78,17 @@ func New(opts Options) (*Manager, error) {
 // Run blocks and runs the cron scheduler until ctx is cancelled.
 func (m *Manager) Run(ctx context.Context) {
 	m.tsk.WithContext(ctx).Run()
+}
+
+// Entries returns all registered schedule entries (used by the list API).
+func (m *Manager) Entries() []ScheduleEntry {
+	return m.entries
+}
+
+// Start begins the cron scheduler in a background goroutine and returns immediately.
+// The scheduler stops when ctx is cancelled.
+func (m *Manager) Start(ctx context.Context) {
+	go m.tsk.WithContext(ctx).Run()
 }
 
 // TaskCount returns the number of cron tasks that were registered.
@@ -143,6 +165,13 @@ func (m *Manager) register(tsk *tasker.Tasker) {
 			})
 
 			m.count++
+			m.entries = append(m.entries, ScheduleEntry{
+				AppName:      capturedAppName,
+				ScheduleName: capturedScheduleName,
+				RecipePath:   capturedRecipePath,
+				Schedule:     capturedSchedule,
+				App:          capturedApp,
+			})
 			zap.L().Info("scheduler: registered cron task",
 				zap.String("app", capturedAppName),
 				zap.String("schedule", capturedScheduleName),
@@ -189,9 +218,7 @@ func (m *Manager) executeSchedule(
 
 	// Merge schedule-level env on top of any global defaults.
 	cliEnv := make(map[string]string, len(sched.Env))
-	for k, v := range sched.Env {
-		cliEnv[k] = v
-	}
+	maps.Copy(cliEnv, sched.Env)
 
 	secRes, _ := cuetry.NewSecretResolverWithPlugins(
 		cuetry.SecretResolverOptionsFromHoney(m.opts.Config), pluginMgr,
@@ -274,4 +301,18 @@ func (m *Manager) executeSchedule(
 	// Inline fallback (blocking).
 	run()
 	return nil
+}
+
+// LoadScheduleEntries reads all AppTypeRecipe apps from cfg, parses their CUE recipes,
+// and returns one ScheduleEntry per declared schedule. Errors on individual apps are
+// logged and skipped; only a nil cfg returns nil,nil.
+func LoadScheduleEntries(cfg *config.File, configPath string) ([]ScheduleEntry, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	// Reuse register() logic via a temporary manager.
+	m := &Manager{opts: Options{Config: cfg, ConfigPath: configPath}}
+	tsk := tasker.New(tasker.Option{})
+	m.register(tsk)
+	return m.entries, nil
 }
