@@ -538,3 +538,142 @@ recipe: {
 	assert.True(t, results[0].Success, "Expected success: %s", results[0].ErrMsg)
 	assert.Equal(t, "Hello local-test", results[0].Output)
 }
+
+func TestRecipeE2E_DockerStep(t *testing.T) {
+	dindHost := startDinD(t)
+	reg := &testRegistry{}
+	rec := hosts.Record{Provider: "test", Name: "docker-test"}
+
+	cueContent := `
+recipe: {
+	name: "test-docker-step"
+	type: "linear"
+	steps: [
+		{
+			host: "*"
+			docker: {
+				action: "run"
+				run: {
+					image: "alpine"
+					command: ["echo", "dind-works"]
+				}
+			}
+		}
+	]
+}
+`
+	recipe, err := cuetry.ParseRemoteRecipe([]byte(cueContent), nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	outCh := make(chan engine.HostExecResult, 10)
+	
+	// CLIEnv overrides HONEY_DOCKER_HOST for the plugin to pick up
+	cliEnv := map[string]string{
+		"HONEY_DOCKER_HOST": dindHost,
+	}
+
+	params := engine.CueRecipeRunParams{
+		Recipe:  recipe,
+		Records: []hosts.Record{rec},
+		Execute: true,
+		CLIEnv:  cliEnv,
+		Reg:     reg,
+	}
+
+	go func() {
+		defer close(outCh)
+		err := engine.StreamCueRecipeSteps(ctx, params, outCh)
+		assert.NoError(t, err)
+	}()
+
+	var results []engine.HostExecResult
+	for res := range outCh {
+		results = append(results, res)
+	}
+
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Success, "Expected success: %s", results[0].ErrMsg)
+	assert.Contains(t, results[0].Output, "dind-works")
+}
+
+func TestRecipeE2E_K8sStep(t *testing.T) {
+	kubeconfigBytes := startK3s(t)
+	reg := &testRegistry{}
+	rec := hosts.Record{Provider: "test", Name: "k8s-test"}
+
+	tmpDir := t.TempDir()
+	kcPath := filepath.Join(tmpDir, "kubeconfig")
+	err := os.WriteFile(kcPath, kubeconfigBytes, 0600)
+	require.NoError(t, err)
+
+	cueContent := `
+recipe: {
+	name: "test-k8s-step"
+	type: "linear"
+	steps: [
+		{
+			host: "*"
+			k8s: {
+				apply: {
+					manifest: """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e2e-config
+  namespace: default
+data:
+  key: value
+"""
+				}
+			}
+		},
+		{
+			host: "*"
+			k8s: {
+				get: {
+					resource: "configmap/e2e-config"
+				}
+			}
+		}
+	]
+}
+`
+	recipe, err := cuetry.ParseRemoteRecipe([]byte(cueContent), nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second) // K8s operations can take a bit longer
+	defer cancel()
+
+	outCh := make(chan engine.HostExecResult, 10)
+	
+	cliEnv := map[string]string{
+		"KUBECONFIG": kcPath,
+	}
+
+	params := engine.CueRecipeRunParams{
+		Recipe:  recipe,
+		Records: []hosts.Record{rec},
+		Execute: true,
+		CLIEnv:  cliEnv,
+		Reg:     reg,
+	}
+
+	go func() {
+		defer close(outCh)
+		err := engine.StreamCueRecipeSteps(ctx, params, outCh)
+		assert.NoError(t, err)
+	}()
+
+	var results []engine.HostExecResult
+	for res := range outCh {
+		results = append(results, res)
+	}
+
+	require.Len(t, results, 2)
+	assert.True(t, results[0].Success, "Expected success: %s", results[0].ErrMsg)
+	assert.True(t, results[1].Success, "Expected success: %s", results[1].ErrMsg)
+	assert.Contains(t, results[1].Output, "e2e-config") // The ConfigMap YAML should be printed
+}
