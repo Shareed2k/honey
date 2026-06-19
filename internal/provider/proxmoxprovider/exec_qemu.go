@@ -166,3 +166,53 @@ func (h *hybridQEMUClient) Close() error {
 	_ = h.qemu.Close()
 	return h.ssh.Close()
 }
+
+// StartLocalForward starts a local port forward.
+func (q *qemuGuestClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartRemoteForward starts a remote port forward.
+func (q *qemuGuestClient) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (remAddr string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartDynamicForward starts a dynamic port forward.
+func (q *qemuGuestClient) StartDynamicForward(_ context.Context, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartUDPRelay starts a UDP relay.
+func (q *qemuGuestClient) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartTunForward starts a TUN forward.
+func (q *qemuGuestClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartLocalForward starts a local port forward.
+func (h *hybridQEMUClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartRemoteForward starts a remote port forward.
+func (h *hybridQEMUClient) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (remAddr string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartDynamicForward starts a dynamic port forward.
+func (h *hybridQEMUClient) StartDynamicForward(_ context.Context, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartUDPRelay starts a UDP relay.
+func (h *hybridQEMUClient) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartTunForward starts a TUN forward.
+func (h *hybridQEMUClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}

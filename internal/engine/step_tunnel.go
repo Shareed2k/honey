@@ -10,12 +10,10 @@ import (
 	"sync"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/ssh"
 )
 
 // StreamCueStepTunnel ...
@@ -193,10 +191,6 @@ func startSSHTunnel(ctx context.Context, user string, r hosts.Record, t *cuetry.
 	if err != nil {
 		return TunnelEndpoint{}, nil, err
 	}
-	leaf, err := LeafSSHFromClient(client)
-	if err != nil {
-		return TunnelEndpoint{}, nil, err
-	}
 	sshPort := 0
 	if p, ok := hosts.MetaSSHPort(&r); ok {
 		sshPort = p
@@ -213,7 +207,7 @@ func startSSHTunnel(ctx context.Context, user string, r hosts.Record, t *cuetry.
 		if localHost == "" {
 			localHost = "127.0.0.1"
 		}
-		remAddr, stop, err := sshclient.StartRemoteForward(ctx, leaf, remoteBind, t.RemoteListen, localHost, t.LocalTarget)
+		remAddr, stop, err := client.StartRemoteForward(ctx, remoteBind, t.RemoteListen, localHost, t.LocalTarget)
 		if err != nil {
 			return TunnelEndpoint{}, nil, err
 		}
@@ -221,40 +215,30 @@ func startSSHTunnel(ctx context.Context, user string, r hosts.Record, t *cuetry.
 		rp, _ := strconv.Atoi(remPortStr)
 		return TunnelEndpoint{Host: remoteBind, Port: rp, Mode: mode, ShareKey: t.ShareKey}, stop, nil
 	case "dynamic":
-		host, port, stop, err := sshclient.StartDynamicForward(ctx, leaf, bind, localPort)
+		host, port, stop, err := client.StartDynamicForward(ctx, bind, localPort)
 		if err != nil {
 			return TunnelEndpoint{}, nil, err
 		}
 		return TunnelEndpoint{Host: host, Port: port, Mode: mode, ShareKey: t.ShareKey}, stop, nil
 	case "udp":
-		host, port, stop, err := sshclient.StartUDPRelay(ctx, leaf, bind, localPort, remoteHost, remotePort, t.RemoteSocat)
+		host, port, stop, err := client.StartUDPRelay(ctx, bind, localPort, remoteHost, remotePort, t.RemoteSocat)
 		if err != nil {
 			return TunnelEndpoint{}, nil, err
 		}
 		return TunnelEndpoint{Host: host, Port: port, Mode: mode, RemoteHost: remoteHost, RemotePort: remotePort, ShareKey: t.ShareKey}, stop, nil
 	case "tun":
-		tunName, stop, err := sshclient.StartTunForward(ctx, user, alias, sshPort, t.TunLocal, t.TunRemote)
+		tunName, stop, err := client.StartTunForward(ctx, user, alias, sshPort, t.TunLocal, t.TunRemote)
 		if err != nil {
 			return TunnelEndpoint{}, nil, err
 		}
 		return TunnelEndpoint{Mode: mode, TunName: tunName, ShareKey: t.ShareKey}, stop, nil
 	default:
-		host, port, stop, err := sshclient.StartLocalForward(ctx, leaf, bind, localPort, remoteHost, remotePort)
+		host, port, stop, err := client.StartLocalForward(ctx, bind, localPort, remoteHost, remotePort)
 		if err != nil {
 			return TunnelEndpoint{}, nil, err
 		}
 		return TunnelEndpoint{Host: host, Port: port, Mode: "local", RemoteHost: remoteHost, RemotePort: remotePort, ShareKey: t.ShareKey}, stop, nil
 	}
-}
-
-// LeafSSHFromClient ...
-func LeafSSHFromClient(c hostexec.HostClient) (*ssh.Client, error) {
-	if hc, ok := c.(*sshclient.HoneyClient); ok {
-		if leaf := hc.LeafSSH(); leaf != nil {
-			return leaf, nil
-		}
-	}
-	return nil, fmt.Errorf("tunnel requires SSH honey client")
 }
 
 func effectiveTunnelBind(bind string) string {

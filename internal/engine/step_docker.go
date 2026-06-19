@@ -16,6 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
+	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
@@ -67,7 +68,7 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 					return res
 				}
 				var sshClient *ssh.Client
-				sshClient, err = LeafSSHFromClient(honeyClient)
+				sshClient, err = sshclient.LeafSSHFromClient(honeyClient)
 				if err != nil {
 					res.Success = false
 					res.ErrMsg = err.Error()
