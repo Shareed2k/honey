@@ -360,7 +360,28 @@ func (c *testSSHClient) Upload(localPath, remotePath string) error {
 	_, err = io.Copy(out, in)
 	return err
 }
-func (c *testSSHClient) Download(_, _ string) error { return fmt.Errorf("not implemented") }
+func (c *testSSHClient) Download(remotePath, localPath string) error {
+	sftpClient, err := sftp.NewClient(c.c)
+	if err != nil {
+		return err
+	}
+	defer sftpClient.Close()
+
+	src, err := sftpClient.Open(remotePath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, src)
+	return err
+}
 func (c *testSSHClient) ListRemoteDir(_ string) ([]hostexec.RemoteFileEntry, error) {
 	return nil, fmt.Errorf("not implemented")
 }
