@@ -191,6 +191,7 @@ export function StepPlan(props: Props) {
       <ParameterPromptModal
         open={promptsOpen}
         prompts={baseRecipe?.defaults?.prompts || {}}
+        recipeName={baseRecipe?.name || 'unknown'}
         onCancel={() => setPromptsOpen(false)}
         onSubmit={(vals) => {
           setPromptsOpen(false);

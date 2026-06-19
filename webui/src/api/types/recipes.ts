@@ -12,6 +12,8 @@ export type RecipePrompt = {
   type?: string;
   required?: boolean;
   choices?: string[];
+  choices_url?: string;
+  choices_json_path?: string;
   default?: string;
   multi?: boolean;
   regex?: string;
