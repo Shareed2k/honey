@@ -843,3 +843,28 @@ func (c *fakeHostClient) Output(_ string, _ map[string]string) ([]byte, error) {
 func (c *fakeHostClient) OutputWithStderr(_ string, _ map[string]string) ([]byte, []byte, error) {
 	return nil, nil, nil
 }
+
+// StartLocalForward starts a local port forward.
+func (m *mockHostClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartRemoteForward starts a remote port forward.
+func (m *mockHostClient) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (remAddr string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartDynamicForward starts a dynamic port forward.
+func (m *mockHostClient) StartDynamicForward(_ context.Context, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartUDPRelay starts a UDP relay.
+func (m *mockHostClient) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartTunForward starts a TUN forward.
+func (m *mockHostClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}

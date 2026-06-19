@@ -697,3 +697,28 @@ func (c *DockerNativeClient) RemoveRemote(remotePath string, recursive bool) err
 	_, err := c.Run(cmd)
 	return err
 }
+
+// StartLocalForward starts a local port forward.
+func (c *DockerNativeClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartRemoteForward starts a remote port forward.
+func (c *DockerNativeClient) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (remAddr string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartDynamicForward starts a dynamic port forward.
+func (c *DockerNativeClient) StartDynamicForward(_ context.Context, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartUDPRelay starts a UDP relay.
+func (c *DockerNativeClient) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartTunForward starts a TUN forward.
+func (c *DockerNativeClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}

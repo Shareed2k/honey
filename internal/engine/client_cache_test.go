@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"testing"
 
@@ -130,4 +132,29 @@ func TestClientCacheAcquireLeaseReleasesWithoutClosingCachedClient(t *testing.T)
 	if c.clients[key] != client {
 		t.Fatal("cached client should remain pooled after lease release")
 	}
+}
+
+// StartLocalForward starts a local port forward.
+func (f *FakeHostClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartRemoteForward starts a remote port forward.
+func (f *FakeHostClient) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (remAddr string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartDynamicForward starts a dynamic port forward.
+func (f *FakeHostClient) StartDynamicForward(_ context.Context, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartUDPRelay starts a UDP relay.
+func (f *FakeHostClient) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartTunForward starts a TUN forward.
+func (f *FakeHostClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
+	return "", nil, fmt.Errorf("tunneling not supported on this transport")
 }

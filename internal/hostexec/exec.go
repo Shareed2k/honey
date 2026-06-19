@@ -33,6 +33,14 @@ type HostClient interface {
 	StatRemote(path string) (RemoteFileEntry, error)
 	MkdirAllRemote(path string) error
 	RemoveRemote(path string, recursive bool) error
+
+	// Tunneling methods
+	StartLocalForward(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int) (host string, port int, stop func(), err error)
+	StartRemoteForward(ctx context.Context, remoteBind string, remoteListen int, localHost string, localTarget int) (remAddr string, stop func(), err error)
+	StartDynamicForward(ctx context.Context, bind string, localPort int) (host string, port int, stop func(), err error)
+	StartUDPRelay(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int, useSocat bool) (host string, port int, stop func(), err error)
+	StartTunForward(ctx context.Context, user string, alias string, sshPort int, tunLocal, tunRemote int) (tunName string, stop func(), err error)
+
 	Close() error
 }
 

@@ -609,6 +609,44 @@ func (h *HoneyClient) RunWithStreams(cmd string, stdin io.Reader, stdout, stderr
 	return sess.Run(cmd)
 }
 
+// StartLocalForward starts a local port forward.
+func (h *HoneyClient) StartLocalForward(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int) (host string, port int, stop func(), err error) {
+	if leaf := h.LeafSSH(); leaf != nil {
+		return StartLocalForward(ctx, leaf, bind, localPort, remoteHost, remotePort)
+	}
+	return "", 0, nil, fmt.Errorf("StartLocalForward requires an active SSH client")
+}
+
+// StartRemoteForward starts a remote port forward.
+func (h *HoneyClient) StartRemoteForward(ctx context.Context, remoteBind string, remoteListen int, localHost string, localTarget int) (remAddr string, stop func(), err error) {
+	if leaf := h.LeafSSH(); leaf != nil {
+		return StartRemoteForward(ctx, leaf, remoteBind, remoteListen, localHost, localTarget)
+	}
+	return "", nil, fmt.Errorf("StartRemoteForward requires an active SSH client")
+}
+
+// StartDynamicForward starts a dynamic port forward.
+func (h *HoneyClient) StartDynamicForward(ctx context.Context, bind string, localPort int) (host string, port int, stop func(), err error) {
+	if leaf := h.LeafSSH(); leaf != nil {
+		return StartDynamicForward(ctx, leaf, bind, localPort)
+	}
+	return "", 0, nil, fmt.Errorf("StartDynamicForward requires an active SSH client")
+}
+
+// StartUDPRelay starts a UDP relay.
+func (h *HoneyClient) StartUDPRelay(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int, useSocat bool) (host string, port int, stop func(), err error) {
+	if leaf := h.LeafSSH(); leaf != nil {
+		return StartUDPRelay(ctx, leaf, bind, localPort, remoteHost, remotePort, useSocat)
+	}
+	return "", 0, nil, fmt.Errorf("StartUDPRelay requires an active SSH client")
+}
+
+// StartTunForward starts a TUN forward.
+func (h *HoneyClient) StartTunForward(ctx context.Context, user string, alias string, sshPort int, tunLocal, tunRemote int) (tunName string, stop func(), err error) {
+	// StartTunForward executes ssh binary directly, it does not use the active go-ssh client
+	return StartTunForward(ctx, user, alias, sshPort, tunLocal, tunRemote)
+}
+
 func expandSSHPath(p string) (string, error) {
 	p = strings.TrimSpace(p)
 	p = strings.Trim(p, `"`)
@@ -1108,4 +1146,14 @@ func RunTunnelGo(ctx context.Context, user, host string, sshPort int, localFwd s
 
 	<-ctx.Done()
 	return nil
+}
+
+// LeafSSHFromClient extracts the underlying *ssh.Client if available.
+func LeafSSHFromClient(c hostexec.HostClient) (*ssh.Client, error) {
+	if hc, ok := c.(*HoneyClient); ok {
+		if leaf := hc.LeafSSH(); leaf != nil {
+			return leaf, nil
+		}
+	}
+	return nil, fmt.Errorf("requires SSH honey client")
 }
