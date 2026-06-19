@@ -297,6 +297,10 @@ func (m *Manager) executeSchedule(
 		}
 	}
 
+	// Detach from the per-tick gronx context so the queue goroutine is not
+	// cancelled when the task function returns (gronx cancels tick contexts).
+	runCtx := context.WithoutCancel(ctx)
+
 	// Always submit async; if queue is nil, run inline (dev / no-queue mode).
 	run := func() {
 		defer func() {
@@ -309,7 +313,7 @@ func (m *Manager) executeSchedule(
 		ch := make(chan engine.HostExecResult, 64)
 		go func() {
 			defer close(ch)
-			_ = engine.StreamCueRecipeSteps(ctx, runParams, ch)
+			_ = engine.StreamCueRecipeSteps(runCtx, runParams, ch)
 		}()
 
 		for res := range ch {
