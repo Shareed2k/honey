@@ -15,12 +15,20 @@ import (
 
 // Recipe is the decoded "recipe" block from a CUE document.
 type Recipe struct {
-	Name     string                   `json:"name"`
-	Type     string                   `json:"type,omitempty"`
-	Webhooks map[string]RecipeWebhook `json:"webhooks,omitempty"`
-	Defaults *RecipeDefaults          `json:"defaults,omitempty"`
-	Steps    []StepWrapper            `json:"steps"`
-	Handlers []StepWrapper            `json:"handlers,omitempty"`
+	Name      string                    `json:"name"`
+	Type      string                    `json:"type,omitempty"`
+	Webhooks  map[string]RecipeWebhook  `json:"webhooks,omitempty"`
+	Schedules map[string]RecipeSchedule `json:"schedules,omitempty"`
+	Defaults  *RecipeDefaults           `json:"defaults,omitempty"`
+	Steps     []StepWrapper             `json:"steps"`
+	Handlers  []StepWrapper             `json:"handlers,omitempty"`
+}
+
+// RecipeSchedule defines a cron-based trigger for a recipe.
+type RecipeSchedule struct {
+	Cron     string            `json:"cron"`               // 5-field cron expression, e.g. "0 2 * * *"
+	TimeZone string            `json:"timezone,omitempty"` // IANA tz name, e.g. "America/New_York"; defaults to UTC
+	Env      map[string]string `json:"env,omitempty"`      // static env vars injected at execution time
 }
 
 // RecipeWebhook defines a webhook trigger for a recipe.
