@@ -211,6 +211,7 @@ func (s *Server) routes() error {
 
 		r.Post("/agent", s.handleAgent)
 		r.Get("/apps", s.handleAppsList)
+		r.Get("/schedules", s.handleSchedulesList)
 
 		r.Route("/proxy", func(pr chi.Router) {
 			pr.Get("/sessions", s.handleProxySessionsGet)
