@@ -83,3 +83,62 @@ recipe: {
 	require.NoError(t, err)
 	assert.Equal(t, "/tmp/e2e_test_file\n", string(out))
 }
+
+func TestRecipeE2E_MultilineEnvVar(t *testing.T) {
+	sshH, sshP, keyFile := startSSH(t)
+
+	reg := &hostexec.StandardRegistry{
+		Dialer: newTestDialer(sshH, sshP, keyFile),
+	}
+
+	rec := sshTestRecord(sshH, sshP)
+
+	cueContent := `
+recipe: {
+	name: "test-multiline-env"
+	type: "linear"
+	steps: [
+		{
+			host: "*"
+			command: "echo \"$JSON_PAYLOAD\""
+		}
+	]
+}
+`
+	recipe, err := cuetry.ParseRemoteRecipe([]byte(cueContent), nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	outCh := make(chan engine.HostExecResult, 10)
+	
+	// Simulating the exact CLIEnv behavior that failed before
+	cliEnv := map[string]string{
+		"JSON_PAYLOAD": "{\n  \"key\": \"value\"\n}",
+	}
+
+	params := engine.CueRecipeRunParams{
+		Recipe:  recipe,
+		Records: []hosts.Record{rec},
+		SSHUser: "testuser",
+		Execute: true,
+		CLIEnv:  cliEnv,
+		Reg:     reg,
+	}
+
+	go func() {
+		defer close(outCh)
+		err := engine.StreamCueRecipeSteps(ctx, params, outCh)
+		assert.NoError(t, err)
+	}()
+
+	var results []engine.HostExecResult
+	for res := range outCh {
+		results = append(results, res)
+	}
+
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Success, "Expected success, got error: %s", results[0].ErrMsg)
+	assert.Contains(t, results[0].Output, "{\n  \"key\": \"value\"\n}")
+}
