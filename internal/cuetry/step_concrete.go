@@ -18,7 +18,8 @@ import (
 type CommandStep struct {
 	StepBase
 	RemoteExec
-	Command string `json:"command,omitempty"`
+	Command     string `json:"command,omitempty"`
+	Interpreter string `json:"interpreter,omitempty"`
 }
 
 // Kind returns the step kind identifier.
@@ -40,7 +41,8 @@ var _ RemoteStep = (*CommandStep)(nil)
 type ScriptStep struct {
 	StepBase
 	RemoteExec
-	Script *RecipeFileTransfer `json:"script,omitempty"`
+	Script      *RecipeFileTransfer `json:"script,omitempty"`
+	Interpreter string              `json:"interpreter,omitempty"`
 }
 
 // Kind returns the step kind identifier.

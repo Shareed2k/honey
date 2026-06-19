@@ -55,13 +55,23 @@ func WrapRemoteShell(runAs, innerCommand string) (string, error) {
 // with POSIX sh (after SFTP). Optional run_as wraps the run like command steps.
 // Optional env is applied as export assignments before `sh remotePath` (same as command steps).
 // Scripts should be compatible with `sh` (or rely on a shebang if the kernel honors it when executed as argument to sh — use POSIX sh syntax for portability).
-func ScriptRunAfterUpload(remotePath, runAs string, env map[string]string) (string, error) {
+func ScriptRunAfterUpload(remotePath, runAs string, env map[string]string, interpreter string) (string, error) {
 	rp := strings.TrimSpace(remotePath)
 	if rp == "" {
 		return "", fmt.Errorf("empty script remote path")
 	}
-	inner := "sh " + shellSingleQuoted(rp)
-	inner, err := ShellExportPrefixForRemote(env, inner)
+	interp := strings.TrimSpace(interpreter)
+	var invocation string
+	switch {
+	case interp == "":
+		invocation = "sh " + shellSingleQuoted(rp)
+	case strings.Contains(interp, "${scriptfile}"):
+		invocation = strings.ReplaceAll(interp, "${scriptfile}", shellSingleQuoted(rp))
+	default:
+		invocation = interp + " " + shellSingleQuoted(rp)
+	}
+
+	inner, err := ShellExportPrefixForRemote(env, invocation)
 	if err != nil {
 		return "", err
 	}

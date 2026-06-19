@@ -71,5 +71,20 @@ recipe: {
 				echo "Notify IP: ${NOTIFY_IP}"
 			"""
 		},
+		{
+			host: "*"
+			command: """
+				bash -s << 'EOF'
+				echo "${ACTION} Начинаем выполнение сложного скрипта..."
+				if [ -d "/etc" ]; then
+					echo "Папка /etc существует!"
+				fi
+				
+				for i in {1..3}; do
+					echo "Итерация $i"
+				done
+				EOF
+			"""
+		}
 	]
 }
