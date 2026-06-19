@@ -45,6 +45,7 @@ func init() {
 		for _, sock := range sockets {
 			if _, err := os.Stat(sock); err == nil {
 				os.Setenv("DOCKER_HOST", "unix://"+sock)
+				os.Setenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "unix://"+sock)
 				break
 			}
 		}

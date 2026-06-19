@@ -22,6 +22,7 @@ import (
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/proxy"
+	"github.com/shareed2k/honey/internal/queue"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
 	"go.uber.org/zap"
@@ -62,6 +63,8 @@ type Server struct {
 	proxy    *proxy.Manager
 	pgPools  *postgres.PoolManager
 
+	webhookQueue queue.Queue
+
 	assistModelsMu  sync.Mutex
 	assistModelIDs  []string
 	assistModelsExp time.Time
@@ -95,6 +98,11 @@ func NewServer(opts Options) (*Server, error) {
 	valCache, _ := lru.New[string, *ValidateContentResponse](50)
 	graphCache, _ := lru.New[string, *cuetry.RecipeGraphPlan](50)
 
+	q, err := queue.NewAntsQueue(50)
+	if err != nil {
+		return nil, fmt.Errorf("init webhook queue: %w", err)
+	}
+
 	s := &Server{
 		opts:                  opts,
 		metrics:               opts.Metrics,
@@ -103,6 +111,7 @@ func NewServer(opts Options) (*Server, error) {
 		tunnels:               newTunnelManager(),
 		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
 		pgPools:               postgres.NewPoolManager(),
+		webhookQueue:          q,
 		fileClientCache:       engine.NewClientCache(),
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
@@ -153,6 +162,8 @@ func (s *Server) routes() error {
 	s.mux.HandleFunc("POST /api/v1/recipes/parse", s.withAuth(s.handleRecipesParse))
 	s.mux.HandleFunc("POST /api/v1/recipes/prompts/upload", s.withAuth(s.handleRecipesPromptsUpload))
 	s.mux.HandleFunc("POST /api/v1/recipes/prompts/choices", s.withAuth(s.handleRecipesPromptsChoices))
+	s.mux.HandleFunc("POST /api/v1/webhooks/{app_name}/{webhook_name}", s.handleRecipeWebhook)
+	s.mux.HandleFunc("GET /api/v1/webhooks/results/{id}", s.withAuth(s.handleRecipeWebhookResult))
 	s.mux.HandleFunc("GET /api/v1/recipes/recent-runs", s.withAuth(s.handleRecipesRecentRuns))
 	s.mux.HandleFunc("GET /api/v1/recipes/schema", s.withAuth(s.handleRecipesSchema))
 	s.mux.HandleFunc("GET /api/v1/recipes/studio-config", s.withAuth(s.handleRecipesStudioConfig))
@@ -287,6 +298,9 @@ func (s *Server) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			if s.webhookQueue != nil {
+				s.webhookQueue.Close()
+			}
 			if s.fileClientCache != nil {
 				s.fileClientCache.CloseAll()
 			}
