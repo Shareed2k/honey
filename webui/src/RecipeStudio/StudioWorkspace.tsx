@@ -3,12 +3,7 @@ import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { 
   ReactFlow, 
   Controls, 
-  Background, 
-  useNodesState, 
-  useEdgesState, 
-  addEdge,
-  Connection,
-  Edge
+  Background
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './studio.css';
@@ -67,7 +62,7 @@ type Props = {
 };
 
 export default function StudioWorkspace({ records = [], selectedRecords = [], sshUser = 'root' }: Props) {
-  const { nodes, setNodes, onNodesChange, edges, setEdges, onEdgesChange, onConnect, stepData, setStepData, resetGraph } = useRecipeGraph();
+  const { nodes, setNodes, onNodesChange, edges, setEdges, onEdgesChange, onConnect, stepData, setStepData } = useRecipeGraph();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [schema, setSchema] = useState<any>(null);
   const [validating, setValidating] = useState(false);
@@ -81,7 +76,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
   const [originalCue, setOriginalCue] = useState<string>('');
-  const [syncingAST, setSyncingAST] = useState(false);
+  // const [syncingAST, setSyncingAST] = useState(false);
   const [runHosts, setRunHosts] = useState<HostRecord[]>([]);
   const [hostPickerOpen, setHostPickerOpen] = useState(false);
   const [pendingRunStepId, setPendingRunStepId] = useState<string | null>(null);
@@ -256,7 +251,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       setRunPanelOpen(false);
       setSelectedNodeId(null);
     } finally {
-      setSyncingAST(false);
+      // setSyncingAST(false);
     }
   };
 
@@ -482,7 +477,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
     } finally {
       setValidating(false);
     }
-  }, [applyValidationResultToNodes, buildRecipeJSON, nodes.length, rawMode]);
+  }, [applyValidationResultToNodes, buildRecipeJSON, nodes.length, rawMode, rawContent]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -977,7 +972,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
                  setStepData(newStepData);
                  
                  message.success(`Loaded ${libRecipe.name} from Library`);
-               } catch (e) {
+               } catch {
                  message.success(`Loaded ${libRecipe.name} (Switch to visual manually after fixing validation if needed)`);
                }
             }, 50);

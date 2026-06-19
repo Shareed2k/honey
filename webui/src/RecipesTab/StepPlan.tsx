@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Checkbox, Collapse, Input, Modal, Spin, Tabs, Typography } from 'antd';
 import { isGraphRecipe, validateRecipeContent } from '../api/recipes';
-import { type ParsedRecipe, type RecipeGraphPlan, type ValidationError } from '../api/types/recipes';
+import { type RecipeGraphPlan, type ValidationError } from '../api/types/recipes';
 import { type ResolvedStep, type RiskReport } from '../api/types/core';
 import type { EnvPair, PlanState } from './types';
 import { EditForm } from './EditForm';

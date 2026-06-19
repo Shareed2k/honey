@@ -21,7 +21,7 @@ type Props = {
 };
 
 export function StepRecipe(props: Props) {
-  const { state: { recipe: current } } = useWizard();
+  useWizard();
   const [recent, setRecent] = useState<RecentRunEntry[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [recipes, setRecipes] = useState<RecipeListEntry[]>([]);

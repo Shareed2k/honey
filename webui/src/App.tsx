@@ -656,7 +656,7 @@ export function App() {
               try {
                 const events = await fetchRecordingEvents(fileName);
                 const metaEv = events.find((e) => e.type === 'recipe-meta');
-                const recipePath = (metaEv?.result as any)?.recipe_path;
+                const recipePath = (metaEv?.result as Record<string, unknown>)?.recipe_path as string | undefined;
                 if (!recipePath) {
                   message.warning('Recording does not contain recipe metadata');
                   return;
