@@ -24,6 +24,7 @@ import (
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/queue"
+	"github.com/shareed2k/honey/internal/scheduler"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
 	"go.uber.org/zap"
@@ -64,7 +65,8 @@ type Server struct {
 	proxy    *proxy.Manager
 	pgPools  *postgres.PoolManager
 
-	webhookQueue queue.Queue
+	webhookQueue    queue.Queue
+	scheduleManager *scheduler.Manager
 
 	assistModelsMu  sync.Mutex
 	assistModelIDs  []string
@@ -104,6 +106,7 @@ func NewServer(opts Options) (*Server, error) {
 		return nil, fmt.Errorf("init webhook queue: %w", err)
 	}
 
+	pgPools := postgres.NewPoolManager()
 	s := &Server{
 		opts:                  opts,
 		metrics:               opts.Metrics,
@@ -111,11 +114,28 @@ func NewServer(opts Options) (*Server, error) {
 		assistRL:              newSlidingRL(),
 		tunnels:               newTunnelManager(),
 		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
-		pgPools:               postgres.NewPoolManager(),
+		pgPools:               pgPools,
 		webhookQueue:          q,
 		fileClientCache:       engine.NewClientCache(),
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
+	}
+	if opts.Config != nil {
+		schedMgr, err := scheduler.New(scheduler.Options{
+			ConfigPath:     opts.ConfigPath,
+			Config:         opts.Config,
+			RecordDir:      opts.RecordDir,
+			ExecRegistry:   opts.ExecRegistry,
+			SearchRegistry: opts.SearchRegistry,
+			Queue:          q,
+			Metrics:        opts.Metrics,
+			Pools:          pgPools,
+		})
+		if err != nil {
+			zap.L().Warn("scheduler init failed, schedules disabled", zap.Error(err))
+		} else {
+			s.scheduleManager = schedMgr
+		}
 	}
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
@@ -321,6 +341,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	s.startRecordingRetention(ctx)
+	if s.scheduleManager != nil {
+		s.scheduleManager.Start(ctx)
+	}
 
 	nListeners := 1
 	if metricsSrv != nil {
