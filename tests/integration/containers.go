@@ -697,26 +697,26 @@ func startK3s(t *testing.T) []byte {
 }
 
 // StartLocalForward starts a local port forward.
-func (e *testClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
+func (e *testSSHClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
 	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
 }
 
 // StartRemoteForward starts a remote port forward.
-func (e *testClient) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (remAddr string, stop func(), err error) {
+func (e *testSSHClient) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (remAddr string, stop func(), err error) {
 	return "", nil, fmt.Errorf("tunneling not supported on this transport")
 }
 
 // StartDynamicForward starts a dynamic port forward.
-func (e *testClient) StartDynamicForward(_ context.Context, _ string, _ int) (host string, port int, stop func(), err error) {
+func (e *testSSHClient) StartDynamicForward(_ context.Context, _ string, _ int) (host string, port int, stop func(), err error) {
 	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
 }
 
 // StartUDPRelay starts a UDP relay.
-func (e *testClient) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (host string, port int, stop func(), err error) {
+func (e *testSSHClient) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (host string, port int, stop func(), err error) {
 	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
 }
 
 // StartTunForward starts a TUN forward.
-func (e *testClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
+func (e *testSSHClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
 	return "", nil, fmt.Errorf("tunneling not supported on this transport")
 }
