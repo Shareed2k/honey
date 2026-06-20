@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -59,14 +60,18 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	t := time.Now()
 	pluginMgr, err := plugins.Open(r.Context(), api.opts.Config)
+	zap.L().Debug("webhook stage", zap.String("stage", "plugins.Open"), zap.Duration("dur", time.Since(t)))
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
 	defer func() { _ = pluginMgr.Close() }()
 
+	t = time.Now()
 	recipe, err := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{PluginManager: pluginMgr})
+	zap.L().Debug("webhook stage", zap.String("stage", "parse"), zap.Duration("dur", time.Since(t)))
 	if err != nil {
 		httpError(w, fmt.Errorf("parse recipe: %w", err), http.StatusBadRequest)
 		return
@@ -85,7 +90,9 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
+		t = time.Now()
 		expected, err := secRes.Resolve(r.Context(), authSecret)
+		zap.L().Debug("webhook stage", zap.String("stage", "auth"), zap.Duration("dur", time.Since(t)))
 		if err != nil {
 			httpError(w, fmt.Errorf("resolve auth_secret: %w", err), http.StatusInternalServerError)
 			return
@@ -143,7 +150,9 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		searchIn.NameRegex = app.TargetRegex
 	}
 
+	t = time.Now()
 	searchOut, err := hostapi.SearchHosts(r.Context(), searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
+	zap.L().Debug("webhook stage", zap.String("stage", "search"), zap.Duration("dur", time.Since(t)))
 	if err != nil {
 		httpError(w, fmt.Errorf("search hosts: %w", err), http.StatusBadRequest)
 		return
@@ -206,6 +215,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
+		t = time.Now()
 		err := api.webhookQueue.Submit(func() {
 			defer func() {
 				if rec != nil {
@@ -225,6 +235,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 				}
 			}
 		})
+		zap.L().Debug("webhook stage", zap.String("stage", "enqueue"), zap.Duration("dur", time.Since(t)))
 		if err != nil {
 			if err == queue.ErrQueueFull {
 				httpError(w, fmt.Errorf("server busy: webhook queue full"), http.StatusTooManyRequests)
