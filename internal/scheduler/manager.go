@@ -236,6 +236,7 @@ func (m *Manager) executeSchedule(
 		ConfigPath: m.opts.ConfigPath,
 		Name:       app.Target,
 		Providers:  app.Provider,
+		Backends:   app.Backend,
 	}
 	if app.Target == "" && app.TargetRegex != "" {
 		searchIn.NameRegex = app.TargetRegex
