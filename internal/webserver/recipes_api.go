@@ -29,6 +29,7 @@ type RecipesAPI struct {
 	webhookQueue          queue.Queue
 	pgPools               *postgres.PoolManager
 	ai                    AIAssistant
+	plugins               *pluginCache
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
 }
@@ -40,6 +41,7 @@ func NewRecipesAPI(
 	webhookQueue queue.Queue,
 	pgPools *postgres.PoolManager,
 	ai AIAssistant,
+	plugins *pluginCache,
 	valCache *lru.Cache[string, *ValidateContentResponse],
 	graphCache *lru.Cache[string, *cuetry.RecipeGraphPlan],
 ) *RecipesAPI {
@@ -49,6 +51,7 @@ func NewRecipesAPI(
 		webhookQueue:          webhookQueue,
 		pgPools:               pgPools,
 		ai:                    ai,
+		plugins:               plugins,
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
 	}
