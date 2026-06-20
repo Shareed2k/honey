@@ -3,6 +3,7 @@ package cuetry
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
@@ -315,12 +316,46 @@ const schemaSource = `
 })
 `
 
-func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, error) {
+// schemaCtx holds a pre-compiled CUE context and #Recipe schema value.
+// Each instance owns its own *cue.Context so there is no shared mutable state
+// between concurrent borrows.  uses is incremented on every return to the pool;
+// once it reaches maxCtxReuse the entry is dropped (GC reclaims it) so that
+// CUE's per-context interning map does not grow without bound.
+type schemaCtx struct {
+	ctx  *cue.Context
+	def  cue.Value // #Recipe compiled in ctx
+	uses int
+}
+
+const maxCtxReuse = 256
+
+var schemaCtxPool = sync.Pool{New: func() any { return newSchemaCtx() }}
+
+func newSchemaCtx() *schemaCtx {
 	ctx := cuecontext.New()
 	schema := ctx.CompileString(schemaSource)
+	// schemaSource is a package-level constant; a compile error here is a
+	// programming error with no recovery path — panic is acceptable.
 	if err := schema.Err(); err != nil {
-		return cue.Value{}, fmt.Errorf("cuetry: internal schema: %w", err)
+		panic(fmt.Sprintf("cuetry: internal schema compile error: %v", err))
 	}
+	def := schema.LookupPath(cue.ParsePath("#Recipe"))
+	if !def.Exists() {
+		panic("cuetry: internal schema missing #Recipe")
+	}
+	return &schemaCtx{ctx: ctx, def: def}
+}
+
+func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, error) {
+	sc := schemaCtxPool.Get().(*schemaCtx)
+	defer func() {
+		sc.uses++
+		if sc.uses >= maxCtxReuse {
+			return // drop; GC reclaims, pool.New makes a fresh one next time
+		}
+		schemaCtxPool.Put(sc)
+	}()
+	ctx := sc.ctx
 
 	var user cue.Value
 	if len(records) > 0 {
@@ -340,12 +375,7 @@ func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, 
 		return cue.Value{}, fmt.Errorf("cuetry: missing top-level field \"recipe\"")
 	}
 
-	def := schema.LookupPath(cue.ParsePath("#Recipe"))
-	if !def.Exists() {
-		return cue.Value{}, fmt.Errorf("cuetry: internal schema missing #Recipe")
-	}
-
-	unified := def.Unify(recipe)
+	unified := sc.def.Unify(recipe)
 	if err := unified.Validate(cue.Concrete(true), cue.Final()); err != nil {
 		return cue.Value{}, fmt.Errorf("cuetry: validate: %w", formatCueErr(err))
 	}
