@@ -163,11 +163,7 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 // AcquireLease returns a cached client and tracks a lightweight borrow for app proxy sessions.
 func (c *ClientCache) AcquireLease(user string, r hosts.Record) (*ClientLease, error) {
 	if c == nil {
-		client, err := c.reg.ForRecord(r).Dial(user, r)
-		if err != nil {
-			return nil, err
-		}
-		return &ClientLease{client: client, closeClient: true}, nil
+		return nil, fmt.Errorf("client cache not initialized")
 	}
 
 	client, err := c.GetOrDial(user, r)
