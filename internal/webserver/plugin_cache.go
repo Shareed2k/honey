@@ -10,42 +10,56 @@ import (
 	"github.com/shareed2k/honey/internal/plugins"
 )
 
-// pluginCache holds one shared *plugins.Manager for the synchronous request path,
-// reopened when config changes. Async work must open its own manager.
+// pluginCache holds one shared *plugins.Manager for the synchronous request
+// path, reopened when config changes. Callers Borrow the manager and must call
+// the returned release func when done; a manager retired by Reload stays open
+// until its last borrower releases it, so an in-flight request never observes a
+// closed manager. Async work opens its own manager and does not use this cache.
 type pluginCache struct {
-	mu  sync.RWMutex
-	cfg *config.File
-	mgr *plugins.Manager
+	mu   sync.Mutex
+	cfg  *config.File
+	mgr  *plugins.Manager
+	refs map[*plugins.Manager]int // live borrow count per manager
 }
 
-func newPluginCache(cfg *config.File) *pluginCache { return &pluginCache{cfg: cfg} }
+func newPluginCache(cfg *config.File) *pluginCache {
+	return &pluginCache{cfg: cfg, refs: map[*plugins.Manager]int{}}
+}
 
-// Get returns the shared manager, opening it lazily. Callers must NOT Close it.
-// Returns nil if the manager cannot be opened (callers must tolerate nil → fall
-// back to plugins.Open or treat plugins as disabled).
-func (p *pluginCache) Get() *plugins.Manager {
-	p.mu.RLock()
-	if p.mgr != nil {
-		m := p.mgr
-		p.mu.RUnlock()
-		return m
-	}
-	p.mu.RUnlock()
-
+// Borrow returns the current shared manager and a release func the caller MUST
+// invoke (via defer) when finished. The manager is guaranteed open until the
+// release func runs, even across a concurrent Reload. Returns (nil, no-op) if
+// the manager cannot be opened; callers must tolerate a nil manager.
+func (p *pluginCache) Borrow() (*plugins.Manager, func()) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.mgr == nil {
 		m, err := plugins.Open(context.Background(), p.cfg)
 		if err != nil {
 			zap.L().Warn("plugin cache: open failed", zap.Error(err))
-			return nil
+			return nil, func() {}
 		}
 		p.mgr = m
 	}
-	return p.mgr
+	m := p.mgr
+	p.refs[m]++
+	return m, func() { p.release(m) }
 }
 
-// Reload swaps in a freshly opened manager and closes the previous one.
+func (p *pluginCache) release(m *plugins.Manager) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.refs[m]--
+	if p.refs[m] <= 0 {
+		delete(p.refs, m)
+		if m != p.mgr { // retired and fully drained → safe to close
+			_ = m.Close()
+		}
+	}
+}
+
+// Reload swaps in a freshly opened manager. The previous manager is closed now
+// if it has no active borrowers, otherwise the last release() closes it.
 func (p *pluginCache) Reload(cfg *config.File) {
 	newMgr, err := plugins.Open(context.Background(), cfg)
 	if err != nil {
@@ -54,9 +68,11 @@ func (p *pluginCache) Reload(cfg *config.File) {
 	}
 	p.mu.Lock()
 	old := p.mgr
-	p.mgr, p.cfg = newMgr, cfg
+	p.mgr = newMgr
+	p.cfg = cfg
+	closeOld := old != nil && p.refs[old] == 0
 	p.mu.Unlock()
-	if old != nil {
+	if closeOld {
 		_ = old.Close()
 	}
 }
@@ -66,6 +82,12 @@ func (p *pluginCache) Close() {
 	defer p.mu.Unlock()
 	if p.mgr != nil {
 		_ = p.mgr.Close()
-		p.mgr = nil
 	}
+	for m := range p.refs {
+		if m != p.mgr {
+			_ = m.Close()
+		}
+	}
+	p.refs = map[*plugins.Manager]int{}
+	p.mgr = nil
 }

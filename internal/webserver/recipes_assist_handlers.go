@@ -153,7 +153,8 @@ func (api *RecipesAPI) handleRecipesAssist(w http.ResponseWriter, r *http.Reques
 	if len(jobs) > 0 {
 		parseSlice = jobs
 	}
-	pluginMgr := api.plugins.Get()
+	pluginMgr, releasePlugins := api.plugins.Borrow()
+	defer releasePlugins()
 	recipe, perr := cuetry.ParseRemoteRecipeOpts(raw, parseSlice, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if perr != nil {
 		parseNote = perr.Error()
