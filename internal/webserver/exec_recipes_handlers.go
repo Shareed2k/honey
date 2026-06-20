@@ -589,7 +589,8 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pluginMgr := api.plugins.Get()
+	pluginMgr, releasePlugins := api.plugins.Borrow()
+	defer releasePlugins()
 
 	recipe, recipeSourcePath, recipeDir, err := api.resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if err != nil {

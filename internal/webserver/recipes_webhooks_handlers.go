@@ -62,8 +62,9 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 
 	// Plugin manager: shared, owned by pluginCache — do NOT Close it here.
 	t := time.Now()
-	pluginMgr := api.plugins.Get()
-	zap.L().Debug("webhook stage", zap.String("stage", "plugins.Get"), zap.Duration("dur", time.Since(t)))
+	pluginMgr, releasePlugins := api.plugins.Borrow()
+	defer releasePlugins()
+	zap.L().Debug("webhook stage", zap.String("stage", "plugins.Borrow"), zap.Duration("dur", time.Since(t)))
 
 	t = time.Now()
 	recipe, err := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{PluginManager: pluginMgr})
