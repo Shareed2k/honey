@@ -128,6 +128,11 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
+	envMap, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), envMap)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
 
 	sshUser := api.sshUser("")
 	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
@@ -215,6 +220,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 				Obs:            api.metrics,
 				Reg:            api.opts.ExecRegistry,
 				Pools:          api.pgPools,
+				Cache:          api.sshCache,
 			}
 
 			ch := make(chan engine.HostExecResult, cueExecChannelCap)
@@ -278,6 +284,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		Obs:            api.metrics,
 		Reg:            api.opts.ExecRegistry,
 		Pools:          api.pgPools,
+		Cache:          api.sshCache,
 	}
 
 	var rec *engine.SessionRecorder

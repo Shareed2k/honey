@@ -25,6 +25,7 @@ type CueRecipeRunParams struct {
 	Reg            hostexec.Registry
 	Obs            metrics.Observer
 	Pools          *postgres.PoolManager
+	Cache          *ClientCache // optional shared cache; nil = create a fresh per-run cache
 }
 
 // CueRun ...

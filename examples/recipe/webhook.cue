@@ -26,7 +26,7 @@ recipe: {
 		{
 			// Target the localhost to run the script. In a real app, this might be
 			// an application server targeted by 'target_regex' or 'target' in the app config.
-			host: "localhost"
+			host: "*"
 
 			// Declare the variables extracted from the webhook payload so CUE validation passes.
 			env: {
