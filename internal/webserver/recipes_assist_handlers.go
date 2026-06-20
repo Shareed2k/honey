@@ -19,7 +19,6 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -154,12 +153,7 @@ func (api *RecipesAPI) handleRecipesAssist(w http.ResponseWriter, r *http.Reques
 	if len(jobs) > 0 {
 		parseSlice = jobs
 	}
-	pluginMgr, plugErr := plugins.Open(r.Context(), api.opts.Config)
-	if plugErr != nil {
-		httpError(w, plugErr, http.StatusInternalServerError)
-		return
-	}
-	defer func() { _ = pluginMgr.Close() }()
+	pluginMgr := api.plugins.Get()
 	recipe, perr := cuetry.ParseRemoteRecipeOpts(raw, parseSlice, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if perr != nil {
 		parseNote = perr.Error()
