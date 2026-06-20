@@ -152,7 +152,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 
 	// 4. Idempotency and Deduplication
-	var idemKey string
+	var idemKey, scopedKey string
 	if webhook.IdempotencyKey != "" {
 		if strings.HasPrefix(webhook.IdempotencyKey, "header:") {
 			headerName := strings.TrimSpace(webhook.IdempotencyKey[7:])
@@ -167,7 +167,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 
 	if idemKey != "" {
-		scopedKey := fmt.Sprintf("%s:%s:%s", appName, webhookName, idemKey)
+		scopedKey = fmt.Sprintf("%s:%s:%s", appName, webhookName, idemKey)
 		ttl := 24 * time.Hour
 		if webhook.IdempotencyTTL != "" {
 			if parsed, err := time.ParseDuration(webhook.IdempotencyTTL); err == nil {
@@ -194,13 +194,6 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 
 		api.webhookDedupCache.Set(scopedKey, "processing", ttl)
 		api.webhookDedupMu.Unlock()
-
-		// Optional: Clear on failure so retries succeed, or set to "done"
-		defer func() {
-			api.webhookDedupMu.Lock()
-			api.webhookDedupCache.Set(scopedKey, "done", ttl)
-			api.webhookDedupMu.Unlock()
-		}()
 	}
 
 	isAsync := webhook.Async != nil && *webhook.Async
@@ -226,6 +219,9 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 			ctx := context.Background()
 			mgr, _ := plugins.Open(ctx, api.opts.Config) // async owns its own manager lifecycle
 			defer func() {
+				if scopedKey != "" {
+					api.webhookDedupCache.Delete(scopedKey)
+				}
 				if mgr != nil {
 					_ = mgr.Close()
 				}
@@ -311,6 +307,10 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 
 	// ---- Synchronous path: search + execute inline, return full results. ----
+	if scopedKey != "" {
+		defer api.webhookDedupCache.Delete(scopedKey)
+	}
+
 	t = time.Now()
 	searchOut, err := hostapi.SearchHosts(r.Context(), searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
 	zap.L().Debug("webhook stage", zap.String("stage", "search"), zap.Duration("dur", time.Since(t)))
