@@ -170,6 +170,7 @@ export function ParameterPromptModal({ open, prompts, recipeName, onCancel, onSu
       const def = prompts[k];
       const valObj = v as Record<string, unknown>;
       if (def?.type === 'file' && valObj && valObj.id) {
+        transformed[k] = String(valObj.path); // FIX: Ensure the main variable gets the path so backend validation passes
         transformed[`HONEY_PROMPT_${k}`] = String(valObj.id);
         transformed[`HONEY_FILE_${k}`] = String(valObj.path);
         transformed[`HONEY_FILE_${k}_FILENAME`] = String(valObj.filename);
