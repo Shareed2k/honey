@@ -47,14 +47,23 @@ type proxyStartRequest struct {
 }
 
 func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest, cache *engine.ClientCache, reg hostexec.Registry, searchReg *searchrun.Registry) (proxy.Dialer, io.Closer, error) {
+	searchProviders := req.Providers
+	if searchProviders == "" {
+		searchProviders = app.Provider
+	}
+	searchBackends := req.Backends
+	if searchBackends == "" {
+		searchBackends = app.Backend
+	}
+
 	// First run a search to find the record for this target
 	in := hostapi.SearchHostsInput{
 		Name:       app.Target,
 		NameRegex:  app.TargetRegex,
 		ConfigPath: configPath,
 		SSHUser:    sshUser,
-		Providers:  req.Providers,
-		Backends:   req.Backends,
+		Providers:  searchProviders,
+		Backends:   searchBackends,
 	}
 
 	out, err := hostapi.SearchHosts(ctx, &in, reg, searchReg)

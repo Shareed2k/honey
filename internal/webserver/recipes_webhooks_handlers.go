@@ -137,6 +137,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		ConfigPath: api.opts.ConfigPath,
 		Name:       target,
 		Providers:  app.Provider,
+		Backends:   app.Backend,
 	}
 	if target == "" && app.TargetRegex != "" {
 		searchIn.NameRegex = app.TargetRegex
