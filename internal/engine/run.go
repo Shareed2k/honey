@@ -100,7 +100,6 @@ func (run *CueRun) GatherFacts(ctx context.Context) {
 		return
 	}
 	zap.L().Debug("gathering host facts")
-	ch := make(chan HostExecResult, len(run.Params.Records))
 	encodedScript := base64.StdEncoding.EncodeToString([]byte(factsScript))
 	cmdFunc := func(_ hosts.Record, _ map[string]string) string {
 		return fmt.Sprintf("echo %s | base64 -d | sh", encodedScript)
@@ -114,6 +113,7 @@ func (run *CueRun) GatherFacts(ctx context.Context) {
 	if len(targets) == 0 {
 		return
 	}
+	ch := make(chan HostExecResult, len(targets))
 
 	targets = CueApplyRecipeSSHDialOptions(run.Params.Recipe, nil, targets)
 

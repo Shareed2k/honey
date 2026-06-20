@@ -19,9 +19,9 @@ recipe: {
 			// (Optional) Extract data from the JSON body using JSON paths (gjson syntax)
 			// and inject them as environment variables into the recipe
 			extract: {
-				"COMMIT_HASH": "after"
-				"REPO_NAME":   "repository.full_name"
-				"PUSHER":      "pusher.name"
+				"SERVICE_NAME": "after"
+				"ACTION":       "action"
+				"ENV_TARGETS":  "env"
 			}
 
 			// (Optional) Run in the background and return a tracking ID immediately
