@@ -260,9 +260,13 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	ctx = cuetry.WithRecipeDir(ctx, p.RecipeDir)
 
 	run := &CueRun{Params: p}
-	run.Cache = NewClientCache()
+	if p.Cache != nil {
+		run.Cache = p.Cache
+	} else {
+		run.Cache = NewClientCache()
+		defer run.Cache.CloseAll()
+	}
 	run.Cache.SetRegistry(p.Reg)
-	defer run.Cache.CloseAll()
 
 	run.RecipeKV = NewRecipeKVCoordinator(0)
 	defer run.RecipeKV.Close()

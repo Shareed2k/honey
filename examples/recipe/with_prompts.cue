@@ -1,6 +1,33 @@
 recipe: {
-	name: "Example: Rundeck-style Prompts"
+	name: "with_promts"
 	type: "linear"
+
+	schedules: {
+        "every-night": {
+            cron:     "0 2 * * *"
+            timezone: "America/New_York"
+            env: { BACKUP_TARGET: "prod-db" }
+        }
+    }
+
+	webhooks: {
+		// "on_push" is the webhook_name used in the URL later
+		"on_push": {
+			// (Optional) Require an Authorization header matching a resolved secret
+			auth_secret: "secure:v1:XVkyVCK/wRnEHSEZ:ZQrqzSSClYTZZuM5GXn3FUwEzHY=" //env:WEBHOOK_SECRET
+			
+			// (Optional) Extract data from the JSON body using JSON paths (gjson syntax)
+			// and inject them as environment variables into the recipe
+			extract: {
+				"COMMIT_HASH": "after"
+				"REPO_NAME":   "repository.full_name"
+				"PUSHER":      "pusher.name"
+			}
+
+			// (Optional) Run in the background and return a tracking ID immediately
+			async: true
+		}
+	}
 
 	defaults: {
 		prompts: {

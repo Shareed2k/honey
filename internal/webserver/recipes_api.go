@@ -10,6 +10,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/queue"
@@ -30,6 +31,7 @@ type RecipesAPI struct {
 	pgPools               *postgres.PoolManager
 	ai                    AIAssistant
 	plugins               *pluginCache
+	sshCache              *engine.ClientCache
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
 }
@@ -42,6 +44,7 @@ func NewRecipesAPI(
 	pgPools *postgres.PoolManager,
 	ai AIAssistant,
 	plugins *pluginCache,
+	sshCache *engine.ClientCache,
 	valCache *lru.Cache[string, *ValidateContentResponse],
 	graphCache *lru.Cache[string, *cuetry.RecipeGraphPlan],
 ) *RecipesAPI {
@@ -52,6 +55,7 @@ func NewRecipesAPI(
 		pgPools:               pgPools,
 		ai:                    ai,
 		plugins:               plugins,
+		sshCache:              sshCache,
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
 	}

@@ -49,6 +49,7 @@ type Options struct {
 	Queue          queue.Queue
 	Metrics        *metrics.Registry
 	Pools          *postgres.PoolManager
+	Cache          *engine.ClientCache // optional shared SSH client cache; nil = per-run cache
 }
 
 // Manager builds and runs all cron schedules derived from recipe apps.
@@ -257,6 +258,10 @@ func (m *Manager) executeSchedule(
 	// Merge schedule-level env on top of any global defaults.
 	cliEnv := make(map[string]string, len(sched.Env))
 	maps.Copy(cliEnv, sched.Env)
+	cliEnv, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), cliEnv)
+	if err != nil {
+		return fmt.Errorf("prompt validation: %w", err)
+	}
 
 	secRes, _ := cuetry.NewSecretResolverWithPlugins(
 		cuetry.SecretResolverOptionsFromHoney(m.opts.Config), pluginMgr,
@@ -282,6 +287,7 @@ func (m *Manager) executeSchedule(
 		Obs:            m.opts.Metrics,
 		Reg:            m.opts.ExecRegistry,
 		Pools:          m.opts.Pools,
+		Cache:          m.opts.Cache,
 	}
 
 	// Build an optional session recorder.

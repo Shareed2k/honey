@@ -617,6 +617,11 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
+	cliEnv, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), cliEnv)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
 	mergeK8sDebugImageFromRecipe(recipe, jobs)
 
 	user := api.sshUser(body.SSHUser)
@@ -668,6 +673,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 			Obs:            api.metrics,
 			Reg:            api.opts.ExecRegistry,
 			Pools:          api.pgPools,
+			Cache:          api.sshCache,
 		}, nil)
 		var rec *engine.SessionRecorder
 		if wantRec {
@@ -729,6 +735,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 				Obs:            api.metrics,
 				Reg:            api.opts.ExecRegistry,
 				Pools:          api.pgPools,
+				Cache:          api.sshCache,
 			}, ch); err != nil {
 				ch <- engine.HostExecResult{
 					Name:     "cue-exec",
@@ -772,6 +779,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 			Obs:            api.metrics,
 			Reg:            api.opts.ExecRegistry,
 			Pools:          api.pgPools,
+			Cache:          api.sshCache,
 		}, ch)
 	}()
 	var results []engine.HostExecResult

@@ -187,6 +187,7 @@ func (api *RecipesAPI) handleRecipesAssist(w http.ResponseWriter, r *http.Reques
 					Obs:            api.metrics,
 					Reg:            api.opts.ExecRegistry,
 					Pools:          api.pgPools,
+					Cache:          api.sshCache,
 				}, nil)
 				plan := buf.String()
 				if runErr != nil {

@@ -133,6 +133,7 @@ func NewServer(opts Options) (*Server, error) {
 			Queue:          q,
 			Metrics:        opts.Metrics,
 			Pools:          pgPools,
+			Cache:          s.fileClientCache,
 		})
 		if err != nil {
 			zap.L().Warn("scheduler init failed, schedules disabled", zap.Error(err))
@@ -149,7 +150,7 @@ func NewServer(opts Options) (*Server, error) {
 }
 
 func (s *Server) routes() error {
-	recipesAPI := NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.recipeValidationCache, s.recipeGraphCache)
+	recipesAPI := NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache, s.recipeValidationCache, s.recipeGraphCache)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
