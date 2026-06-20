@@ -234,6 +234,7 @@ func (m *Manager) executeSchedule(
 	// Resolve target hosts.
 	searchIn := &hostapi.SearchHostsInput{
 		ConfigPath: m.opts.ConfigPath,
+		Config:     m.opts.Config,
 		Name:       app.Target,
 		Providers:  app.Provider,
 		Backends:   app.Backend,
