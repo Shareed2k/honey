@@ -66,6 +66,7 @@ type Server struct {
 	pgPools  *postgres.PoolManager
 
 	webhookQueue    queue.Queue
+	plugins         *pluginCache
 	scheduleManager *scheduler.Manager
 
 	assistModelsMu  sync.Mutex
@@ -107,6 +108,7 @@ func NewServer(opts Options) (*Server, error) {
 	}
 
 	pgPools := postgres.NewPoolManager()
+	pc := newPluginCache(opts.Config)
 	s := &Server{
 		opts:                  opts,
 		metrics:               opts.Metrics,
@@ -116,6 +118,7 @@ func NewServer(opts Options) (*Server, error) {
 		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
 		pgPools:               pgPools,
 		webhookQueue:          q,
+		plugins:               pc,
 		fileClientCache:       engine.NewClientCache(),
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
@@ -146,7 +149,7 @@ func NewServer(opts Options) (*Server, error) {
 }
 
 func (s *Server) routes() error {
-	recipesAPI := NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.recipeValidationCache, s.recipeGraphCache)
+	recipesAPI := NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.recipeValidationCache, s.recipeGraphCache)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -355,6 +358,9 @@ func (s *Server) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			if s.webhookQueue != nil {
 				s.webhookQueue.Close()
+			}
+			if s.plugins != nil {
+				s.plugins.Close()
 			}
 			if s.fileClientCache != nil {
 				s.fileClientCache.CloseAll()
