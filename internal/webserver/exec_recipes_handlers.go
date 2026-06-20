@@ -16,7 +16,6 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -590,12 +589,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pluginMgr, err := plugins.Open(r.Context(), api.opts.Config)
-	if err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
-	}
-	defer func() { _ = pluginMgr.Close() }()
+	pluginMgr := api.plugins.Get()
 
 	recipe, recipeSourcePath, recipeDir, err := api.resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if err != nil {
