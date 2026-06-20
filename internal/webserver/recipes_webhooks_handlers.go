@@ -135,6 +135,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	// Host search input — shared by both branches.
 	searchIn := &hostapi.SearchHostsInput{
 		ConfigPath: api.opts.ConfigPath,
+		Config:     api.opts.Config,
 		Name:       app.Target,
 		Providers:  app.Provider,
 		Backends:   app.Backend,

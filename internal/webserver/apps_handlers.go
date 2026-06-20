@@ -46,7 +46,7 @@ type proxyStartRequest struct {
 	Backends  string `json:"backends,omitempty"`
 }
 
-func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest, cache *engine.ClientCache, reg hostexec.Registry, searchReg *searchrun.Registry) (proxy.Dialer, io.Closer, error) {
+func resolveAppDialer(ctx context.Context, cfg *config.File, configPath string, app apps.AppConfig, sshUser string, req proxyStartRequest, cache *engine.ClientCache, reg hostexec.Registry, searchReg *searchrun.Registry) (proxy.Dialer, io.Closer, error) {
 	searchProviders := req.Providers
 	if searchProviders == "" {
 		searchProviders = app.Provider
@@ -61,6 +61,7 @@ func resolveAppDialer(ctx context.Context, _ *config.File, configPath string, ap
 		Name:       app.Target,
 		NameRegex:  app.TargetRegex,
 		ConfigPath: configPath,
+		Config:     cfg,
 		SSHUser:    sshUser,
 		Providers:  searchProviders,
 		Backends:   searchBackends,

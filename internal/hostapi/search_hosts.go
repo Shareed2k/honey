@@ -17,6 +17,7 @@ import (
 // need to know which fields any specific provider accepts.
 type SearchHostsInput struct {
 	ConfigPath string                      `json:"config_path,omitempty" mod:"trim"`
+	Config     *config.File                `json:"-"` // pre-loaded config; skips config.Load when set
 	Name       string                      `json:"name,omitempty"        mod:"trim"`
 	NameRegex  string                      `json:"name_regex,omitempty"  mod:"trim"`
 	Providers  string                      `json:"providers,omitempty"   mod:"trim"`
@@ -63,7 +64,9 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput, reg hostexec.Registr
 		return out, err
 	}
 	var cfg *config.File
-	if cfgPath != "" {
+	if in.Config != nil {
+		cfg = in.Config
+	} else if cfgPath != "" {
 		cfg, err = config.Load(cfgPath)
 		if err != nil {
 			return out, fmt.Errorf("config: %w", err)
