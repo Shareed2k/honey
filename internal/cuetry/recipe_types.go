@@ -33,9 +33,11 @@ type RecipeSchedule struct {
 
 // RecipeWebhook defines a webhook trigger for a recipe.
 type RecipeWebhook struct {
-	AuthSecret string            `json:"auth_secret,omitempty"`
-	Extract    map[string]string `json:"extract,omitempty"`
-	Async      *bool             `json:"async,omitempty"`
+	AuthSecret     string            `json:"auth_secret,omitempty"`
+	Extract        map[string]string `json:"extract,omitempty"`
+	Async          *bool             `json:"async,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
+	IdempotencyTTL string            `json:"idempotency_ttl,omitempty"`
 }
 
 // RecipePrompt defines metadata for UI form generation.

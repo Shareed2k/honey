@@ -4,9 +4,12 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/jellydator/ttlcache/v3"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -34,6 +37,9 @@ type RecipesAPI struct {
 	sshCache              *engine.ClientCache
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
+
+	webhookDedupCache *ttlcache.Cache[string, string]
+	webhookDedupMu    sync.Mutex
 }
 
 // NewRecipesAPI creates a new isolated router and handler set for Recipes.
@@ -48,6 +54,12 @@ func NewRecipesAPI(
 	valCache *lru.Cache[string, *ValidateContentResponse],
 	graphCache *lru.Cache[string, *cuetry.RecipeGraphPlan],
 ) *RecipesAPI {
+	dedupCache := ttlcache.New[string, string](
+		ttlcache.WithTTL[string, string](24*time.Hour),
+		ttlcache.WithDisableTouchOnHit[string, string](),
+	)
+	go dedupCache.Start()
+
 	return &RecipesAPI{
 		opts:                  opts,
 		metrics:               metrics,
@@ -58,6 +70,7 @@ func NewRecipesAPI(
 		sshCache:              sshCache,
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
+		webhookDedupCache:     dedupCache,
 	}
 }
 

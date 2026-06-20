@@ -2,6 +2,8 @@ package webserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -147,6 +149,58 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 	if app.Target == "" && app.TargetRegex != "" {
 		searchIn.NameRegex = app.TargetRegex
+	}
+
+	// 4. Idempotency and Deduplication
+	var idemKey string
+	if webhook.IdempotencyKey != "" {
+		if strings.HasPrefix(webhook.IdempotencyKey, "header:") {
+			headerName := strings.TrimSpace(webhook.IdempotencyKey[7:])
+			idemKey = r.Header.Get(headerName)
+		} else if gjson.ValidBytes(body) {
+			idemKey = gjson.GetBytes(body, webhook.IdempotencyKey).String()
+		}
+	} else {
+		// Fallback to SHA256 of raw body
+		hash := sha256.Sum256(body)
+		idemKey = hex.EncodeToString(hash[:])
+	}
+
+	if idemKey != "" {
+		scopedKey := fmt.Sprintf("%s:%s:%s", appName, webhookName, idemKey)
+		ttl := 24 * time.Hour
+		if webhook.IdempotencyTTL != "" {
+			if parsed, err := time.ParseDuration(webhook.IdempotencyTTL); err == nil {
+				ttl = parsed
+			}
+		}
+
+		api.webhookDedupMu.Lock()
+		if item := api.webhookDedupCache.Get(scopedKey); item != nil {
+			api.webhookDedupMu.Unlock()
+			zap.L().Info("webhook duplicate detected, skipping",
+				zap.String("app", appName),
+				zap.String("webhook", webhookName),
+				zap.String("idempotency_key", idemKey))
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "duplicate",
+				"msg":    "Event already processed or in progress",
+			})
+			return
+		}
+
+		api.webhookDedupCache.Set(scopedKey, "processing", ttl)
+		api.webhookDedupMu.Unlock()
+
+		// Optional: Clear on failure so retries succeed, or set to "done"
+		defer func() {
+			api.webhookDedupMu.Lock()
+			api.webhookDedupCache.Set(scopedKey, "done", ttl)
+			api.webhookDedupMu.Unlock()
+		}()
 	}
 
 	isAsync := webhook.Async != nil && *webhook.Async

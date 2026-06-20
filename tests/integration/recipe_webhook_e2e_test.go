@@ -70,6 +70,7 @@ recipe: {
 			extract: {
 				"WEBHOOK_MSG": "payload.message"
 			}
+			idempotency_key: "payload.message.id"
 			async: false
 		}
 	}
@@ -112,7 +113,7 @@ recipe: {
 	}
 
 	baseURL := newTestServer(t, opts)
-	// Inject the queue into the server manually since newTestServer doesn't expose it directly in Options, 
+	// Inject the queue into the server manually since newTestServer doesn't expose it directly in Options,
 	// Wait, we can't easily inject the queue into an already built server via newTestServer if it doesn't take Queue as opt.
 	// But actually we are running sync: false webhook, so it might not even need the queue. Let's check the recipe.
 	// async: false is set. So it doesn't need the queue.
@@ -121,18 +122,21 @@ recipe: {
 
 	// 7. Trigger Webhook
 	payload := map[string]interface{}{
-		"payload": map[string]string{
-			"message": "hello-from-e2e-webhook",
+		"payload": map[string]interface{}{
+			"message": map[string]string{
+				"id":   "msg-123",
+				"text": "hello-from-e2e-webhook",
+			},
 		},
 	}
-	
+
 	resp := doJSON(t, httpClient, baseURL+"/api/v1/webhooks/webhook_app/hook1", payload)
-	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var out webserver.CueExecExecuteResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	resp.Body.Close()
 	require.Len(t, out.Results, 1)
 	assert.True(t, out.Results[0].Success, "Expected step to succeed, got: %s", out.Results[0].ErrMsg)
 
@@ -143,5 +147,17 @@ recipe: {
 
 	output, err := client.Run("cat /tmp/webhook_out.txt")
 	require.NoError(t, err)
-	assert.Equal(t, "hello-from-e2e-webhook\n", string(output))
+	// The gjson extract of "payload.message" will stringify the object
+	assert.Contains(t, string(output), "msg-123")
+	assert.Contains(t, string(output), "hello-from-e2e-webhook")
+
+	// 9. Trigger duplicate webhook
+	respDuplicate := doJSON(t, httpClient, baseURL+"/api/v1/webhooks/webhook_app/hook1", payload)
+	defer respDuplicate.Body.Close()
+
+	require.Equal(t, http.StatusOK, respDuplicate.StatusCode)
+
+	var dupOut map[string]interface{}
+	require.NoError(t, json.NewDecoder(respDuplicate.Body).Decode(&dupOut))
+	assert.Equal(t, "duplicate", dupOut["status"])
 }
