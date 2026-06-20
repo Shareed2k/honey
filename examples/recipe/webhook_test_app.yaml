@@ -1,0 +1,5 @@
+apps:
+  webhook_demo:
+    type: recipe
+    target_recipe: ./webhook.cue
+    target: "localhost"
