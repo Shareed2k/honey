@@ -61,11 +61,18 @@ recipe: {
 			"""
 		},
 		{
+			host: "*"
+			put: {
+				local:  "${CONFIG_FILE}"
+				remote: "/tmp/${env.HONEY_FILE_CONFIG_FILE_FILENAME}"
+			}
+		},
+		{
 			// Example of processing the uploaded file on the local honey server before distributing it
-			host: "_" // Special host representing the honey server itself
+			host: "*" // Special host representing the honey server itself
 			command: """
 				echo "Reading file contents from the honey server's local temp dir..."
-				cat "${HONEY_FILE_CONFIG_FILE}"
+				cat "${HONEY_FILE_CONFIG_FILE_FILENAME}"
 			"""
 		}
 	]
