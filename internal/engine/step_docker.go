@@ -2,7 +2,9 @@ package engine
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -257,8 +259,12 @@ func executeDockerRun(ctx context.Context, cli *client.Client, r *cuetry.DockerR
 		out, err := cli.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: true})
 		if err == nil {
 			defer out.Close()
-			logBytes, _ := io.ReadAll(out)
-			resultMap["logs"] = string(logBytes)
+			var stdoutBuf, stderrBuf bytes.Buffer
+			_, _ = dockerStdCopy(&stdoutBuf, &stderrBuf, out)
+			resultMap["logs"] = stdoutBuf.String()
+			if stderrBuf.Len() > 0 {
+				resultMap["stderr"] = stderrBuf.String()
+			}
 		}
 	}
 	res, _ := json.Marshal(resultMap)
@@ -279,10 +285,14 @@ func executeDockerExec(ctx context.Context, cli *client.Client, e *cuetry.Docker
 		return "", err
 	}
 	defer resp.Close()
-	outBytes, _ := io.ReadAll(resp.Reader)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	_, _ = dockerStdCopy(&stdoutBuf, &stderrBuf, resp.Reader)
 	resultMap := map[string]any{
 		"container": e.Container,
-		"output":    string(outBytes),
+		"output":    stdoutBuf.String(),
+	}
+	if stderrBuf.Len() > 0 {
+		resultMap["stderr"] = stderrBuf.String()
 	}
 	res, _ := json.Marshal(resultMap)
 	return string(res), nil
@@ -303,6 +313,39 @@ func executeDockerStop(ctx context.Context, cli *client.Client, s *cuetry.Docker
 	}
 	res, _ := json.Marshal(resultMap)
 	return string(res), nil
+}
+
+// dockerStdCopy demultiplexes docker stream into stdout and stderr.
+func dockerStdCopy(dstout, dsterr io.Writer, src io.Reader) (int64, error) {
+	var written int64
+	header := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(src, header); err != nil {
+			if err == io.EOF {
+				return written, nil
+			}
+			return written, err
+		}
+
+		streamType := header[0]
+		size := binary.BigEndian.Uint32(header[4:8])
+
+		var dst io.Writer
+		switch streamType {
+		case 1:
+			dst = dstout
+		case 2:
+			dst = dsterr
+		default:
+			dst = dstout
+		}
+
+		n, err := io.CopyN(dst, src, int64(size))
+		written += n
+		if err != nil {
+			return written, err
+		}
+	}
 }
 
 // ExecuteDryRun executes a dry run of the step.
