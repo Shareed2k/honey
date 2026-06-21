@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/shareed2k/honey/internal/cuetry"
 	"go.uber.org/zap"
 )
@@ -30,12 +32,19 @@ func StreamCueRecipeStepsGraph(ctx context.Context, run *CueRun, out chan<- Host
 		state[i] = cuetry.StepRunPending
 	}
 
-	for _, wave := range sg.Waves {
+	tracer := otel.Tracer("honey")
+	for wi, wave := range sg.Waves {
 		batch := graphWaveBatch(sg, state, wave)
 		if len(batch) == 0 {
 			continue
 		}
-		if err := runGraphWave(ctx, run, out, sg, state, historyByIndex, batch, defaultGraphStepParallelism); err != nil {
+
+		err := func() error {
+			waveCtx, waveSpan := tracer.Start(ctx, fmt.Sprintf("recipe.wave.%d", wi))
+			defer waveSpan.End()
+			return runGraphWave(waveCtx, run, out, sg, state, historyByIndex, batch, defaultGraphStepParallelism)
+		}()
+		if err != nil {
 			return err
 		}
 	}
