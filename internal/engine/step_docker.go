@@ -260,7 +260,7 @@ func executeDockerRun(ctx context.Context, cli *client.Client, r *cuetry.DockerR
 		if err == nil {
 			defer out.Close()
 			var stdoutBuf, stderrBuf bytes.Buffer
-			_, _ = dockerStdCopy(&stdoutBuf, &stderrBuf, out)
+			_ = dockerStdCopy(&stdoutBuf, &stderrBuf, out)
 			resultMap["logs"] = stdoutBuf.String()
 			if stderrBuf.Len() > 0 {
 				resultMap["stderr"] = stderrBuf.String()
@@ -286,7 +286,7 @@ func executeDockerExec(ctx context.Context, cli *client.Client, e *cuetry.Docker
 	}
 	defer resp.Close()
 	var stdoutBuf, stderrBuf bytes.Buffer
-	_, _ = dockerStdCopy(&stdoutBuf, &stderrBuf, resp.Reader)
+	_ = dockerStdCopy(&stdoutBuf, &stderrBuf, resp.Reader)
 	resultMap := map[string]any{
 		"container": e.Container,
 		"output":    stdoutBuf.String(),
@@ -316,15 +316,14 @@ func executeDockerStop(ctx context.Context, cli *client.Client, s *cuetry.Docker
 }
 
 // dockerStdCopy demultiplexes docker stream into stdout and stderr.
-func dockerStdCopy(dstout, dsterr io.Writer, src io.Reader) (int64, error) {
-	var written int64
+func dockerStdCopy(dstout, dsterr io.Writer, src io.Reader) error {
 	header := make([]byte, 8)
 	for {
 		if _, err := io.ReadFull(src, header); err != nil {
 			if err == io.EOF {
-				return written, nil
+				return nil
 			}
-			return written, err
+			return err
 		}
 
 		streamType := header[0]
@@ -340,10 +339,8 @@ func dockerStdCopy(dstout, dsterr io.Writer, src io.Reader) (int64, error) {
 			dst = dstout
 		}
 
-		n, err := io.CopyN(dst, src, int64(size))
-		written += n
-		if err != nil {
-			return written, err
+		if _, err := io.CopyN(dst, src, int64(size)); err != nil {
+			return err
 		}
 	}
 }
