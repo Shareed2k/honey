@@ -11,8 +11,10 @@ require (
 	cloud.google.com/go/storage v1.62.3
 	cuelang.org/go v0.16.1
 	filippo.io/age v1.3.1
-	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
+	github.com/ClickHouse/clickhouse-go/v2 v2.32.2
 	github.com/Telmate/proxmox-api-go v0.0.0-20260601171806-be33f19f9268
+	github.com/adhocore/gronx v1.20.0
+	github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20260617132514-63fc8900f3a5
 	github.com/atotto/clipboard v0.1.4
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.24
@@ -26,9 +28,11 @@ require (
 	github.com/coregx/coregex v0.12.21
 	github.com/creack/pty v1.1.24
 	github.com/creasty/defaults v1.8.0
+	github.com/docker/docker v27.5.1+incompatible
 	github.com/extism/go-pdk v1.1.3
 	github.com/extism/go-sdk v1.7.1
 	github.com/getkin/kin-openapi v0.139.0
+	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-playground/mold/v4 v4.5.1
@@ -58,16 +62,19 @@ require (
 	github.com/nikoksr/notify v1.5.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/opensearch-project/opensearch-go/v2 v2.3.0
+	github.com/panjf2000/ants/v2 v2.12.1
 	github.com/pkg/sftp v1.13.10
 	github.com/prometheus/alertmanager v0.32.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/swag/v2 v2.0.0-rc5
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/things-go/go-socks5 v0.1.1
+	github.com/tidwall/gjson v1.18.0
 	github.com/yalue/onnxruntime_go v1.31.0
 	github.com/zalando/go-keyring v0.2.8
 	go.uber.org/zap v1.28.0
@@ -123,8 +130,6 @@ require (
 	github.com/MirrexOne/unqueryvet v1.5.4 // indirect
 	github.com/OpenPeeDeeP/depguard/v2 v2.2.1 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
-	github.com/adhocore/gronx v1.20.0 // indirect
-	github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20260617132514-63fc8900f3a5 // indirect
 	github.com/alecthomas/chroma/v2 v2.24.1 // indirect
 	github.com/alecthomas/go-check-sumtype v0.3.1 // indirect
 	github.com/alessio/shellescape v1.4.1 // indirect
@@ -228,7 +233,6 @@ require (
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/ghostiam/protogetter v0.3.20 // indirect
-	github.com/go-chi/chi/v5 v5.3.0 // indirect
 	github.com/go-critic/go-critic v0.14.3 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
@@ -420,7 +424,6 @@ require (
 	github.com/openai/openai-go/v3 v3.32.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/panjf2000/ants/v2 v2.12.1 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
@@ -479,14 +482,12 @@ require (
 	github.com/ssgreg/nlreturn/v2 v2.2.1 // indirect
 	github.com/stbenjam/no-sprintf-host-port v0.3.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/sv-tools/openapi v0.4.0 // indirect
 	github.com/technoweenie/multipartstreamer v1.0.1 // indirect
 	github.com/tetafro/godot v1.5.6 // indirect
 	github.com/tetratelabs/wabin v0.0.0-20230304001439-f6f874872834 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/jsonc v0.3.3 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
