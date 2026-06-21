@@ -27,94 +27,40 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// handleRecipeWebhook handles incoming Rundeck-style webhooks for recipe apps.
-//
-//nolint:gocyclo
-func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func authenticateWebhook(ctx context.Context, api *RecipesAPI, webhook cuetry.RecipeWebhook, pluginMgr *plugins.Manager, r *http.Request) error {
+	authSecret := strings.TrimSpace(webhook.AuthSecret)
+	if authSecret == "" {
+		return nil
 	}
 
-	appName := chi.URLParam(r, "app_name")
-	webhookName := chi.URLParam(r, "webhook_name")
-
-	if api.opts.Config == nil || api.opts.Config.Apps == nil {
-		httpError(w, fmt.Errorf("no apps configured"), http.StatusNotFound)
-		return
-	}
-
-	app, ok := api.opts.Config.Apps[appName]
-	if !ok || app.Type != apps.AppTypeRecipe || strings.TrimSpace(app.TargetRecipe) == "" {
-		httpError(w, fmt.Errorf("app not found or not a valid recipe app"), http.StatusNotFound)
-		return
-	}
-
-	// 1. Resolve and parse recipe
-	recipePath := strings.TrimSpace(app.TargetRecipe)
-	if !filepath.IsAbs(recipePath) && api.opts.ConfigPath != "" {
-		recipePath = filepath.Join(filepath.Dir(api.opts.ConfigPath), recipePath)
-	}
-
-	raw, err := safepath.ReadFile(recipePath)
+	secRes, err := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), pluginMgr)
 	if err != nil {
-		httpError(w, fmt.Errorf("read target recipe: %w", err), http.StatusBadRequest)
-		return
+		return fmt.Errorf("init secret resolver: %w", err)
 	}
 
-	// Plugin manager: shared, owned by pluginCache — do NOT Close it here.
-	t := time.Now()
-	pluginMgr, releasePlugins := api.plugins.Borrow()
-	defer releasePlugins()
-	zap.L().Debug("webhook stage", zap.String("stage", "plugins.Borrow"), zap.Duration("dur", time.Since(t)))
-
-	t = time.Now()
-	recipe, err := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{PluginManager: pluginMgr})
-	zap.L().Debug("webhook stage", zap.String("stage", "parse"), zap.Duration("dur", time.Since(t)))
+	expected, err := secRes.Resolve(ctx, authSecret)
 	if err != nil {
-		httpError(w, fmt.Errorf("parse recipe: %w", err), http.StatusBadRequest)
-		return
+		return fmt.Errorf("resolve auth_secret: %w", err)
 	}
 
-	webhook, ok := recipe.Webhooks[webhookName]
-	if !ok {
-		httpError(w, fmt.Errorf("webhook %q not found in recipe", webhookName), http.StatusNotFound)
-		return
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || authHeader != expected {
+		return fmt.Errorf("unauthorized")
 	}
 
-	// 2. Authentication
-	if authSecret := strings.TrimSpace(webhook.AuthSecret); authSecret != "" {
-		secRes, err := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), pluginMgr)
-		if err != nil {
-			httpError(w, err, http.StatusInternalServerError)
-			return
-		}
-		t = time.Now()
-		expected, err := secRes.Resolve(r.Context(), authSecret)
-		zap.L().Debug("webhook stage", zap.String("stage", "auth"), zap.Duration("dur", time.Since(t)))
-		if err != nil {
-			httpError(w, fmt.Errorf("resolve auth_secret: %w", err), http.StatusInternalServerError)
-			return
-		}
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" || authHeader != expected {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-			return
-		}
-	}
+	return nil
+}
 
-	// 3. Extract JSON payload
+func extractWebhookPayload(r *http.Request, webhook cuetry.RecipeWebhook) ([]byte, []string, error) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		httpError(w, fmt.Errorf("read body: %w", err), http.StatusBadRequest)
-		return
+		return nil, nil, fmt.Errorf("read body: %w", err)
 	}
 
 	var cliEnv []string
 	if len(webhook.Extract) > 0 {
 		if !gjson.ValidBytes(body) {
-			httpError(w, fmt.Errorf("invalid json payload"), http.StatusBadRequest)
-			return
+			return nil, nil, fmt.Errorf("invalid json payload")
 		}
 		parsedJSON := gjson.ParseBytes(body)
 		for envKey, jsonPath := range webhook.Extract {
@@ -124,34 +70,10 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
+	return body, cliEnv, nil
+}
 
-	envMap, err := cuetry.ParseEnvKeyValuePairs(cliEnv)
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	envMap, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), envMap)
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-
-	sshUser := api.sshUser("")
-	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
-
-	// Host search input — shared by both branches.
-	searchIn := &hostapi.SearchHostsInput{
-		ConfigPath: api.opts.ConfigPath,
-		Config:     api.opts.Config,
-		Name:       app.Target,
-		Providers:  app.Provider,
-		Backends:   app.Backend,
-	}
-	if app.Target == "" && app.TargetRegex != "" {
-		searchIn.NameRegex = app.TargetRegex
-	}
-
-	// 4. Idempotency and Deduplication
+func checkWebhookIdempotency(api *RecipesAPI, webhook cuetry.RecipeWebhook, body []byte, appName, webhookName string, r *http.Request) (string, bool) {
 	var idemKey, scopedKey string
 	if webhook.IdempotencyKey != "" {
 		if strings.HasPrefix(webhook.IdempotencyKey, "header:") {
@@ -161,157 +83,145 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 			idemKey = gjson.GetBytes(body, webhook.IdempotencyKey).String()
 		}
 	} else {
-		// Fallback to SHA256 of raw body
 		hash := sha256.Sum256(body)
 		idemKey = hex.EncodeToString(hash[:])
 	}
 
-	if idemKey != "" {
-		scopedKey = fmt.Sprintf("%s:%s:%s", appName, webhookName, idemKey)
-		ttl := 24 * time.Hour
-		if webhook.IdempotencyTTL != "" {
-			if parsed, err := time.ParseDuration(webhook.IdempotencyTTL); err == nil {
-				ttl = parsed
-			}
-		}
-
-		api.webhookDedupMu.Lock()
-		if item := api.webhookDedupCache.Get(scopedKey); item != nil {
-			api.webhookDedupMu.Unlock()
-			zap.L().Info("webhook duplicate detected, skipping",
-				zap.String("app", appName),
-				zap.String("webhook", webhookName),
-				zap.String("idempotency_key", idemKey))
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"status": "duplicate",
-				"msg":    "Event already processed or in progress",
-			})
-			return
-		}
-
-		api.webhookDedupCache.Set(scopedKey, "processing", ttl)
-		api.webhookDedupMu.Unlock()
+	if idemKey == "" {
+		return "", false
 	}
 
-	isAsync := webhook.Async != nil && *webhook.Async
-
-	// ---- Async path: return 202 immediately; search + execution run in the queue. ----
-	if isAsync {
-		if api.webhookQueue == nil {
-			httpError(w, fmt.Errorf("server queue not configured"), http.StatusInternalServerError)
-			return
+	scopedKey = fmt.Sprintf("%s:%s:%s", appName, webhookName, idemKey)
+	ttl := 24 * time.Hour
+	if webhook.IdempotencyTTL != "" {
+		if parsed, err := time.ParseDuration(webhook.IdempotencyTTL); err == nil {
+			ttl = parsed
 		}
+	}
 
-		var rec *engine.SessionRecorder
-		if strings.TrimSpace(api.opts.RecordDir) != "" {
-			rec, err = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-webhook-"+webhookName, sshUser, 0)
-			if err != nil {
-				httpError(w, err, http.StatusInternalServerError)
-				return
-			}
-		}
+	api.webhookDedupMu.Lock()
+	defer api.webhookDedupMu.Unlock()
+	if item := api.webhookDedupCache.Get(scopedKey); item != nil {
+		return scopedKey, true
+	}
 
-		t = time.Now()
-		submitErr := api.webhookQueue.Submit(func() {
-			ctx := context.Background()
-			mgr, _ := plugins.Open(ctx, api.opts.Config) // async owns its own manager lifecycle
-			defer func() {
-				if scopedKey != "" {
-					api.webhookDedupCache.Delete(scopedKey)
-				}
-				if mgr != nil {
-					_ = mgr.Close()
-				}
-				if rec != nil {
-					_ = rec.Close()
-				}
-			}()
+	api.webhookDedupCache.Set(scopedKey, "processing", ttl)
+	return scopedKey, false
+}
 
-			searchOut, serr := hostapi.SearchHosts(ctx, searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
-			if serr != nil {
-				if rec != nil {
-					rec.RecordError(fmt.Errorf("search hosts: %w", serr))
-				}
-				return
-			}
-			if len(searchOut.Records) == 0 {
-				if rec != nil {
-					rec.RecordError(fmt.Errorf("no target hosts found for app %q", appName))
-				}
-				return
-			}
-
-			if rec != nil {
-				hash, _ := recipe.HashJSON()
-				rec.RecordRecipeMeta(engine.RecipeMeta{
-					RecipePath:        recipePath,
-					HostCount:         len(searchOut.Records),
-					RecipeContentHash: hash,
-					StartedAt:         time.Now().UTC(),
-					Hosts:             engine.HostsForRecipeMeta(searchOut.Records, maxWebExecRecords),
-				})
-			}
-
-			secRes, _ := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), mgr)
-			runParams := engine.CueRecipeRunParams{
-				Recipe:         recipe,
-				RecipeDir:      filepath.Dir(recipePath),
-				Records:        searchOut.Records,
-				SSHUser:        sshUser,
-				CLIEnv:         envMap,
-				ConfigPath:     api.opts.ConfigPath,
-				AISystemPrompt: aiPrompt,
-				SecretResolver: secRes,
-				PluginMgr:      mgr,
-				Execute:        true,
-				Obs:            api.metrics,
-				Reg:            api.opts.ExecRegistry,
-				Pools:          api.pgPools,
-				Cache:          api.sshCache,
-			}
-
-			ch := make(chan engine.HostExecResult, cueExecChannelCap)
-			go func() {
-				defer close(ch)
-				_ = engine.StreamCueRecipeSteps(ctx, runParams, ch)
-			}()
-			for res := range ch {
-				if rec != nil {
-					rec.RecordHostExecResult(res)
-				}
-			}
-		})
-		zap.L().Debug("webhook stage", zap.String("stage", "enqueue"), zap.Duration("dur", time.Since(t)))
-		if submitErr != nil {
-			if rec != nil {
-				_ = rec.Close()
-			}
-			if submitErr == queue.ErrQueueFull {
-				httpError(w, fmt.Errorf("server busy: webhook queue full"), http.StatusTooManyRequests)
-				return
-			}
-			httpError(w, fmt.Errorf("submit webhook task: %w", submitErr), http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusAccepted)
-		response := map[string]string{"status": "queued"}
-		if rec != nil {
-			response["id"] = rec.RecordingID()
-		}
-		_ = json.NewEncoder(w).Encode(response)
+func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt string, _ *plugins.Manager) {
+	if api.webhookQueue == nil {
+		httpError(w, fmt.Errorf("server queue not configured"), http.StatusInternalServerError)
 		return
 	}
 
-	// ---- Synchronous path: search + execute inline, return full results. ----
+	var rec *engine.SessionRecorder
+	var err error
+	if strings.TrimSpace(api.opts.RecordDir) != "" {
+		rec, err = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-webhook-"+webhookName, sshUser, 0)
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	t := time.Now()
+	submitErr := api.webhookQueue.Submit(func() {
+		ctx := context.Background()
+		mgr, _ := plugins.Open(ctx, api.opts.Config) // async owns its own manager lifecycle
+		defer func() {
+			if scopedKey != "" {
+				api.webhookDedupCache.Delete(scopedKey)
+			}
+			if mgr != nil {
+				_ = mgr.Close()
+			}
+			if rec != nil {
+				_ = rec.Close()
+			}
+		}()
+
+		searchOut, serr := hostapi.SearchHosts(ctx, searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
+		if serr != nil {
+			if rec != nil {
+				rec.RecordError(fmt.Errorf("search hosts: %w", serr))
+			}
+			return
+		}
+		if len(searchOut.Records) == 0 {
+			if rec != nil {
+				rec.RecordError(fmt.Errorf("no target hosts found for app %q", appName))
+			}
+			return
+		}
+
+		if rec != nil {
+			hash, _ := recipe.HashJSON()
+			rec.RecordRecipeMeta(engine.RecipeMeta{
+				RecipePath:        recipePath,
+				HostCount:         len(searchOut.Records),
+				RecipeContentHash: hash,
+				StartedAt:         time.Now().UTC(),
+				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, maxWebExecRecords),
+			})
+		}
+
+		secRes, _ := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), mgr)
+		runParams := engine.CueRecipeRunParams{
+			Recipe:         recipe,
+			RecipeDir:      filepath.Dir(recipePath),
+			Records:        searchOut.Records,
+			SSHUser:        sshUser,
+			CLIEnv:         envMap,
+			ConfigPath:     api.opts.ConfigPath,
+			AISystemPrompt: aiPrompt,
+			SecretResolver: secRes,
+			PluginMgr:      mgr,
+			Execute:        true,
+			Obs:            api.metrics,
+			Reg:            api.opts.ExecRegistry,
+			Pools:          api.pgPools,
+			Cache:          api.sshCache,
+		}
+
+		ch := make(chan engine.HostExecResult, cueExecChannelCap)
+		go func() {
+			defer close(ch)
+			_ = engine.StreamCueRecipeSteps(ctx, runParams, ch)
+		}()
+		for res := range ch {
+			if rec != nil {
+				rec.RecordHostExecResult(res)
+			}
+		}
+	})
+	zap.L().Debug("webhook stage", zap.String("stage", "enqueue"), zap.Duration("dur", time.Since(t)))
+	if submitErr != nil {
+		if rec != nil {
+			_ = rec.Close()
+		}
+		if submitErr == queue.ErrQueueFull {
+			httpError(w, fmt.Errorf("server busy: webhook queue full"), http.StatusTooManyRequests)
+			return
+		}
+		httpError(w, fmt.Errorf("submit webhook task: %w", submitErr), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+	response := map[string]string{"status": "queued"}
+	if rec != nil {
+		response["id"] = rec.RecordingID()
+	}
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt string, pluginMgr *plugins.Manager) {
 	if scopedKey != "" {
 		defer api.webhookDedupCache.Delete(scopedKey)
 	}
 
-	t = time.Now()
+	t := time.Now()
 	searchOut, err := hostapi.SearchHosts(r.Context(), searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
 	zap.L().Debug("webhook stage", zap.String("stage", "search"), zap.Duration("dur", time.Since(t)))
 	if err != nil {
@@ -388,6 +298,130 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(CueExecExecuteResponse{Results: results})
+}
+
+// handleRecipeWebhook handles incoming Rundeck-style webhooks for recipe apps.
+func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	appName := chi.URLParam(r, "app_name")
+	webhookName := chi.URLParam(r, "webhook_name")
+
+	if api.opts.Config == nil || api.opts.Config.Apps == nil {
+		httpError(w, fmt.Errorf("no apps configured"), http.StatusNotFound)
+		return
+	}
+
+	app, ok := api.opts.Config.Apps[appName]
+	if !ok || app.Type != apps.AppTypeRecipe || strings.TrimSpace(app.TargetRecipe) == "" {
+		httpError(w, fmt.Errorf("app not found or not a valid recipe app"), http.StatusNotFound)
+		return
+	}
+
+	// 1. Resolve and parse recipe
+	recipePath := strings.TrimSpace(app.TargetRecipe)
+	if !filepath.IsAbs(recipePath) && api.opts.ConfigPath != "" {
+		recipePath = filepath.Join(filepath.Dir(api.opts.ConfigPath), recipePath)
+	}
+
+	raw, err := safepath.ReadFile(recipePath)
+	if err != nil {
+		httpError(w, fmt.Errorf("read target recipe: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Plugin manager: shared, owned by pluginCache — do NOT Close it here.
+	t := time.Now()
+	pluginMgr, releasePlugins := api.plugins.Borrow()
+	defer releasePlugins()
+	zap.L().Debug("webhook stage", zap.String("stage", "plugins.Borrow"), zap.Duration("dur", time.Since(t)))
+
+	t = time.Now()
+	recipe, err := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{PluginManager: pluginMgr})
+	zap.L().Debug("webhook stage", zap.String("stage", "parse"), zap.Duration("dur", time.Since(t)))
+	if err != nil {
+		httpError(w, fmt.Errorf("parse recipe: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	webhook, ok := recipe.Webhooks[webhookName]
+	if !ok {
+		httpError(w, fmt.Errorf("webhook %q not found in recipe", webhookName), http.StatusNotFound)
+		return
+	}
+
+	// 2. Authentication
+	if err := authenticateWebhook(r.Context(), api, webhook, pluginMgr, r); err != nil {
+		if err.Error() == "unauthorized" {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		} else {
+			httpError(w, err, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// 3. Extract JSON payload
+	body, cliEnv, err := extractWebhookPayload(r, webhook)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	envMap, err := cuetry.ParseEnvKeyValuePairs(cliEnv)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	envMap, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), envMap)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	sshUser := api.sshUser("")
+	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
+
+	// Host search input — shared by both branches.
+	searchIn := &hostapi.SearchHostsInput{
+		ConfigPath: api.opts.ConfigPath,
+		Config:     api.opts.Config,
+		Name:       app.Target,
+		Providers:  app.Provider,
+		Backends:   app.Backend,
+	}
+	if app.Target == "" && app.TargetRegex != "" {
+		searchIn.NameRegex = app.TargetRegex
+	}
+
+	// 4. Idempotency and Deduplication
+	scopedKey, isDuplicate := checkWebhookIdempotency(api, webhook, body, appName, webhookName, r)
+	if isDuplicate {
+		zap.L().Info("webhook duplicate detected, skipping",
+			zap.String("app", appName),
+			zap.String("webhook", webhookName))
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "duplicate",
+			"msg":    "Event already processed or in progress",
+		})
+		return
+	}
+
+	isAsync := webhook.Async != nil && *webhook.Async
+
+	// ---- Async path: return 202 immediately; search + execution run in the queue. ----
+	if isAsync {
+		handleAsyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, pluginMgr)
+		return
+	}
+
+	// ---- Synchronous path: search + execute inline, return full results. ----
+	handleSyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, pluginMgr)
 }
 
 // WebhookResultResponse is returned by GET /api/v1/webhooks/results/{id}

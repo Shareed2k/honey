@@ -35,7 +35,6 @@ func validateStepEnvFrom(stepIdx int, kind string, mode ExecutionMode, step *Ste
 	return nil
 }
 
-//nolint
 func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByName map[string]string, matrixExpansions map[string][]string) error {
 	if len(step.EnvFrom) == 0 {
 		return nil
@@ -46,83 +45,90 @@ func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByNam
 	}
 	seenEnv := make(map[string]int)
 	for i, ref := range step.EnvFrom {
-		hasMap := len(ref.Map) > 0
-		hasExtract := len(ref.Extract) > 0
-		hasKv := len(ref.Kv) > 0
-		if !hasMap && !hasExtract && !hasKv {
-			return fmt.Errorf("cuetry: steps[%d].env_from[%d]: at least one of map, extract, or kv is required", stepIdx, i)
-		}
-		refStep := strings.TrimSpace(ref.Step)
-		refOut := strings.TrimSpace(ref.FromOutput)
-		hasStep := refStep != ""
-		hasOut := refOut != ""
-		kvOnly := hasKv && !hasMap && !hasExtract
-		if kvOnly {
-			if hasStep || hasOut {
-				return fmt.Errorf("cuetry: steps[%d].env_from[%d]: kv-only entry must not set step or from_output", stepIdx, i)
-			}
-		} else if hasMap || hasExtract {
-			if hasStep == hasOut {
-				return fmt.Errorf("cuetry: steps[%d].env_from[%d]: exactly one of step or from_output is required", stepIdx, i)
-			}
-			if hasStep {
-				expanded, isMatrix := matrixExpansions[refStep]
-				if !isMatrix {
-					if _, ok := sg.IDToIndex[refStep]; !ok {
-						return fmt.Errorf("cuetry: steps[%d].env_from[%d] references unknown step id %q", stepIdx, i, refStep)
-					}
-					if _, ok := depSet[refStep]; !ok {
-						return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q must appear in depends", stepIdx, i, refStep)
-					}
-				} else {
-					for _, expID := range expanded {
-						if _, ok := depSet[expID]; !ok {
-							return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q (matrix): expanded step %q must appear in depends", stepIdx, i, refStep, expID)
-						}
-					}
-				}
-			}
-			if hasOut {
-				producer, ok := outputByName[refOut]
-				if !ok {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].from_output references unknown capture name %q", stepIdx, i, refOut)
-				}
-				if _, ok := depSet[producer]; !ok {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].from_output %q: producer step %q must appear in depends", stepIdx, i, refOut, producer)
-				}
-			}
-		}
-		validateKeys := func(kind string, m map[string]string, fn func(string) error) error {
-			for envKey, val := range m {
-				if prev, dup := seenEnv[envKey]; dup {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d]: duplicate env key %q (also in env_from[%d])", stepIdx, i, envKey, prev)
-				}
-				seenEnv[envKey] = i
-				if err := validateOneEnv(envKey, "x"); err != nil {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].%s key: %w", stepIdx, i, kind, err)
-				}
-				if err := fn(val); err != nil {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].%s[%q]: %w", stepIdx, i, kind, envKey, err)
-				}
-			}
-			return nil
-		}
-		if err := validateKeys("map", ref.Map, func(src string) error {
-			if strings.TrimSpace(src) != envFromSourceStdout {
-				return fmt.Errorf("must be %q", envFromSourceStdout)
-			}
-			return nil
-		}); err != nil {
+		if err := validateOneEnvFromRef(stepIdx, i, ref, depSet, sg, outputByName, matrixExpansions, seenEnv); err != nil {
 			return err
 		}
-		if err := validateKeys("extract", ref.Extract, ValidateJQQuery); err != nil {
-			return err
+	}
+	return nil
+}
+
+func validateOneEnvFromRef(stepIdx, i int, ref EnvFromRef, depSet map[string]struct{}, sg *StepGraph, outputByName map[string]string, matrixExpansions map[string][]string, seenEnv map[string]int) error {
+	hasMap := len(ref.Map) > 0
+	hasExtract := len(ref.Extract) > 0
+	hasKv := len(ref.Kv) > 0
+	if !hasMap && !hasExtract && !hasKv {
+		return fmt.Errorf("cuetry: steps[%d].env_from[%d]: at least one of map, extract, or kv is required", stepIdx, i)
+	}
+	refStep := strings.TrimSpace(ref.Step)
+	refOut := strings.TrimSpace(ref.FromOutput)
+	hasStep := refStep != ""
+	hasOut := refOut != ""
+	kvOnly := hasKv && !hasMap && !hasExtract
+	if kvOnly {
+		if hasStep || hasOut {
+			return fmt.Errorf("cuetry: steps[%d].env_from[%d]: kv-only entry must not set step or from_output", stepIdx, i)
 		}
-		if err := validateKeys("kv", ref.Kv, func(kvKey string) error {
-			return stepkvValidateKey(strings.TrimSpace(kvKey))
-		}); err != nil {
-			return err
+	} else if hasMap || hasExtract {
+		if hasStep == hasOut {
+			return fmt.Errorf("cuetry: steps[%d].env_from[%d]: exactly one of step or from_output is required", stepIdx, i)
 		}
+		if hasStep {
+			expanded, isMatrix := matrixExpansions[refStep]
+			if !isMatrix {
+				if _, ok := sg.IDToIndex[refStep]; !ok {
+					return fmt.Errorf("cuetry: steps[%d].env_from[%d] references unknown step id %q", stepIdx, i, refStep)
+				}
+				if _, ok := depSet[refStep]; !ok {
+					return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q must appear in depends", stepIdx, i, refStep)
+				}
+			} else {
+				for _, expID := range expanded {
+					if _, ok := depSet[expID]; !ok {
+						return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q (matrix): expanded step %q must appear in depends", stepIdx, i, refStep, expID)
+					}
+				}
+			}
+		}
+		if hasOut {
+			producer, ok := outputByName[refOut]
+			if !ok {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d].from_output references unknown capture name %q", stepIdx, i, refOut)
+			}
+			if _, ok := depSet[producer]; !ok {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d].from_output %q: producer step %q must appear in depends", stepIdx, i, refOut, producer)
+			}
+		}
+	}
+	validateKeys := func(kind string, m map[string]string, fn func(string) error) error {
+		for envKey, val := range m {
+			if prev, dup := seenEnv[envKey]; dup {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d]: duplicate env key %q (also in env_from[%d])", stepIdx, i, envKey, prev)
+			}
+			seenEnv[envKey] = i
+			if err := validateOneEnv(envKey, "x"); err != nil {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d].%s key: %w", stepIdx, i, kind, err)
+			}
+			if err := fn(val); err != nil {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d].%s[%q]: %w", stepIdx, i, kind, envKey, err)
+			}
+		}
+		return nil
+	}
+	if err := validateKeys("map", ref.Map, func(src string) error {
+		if strings.TrimSpace(src) != envFromSourceStdout {
+			return fmt.Errorf("must be %q", envFromSourceStdout)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := validateKeys("extract", ref.Extract, ValidateJQQuery); err != nil {
+		return err
+	}
+	if err := validateKeys("kv", ref.Kv, func(kvKey string) error {
+		return stepkvValidateKey(strings.TrimSpace(kvKey))
+	}); err != nil {
+		return err
 	}
 	return nil
 }
