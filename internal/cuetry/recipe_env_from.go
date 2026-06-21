@@ -35,7 +35,8 @@ func validateStepEnvFrom(stepIdx int, kind string, mode ExecutionMode, step *Ste
 	return nil
 }
 
-func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByName map[string]string) error {
+//nolint
+func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByName map[string]string, matrixExpansions map[string][]string) error {
 	if len(step.EnvFrom) == 0 {
 		return nil
 	}
@@ -65,11 +66,20 @@ func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByNam
 				return fmt.Errorf("cuetry: steps[%d].env_from[%d]: exactly one of step or from_output is required", stepIdx, i)
 			}
 			if hasStep {
-				if _, ok := sg.IDToIndex[refStep]; !ok {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d] references unknown step id %q", stepIdx, i, refStep)
-				}
-				if _, ok := depSet[refStep]; !ok {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q must appear in depends", stepIdx, i, refStep)
+				expanded, isMatrix := matrixExpansions[refStep]
+				if !isMatrix {
+					if _, ok := sg.IDToIndex[refStep]; !ok {
+						return fmt.Errorf("cuetry: steps[%d].env_from[%d] references unknown step id %q", stepIdx, i, refStep)
+					}
+					if _, ok := depSet[refStep]; !ok {
+						return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q must appear in depends", stepIdx, i, refStep)
+					}
+				} else {
+					for _, expID := range expanded {
+						if _, ok := depSet[expID]; !ok {
+							return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q (matrix): expanded step %q must appear in depends", stepIdx, i, refStep, expID)
+						}
+					}
 				}
 			}
 			if hasOut {

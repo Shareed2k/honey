@@ -13,7 +13,7 @@ const defaultGraphStepParallelism = 8
 
 // StreamCueRecipeStepsGraph ...
 func StreamCueRecipeStepsGraph(ctx context.Context, run *CueRun, out chan<- HostExecResult) error {
-	sg, err := cuetry.BuildStepGraphFromRecipe(run.Params.Recipe)
+	sg, err := cuetry.BuildStepGraphFromRecipe(&run.Params.Recipe)
 	if err != nil {
 		return err
 	}

@@ -16,7 +16,7 @@ const (
 	ExecutionModeGraph
 )
 
-var recipeStepIDPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
+var recipeStepIDPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_\-\[\]=,]*$`)
 
 // RecipeExecutionMode returns linear (default) or graph from recipe.type.
 func RecipeExecutionMode(r Recipe) (ExecutionMode, error) {
@@ -221,7 +221,7 @@ func ValidateRecipeGraph(r Recipe) error {
 		for i, ws := range r.Steps {
 			b := ws.Step.Base()
 			if len(b.EnvFrom) > 0 {
-				if err := validateEnvFromRefs(i, b, sg, outputByName); err != nil {
+				if err := validateEnvFromRefs(i, b, sg, outputByName, r.MatrixExpansions); err != nil {
 					return err
 				}
 			}
@@ -280,15 +280,15 @@ func GraphStepWaves(r Recipe) ([][]int, error) {
 }
 
 // BuildStepGraphFromRecipe builds the step graph when mode is graph.
-func BuildStepGraphFromRecipe(r Recipe) (*StepGraph, error) {
-	mode, err := RecipeExecutionMode(r)
+func BuildStepGraphFromRecipe(r *Recipe) (*StepGraph, error) {
+	mode, err := RecipeExecutionMode(*r)
 	if err != nil {
 		return nil, err
 	}
 	if mode != ExecutionModeGraph {
 		return nil, fmt.Errorf("cuetry: not a graph recipe")
 	}
-	if err := ExpandMatrixSteps(&r); err != nil {
+	if err := ExpandMatrixSteps(r); err != nil {
 		return nil, err
 	}
 	return BuildStepGraph(r.Steps)
