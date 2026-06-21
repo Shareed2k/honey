@@ -28,7 +28,6 @@ require (
 	github.com/coregx/coregex v0.12.21
 	github.com/creack/pty v1.1.24
 	github.com/creasty/defaults v1.8.0
-	github.com/docker/docker v27.5.1+incompatible
 	github.com/extism/go-pdk v1.1.3
 	github.com/extism/go-sdk v1.7.1
 	github.com/getkin/kin-openapi v0.139.0
