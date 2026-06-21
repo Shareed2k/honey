@@ -500,8 +500,8 @@ func validateStepRetry(i int, b *StepBase, defaults *RecipeDefaults) error {
 }
 
 func validateStepEnvAndSecrets(i int, kind string, b *StepBase, secretPrefixes []string) error {
-	if len(b.Env) > 0 && (kind == KindPut || kind == KindGet || kind == KindAgentTransfer || kind == KindAI) {
-		return fmt.Errorf("cuetry: steps[%d]: env is only supported for command, script, plugin, and template steps", i)
+	if len(b.Env) > 0 && (kind == KindAgentTransfer || kind == KindAI) {
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for agent_transfer or ai steps", i)
 	}
 	if len(b.Secrets) > 0 && kind != KindCommand && kind != KindScript && kind != KindPlugin && kind != KindTemplate {
 		return fmt.Errorf("cuetry: steps[%d]: secrets are only supported for command, script, plugin, and template steps", i)

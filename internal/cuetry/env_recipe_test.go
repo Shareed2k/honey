@@ -154,8 +154,9 @@ recipe: {
 	]
 }
 `
-	if err := ValidateRemoteRecipe([]byte(src)); err == nil {
-		t.Fatal("expected error")
+	// We removed this rejection rule, so parsing should now succeed
+	if err := ValidateRemoteRecipe([]byte(src)); err != nil {
+		t.Fatalf("expected parsing to succeed, got: %v", err)
 	}
 }
 
