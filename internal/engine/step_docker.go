@@ -54,7 +54,11 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 			)
 
 			if r.PrimaryIP == "-" || r.PrimaryIP == "127.0.0.1" || r.PrimaryIP == "localhost" {
-				mCli, err = client.New(client.FromEnv)
+				if ds.Docker.Socket != "" {
+					mCli, err = client.New(client.FromEnv, client.WithHost(ds.Docker.Socket))
+				} else {
+					mCli, err = client.New(client.FromEnv)
+				}
 			} else {
 				sshUser := run.Params.SSHUser
 				if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
@@ -76,9 +80,16 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 					return res
 				}
 
+				socketPath := "/var/run/docker.sock"
+				if ds.Docker.Socket != "" {
+					socketPath = ds.Docker.Socket
+				} else if metaSocket := strings.TrimSpace(r.Meta["docker_socket"]); metaSocket != "" {
+					socketPath = metaSocket
+				}
+
 				bc := dockerprovider.BackendConfig{
 					SSHUser: sshUser,
-					Socket:  "/var/run/docker.sock",
+					Socket:  socketPath,
 					RunAs:   cuetry.EffectiveRunAs(step.Base(), run.Params.Recipe.Defaults),
 				}
 				opts := dockerprovider.APIClientOptions{

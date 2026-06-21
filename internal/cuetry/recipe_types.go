@@ -293,6 +293,7 @@ type K8sCreateJob struct {
 
 // RecipeStepDocker configures a Docker engine API step.
 type RecipeStepDocker struct {
+	Socket string       `json:"socket,omitempty"`
 	Action string       `json:"action"`
 	Output string       `json:"output,omitempty"`
 	Build  *DockerBuild `json:"build,omitempty"`

@@ -135,6 +135,7 @@ const schemaSource = `
 		remote_socat?: bool
 	})
 	docker?: close({
+		socket?: string
 		action: "build" | "push" | "pull" | "run" | "exec" | "stop"
 		output?: string
 		build?: {
