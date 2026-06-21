@@ -32,6 +32,12 @@ type RecipeSchedule struct {
 	Env      map[string]string `json:"env,omitempty"`      // static env vars injected at execution time
 }
 
+// RecipeSubRecipe configures a step that invokes another recipe.
+type RecipeSubRecipe struct {
+	Path    string            `json:"path"`
+	Prompts map[string]string `json:"prompts,omitempty"`
+}
+
 // RecipeWebhook defines a webhook trigger for a recipe.
 type RecipeWebhook struct {
 	AuthSecret     string            `json:"auth_secret,omitempty"`

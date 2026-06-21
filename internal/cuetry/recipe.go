@@ -253,6 +253,10 @@ const schemaSource = `
 		files?:          [...string]
 		output?:         string
 	})
+	recipe?: close({
+		path:     string
+		prompts?: {[string]: string}
+	})
 	hooks?: close({
 		on_success?: #StepHook
 		on_failure?: #StepHook
@@ -461,8 +465,8 @@ func validateStepRunAs(i int, kind string, b *StepBase) error {
 		return nil
 	}
 	switch kind {
-	case KindPut, KindGet, KindAgentTransfer, KindAI, KindTemplate, KindTunnel, KindK8s, KindOpensearch, KindPostgres:
-		return fmt.Errorf("cuetry: steps[%d]: run_as on put/get/agent_transfer/ai/template/tunnel/k8s/opensearch/postgres steps is not supported", i)
+	case KindPut, KindGet, KindAgentTransfer, KindAI, KindTemplate, KindTunnel, KindK8s, KindOpensearch, KindPostgres, KindRecipe:
+		return fmt.Errorf("cuetry: steps[%d]: run_as on put/get/agent_transfer/ai/template/tunnel/k8s/opensearch/postgres/recipe steps is not supported", i)
 	}
 	if err := ValidateRunAsUser(runAs); err != nil {
 		return fmt.Errorf("cuetry: steps[%d].run_as: %w", i, err)
