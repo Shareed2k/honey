@@ -311,6 +311,35 @@ func (s *PostgresStep) Validate(_ StepValidateCtx) error {
 var _ RemoteStep = (*PostgresStep)(nil)
 
 // ---------------------------------------------------------------------------
+// recipe
+// ---------------------------------------------------------------------------
+
+// RecipeStep executes another recipe as a sub-recipe.
+type RecipeStep struct {
+	StepBase
+	Recipe *RecipeSubRecipe `json:"recipe,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *RecipeStep) Kind() string { return KindRecipe }
+
+// Clone returns a deep copy of the step (safe for loop fan-out mutation).
+func (s *RecipeStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields; shared rules run separately.
+func (s *RecipeStep) Validate(_ StepValidateCtx) error {
+	if s.Recipe == nil {
+		return fmt.Errorf("recipe step requires a recipe block")
+	}
+	if strings.TrimSpace(s.Recipe.Path) == "" {
+		return fmt.Errorf("recipe.path is required")
+	}
+	return nil
+}
+
+var _ Step = (*RecipeStep)(nil)
+
+// ---------------------------------------------------------------------------
 // agent_transfer
 // ---------------------------------------------------------------------------
 
@@ -479,6 +508,7 @@ func init() {
 	RegisterStep(KindDocker, []string{"docker"}, func() Step { return &DockerStep{} })
 	RegisterStep(KindOpensearch, []string{"opensearch"}, func() Step { return &OpensearchStep{} })
 	RegisterStep(KindPostgres, []string{"postgres"}, func() Step { return &PostgresStep{} })
+	RegisterStep(KindRecipe, []string{"recipe"}, func() Step { return &RecipeStep{} })
 	RegisterStep(KindAgentTransfer, []string{"agent_transfer"}, func() Step { return &AgentTransferStep{} })
 	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })
 }
