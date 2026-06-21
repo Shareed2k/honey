@@ -55,7 +55,7 @@ func runCueStepTemplateOnHost(
 		extraEnv = env
 	}
 	if mode == cuetry.ExecutionModeGraph && len(step.Base().EnvFrom) > 0 {
-		if err := cuetry.PrepareTemplateData(data, step.Base(), outputStore, outputCapture, KvReaderFromCoordinator(recipeKV), hostName, extraEnv, !execute); err != nil {
+		if err := cuetry.PrepareTemplateData(data, step.Base(), outputStore, outputCapture, KvReaderFromCoordinator(recipeKV), hostName, extraEnv, !execute, recipe.MatrixExpansions); err != nil {
 			return HostExecResult{Name: prefix, Provider: target.Provider, IP: target.PrimaryIP, Success: false, ErrMsg: err.Error()}
 		}
 	} else if len(extraEnv) > 0 || outputCapture != nil {

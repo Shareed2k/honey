@@ -49,7 +49,7 @@ func TestPrepareTemplateData_envFromAndVar(t *testing.T) {
 		EnvFrom: []EnvFromRef{{Step: "fetch", Map: map[string]string{"HOSTNAME": "stdout"}}},
 	}
 	data := map[string]any{"msg": "hello ${HOSTNAME}"}
-	if err := PrepareTemplateData(data, step, store, outputCap, nil, "web-1", nil, false); err != nil {
+	if err := PrepareTemplateData(data, step, store, outputCap, nil, "web-1", nil, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(data["msg"].(string), "alice") {

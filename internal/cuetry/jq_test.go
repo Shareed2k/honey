@@ -57,7 +57,7 @@ func TestMergeEnvFromInto_extract(t *testing.T) {
 		}},
 	}
 	dst := map[string]string{}
-	if err := MergeEnvFromInto(dst, step, store, nil, nil, "h1", false); err != nil {
+	if err := MergeEnvFromInto(dst, step, store, nil, nil, "h1", false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if dst["THRESHOLD"] != "7" {
@@ -81,7 +81,7 @@ func TestMergeEnvFromInto_kv(t *testing.T) {
 	}
 	dst := map[string]string{}
 	kv := testKVReader{"pg_activity_count": "9"}
-	if err := MergeEnvFromInto(dst, step, nil, nil, kv, "h1", false); err != nil {
+	if err := MergeEnvFromInto(dst, step, nil, nil, kv, "h1", false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if dst["THRESHOLD"] != "9" {
