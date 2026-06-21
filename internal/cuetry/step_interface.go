@@ -84,6 +84,7 @@ type StepBase struct {
 	Hooks         *RecipeStepHooks  `json:"hooks,omitempty"`
 	NotifyHandler []string          `json:"notify_handler,omitempty"`
 	KVTunnel      *bool             `json:"kv_tunnel,omitempty" jsonschema:"default=false"`
+	Assert        []Assertion       `json:"assert,omitempty"`
 }
 
 // Base lets a *StepBase (and thus every embedding step) satisfy the shared part of Step.
