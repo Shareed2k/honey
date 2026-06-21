@@ -103,11 +103,22 @@ func (e *PutExecutor) ExecuteStream(sc *StepContext) error {
 	if !ok || ps.Put == nil {
 		return fmt.Errorf("internal: put step missing put field")
 	}
-	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, ps.Put.Local)
+
+	// Expand variables in the paths
+	localExpanded, err := cuetry.ExpandRecipeVars(ps.Put.Local, run.Params.CLIEnv, false)
+	if err != nil {
+		return fmt.Errorf("put.local var expansion: %w", err)
+	}
+	remoteExpanded, err := cuetry.ExpandRecipeVars(ps.Put.Remote, run.Params.CLIEnv, false)
+	if err != nil {
+		return fmt.Errorf("put.remote var expansion: %w", err)
+	}
+
+	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, localExpanded)
 	if err != nil {
 		return fmt.Errorf("put.local: %w", err)
 	}
-	remotePath := strings.TrimSpace(ps.Put.Remote)
+	remotePath := strings.TrimSpace(remoteExpanded)
 	if _, statErr := os.Stat(localAbs); statErr != nil {
 		return fmt.Errorf("put: local file %q: %w", localAbs, statErr)
 	}
@@ -127,13 +138,24 @@ func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
 	if !okt || gs.Get == nil {
 		return fmt.Errorf("internal: get step missing get field")
 	}
-	remotePath := strings.TrimSpace(gs.Get.Remote)
-	localRoot, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, gs.Get.Local)
+
+	// Expand variables in the paths
+	localExpanded, err := cuetry.ExpandRecipeVars(gs.Get.Local, run.Params.CLIEnv, false)
+	if err != nil {
+		return fmt.Errorf("get.local var expansion: %w", err)
+	}
+	remoteExpanded, err := cuetry.ExpandRecipeVars(gs.Get.Remote, run.Params.CLIEnv, false)
+	if err != nil {
+		return fmt.Errorf("get.remote var expansion: %w", err)
+	}
+
+	remotePath := strings.TrimSpace(remoteExpanded)
+	localRoot, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, localExpanded)
 	if err != nil {
 		return fmt.Errorf("get.local: %w", err)
 	}
 	if len(targets) > 1 {
-		ok, err := CueGetLocalIsDirectory(gs.Get.Local, localRoot)
+		ok, err := CueGetLocalIsDirectory(localExpanded, localRoot)
 		if err != nil {
 			return fmt.Errorf("get: %w", err)
 		} else if !ok {
@@ -181,12 +203,23 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 	if !ok || ss.Script == nil {
 		return fmt.Errorf("internal: script step missing script field")
 	}
+
+	// Expand variables in the paths
+	localExpanded, err := cuetry.ExpandRecipeVars(ss.Script.Local, run.Params.CLIEnv, false)
+	if err != nil {
+		return fmt.Errorf("script.local var expansion: %w", err)
+	}
+	remoteExpanded, err := cuetry.ExpandRecipeVars(ss.Script.Remote, run.Params.CLIEnv, false)
+	if err != nil {
+		return fmt.Errorf("script.remote var expansion: %w", err)
+	}
+
 	b := step.Base()
-	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, ss.Script.Local)
+	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, localExpanded)
 	if err != nil {
 		return fmt.Errorf("script.local: %w", err)
 	}
-	remotePath := strings.TrimSpace(ss.Script.Remote)
+	remotePath := strings.TrimSpace(remoteExpanded)
 	runAs := cuetry.EffectiveRunAs(b, run.Params.Recipe.Defaults)
 	kvTunnel := cuetry.KVTunnelEnabled(step, run.Params.Recipe.Defaults)
 

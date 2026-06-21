@@ -51,7 +51,7 @@ recipe: {
 }
 `
 	_, err := ParseRemoteRecipe([]byte(cue), nil)
-	if err == nil || !strings.Contains(err.Error(), "env is only supported") {
+	if err == nil || !strings.Contains(err.Error(), "env is not supported") {
 		t.Fatalf("expected env error, got %v", err)
 	}
 }
