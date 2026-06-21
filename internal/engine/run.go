@@ -17,6 +17,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/shareed2k/honey/internal/config"
@@ -396,13 +397,23 @@ func CueStepAllTargetsTransientTransportFailed(results []HostExecResult) bool {
 }
 
 // StreamCueRecipeStep ...
-func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.Step, history [][]HostExecResult, out chan<- HostExecResult) ([]HostExecResult, error) {
+func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.Step, history [][]HostExecResult, out chan<- HostExecResult) (stepResults []HostExecResult, err error) {
 	stepStart := time.Now()
 	var attemptMax atomic.Int32
 	kind := step.Kind()
 
+	tracer := otel.Tracer("honey")
+	ctx, span := tracer.Start(ctx, fmt.Sprintf("step.%s", kind))
+	span.SetAttributes(attribute.String("step.id", step.Base().ID))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	var targets []hosts.Record
-	var err error
 	if CueRecipeLoopUsesItemHost(step) {
 		targets = []hosts.Record{cuetry.MatchLocalAIHostRecord()}
 	} else {
@@ -428,7 +439,6 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 
 	ch := make(chan HostExecResult, len(targets))
 	done := make(chan struct{})
-	var stepResults []HostExecResult
 	go func() {
 		for _, sk := range whenSkipped {
 			sk.OutputCapture = cuetry.StepOutputName(step)
@@ -458,7 +468,7 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 
 	retryCfg := cuetry.EffectiveRetry(step.Base(), run.Params.Recipe.Defaults)
 
-	stepErr := run.ExecuteStep(ctx, i, kind, step, targets, history, ch, retryCfg, &attemptMax)
+	err = run.ExecuteStep(ctx, i, kind, step, targets, history, ch, retryCfg, &attemptMax)
 
 	close(ch)
 	<-done
@@ -476,8 +486,8 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 		maxAttempts = 1
 	}
 	ObserveRecipeStep(run.Params.Obs, kind, stepStart, stepResults, maxAttempts)
-	if stepErr != nil {
-		return stepResults, stepErr
+	if err != nil {
+		return stepResults, err
 	}
 	return stepResults, nil
 }
