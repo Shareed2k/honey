@@ -47,6 +47,13 @@ const schemaSource = `
 #Step: close({
 	id?:      string
 	depends?: [...string]
+	assert?: [...{
+		regex?: string
+		not_regex?: string
+		json_path?: string
+		expected_value?: string
+		exit_code?: int
+	}]
 	host?:    string
 	ssh_port?: int
 	ssh_private_key?: string

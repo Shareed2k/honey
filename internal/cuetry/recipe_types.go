@@ -169,6 +169,15 @@ type RecipePluginHook struct {
 	Config json.RawMessage `json:"config,omitempty"`
 }
 
+// Assertion defines validation rules for a step's output and exit code.
+type Assertion struct {
+	Regex         string `json:"regex,omitempty"`
+	NotRegex      string `json:"not_regex,omitempty"`
+	JSONPath      string `json:"json_path,omitempty"`
+	ExpectedValue string `json:"expected_value,omitempty"`
+	ExitCode      *int   `json:"exit_code,omitempty"`
+}
+
 // RecipeStepHook runs once per target host after that host's main step result is known.
 type RecipeStepHook struct {
 	Where   string            `json:"where"`
