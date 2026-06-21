@@ -15,6 +15,10 @@ import (
 	"time"
 	"unicode"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -268,6 +272,12 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	if len(p.Records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
+
+	tracer := otel.Tracer("honey")
+	var span trace.Span
+	ctx, span = tracer.Start(ctx, "recipe.run")
+	span.SetAttributes(attribute.String("recipe.name", p.Recipe.Name))
+	defer span.End()
 
 	runStart := time.Now()
 	var runErr error
