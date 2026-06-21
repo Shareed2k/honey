@@ -331,6 +331,7 @@ type DockerRun struct {
 	Volumes []string          `json:"volumes,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Detach  bool              `json:"detach,omitempty"`
+	Rm      bool              `json:"rm,omitempty"`
 }
 
 // DockerExec configures executing a command inside a running container.
@@ -342,6 +343,7 @@ type DockerExec struct {
 // DockerStop configures stopping a running container.
 type DockerStop struct {
 	Container string `json:"container"`
+	Rm        bool   `json:"rm,omitempty"`
 }
 
 // RecipeStepOpensearch configures an OpenSearch engine API step.

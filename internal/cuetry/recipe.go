@@ -158,6 +158,7 @@ const schemaSource = `
 			volumes?: [...string]
 			env?: {[string]: string}
 			detach?: bool
+			rm?:     bool
 		}
 		exec?: {
 			container: string
@@ -165,6 +166,7 @@ const schemaSource = `
 		}
 		stop?: {
 			container: string
+			rm?:        bool
 		}
 	})
 	k8s?: close({

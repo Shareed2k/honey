@@ -217,7 +217,9 @@ func executeDockerRun(ctx context.Context, cli *client.Client, r *cuetry.DockerR
 	for k, v := range r.Env {
 		config.Env = append(config.Env, fmt.Sprintf("%s=%s", k, v))
 	}
-	hostConfig := &container.HostConfig{}
+	hostConfig := &container.HostConfig{
+		AutoRemove: r.Rm,
+	}
 	createOpts := client.ContainerCreateOptions{
 		Config:     config,
 		HostConfig: hostConfig,
@@ -289,6 +291,11 @@ func executeDockerExec(ctx context.Context, cli *client.Client, e *cuetry.Docker
 func executeDockerStop(ctx context.Context, cli *client.Client, s *cuetry.DockerStop) (string, error) {
 	if _, err := cli.ContainerStop(ctx, s.Container, client.ContainerStopOptions{}); err != nil {
 		return "", err
+	}
+	if s.Rm {
+		if _, err := cli.ContainerRemove(ctx, s.Container, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true}); err != nil {
+			return "", fmt.Errorf("failed to remove container %q: %w", s.Container, err)
+		}
 	}
 	resultMap := map[string]any{
 		"container_id": s.Container,
