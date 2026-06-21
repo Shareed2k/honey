@@ -26,42 +26,9 @@ type RunAgentInput struct {
 	Tools    []agtypes.Tool    `json:"tools,omitempty"`
 }
 
-//nolint:gocyclo
-func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// 1. Validate auth and rate limits
-	if assistAPIKey() == "" {
-		http.Error(w, "AI assist not configured", http.StatusServiceUnavailable)
-		return
-	}
-	if !s.assistRL.allow(r.RemoteAddr, assistRPM()) {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-		return
-	}
-
-	// 2. Set headers for SSE
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.Header().Set("Connection", "keep-alive")
-
-	var input RunAgentInput
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxAssistRequestBody)).Decode(&input); err != nil {
-		zap.L().Error("failed to decode agent input", zap.Error(err))
-		return // Too late to send HTTP error if we already sent headers? Actually we just set them.
-	}
-
-	sseWriter := agsse.NewSSEWriter()
-	err := sseWriter.WriteEvent(ctx, w, agcore.NewRunStartedEvent(input.RunID, input.ThreadID))
-	if err != nil {
-		zap.L().Error("failed to write RunStartedEvent", zap.Error(err))
-		return
-	}
-
-	// 3. Convert AG-UI messages to OpenAI format
-	var openAIMessages []openai.ChatCompletionMessage
-	for _, msg := range input.Messages {
+func convertAgentMessages(messages []agtypes.Message) []openai.ChatCompletionMessage {
+	openAIMessages := make([]openai.ChatCompletionMessage, 0, len(messages))
+	for _, msg := range messages {
 		contentStr, _ := msg.ContentString()
 		oaiMsg := openai.ChatCompletionMessage{
 			Role:    string(msg.Role),
@@ -89,10 +56,12 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 		openAIMessages = append(openAIMessages, oaiMsg)
 	}
+	return openAIMessages
+}
 
-	// 4. Convert AG-UI tools to OpenAI format
-	var openaiTools []openai.Tool
-	for _, t := range input.Tools {
+func convertAgentTools(tools []agtypes.Tool) []openai.Tool {
+	openaiTools := make([]openai.Tool, 0, len(tools))
+	for _, t := range tools {
 		openaiTools = append(openaiTools, openai.Tool{
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
@@ -102,8 +71,11 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
+	return openaiTools
+}
 
-	model := input.Model
+func (s *Server) resolveAgentModel(ctx context.Context, r *http.Request, inputModel string) (string, error) {
+	model := inputModel
 	if model == "" {
 		model = r.URL.Query().Get("model")
 	}
@@ -118,35 +90,13 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resolveCtx, resolveCancel := context.WithTimeout(ctx, 25*time.Second)
-	chatModel, err := s.resolveAssistChatModel(resolveCtx, model)
-	resolveCancel()
-	if err != nil {
-		zap.L().Error("agent model resolve failed", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	defer resolveCancel()
+	return s.resolveAssistChatModel(resolveCtx, model)
+}
 
-	req := openai.ChatCompletionRequest{
-		Model:    chatModel,
-		Messages: openAIMessages,
-		Stream:   true,
-	}
-	if len(openaiTools) > 0 {
-		req.Tools = openaiTools
-	}
-
-	client := assistNewOpenAIClient()
-	stream, err := client.CreateChatCompletionStream(ctx, req)
-	if err != nil {
-		zap.L().Error("agent stream creation failed", zap.Error(err))
-		_ = sseWriter.WriteEvent(ctx, w, agcore.NewRunErrorEvent(err.Error()))
-		return
-	}
-	defer stream.Close()
-
+func pumpAgentStream(ctx context.Context, w http.ResponseWriter, stream *openai.ChatCompletionStream, sseWriter *agsse.SSEWriter, input RunAgentInput) {
 	var currentTextMsgID string
 	var currentToolCallID string
-
 	hasTextStarted := false
 
 	// Flush to ensure client gets headers and RunStarted immediately
@@ -216,11 +166,8 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 			}
 
 			switch finishReason {
-			case openai.FinishReasonToolCalls:
+			case openai.FinishReasonToolCalls, openai.FinishReasonStop:
 				// End run but allow continuation by caller
-				_ = sseWriter.WriteEvent(ctx, w, agcore.NewRunFinishedEvent(input.RunID, input.ThreadID))
-				return
-			case openai.FinishReasonStop:
 				_ = sseWriter.WriteEvent(ctx, w, agcore.NewRunFinishedEvent(input.RunID, input.ThreadID))
 				return
 			}
@@ -239,4 +186,67 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		_ = sseWriter.WriteEvent(ctx, w, agcore.NewToolCallEndEvent(currentToolCallID))
 	}
 	_ = sseWriter.WriteEvent(ctx, w, agcore.NewRunFinishedEvent(input.RunID, input.ThreadID))
+}
+
+func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// 1. Validate auth and rate limits
+	if assistAPIKey() == "" {
+		http.Error(w, "AI assist not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if !s.assistRL.allow(r.RemoteAddr, assistRPM()) {
+		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+
+	// 2. Set headers for SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("Connection", "keep-alive")
+
+	var input RunAgentInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxAssistRequestBody)).Decode(&input); err != nil {
+		zap.L().Error("failed to decode agent input", zap.Error(err))
+		return // Too late to send HTTP error if we already sent headers? Actually we just set them.
+	}
+
+	sseWriter := agsse.NewSSEWriter()
+	err := sseWriter.WriteEvent(ctx, w, agcore.NewRunStartedEvent(input.RunID, input.ThreadID))
+	if err != nil {
+		zap.L().Error("failed to write RunStartedEvent", zap.Error(err))
+		return
+	}
+
+	openAIMessages := convertAgentMessages(input.Messages)
+	openaiTools := convertAgentTools(input.Tools)
+
+	chatModel, err := s.resolveAgentModel(ctx, r, input.Model)
+	if err != nil {
+		zap.L().Error("agent model resolve failed", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	req := openai.ChatCompletionRequest{
+		Model:    chatModel,
+		Messages: openAIMessages,
+		Stream:   true,
+	}
+	if len(openaiTools) > 0 {
+		req.Tools = openaiTools
+	}
+
+	client := assistNewOpenAIClient()
+	stream, err := client.CreateChatCompletionStream(ctx, req)
+	if err != nil {
+		zap.L().Error("agent stream creation failed", zap.Error(err))
+		_ = sseWriter.WriteEvent(ctx, w, agcore.NewRunErrorEvent(err.Error()))
+		return
+	}
+	defer stream.Close()
+
+	pumpAgentStream(ctx, w, stream, sseWriter, input)
 }
