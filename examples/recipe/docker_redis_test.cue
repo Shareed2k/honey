@@ -47,6 +47,7 @@ recipe: {
 				action: "stop"
 				stop: {
 					container: "honey-test-redis"
+					rm: true
 				}
 			}
 		},
