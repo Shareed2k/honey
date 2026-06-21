@@ -8,6 +8,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
 )
 
@@ -105,15 +106,43 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	c.mu.Unlock()
 
 	if exists {
-		atomic.AddInt64(&c.hits, 1)
-		zap.L().Debug(
-			"ssh client cache hit",
-			zap.String("provider", r.Provider),
-			zap.String("host_name", r.Name),
-			zap.String("host_ip", r.PrimaryIP),
-			zap.String("user", user),
-		)
-		return client, nil
+		// Health check if it's an SSH client
+		if hc, ok := client.(*sshclient.HoneyClient); ok {
+			if leaf := hc.LeafSSH(); leaf != nil {
+				_, _, err := leaf.SendRequest("keepalive@openssh.com", true, nil)
+				if err != nil {
+					zap.L().Warn(
+						"ssh client cache keepalive failed, discarding client",
+						zap.String("provider", r.Provider),
+						zap.String("host_name", r.Name),
+						zap.String("host_ip", r.PrimaryIP),
+						zap.String("user", user),
+						zap.Error(err),
+					)
+
+					// Remove from cache and close
+					c.mu.Lock()
+					delete(c.clients, key)
+					c.mu.Unlock()
+					_ = client.Close()
+
+					// Proceed as cache miss
+					exists = false
+				}
+			}
+		}
+
+		if exists {
+			atomic.AddInt64(&c.hits, 1)
+			zap.L().Debug(
+				"ssh client cache hit",
+				zap.String("provider", r.Provider),
+				zap.String("host_name", r.Name),
+				zap.String("host_ip", r.PrimaryIP),
+				zap.String("user", user),
+			)
+			return client, nil
+		}
 	}
 	atomic.AddInt64(&c.misses, 1)
 	atomic.AddInt64(&c.dialAttempts, 1)
