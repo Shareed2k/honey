@@ -206,6 +206,10 @@ func ValidateRecipeGraph(r Recipe) error {
 		}
 		return nil
 	case ExecutionModeGraph:
+		// Expand matrices before graph validation
+		if err := ExpandMatrixSteps(&r); err != nil {
+			return err
+		}
 		if err := validateUniqueTemplateOutputs(r.Steps); err != nil {
 			return err
 		}
@@ -236,6 +240,9 @@ func ValidateRecipeGraph(r Recipe) error {
 
 // FormatGraphWavesText returns a human-readable wave plan for graph recipes.
 func FormatGraphWavesText(r Recipe) (string, error) {
+	if err := ExpandMatrixSteps(&r); err != nil {
+		return "", err
+	}
 	waves, err := GraphStepWaves(r)
 	if err != nil {
 		return "", err
@@ -280,6 +287,9 @@ func BuildStepGraphFromRecipe(r Recipe) (*StepGraph, error) {
 	}
 	if mode != ExecutionModeGraph {
 		return nil, fmt.Errorf("cuetry: not a graph recipe")
+	}
+	if err := ExpandMatrixSteps(&r); err != nil {
+		return nil, err
 	}
 	return BuildStepGraph(r.Steps)
 }
