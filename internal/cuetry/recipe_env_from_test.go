@@ -60,11 +60,11 @@ func TestValidateEnvFromRefs_requiresDepends(t *testing.T) {
 		t.Fatal(err)
 	}
 	producers := templateOutputProducers(steps)
-	if err := validateEnvFromRefs(1, steps[1].Step.Base(), sg, producers); err != nil {
+	if err := validateEnvFromRefs(1, steps[1].Step.Base(), sg, producers, nil); err != nil {
 		t.Fatal(err)
 	}
 	steps[1].Step.Base().Depends = nil
-	if err := validateEnvFromRefs(1, steps[1].Step.Base(), sg, producers); err == nil {
+	if err := validateEnvFromRefs(1, steps[1].Step.Base(), sg, producers, nil); err == nil {
 		t.Fatal("expected depends error")
 	}
 }
