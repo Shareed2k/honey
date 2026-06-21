@@ -51,8 +51,30 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 | `put` / `get` | SFTP or k8s tar stream | Relative `local` paths from recipe directory |
 | `agent_transfer` | A→cloud→B | Needs honey config for `cloud_backend_ref` |
 | `ai` | Local (operator) | `host: "_"`; needs `OPENAI_API_KEY` when executing |
+| `recipe` | Local (operator) | Invoke a sub-recipe — [Sub-recipes](#sub-recipes) |
 
 Optional **`recipe.defaults`**: `run_as`, `env`, `secrets`, `kv_tunnel`, `max_parallel`, `ssh_port`, `ssh_private_key`, `k8s_debug_image`.
+
+## Sub-recipes
+
+You can invoke a CUE recipe from within another recipe using the `recipe` step kind. This allows you to build reusable modules (e.g., `setup-postgres.cue`) and orchestrate them from a parent playbook.
+
+- The `path` is resolved relative to the parent recipe's directory.
+- You can pass inputs to the child recipe via the `prompts` map.
+- **Targeting**: The parent step dictates the target hosts. Any `host:` filters inside the child recipe are ignored, and all its steps execute over the hosts passed down from the parent.
+
+```cue
+{
+  id: "setup-db"
+  host: "db-*"
+  recipe: {
+    path: "setup-postgres.cue"
+    prompts: {
+      PG_VERSION: "16"
+    }
+  }
+}
+```
 
 ### SSH customization
 
@@ -136,6 +158,33 @@ Example: [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/e
 - **Web UI:** Recipes wizard → **Graph** tab shows the DAG (`POST /api/v1/recipes/validate-content` → `graph` field).
 
 Example: [`graph_parallel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/graph_parallel.cue).
+
+## Step-level assertions
+
+You can assert that a step succeeded based on its output or a specific exit code. When an assertion fails, the step is marked as failed even if the exit code was 0.
+
+Supported assertions inside the `assert: []` block:
+- **`exit_code`**: Overrides the default success check. If the command exits with this code, the step succeeds (even if the code is non-zero).
+- **`regex`**: Verifies `stdout`/`stderr` matches the regular expression.
+- **`not_regex`**: Verifies the output DOES NOT match the regular expression.
+- **`json_path`**: Parses the output as JSON and verifies the given `tidwall/gjson` path exists.
+- **`expected_value`**: Used alongside `json_path` to verify the extracted JSON field strictly matches this string.
+
+```cue
+recipe: {
+  name: "assertions-demo"
+  steps: [
+    {
+      host: "local"
+      command: "curl -s http://localhost/health"
+      assert: [{
+        json_path: "status"
+        expected_value: "healthy"
+      }]
+    }
+  ]
+}
+```
 
 ## Conditional steps (`when` + CEL)
 
@@ -704,9 +753,31 @@ Example: [`kafka_controller_rolling_restart.cue`](https://github.com/shareed2k/h
 - **`notify`:** optional per-step notifications after success ([nikoksr/notify](https://github.com/nikoksr/notify)).
 - **`ai`:** terminal summarizer after prior steps; optional `notify` and `when` (aggregated `steps` view).
 
-## Loops (dynamic fan-out)
+## Loops and Matrix Execution
 
-Steps can be repeated dynamically over a list of items using the `loop` or `loop_from` fields:
+Steps can be repeated dynamically over a list of items using the `loop`, `loop_from`, or `matrix` fields.
+
+### Matrix Execution
+
+You can fan-out a single step into multiple independent steps running in parallel using a **Cartesian matrix**. 
+
+The engine expands the step before execution. For example, the following matrix will create 4 parallel steps (`postgres v1`, `postgres v2`, `mysql v1`, `mysql v2`) and inject the variables into the step's environment:
+
+```cue
+{
+  id: "deploy-db"
+  host: "local"
+  matrix: {
+    db: ["postgres", "mysql"]
+    version: ["v1", "v2"]
+  }
+  command: "echo 'Deploying \(env.db) \(env.version)'"
+}
+```
+
+If a downstream step references a matrix step via `env_from`, the engine will aggregate all outputs from the expanded matrix nodes into a **JSON array** string (e.g. `["out1", "out2", "out3", "out4"]`), which you can parse with `extract` (jq).
+
+### `loop` and `loop_from`
 
 - **`loop`:** A Go text/template string (e.g. evaluating prior step stdout as a JSON array using `stepStdoutLines`) or a JQ expression.
 - **`loop_from`:** Selects a prior step and extracts a JSON array using a JQ path.

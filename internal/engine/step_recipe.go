@@ -61,12 +61,25 @@ func (e *RecipeExecutor) ExecuteStream(sc *StepContext) error {
 		return fmt.Errorf("failed to parse sub-recipe %q: %w", recipePath, err)
 	}
 
+	// Combine parent's runtime environment for variable expansion
+	parentVars := make(map[string]string)
+	for k, v := range sc.CLIEnv {
+		parentVars[k] = v
+	}
+	for k, v := range step.Base().Env {
+		parentVars[k] = v
+	}
+
 	mergedEnv := make(map[string]string)
 	for k, v := range sc.CLIEnv {
 		mergedEnv[k] = v
 	}
 	for k, v := range rs.Recipe.Prompts {
-		mergedEnv[k] = v
+		expanded, err := cuetry.ExpandRecipeVars(v, parentVars, false)
+		if err != nil {
+			return fmt.Errorf("expand prompt %q: %w", k, err)
+		}
+		mergedEnv[k] = expanded
 	}
 
 	subParams := CueRecipeRunParams{

@@ -19,6 +19,7 @@ const sidebars = {
     'plugins-development',
     'add-new-backend',
     'anomaly-detection',
+    'tracing',
     'alert',
     {
       type: 'category',
