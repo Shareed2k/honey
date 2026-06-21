@@ -187,7 +187,23 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		AISystemPrompt: run.Params.AISystemPrompt,
 	}
 
-	return exec.ExecuteStream(sc)
+	proxyCh := make(chan HostExecResult)
+	sc.ResultCh = proxyCh
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- exec.ExecuteStream(sc)
+		close(proxyCh)
+	}()
+
+	for res := range proxyCh {
+		if err := EvaluateAssertions(&res, step.Base().Assert); err != nil {
+			zap.L().Debug("step assertions failed", zap.Error(err), zap.String("step_id", step.Base().ID))
+		}
+		ch <- res
+	}
+
+	return <-errCh
 }
 
 // CueGetLocalIsDirectory ...
