@@ -15,13 +15,14 @@ import (
 
 // Recipe is the decoded "recipe" block from a CUE document.
 type Recipe struct {
-	Name      string                    `json:"name"`
-	Type      string                    `json:"type,omitempty"`
-	Webhooks  map[string]RecipeWebhook  `json:"webhooks,omitempty"`
-	Schedules map[string]RecipeSchedule `json:"schedules,omitempty"`
-	Defaults  *RecipeDefaults           `json:"defaults,omitempty"`
-	Steps     []StepWrapper             `json:"steps"`
-	Handlers  []StepWrapper             `json:"handlers,omitempty"`
+	Name             string                    `json:"name"`
+	Type             string                    `json:"type,omitempty"`
+	Webhooks         map[string]RecipeWebhook  `json:"webhooks,omitempty"`
+	Schedules        map[string]RecipeSchedule `json:"schedules,omitempty"`
+	Defaults         *RecipeDefaults           `json:"defaults,omitempty"`
+	Steps            []StepWrapper             `json:"steps"`
+	Handlers         []StepWrapper             `json:"handlers,omitempty"`
+	MatrixExpansions map[string][]string       `json:"-"` // internal tracking, not unmarshaled
 }
 
 // RecipeSchedule defines a cron-based trigger for a recipe.

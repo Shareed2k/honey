@@ -47,6 +47,7 @@ const schemaSource = `
 #Step: close({
 	id?:      string
 	depends?: [...string]
+	matrix?: {[string]: [...string]}
 	assert?: [...{
 		regex?: string
 		not_regex?: string
