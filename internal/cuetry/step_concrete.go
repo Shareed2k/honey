@@ -324,7 +324,21 @@ type RecipeStep struct {
 func (s *RecipeStep) Kind() string { return KindRecipe }
 
 // Clone returns a deep copy of the step (safe for loop fan-out mutation).
-func (s *RecipeStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+func (s *RecipeStep) Clone() Step {
+	cp := *s
+	cp.StepBase = s.cloned()
+	if s.Recipe != nil {
+		rCp := *s.Recipe
+		if rCp.Prompts != nil {
+			rCp.Prompts = make(map[string]string, len(s.Recipe.Prompts))
+			for k, v := range s.Recipe.Prompts {
+				rCp.Prompts[k] = v
+			}
+		}
+		cp.Recipe = &rCp
+	}
+	return &cp
+}
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *RecipeStep) Validate(_ StepValidateCtx) error {
