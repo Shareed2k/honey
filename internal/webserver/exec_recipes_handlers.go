@@ -26,7 +26,6 @@ const (
 	maxWebExecArgs      = 64
 	maxWebExecArgLen    = 4 << 10
 	maxRecipeViewBytes  = 512 << 10
-	cueExecChannelCap   = 4096
 	execModeCommand     = "command"
 	execModeScript      = "script"
 	execConnectableHint = "need IP, k8s pod, or docker container"
