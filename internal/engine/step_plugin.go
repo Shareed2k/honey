@@ -209,7 +209,7 @@ func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind stri
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *PluginExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, recipeDir, cliEnv, sshUser, secretResolver, pluginMgr, i, step, targets := sc.Out, sc.Recipe, sc.RecipeDir, sc.CLIEnv, sc.SSHUser, sc.SecretResolver, sc.PluginMgr, sc.Index, sc.Step, sc.Targets
+	out, recipe, recipeDir, cliEnv, sshUser, secretResolver, pluginMgr, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.RecipeDir, sc.Run.Params.CLIEnv, sc.Run.Params.SSHUser, sc.Run.Params.SecretResolver, sc.Run.Params.PluginMgr, sc.Index, sc.Step, sc.Targets
 	pls, _ := step.(*cuetry.PluginStep)
 	pl := (*cuetry.RecipeStepPlugin)(nil)
 	if pls != nil {

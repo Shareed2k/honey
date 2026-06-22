@@ -20,7 +20,7 @@ type AIExecutor struct{}
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *AIExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, execute, i, step := sc.Out, sc.Execute, sc.Index, sc.Step
+	out, execute, i, step := sc.Out, sc.Run.Params.Execute, sc.Index, sc.Step
 	if execute {
 		return nil
 	}
@@ -63,7 +63,7 @@ func (e *AIExecutor) ExecuteDryRun(sc *StepContext) error {
 
 // ExecuteStream streams the step execution.
 func (e *AIExecutor) ExecuteStream(sc *StepContext) error {
-	ctx, run, i, step, history, aiSystemPrompt, out := sc.Ctx, sc.Run, sc.Index, sc.Step, sc.History, sc.AISystemPrompt, sc.ResultCh
+	ctx, run, i, step, history, aiSystemPrompt, out := sc.Ctx, sc.Run, sc.Index, sc.Step, sc.History, sc.Run.Params.AISystemPrompt, sc.ResultCh
 
 	stepStart := time.Now()
 	kv := KvReaderFromCoordinator(run.RecipeKV)

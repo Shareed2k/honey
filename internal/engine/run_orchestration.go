@@ -173,22 +173,29 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 		}
 	}
 
-	sc := &StepContext{
-		Ctx:            context.Background(),
-		Out:            out,
+	// Dry-run builds a lightweight CueRun so StepContext.Run is always set — the
+	// single source of run-scoped inputs for executors. Run-state fields
+	// (OutputStore, KV, …) stay nil; dry-run executors don't use them.
+	run := &CueRun{Params: CueRecipeRunParams{
 		Recipe:         recipe,
 		RecipeDir:      recipeDir,
 		Records:        records,
-		Targets:        targets,
 		SSHUser:        sshUser,
 		Execute:        execute,
 		CLIEnv:         cliEnv,
 		ConfigPath:     configPath,
-		Index:          i,
-		Step:           step,
-		Kind:           kind,
 		SecretResolver: secretResolver,
 		PluginMgr:      pluginMgr,
+	}}
+
+	sc := &StepContext{
+		Ctx:     context.Background(),
+		Run:     run,
+		Out:     out,
+		Targets: targets,
+		Index:   i,
+		Step:    step,
+		Kind:    kind,
 	}
 
 	exec, err := GetStepExecutor(kind)
