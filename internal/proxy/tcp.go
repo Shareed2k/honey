@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/shareed2k/honey/internal/apps"
+	"github.com/shareed2k/honey/internal/postgres"
 )
 
 // StartTCPProxy starts a raw TCP proxy bound to 127.0.0.1.
@@ -72,7 +72,7 @@ func tcpDialAddress(app apps.AppConfig) string {
 	if app.Type != apps.AppTypeTCP || !strings.EqualFold(strings.TrimSpace(app.Mode), "postgres") {
 		return app.Upstream
 	}
-	u, err := url.Parse(strings.TrimSpace(app.Upstream))
+	u, err := postgres.ParseURL(strings.TrimSpace(app.Upstream))
 	if err != nil {
 		return app.Upstream
 	}

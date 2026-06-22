@@ -154,11 +154,12 @@ func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
 	if err != nil {
 		return fmt.Errorf("get.local: %w", err)
 	}
+	isDir, err := CueGetLocalIsDirectory(localExpanded, localRoot)
+	if err != nil {
+		return fmt.Errorf("get: %w", err)
+	}
 	if len(targets) > 1 {
-		ok, err := CueGetLocalIsDirectory(localExpanded, localRoot)
-		if err != nil {
-			return fmt.Errorf("get: %w", err)
-		} else if !ok {
+		if !isDir {
 			return fmt.Errorf("get: %d hosts require get.local to be a directory; got %q", len(targets), gs.Get.Local)
 		}
 	}
@@ -171,6 +172,8 @@ func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
 		dest := localRoot
 		if len(targets) > 1 {
 			dest = filepath.Join(localRoot, CueSanitizeHostName(target.Name)+"_"+base)
+		} else if isDir {
+			dest = filepath.Join(localRoot, base)
 		}
 		jobs = append(jobs, SFTPDownloadJob{
 			Record:    target,
@@ -349,12 +352,12 @@ func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
 	if err != nil {
 		return fmt.Errorf("step %d get.local: %w", i, err)
 	}
+	isDir, err := CueGetLocalIsDirectory(gs.Get.Local, localRoot)
+	if err != nil {
+		return fmt.Errorf("step %d get: %w", i, err)
+	}
 	if len(targets) > 1 {
-		ok, err := CueGetLocalIsDirectory(gs.Get.Local, localRoot)
-		if err != nil {
-			return fmt.Errorf("step %d get: %w", i, err)
-		}
-		if !ok {
+		if !isDir {
 			return fmt.Errorf("step %d get: %d hosts require get.local to be a directory (add trailing %q or use an existing directory); got %q",
 				i, len(targets), string(filepath.Separator), gs.Get.Local)
 		}
@@ -368,6 +371,8 @@ func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
 		dest := localRoot
 		if len(targets) > 1 {
 			dest = filepath.Join(localRoot, CueSanitizeHostName(target.Name)+"_"+base)
+		} else if isDir {
+			dest = filepath.Join(localRoot, base)
 		}
 		jobs = append(jobs, SFTPDownloadJob{
 			Record:    target,

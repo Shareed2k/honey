@@ -45,7 +45,7 @@ func init() {
 		for _, sock := range sockets {
 			if _, err := os.Stat(sock); err == nil {
 				os.Setenv("DOCKER_HOST", "unix://"+sock)
-				os.Setenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "unix://"+sock)
+				os.Setenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
 				break
 			}
 		}
@@ -185,6 +185,7 @@ func startOpenSearch(t *testing.T) string {
 			Env: map[string]string{
 				"discovery.type":                    "single-node",
 				"OPENSEARCH_INITIAL_ADMIN_PASSWORD": "Qx7#nBm2pLv!",
+				"OPENSEARCH_JAVA_OPTS":              "-Xms512m -Xmx512m",
 			},
 			WaitingFor: wait.ForHTTP("/").WithPort("9200/tcp").
 				WithTLS(true, insecureTLS).

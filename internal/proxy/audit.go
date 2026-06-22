@@ -2,6 +2,7 @@
 package proxy
 
 import (
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -37,7 +38,7 @@ func (l *Logger) emit(event string, s *Session, err error) {
 		zap.String("event", event),
 		zap.String("app", s.App.Name),
 		zap.String("target", s.App.Target),
-		zap.String("upstream", s.App.Upstream),
+		zap.String("upstream", redactURL(s.App.Upstream)),
 		zap.String("local_addr", s.LocalAddr),
 	}
 
@@ -67,4 +68,17 @@ func (l *Logger) Expired(s *Session) {
 // Failed emits an event when a proxy session encounters an error.
 func (l *Logger) Failed(s *Session, err error) {
 	l.emit("proxy_failed", s, err)
+}
+
+// redactURL masks credentials in a URL string (e.g. scheme://xxxxx@host).
+func redactURL(raw string) string {
+	schemeEnd := strings.Index(raw, "://")
+	if schemeEnd == -1 {
+		return raw
+	}
+	atIndex := strings.LastIndex(raw, "@")
+	if atIndex > schemeEnd+3 {
+		return raw[:schemeEnd+3] + "xxxxx" + raw[atIndex:]
+	}
+	return raw
 }

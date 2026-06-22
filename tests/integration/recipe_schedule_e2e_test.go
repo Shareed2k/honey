@@ -6,10 +6,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/shareed2k/honey/internal/apps"
@@ -78,7 +78,7 @@ recipe: {
 			env: {
 				SCHED_VAR: string | *""
 			}
-			command: "echo \(env.SCHED_VAR) >> /tmp/schedule_out.txt"
+			command: "echo $SCHED_VAR >> /tmp/schedule_out.txt"
 		}
 	]
 }
@@ -115,16 +115,19 @@ recipe: {
 	_ = newTestServer(t, opts)
 
 	// 7. Wait for cron to trigger at least once (gronx triggers exactly on the second mark)
-	time.Sleep(3 * time.Second)
-
-	// 8. Verify on SSH container
-	client, err := execReg.Dialer.Dial("testuser", sshH, sshP, keyFile)
-	require.NoError(t, err)
-	defer client.Close()
-
-	output, err := client.Run("cat /tmp/schedule_out.txt")
-	require.NoError(t, err)
-	
-	// We expect at least one line of output.
-	assert.Contains(t, string(output), "hello-from-e2e-schedule\n")
+	require.Eventually(t, func() bool {
+		client, err := execReg.Dialer.Dial("testuser", sshH, sshP, keyFile)
+		if err != nil {
+			t.Logf("Dial err: %v", err)
+			return false
+		}
+		defer client.Close()
+		output, err := client.Run("cat /tmp/schedule_out.txt")
+		if err != nil {
+			t.Logf("Run err: %v", err)
+			return false
+		}
+		t.Logf("Output: %s", string(output))
+		return strings.Contains(string(output), "hello-from-e2e-schedule\n")
+	}, 10*time.Second, 1*time.Second, "Expected schedule to run and output to file")
 }
