@@ -16,6 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/postgres"
 )
 
 func TestRecipeE2E_LinearExecution(t *testing.T) {
@@ -247,11 +248,12 @@ recipe: {
 
 	outCh := make(chan engine.HostExecResult, 10)
 	params := engine.CueRecipeRunParams{
-		Recipe:  recipe,
-		Records: []hosts.Record{rec},
-		SSHUser: "testuser",
-		Execute: true,
-		Reg:     reg,
+		Recipe:    recipe,
+		RecipeDir: tmpDir,
+		Records:   []hosts.Record{rec},
+		SSHUser:   "testuser",
+		Execute:   true,
+		Reg:       reg,
 	}
 
 	go func() {
@@ -328,9 +330,8 @@ recipe: {
 	assert.True(t, results[0].Success)
 	assert.True(t, results[1].Success, "Expected success: %s", results[1].ErrMsg)
 
-	// Since we download to a directory, it will be saved as "ssh-test_to_download.txt"
-	// based on the CueGetLocalIsDirectory logic.
-	downloadedFile := filepath.Join(tmpDir, "ssh-test_to_download.txt")
+	// Since we download to a directory and there is 1 target, it will be saved as "to_download.txt"
+	downloadedFile := filepath.Join(tmpDir, "to_download.txt")
 	content, err := os.ReadFile(downloadedFile)
 	require.NoError(t, err)
 	assert.Equal(t, "file contents\n", string(content))
@@ -341,12 +342,17 @@ func TestRecipeE2E_PostgresStep(t *testing.T) {
 	// Create an empty registry, database steps do not require ssh dialers
 	_ = plugins.Manager{} // Spec compliance
 	reg := &testRegistry{}
-	rec := hosts.Record{Provider: "test", Name: "db-test"}
+	rec := hosts.Record{Provider: "test", Name: "db-test", PrimaryIP: "127.0.0.1"}
 
 	cueContent := `
 recipe: {
 	name: "test-postgres-step"
 	type: "linear"
+	defaults: {
+		secrets: {
+			"my_db": "secure:v1:dGVzdA==:dGVzdA=="
+		}
+	}
 	steps: [
 		{
 			host: "*"
@@ -368,7 +374,7 @@ recipe: {
 
 	// Mock SecretResolver to return our container's DSN
 	secretResolver := cuetry.StaticSecretResolver{
-		"my_db": pgDSN,
+		"secure:v1:dGVzdA==:dGVzdA==": pgDSN,
 	}
 
 	outCh := make(chan engine.HostExecResult, 10)
@@ -378,6 +384,7 @@ recipe: {
 		Execute:        true,
 		Reg:            reg,
 		SecretResolver: secretResolver,
+		Pools:          postgres.NewPoolManager(),
 	}
 
 	go func() {
@@ -400,7 +407,7 @@ func TestRecipeE2E_OpenSearchStep(t *testing.T) {
 	osURL := startOpenSearch(t)
 	_ = plugins.Manager{} // Spec compliance
 	reg := &testRegistry{}
-	rec := hosts.Record{Provider: "test", Name: "os-test"}
+	rec := hosts.Record{Provider: "test", Name: "os-test", PrimaryIP: "127.0.0.1"}
 
 	cueContent := `
 recipe: {
@@ -453,7 +460,7 @@ recipe: {
 
 	require.Len(t, results, 1)
 	assert.True(t, results[0].Success, "Expected success: %s", results[0].ErrMsg)
-	assert.Contains(t, results[0].Output, "indexed")
+	assert.Contains(t, results[0].Output, "created")
 }
 
 func TestRecipeE2E_LocalSteps(t *testing.T) {
@@ -542,7 +549,7 @@ recipe: {
 func TestRecipeE2E_DockerStep(t *testing.T) {
 	dindHost := startDinD(t)
 	reg := &testRegistry{}
-	rec := hosts.Record{Provider: "test", Name: "docker-test"}
+	rec := hosts.Record{Provider: "test", Name: "docker-test", PrimaryIP: "127.0.0.1"}
 
 	cueContent := `
 recipe: {
@@ -602,7 +609,7 @@ recipe: {
 func TestRecipeE2E_K8sStep(t *testing.T) {
 	kubeconfigBytes := startK3s(t)
 	reg := &testRegistry{}
-	rec := hosts.Record{Provider: "test", Name: "k8s-test"}
+	rec := hosts.Record{Provider: "test", Name: "k8s-test", PrimaryIP: "127.0.0.1"}
 
 	tmpDir := t.TempDir()
 	kcPath := filepath.Join(tmpDir, "kubeconfig")

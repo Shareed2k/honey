@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -154,7 +153,7 @@ func postgresDSNForSession(ctx context.Context, cfg *config.File, sess *proxy.Se
 			upstreamRaw = dec
 		}
 	}
-	u, err := url.Parse(upstreamRaw)
+	u, err := postgres.ParseURL(upstreamRaw)
 	if err != nil {
 		return "", fmt.Errorf("parse app upstream: %w", err)
 	}

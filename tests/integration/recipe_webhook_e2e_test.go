@@ -80,7 +80,7 @@ recipe: {
 			env: {
 				WEBHOOK_MSG: string | *""
 			}
-			command: "echo \(env.WEBHOOK_MSG) > /tmp/webhook_out.txt"
+			command: "sleep 2 && echo $WEBHOOK_MSG > /tmp/webhook_out.txt"
 		}
 	]
 }
@@ -120,7 +120,7 @@ recipe: {
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 
-	// 7. Trigger Webhook
+	// 7. Trigger Webhook in background so we can trigger a duplicate
 	payload := map[string]interface{}{
 		"payload": map[string]interface{}{
 			"message": map[string]string{
@@ -130,17 +130,28 @@ recipe: {
 		},
 	}
 
-	resp := doJSON(t, httpClient, baseURL+"/api/v1/webhooks/webhook_app/hook1", payload)
+	go func() {
+		resp := doJSON(t, httpClient, baseURL+"/api/v1/webhooks/webhook_app/hook1", payload)
+		defer resp.Body.Close()
+	}()
 
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	time.Sleep(500 * time.Millisecond) // Give the first request time to acquire the dedup lock
 
-	var out webserver.CueExecExecuteResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	resp.Body.Close()
-	require.Len(t, out.Results, 1)
-	assert.True(t, out.Results[0].Success, "Expected step to succeed, got: %s", out.Results[0].ErrMsg)
+	// 8. Trigger duplicate webhook while the first one is sleeping
+	respDuplicate := doJSON(t, httpClient, baseURL+"/api/v1/webhooks/webhook_app/hook1", payload)
+	defer respDuplicate.Body.Close()
 
-	// 8. Verify on SSH container
+	require.Equal(t, http.StatusOK, respDuplicate.StatusCode)
+
+	var dupOut map[string]interface{}
+	require.NoError(t, json.NewDecoder(respDuplicate.Body).Decode(&dupOut))
+	t.Logf("Duplicate Response: %v", dupOut)
+	assert.Equal(t, "duplicate", dupOut["status"])
+
+	// 9. Verify on SSH container
+	// Wait enough for the first command (which sleeps for 2s) to finish
+	time.Sleep(3 * time.Second)
+
 	client, err := execReg.Dialer.Dial("testuser", sshH, sshP, keyFile)
 	require.NoError(t, err)
 	defer client.Close()
@@ -150,14 +161,4 @@ recipe: {
 	// The gjson extract of "payload.message" will stringify the object
 	assert.Contains(t, string(output), "msg-123")
 	assert.Contains(t, string(output), "hello-from-e2e-webhook")
-
-	// 9. Trigger duplicate webhook
-	respDuplicate := doJSON(t, httpClient, baseURL+"/api/v1/webhooks/webhook_app/hook1", payload)
-	defer respDuplicate.Body.Close()
-
-	require.Equal(t, http.StatusOK, respDuplicate.StatusCode)
-
-	var dupOut map[string]interface{}
-	require.NoError(t, json.NewDecoder(respDuplicate.Body).Decode(&dupOut))
-	assert.Equal(t, "duplicate", dupOut["status"])
 }

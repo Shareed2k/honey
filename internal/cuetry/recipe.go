@@ -289,9 +289,11 @@ const schemaSource = `
 	notify_handler?: [...string]
 })
 #Webhook: close({
-	auth_secret?:  string
-	extract?:      {[string]: string}
-	async?:        bool
+	auth_secret?:     string
+	extract?:         {[string]: string}
+	async?:           bool
+	idempotency_key?: string
+	idempotency_ttl?: string
 })
 #Schedule: close({
 	cron:      string
