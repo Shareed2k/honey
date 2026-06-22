@@ -697,6 +697,51 @@ func startK3s(t *testing.T) []byte {
 	return k3sKubeConfig
 }
 
+// ── Registry ─────────────────────────────────────────────────────────────────
+
+var (
+	registryOnce     sync.Once
+	registryAddr     string
+	registryStartErr error
+)
+
+// startRegistry boots a local Docker registry (registry:2) and returns its
+// address as 127.0.0.1:<port>. Using a loopback address makes the Docker daemon
+// treat it as an insecure registry, so no daemon reconfiguration is needed.
+func startRegistry(t *testing.T) string {
+	t.Helper()
+	registryOnce.Do(func() {
+		ctx := context.Background()
+		req := testcontainers.ContainerRequest{
+			Image:        "registry:2",
+			ExposedPorts: []string{"5000/tcp"},
+			WaitingFor:   wait.ForListeningPort("5000/tcp").WithStartupTimeout(60 * time.Second),
+		}
+		c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
+		if err != nil {
+			registryStartErr = err
+			return
+		}
+		port, err := c.MappedPort(ctx, "5000")
+		if err != nil {
+			registryStartErr = err
+			return
+		}
+		registryAddr = fmt.Sprintf("127.0.0.1:%s", port.Port())
+
+		cleanupMu.Lock()
+		cleanupFuncs = append(cleanupFuncs, func() { _ = c.Terminate(context.Background()) })
+		cleanupMu.Unlock()
+	})
+	if registryStartErr != nil {
+		t.Skipf("start registry skipped: %v", registryStartErr)
+	}
+	return registryAddr
+}
+
 // StartLocalForward starts a local port forward.
 func (e *testSSHClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
 	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
