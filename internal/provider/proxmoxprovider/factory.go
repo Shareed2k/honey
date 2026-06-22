@@ -23,7 +23,9 @@ type ConfigProvider interface {
 const overrideKey = "proxmox"
 
 func proxmoxOverride(overrides searchrun.ProviderOverrides) (o config.ProxmoxBackend) {
-	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	if len(overrides[overrideKey]) > 0 {
+		_ = json.Unmarshal(overrides[overrideKey], &o) // overrides are optional
+	}
 	return o
 }
 
