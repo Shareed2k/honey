@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +19,36 @@ import (
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/postgres"
 )
+
+// runRecipeE2E parses a CUE recipe, executes it against a single record, and
+// returns the collected per-step host results. Shared by the per-action
+// docker/k8s e2e tests below.
+func runRecipeE2E(t *testing.T, cueContent string, rec hosts.Record, reg *testRegistry, timeout time.Duration) []engine.HostExecResult {
+	t.Helper()
+	recipe, err := cuetry.ParseRemoteRecipe([]byte(cueContent), nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	outCh := make(chan engine.HostExecResult, 16)
+	params := engine.CueRecipeRunParams{
+		Recipe:  recipe,
+		Records: []hosts.Record{rec},
+		Execute: true,
+		Reg:     reg,
+	}
+	go func() {
+		defer close(outCh)
+		assert.NoError(t, engine.StreamCueRecipeSteps(ctx, params, outCh))
+	}()
+
+	var results []engine.HostExecResult
+	for res := range outCh {
+		results = append(results, res)
+	}
+	return results
+}
 
 func TestRecipeE2E_LinearExecution(t *testing.T) {
 	sshH, sshP, keyFile := startSSH(t)
@@ -683,4 +714,133 @@ data:
 	assert.True(t, results[0].Success, "Expected success: %s", results[0].ErrMsg)
 	assert.True(t, results[1].Success, "Expected success: %s", results[1].ErrMsg)
 	assert.Contains(t, results[1].Output, "e2e-config") // The ConfigMap YAML should be printed
+}
+
+// ── Docker action coverage (build, push, pull, exec, stop) ───────────────────
+
+func TestRecipeE2E_DockerPull(t *testing.T) {
+	dindHost := startDinD(t)
+	reg := &testRegistry{}
+	rec := hosts.Record{Provider: "test", Name: "docker-test", PrimaryIP: "127.0.0.1"}
+
+	cue := fmt.Sprintf(`
+recipe: {
+	name: "e2e-docker-pull"
+	type: "linear"
+	steps: [
+		{ host: "*", docker: { socket: %q, action: "pull", pull: { image: "alpine:latest" } } },
+	]
+}
+`, dindHost)
+
+	results := runRecipeE2E(t, cue, rec, reg, 60*time.Second)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Success, "pull failed: %s", results[0].ErrMsg)
+}
+
+func TestRecipeE2E_DockerBuild(t *testing.T) {
+	dindHost := startDinD(t)
+	reg := &testRegistry{}
+	rec := hosts.Record{Provider: "test", Name: "docker-test", PrimaryIP: "127.0.0.1"}
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "Dockerfile"),
+		[]byte("FROM alpine:latest\nRUN echo built > /built.txt\n"),
+		0o600,
+	))
+
+	cue := fmt.Sprintf(`
+recipe: {
+	name: "e2e-docker-build"
+	type: "linear"
+	steps: [
+		{ host: "*", docker: { socket: %q, action: "build", build: { context: %q, tags: ["honey-e2e-build:latest"] } } },
+	]
+}
+`, dindHost, dir)
+
+	results := runRecipeE2E(t, cue, rec, reg, 120*time.Second)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Success, "build failed: %s", results[0].ErrMsg)
+	assert.Contains(t, results[0].Output, "image_id")
+}
+
+func TestRecipeE2E_DockerExec(t *testing.T) {
+	dindHost := startDinD(t)
+	reg := &testRegistry{}
+	rec := hosts.Record{Provider: "test", Name: "docker-test", PrimaryIP: "127.0.0.1"}
+
+	// run (detached) sets up a container; exec is the step under test; stop cleans up.
+	cue := fmt.Sprintf(`
+recipe: {
+	name: "e2e-docker-exec"
+	type: "linear"
+	steps: [
+		{ host: "*", docker: { socket: %q, action: "run", run: { image: "alpine:latest", name: "honey-e2e-exec", command: ["sleep","60"], detach: true } } },
+		{ host: "*", docker: { socket: %q, action: "exec", exec: { container: "honey-e2e-exec", command: ["echo","exec-works"] } } },
+		{ host: "*", docker: { socket: %q, action: "stop", stop: { container: "honey-e2e-exec", rm: true } } },
+	]
+}
+`, dindHost, dindHost, dindHost)
+
+	results := runRecipeE2E(t, cue, rec, reg, 90*time.Second)
+	require.Len(t, results, 3)
+	assert.True(t, results[1].Success, "exec failed: %s", results[1].ErrMsg)
+	assert.Contains(t, results[1].Output, "exec-works")
+}
+
+func TestRecipeE2E_DockerStop(t *testing.T) {
+	dindHost := startDinD(t)
+	reg := &testRegistry{}
+	rec := hosts.Record{Provider: "test", Name: "docker-test", PrimaryIP: "127.0.0.1"}
+
+	cue := fmt.Sprintf(`
+recipe: {
+	name: "e2e-docker-stop"
+	type: "linear"
+	steps: [
+		{ host: "*", docker: { socket: %q, action: "run", run: { image: "alpine:latest", name: "honey-e2e-stop", command: ["sleep","60"], detach: true } } },
+		{ host: "*", docker: { socket: %q, action: "stop", stop: { container: "honey-e2e-stop", rm: true } } },
+	]
+}
+`, dindHost, dindHost)
+
+	results := runRecipeE2E(t, cue, rec, reg, 90*time.Second)
+	require.Len(t, results, 2)
+	assert.True(t, results[1].Success, "stop failed: %s", results[1].ErrMsg)
+}
+
+func TestRecipeE2E_DockerPush(t *testing.T) {
+	registryAddr := startRegistry(t)
+	reg := &testRegistry{}
+	rec := hosts.Record{Provider: "test", Name: "docker-test", PrimaryIP: "127.0.0.1"}
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "Dockerfile"),
+		[]byte("FROM alpine:latest\n"),
+		0o600,
+	))
+	// 127.0.0.1:PORT → loopback → daemon treats it as an insecure registry.
+	// No socket override here: build+push run on the ambient host daemon so that
+	// 127.0.0.1:PORT resolves to the host where the registry is published. (Under
+	// a DinD socket, 127.0.0.1 would be DinD's own loopback and never reach it.)
+	tag := registryAddr + "/honey-e2e:latest"
+
+	cue := fmt.Sprintf(`
+recipe: {
+	name: "e2e-docker-push"
+	type: "linear"
+	steps: [
+		{ host: "*", docker: { action: "build", build: { context: %q, tags: [%q] } } },
+		{ host: "*", docker: { action: "push", push: { image: %q } } },
+	]
+}
+`, dir, tag, tag)
+
+	results := runRecipeE2E(t, cue, rec, reg, 120*time.Second)
+	require.Len(t, results, 2)
+	assert.True(t, results[0].Success, "build failed: %s", results[0].ErrMsg)
+	assert.True(t, results[1].Success, "push failed: %s", results[1].ErrMsg)
 }
