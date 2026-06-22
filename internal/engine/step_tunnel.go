@@ -296,7 +296,7 @@ func tunnelDryRunJSON(t *cuetry.RecipeStepTunnel) string {
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *TunnelExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, i, step, targets := sc.Out, sc.Recipe, sc.Index, sc.Step, sc.Targets
+	out, recipe, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Index, sc.Step, sc.Targets
 	WriteCueStepNotifyDryLine(out, step)
 	WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 	for _, target := range targets {

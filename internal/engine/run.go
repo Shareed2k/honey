@@ -188,26 +188,16 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 	}
 
 	sc := &StepContext{
-		Ctx:            ctx,
-		Run:            run,
-		Recipe:         run.Params.Recipe,
-		RecipeDir:      run.Params.RecipeDir,
-		Records:        run.Params.Records,
-		Targets:        targets,
-		SSHUser:        run.Params.SSHUser,
-		Execute:        run.Params.Execute,
-		CLIEnv:         run.Params.CLIEnv,
-		ConfigPath:     run.Params.ConfigPath,
-		Index:          i,
-		Step:           step,
-		Kind:           kind,
-		SecretResolver: run.Params.SecretResolver,
-		PluginMgr:      run.Params.PluginMgr,
-		RetryCfg:       retryCfg,
-		AttemptMax:     attemptMax,
-		ResultCh:       ch,
-		History:        history,
-		AISystemPrompt: run.Params.AISystemPrompt,
+		Ctx:        ctx,
+		Run:        run,
+		Targets:    targets,
+		Index:      i,
+		Step:       step,
+		Kind:       kind,
+		RetryCfg:   retryCfg,
+		AttemptMax: attemptMax,
+		ResultCh:   ch,
+		History:    history,
 	}
 
 	proxyCh := make(chan HostExecResult)

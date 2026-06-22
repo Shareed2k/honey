@@ -23,9 +23,9 @@ func (e *RecipeExecutor) ExecuteDryRun(sc *StepContext) error {
 		return fmt.Errorf("step %d: internal: missing recipe", i)
 	}
 
-	if !sc.Execute {
+	if !sc.Run.Params.Execute {
 		WriteCueStepNotifyDryLine(out, step)
-		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), sc.Recipe.Defaults))
+		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), sc.Run.Params.Recipe.Defaults))
 		_, _ = fmt.Fprintf(out, "step %d: kind=recipe targets=%d → path:%q\n",
 			i, len(sc.Targets), rs.Recipe.Path)
 		return nil
@@ -44,7 +44,7 @@ func (e *RecipeExecutor) ExecuteStream(sc *StepContext) error {
 	// Expand variables in the path (just in case they are used, but typically it's a static path)
 	// Actually, the spec doesn't explicitly require var expansion for the path, but let's just use it as is.
 	recipePath := rs.Recipe.Path
-	subRecipePath, err := cuetry.ResolveLocalAgainstRecipe(sc.RecipeDir, recipePath)
+	subRecipePath, err := cuetry.ResolveLocalAgainstRecipe(sc.Run.Params.RecipeDir, recipePath)
 	if err != nil {
 		return fmt.Errorf("resolve recipe path: %w", err)
 	}
@@ -55,7 +55,7 @@ func (e *RecipeExecutor) ExecuteStream(sc *StepContext) error {
 	}
 
 	subRecipe, err := cuetry.ParseRemoteRecipeOpts(cueBytes, targets, cuetry.ParseOptions{
-		PluginManager: sc.PluginMgr,
+		PluginManager: sc.Run.Params.PluginMgr,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to parse sub-recipe %q: %w", recipePath, err)
@@ -63,7 +63,7 @@ func (e *RecipeExecutor) ExecuteStream(sc *StepContext) error {
 
 	// Combine parent's runtime environment for variable expansion
 	parentVars := make(map[string]string)
-	for k, v := range sc.CLIEnv {
+	for k, v := range sc.Run.Params.CLIEnv {
 		parentVars[k] = v
 	}
 	for k, v := range step.Base().Env {
@@ -71,7 +71,7 @@ func (e *RecipeExecutor) ExecuteStream(sc *StepContext) error {
 	}
 
 	mergedEnv := make(map[string]string)
-	for k, v := range sc.CLIEnv {
+	for k, v := range sc.Run.Params.CLIEnv {
 		mergedEnv[k] = v
 	}
 	for k, v := range rs.Recipe.Prompts {
@@ -86,13 +86,13 @@ func (e *RecipeExecutor) ExecuteStream(sc *StepContext) error {
 		Recipe:         subRecipe,
 		RecipeDir:      filepath.Dir(subRecipePath),
 		Records:        targets,
-		SSHUser:        sc.SSHUser,
+		SSHUser:        sc.Run.Params.SSHUser,
 		CLIEnv:         mergedEnv,
-		ConfigPath:     sc.ConfigPath,
-		AISystemPrompt: sc.AISystemPrompt,
-		SecretResolver: sc.SecretResolver,
-		PluginMgr:      sc.PluginMgr,
-		Execute:        sc.Execute,
+		ConfigPath:     sc.Run.Params.ConfigPath,
+		AISystemPrompt: sc.Run.Params.AISystemPrompt,
+		SecretResolver: sc.Run.Params.SecretResolver,
+		PluginMgr:      sc.Run.Params.PluginMgr,
+		Execute:        sc.Run.Params.Execute,
 		JSON:           run.Params.JSON,
 		Reg:            run.Params.Reg,
 		Obs:            run.Params.Obs,

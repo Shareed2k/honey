@@ -70,7 +70,7 @@ func SummarizeAgentTransferEvents(events []AgentTransferEvent) string {
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *AgentTransferExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, records, sshUser, configPath, i, step := sc.Out, sc.Records, sc.SSHUser, sc.ConfigPath, sc.Index, sc.Step
+	out, records, sshUser, configPath, i, step := sc.Out, sc.Run.Params.Records, sc.Run.Params.SSHUser, sc.Run.Params.ConfigPath, sc.Index, sc.Step
 
 	ats, _ := step.(*cuetry.AgentTransferStep)
 	if ats == nil || ats.AgentTransfer == nil {
@@ -125,7 +125,7 @@ func (e *AgentTransferExecutor) ExecuteDryRun(sc *StepContext) error {
 // ExecuteStream streams the step execution.
 func (e *AgentTransferExecutor) ExecuteStream(sc *StepContext) error {
 	run, ctx, i, step, ch := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.ResultCh
-	records, sshUser, configPath, cache := sc.Records, sc.SSHUser, sc.ConfigPath, sc.Run.Cache
+	records, sshUser, configPath, cache := sc.Run.Params.Records, sc.Run.Params.SSHUser, sc.Run.Params.ConfigPath, sc.Run.Cache
 
 	ats, _ := step.(*cuetry.AgentTransferStep)
 	if ats == nil || ats.AgentTransfer == nil {

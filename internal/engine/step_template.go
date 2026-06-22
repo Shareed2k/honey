@@ -105,7 +105,7 @@ type TemplateExecutor struct{}
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *TemplateExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, execute, i, step := sc.Out, sc.Execute, sc.Index, sc.Step
+	out, execute, i, step := sc.Out, sc.Run.Params.Execute, sc.Index, sc.Step
 	if execute {
 		return nil
 	}

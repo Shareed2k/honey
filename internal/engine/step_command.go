@@ -275,7 +275,7 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, execute, cliEnv, i, step, targets := sc.Out, sc.Recipe, sc.Execute, sc.CLIEnv, sc.Index, sc.Step, sc.Targets
+	out, recipe, execute, cliEnv, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.Execute, sc.Run.Params.CLIEnv, sc.Index, sc.Step, sc.Targets
 	cs, _ := step.(*cuetry.CommandStep)
 	command := ""
 	if cs != nil {
@@ -315,7 +315,7 @@ func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *PutExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, recipeDir, execute, i, step, targets := sc.Out, sc.Recipe, sc.RecipeDir, sc.Execute, sc.Index, sc.Step, sc.Targets
+	out, recipe, recipeDir, execute, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.RecipeDir, sc.Run.Params.Execute, sc.Index, sc.Step, sc.Targets
 	ps, _ := step.(*cuetry.PutStep)
 	if ps == nil || ps.Put == nil {
 		return fmt.Errorf("step %d: internal: missing put", i)
@@ -342,7 +342,7 @@ func (e *PutExecutor) ExecuteDryRun(sc *StepContext) error {
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, recipeDir, execute, i, step, targets := sc.Out, sc.Recipe, sc.RecipeDir, sc.Execute, sc.Index, sc.Step, sc.Targets
+	out, recipe, recipeDir, execute, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.RecipeDir, sc.Run.Params.Execute, sc.Index, sc.Step, sc.Targets
 	gs, _ := step.(*cuetry.GetStep)
 	if gs == nil || gs.Get == nil {
 		return fmt.Errorf("step %d: internal: missing get", i)
@@ -394,7 +394,7 @@ func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *ScriptExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipeDir, recipe, execute, cliEnv, i, step, targets := sc.Out, sc.RecipeDir, sc.Recipe, sc.Execute, sc.CLIEnv, sc.Index, sc.Step, sc.Targets
+	out, recipeDir, recipe, execute, cliEnv, i, step, targets := sc.Out, sc.Run.Params.RecipeDir, sc.Run.Params.Recipe, sc.Run.Params.Execute, sc.Run.Params.CLIEnv, sc.Index, sc.Step, sc.Targets
 	ss, _ := step.(*cuetry.ScriptStep)
 	if ss == nil || ss.Script == nil {
 		return fmt.Errorf("step %d: internal: missing script", i)
