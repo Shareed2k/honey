@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/retry"
 )
 
 // k8sClients holds typed and dynamic k8s API clients for one cluster.
@@ -316,33 +317,47 @@ func execK8sScale(ctx context.Context, c *k8sClients, ns string, s *cuetry.K8sSc
 		return "", fmt.Errorf("k8s.scale.resource must be kind/name, got %q", s.Resource)
 	}
 	replicas := s.Replicas
+	// GetScale+UpdateScale races the controller reconciling a freshly-changed
+	// object; retry on the resulting optimistic-concurrency conflict.
 	switch strings.ToLower(kind) {
 	case "deployment", "deployments":
-		sc, err := c.clientset.AppsV1().Deployments(ns).GetScale(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("get scale deployment/%s: %w", name, err)
-		}
-		sc.Spec.Replicas = replicas
-		if _, err := c.clientset.AppsV1().Deployments(ns).UpdateScale(ctx, name, sc, metav1.UpdateOptions{}); err != nil {
-			return "", fmt.Errorf("update scale deployment/%s: %w", name, err)
+		api := c.clientset.AppsV1().Deployments(ns)
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			sc, err := api.GetScale(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			sc.Spec.Replicas = replicas
+			_, err = api.UpdateScale(ctx, name, sc, metav1.UpdateOptions{})
+			return err
+		}); err != nil {
+			return "", fmt.Errorf("scale deployment/%s: %w", name, err)
 		}
 	case "statefulset", "statefulsets":
-		sc, err := c.clientset.AppsV1().StatefulSets(ns).GetScale(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("get scale statefulset/%s: %w", name, err)
-		}
-		sc.Spec.Replicas = replicas
-		if _, err := c.clientset.AppsV1().StatefulSets(ns).UpdateScale(ctx, name, sc, metav1.UpdateOptions{}); err != nil {
-			return "", fmt.Errorf("update scale statefulset/%s: %w", name, err)
+		api := c.clientset.AppsV1().StatefulSets(ns)
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			sc, err := api.GetScale(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			sc.Spec.Replicas = replicas
+			_, err = api.UpdateScale(ctx, name, sc, metav1.UpdateOptions{})
+			return err
+		}); err != nil {
+			return "", fmt.Errorf("scale statefulset/%s: %w", name, err)
 		}
 	case "replicaset", "replicasets":
-		sc, err := c.clientset.AppsV1().ReplicaSets(ns).GetScale(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("get scale replicaset/%s: %w", name, err)
-		}
-		sc.Spec.Replicas = replicas
-		if _, err := c.clientset.AppsV1().ReplicaSets(ns).UpdateScale(ctx, name, sc, metav1.UpdateOptions{}); err != nil {
-			return "", fmt.Errorf("update scale replicaset/%s: %w", name, err)
+		api := c.clientset.AppsV1().ReplicaSets(ns)
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			sc, err := api.GetScale(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			sc.Spec.Replicas = replicas
+			_, err = api.UpdateScale(ctx, name, sc, metav1.UpdateOptions{})
+			return err
+		}); err != nil {
+			return "", fmt.Errorf("scale replicaset/%s: %w", name, err)
 		}
 	default:
 		return "", fmt.Errorf("scale not supported for %q (supported: deployment, statefulset, replicaset)", kind)
