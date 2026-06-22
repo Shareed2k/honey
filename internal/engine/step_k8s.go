@@ -188,7 +188,7 @@ func runK8sActionOnHost(
 	}
 
 	// Resolve env once for ${VAR} expansion in manifest and other action fields.
-	stepEnv, err := cuetry.EffectiveEnvForRunEx(ctx, run.Params.Execute, run.Params.SecretResolver, step.Base(), run.Params.Recipe.Defaults, run.Params.CLIEnv, &target, CueEnvRunOpts(&run.Params.Recipe, run.OutputStore, run.OutputCapture, KvReaderFromCoordinator(run.RecipeKV), !run.Params.Execute))
+	stepEnv, err := run.StepEnv(ctx, step.Base(), &target, run.Params.Execute, !run.Params.Execute)
 	if err != nil {
 		res.ErrMsg = fmt.Errorf("k8s step env: %w", err).Error()
 		return res

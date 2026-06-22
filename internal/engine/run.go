@@ -61,6 +61,24 @@ func CueEnvRunOpts(recipe *cuetry.Recipe, store *cuetry.StepOutputStore, capture
 	return &cuetry.EffectiveEnvForRunOpts{Recipe: recipe, OutputStore: store, OutputCapture: capture, KV: kv, DryRun: dryRun}
 }
 
+// StepEnv resolves the effective environment for one step on one target. All
+// run-scoped inputs (secret resolver, recipe defaults, CLI env, prior step
+// outputs, output capture, and live KV) come from the run; callers pass only
+// what varies per step/target. Env cannot be pre-resolved before the run because
+// OutputStore and KV are populated as earlier steps execute.
+func (run *CueRun) StepEnv(ctx context.Context, step *cuetry.StepBase, target *hosts.Record, resolveSecrets, dryRun bool) (map[string]string, error) {
+	return cuetry.EffectiveEnvForRunEx(
+		ctx,
+		resolveSecrets,
+		run.Params.SecretResolver,
+		step,
+		run.Params.Recipe.Defaults,
+		run.Params.CLIEnv,
+		target,
+		CueEnvRunOpts(&run.Params.Recipe, run.OutputStore, run.OutputCapture, KvReaderFromCoordinator(run.RecipeKV), dryRun),
+	)
+}
+
 // WriteCueKVTunnelDryLine ...
 func WriteCueKVTunnelDryLine(out io.Writer, recipe cuetry.Recipe, stepIdx int, step cuetry.Step, def *cuetry.RecipeDefaults) {
 	if !cuetry.KVTunnelEnabled(step, def) {

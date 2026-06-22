@@ -74,7 +74,7 @@ func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind stri
 		res.ErrMsg = "internal: plugin step missing plugin field"
 		return res
 	}
-	env, err := cuetry.EffectiveEnvForRunEx(ctx, run.Params.Execute, run.Params.SecretResolver, step.Base(), run.Params.Recipe.Defaults, run.Params.CLIEnv, &target, CueEnvRunOpts(&run.Params.Recipe, run.OutputStore, run.OutputCapture, KvReaderFromCoordinator(run.RecipeKV), secretsDry))
+	env, err := run.StepEnv(ctx, step.Base(), &target, run.Params.Execute, secretsDry)
 	if err != nil {
 		res.ErrMsg = err.Error()
 		return res
