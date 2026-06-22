@@ -322,6 +322,8 @@ func sendTelegram(ctx context.Context, cfg *config.AlertNotifyTelegram, subject,
 			zap.L().Error("alert notify Telegram: request failed", zap.Error(err))
 			continue
 		}
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			zap.L().Debug("alert webhook: close response body error", zap.Error(err))
+		}
 	}
 }
