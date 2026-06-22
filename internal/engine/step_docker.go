@@ -238,7 +238,9 @@ func executeDockerRun(ctx context.Context, cli *client.Client, r *cuetry.DockerR
 				}
 				// Drain the response to block until the image pull completes
 				_, _ = io.Copy(io.Discard, pullResp)
-				pullResp.Close()
+				if err := pullResp.Close(); err != nil {
+					zap.L().Debug("docker pull response close error", zap.Error(err))
+				}
 				return client.ContainerCreateResult{}, innerErr // Retry ContainerCreate on next tick
 			}
 			return client.ContainerCreateResult{}, backoff.Permanent(innerErr)

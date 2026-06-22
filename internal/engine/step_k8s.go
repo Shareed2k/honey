@@ -296,11 +296,10 @@ func execK8sDelete(ctx context.Context, c *k8sClients, ns string, d *cuetry.K8sD
 		for time.Now().Before(deadline) {
 			_, err := ri.Get(ctx, name, metav1.GetOptions{})
 			if k8serrors.IsNotFound(err) {
-				break
+				break // gone — deletion confirmed
 			}
-			if err != nil {
-				return "", fmt.Errorf("wait delete %s/%s: %w", kind, name, err)
-			}
+			// Any other Get error (transient connection blip) is ignored; keep
+			// polling until the object is gone or the deadline passes.
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -394,12 +393,12 @@ func execK8sRolloutRestart(ctx context.Context, c *k8sClients, ns string, r *cue
 	}
 	// Wait for rollout to complete by polling observedGeneration + availableReplicas.
 	deadline := time.Now().Add(10 * time.Minute)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		done, err := rolloutComplete(ctx, c, ns, kind, name)
-		if err != nil {
-			return "", fmt.Errorf("wait rollout %s/%s: %w", kind, name, err)
-		}
-		if done {
+		// Transient API errors (connection blips) should not abort the wait.
+		if done, err := rolloutComplete(ctx, c, ns, kind, name); err != nil {
+			lastErr = err
+		} else if done {
 			return fmt.Sprintf("rollout restart complete for %s/%s", kind, name), nil
 		}
 		select {
@@ -407,6 +406,9 @@ func execK8sRolloutRestart(ctx context.Context, c *k8sClients, ns string, r *cue
 			return "", ctx.Err()
 		case <-time.After(3 * time.Second):
 		}
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("rollout restart timed out for %s/%s: last error: %w", kind, name, lastErr)
 	}
 	return "", fmt.Errorf("rollout restart timed out for %s/%s", kind, name)
 }
@@ -481,12 +483,14 @@ func execK8sWait(ctx context.Context, c *k8sClients, ns string, w *cuetry.K8sWai
 	}
 
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		obj, err := ri.Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("get %s/%s: %w", kind, name, err)
-		}
-		if checkK8sCondition(obj, forKey, condName) {
+		// A Get failure is treated as transient (connection blip, or the resource
+		// not yet created): record it and keep polling until the deadline rather
+		// than failing the whole wait on a single hiccup.
+		if obj, err := ri.Get(ctx, name, metav1.GetOptions{}); err != nil {
+			lastErr = err
+		} else if checkK8sCondition(obj, forKey, condName) {
 			return fmt.Sprintf("%s/%s condition %q met", kind, name, w.For), nil
 		}
 		select {
@@ -494,6 +498,9 @@ func execK8sWait(ctx context.Context, c *k8sClients, ns string, w *cuetry.K8sWai
 			return "", ctx.Err()
 		case <-time.After(3 * time.Second):
 		}
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("wait timed out for %s/%s (for: %s): last error: %w", kind, name, w.For, lastErr)
 	}
 	return "", fmt.Errorf("wait timed out for %s/%s (for: %s)", kind, name, w.For)
 }
@@ -648,19 +655,23 @@ func execK8sCreateJob(ctx context.Context, c *k8sClients, ns string, j *cuetry.K
 	}
 	// Poll until job succeeds or fails.
 	deadline := time.Now().Add(30 * time.Minute)
+	var lastErr error
 	for time.Now().Before(deadline) {
+		// A Get failure is transient (connection blip): record it and keep
+		// polling rather than aborting the whole wait on a single hiccup.
 		current, err := c.clientset.BatchV1().Jobs(ns).Get(ctx, j.Name, metav1.GetOptions{})
 		if err != nil {
-			return "", fmt.Errorf("get job/%s: %w", j.Name, err)
-		}
-		for _, cond := range current.Status.Conditions {
-			if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
-				logs := collectJobLogs(ctx, c, ns, j.Name)
-				return fmt.Sprintf("job/%s complete\n%s", j.Name, logs), nil
-			}
-			if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-				logs := collectJobLogs(ctx, c, ns, j.Name)
-				return logs, fmt.Errorf("job/%s failed: %s", j.Name, cond.Message)
+			lastErr = err
+		} else {
+			for _, cond := range current.Status.Conditions {
+				if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
+					logs := collectJobLogs(ctx, c, ns, j.Name)
+					return fmt.Sprintf("job/%s complete\n%s", j.Name, logs), nil
+				}
+				if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
+					logs := collectJobLogs(ctx, c, ns, j.Name)
+					return logs, fmt.Errorf("job/%s failed: %s", j.Name, cond.Message)
+				}
 			}
 		}
 		select {
@@ -668,6 +679,9 @@ func execK8sCreateJob(ctx context.Context, c *k8sClients, ns string, j *cuetry.K
 			return "", ctx.Err()
 		case <-time.After(5 * time.Second):
 		}
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("job/%s timed out after 30 minutes: last error: %w", j.Name, lastErr)
 	}
 	return "", fmt.Errorf("job/%s timed out after 30 minutes", j.Name)
 }

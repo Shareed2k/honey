@@ -27,6 +27,29 @@ type ClientCache struct {
 	dialErrors   int64
 }
 
+// CacheStats holds connection metrics from the client cache.
+type CacheStats struct {
+	Hits         int64
+	Misses       int64
+	RaceHits     int64
+	DialAttempts int64
+	DialErrors   int64
+}
+
+// Stats returns a snapshot of cache metrics.
+func (c *ClientCache) Stats() CacheStats {
+	if c == nil {
+		return CacheStats{}
+	}
+	return CacheStats{
+		Hits:         atomic.LoadInt64(&c.hits),
+		Misses:       atomic.LoadInt64(&c.misses),
+		RaceHits:     atomic.LoadInt64(&c.raceHits),
+		DialAttempts: atomic.LoadInt64(&c.dialAttempts),
+		DialErrors:   atomic.LoadInt64(&c.dialErrors),
+	}
+}
+
 // NewClientCache creates a new uninitialized cache.
 // You must call SetRegistry on it before it can dial properly.
 // NewClientCache ...
@@ -40,6 +63,14 @@ func NewClientCache() *ClientCache {
 // SetRegistry configures the executor registry.
 func (c *ClientCache) SetRegistry(reg hostexec.Registry) {
 	c.reg = reg
+}
+
+// Reg returns the executor registry.
+func (c *ClientCache) Reg() hostexec.Registry {
+	if c == nil {
+		return nil
+	}
+	return c.reg
 }
 
 // ClientLease is a borrowed cached host connection. Close releases the borrow without

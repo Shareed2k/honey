@@ -697,10 +697,14 @@ func ExecuteAgentCloudTransferWithEmit(job AgentTransferJob, cache *ClientCache,
 	)
 
 	if c, err := cache.GetOrDial(user, job.Source.Record); err == nil {
-		NewHostClientTransferNode(job.Source.Record, c).CleanupAgent(ctx, agentRemoteAbs)
+		if cleanErr := NewHostClientTransferNode(job.Source.Record, c).CleanupAgent(ctx, agentRemoteAbs); cleanErr != nil {
+			zap.L().Debug("failed to cleanup agent on source", zap.String("host", job.Source.Record.Name), zap.Error(cleanErr))
+		}
 	}
 	if c, err := cache.GetOrDial(user, job.Destination.Record); err == nil {
-		NewHostClientTransferNode(job.Destination.Record, c).CleanupAgent(ctx, agentRemoteAbs)
+		if cleanErr := NewHostClientTransferNode(job.Destination.Record, c).CleanupAgent(ctx, agentRemoteAbs); cleanErr != nil {
+			zap.L().Debug("failed to cleanup agent on destination", zap.String("host", job.Destination.Record.Name), zap.Error(cleanErr))
+		}
 	}
 	stageEvent(&events, emit, redactions, "cleanup_agent", srcHost, true, "removed ephemeral agent", nil, 1)
 	if dstHost != srcHost {

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kevinburke/ssh_config"
@@ -27,6 +28,9 @@ import (
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/safepath"
 )
+
+// SFTPSessionsReused tracks how many times an existing SFTP session was reused.
+var SFTPSessionsReused int64
 
 // honeySSHConfig uses kevinburke/ssh_config (https://github.com/kevinburke/ssh_config) to read
 // ~/.ssh/config and /etc/ssh/ssh_config. Parse errors are ignored so a broken file does not block
@@ -317,6 +321,7 @@ func (h *HoneyClient) sftpClient() (*sftp.Client, error) {
 	h.sftpMu.Lock()
 	defer h.sftpMu.Unlock()
 	if h.sftp != nil {
+		atomic.AddInt64(&SFTPSessionsReused, 1)
 		return h.sftp, nil
 	}
 	if h.Client == nil || h.Client.Client == nil {
