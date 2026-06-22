@@ -22,7 +22,6 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
-	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/queue"
 	"github.com/shareed2k/honey/internal/safepath"
@@ -58,6 +57,7 @@ type Manager struct {
 	taskers []*tasker.Tasker // one per unique timezone
 	count   int
 	entries []ScheduleEntry
+	runner  *engine.RecipeRunner
 }
 
 // New creates a Manager and registers all eligible recipe schedule tasks.
@@ -68,6 +68,16 @@ func New(opts Options) (*Manager, error) {
 	}
 
 	m := &Manager{opts: opts}
+	m.runner = engine.NewRecipeRunner(engine.RunnerOptions{
+		ConfigPath:   opts.ConfigPath,
+		Config:       opts.Config,
+		ExecRegistry: opts.ExecRegistry,
+		Metrics:      opts.Metrics,
+		Pools:        opts.Pools,
+		Cache:        opts.Cache,
+		Plugins:      openClosePlugins{cfg: opts.Config},
+		RecordDir:    opts.RecordDir,
+	})
 	m.register()
 	return m, nil
 }
@@ -227,11 +237,6 @@ func (m *Manager) executeSchedule(
 	recipePath string,
 	sched cuetry.RecipeSchedule,
 ) error {
-	pluginMgr, err := plugins.Open(ctx, m.opts.Config)
-	if err != nil {
-		return fmt.Errorf("open plugins: %w", err)
-	}
-
 	// Resolve target hosts.
 	searchIn := &hostapi.SearchHostsInput{
 		ConfigPath: m.opts.ConfigPath,
@@ -246,16 +251,14 @@ func (m *Manager) executeSchedule(
 
 	searchOut, err := hostapi.SearchHosts(ctx, searchIn, m.opts.ExecRegistry, m.opts.SearchRegistry)
 	if err != nil {
-		_ = pluginMgr.Close()
 		return fmt.Errorf("search hosts: %w", err)
 	}
-
 	if len(searchOut.Records) == 0 {
-		_ = pluginMgr.Close()
 		return fmt.Errorf("no target hosts found for app %q", appName)
 	}
 
-	// Merge schedule-level env on top of any global defaults.
+	// Merge schedule-level env on top of any global defaults; validate prompts up
+	// front so a missing required prompt fails the tick before it is queued.
 	cliEnv := make(map[string]string, len(sched.Env))
 	maps.Copy(cliEnv, sched.Env)
 	cliEnv, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), cliEnv)
@@ -263,80 +266,39 @@ func (m *Manager) executeSchedule(
 		return fmt.Errorf("prompt validation: %w", err)
 	}
 
-	secRes, _ := cuetry.NewSecretResolverWithPlugins(
-		cuetry.SecretResolverOptionsFromHoney(m.opts.Config), pluginMgr,
-	)
-	aiPrompt := ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath)
-
 	sshUser := ""
 	if m.opts.Config != nil && m.opts.Config.Defaults.SSHUser != "" {
 		sshUser = m.opts.Config.Defaults.SSHUser
 	}
 
-	runParams := engine.CueRecipeRunParams{
-		Recipe:         recipe,
-		RecipeDir:      filepath.Dir(recipePath),
-		Records:        searchOut.Records,
-		SSHUser:        sshUser,
-		CLIEnv:         cliEnv,
-		ConfigPath:     m.opts.ConfigPath,
-		AISystemPrompt: aiPrompt,
-		SecretResolver: secRes,
-		PluginMgr:      pluginMgr,
-		Execute:        true,
-		Obs:            m.opts.Metrics,
-		Reg:            m.opts.ExecRegistry,
-		Pools:          m.opts.Pools,
-		Cache:          m.opts.Cache,
+	req := engine.RunRequest{
+		Recipe:           recipe,
+		RecipeSourcePath: recipePath,
+		RecipeDir:        filepath.Dir(recipePath),
+		Records:          searchOut.Records,
+		SSHUser:          sshUser,
+		Env:              cliEnv,
+		AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath),
+		RecordSession:    strings.TrimSpace(m.opts.RecordDir) != "",
+		RecordLabel:      fmt.Sprintf("cron-%s-%s", appName, scheduleName),
 	}
 
-	// Build an optional session recorder.
-	var rec *engine.SessionRecorder
-	if strings.TrimSpace(m.opts.RecordDir) != "" {
-		trigger := fmt.Sprintf("cron-%s-%s", appName, scheduleName)
-		rec, err = engine.NewBatchSessionRecorder(m.opts.RecordDir, trigger, sshUser, len(searchOut.Records))
-		if err != nil {
-			zap.L().Warn("scheduler: could not create session recorder",
-				zap.String("app", appName),
-				zap.String("schedule", scheduleName),
-				zap.Error(err),
-			)
-			rec = nil
-		} else {
-			hash, _ := recipe.HashJSON()
-			rec.RecordRecipeMeta(engine.RecipeMeta{
-				RecipePath:        recipePath,
-				HostCount:         len(searchOut.Records),
-				RecipeContentHash: hash,
-				StartedAt:         time.Now().UTC(),
-				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, 100),
-			})
-		}
-	}
-
-	// Detach from the per-tick gronx context so the queue goroutine is not
-	// cancelled when the task function returns (gronx cancels tick contexts).
+	// Detach from the per-tick gronx context so the queued run is not cancelled
+	// when the task function returns (gronx cancels tick contexts).
 	runCtx := context.WithoutCancel(ctx)
 
-	// Always submit async; if queue is nil, run inline (dev / no-queue mode).
+	// The runner owns the plugin and recorder lifecycle for the whole run.
 	run := func() {
-		defer func() {
-			_ = pluginMgr.Close()
-			if rec != nil {
-				_ = rec.Close()
-			}
-		}()
-
-		ch := make(chan engine.HostExecResult, 64)
-		go func() {
-			defer close(ch)
-			_ = engine.StreamCueRecipeSteps(runCtx, runParams, ch)
-		}()
-
-		for res := range ch {
-			if rec != nil {
-				rec.RecordHostExecResult(res)
-			}
+		ch, rerr := m.runner.Execute(runCtx, req)
+		if rerr != nil {
+			zap.L().Error("scheduler: recipe execution failed to start",
+				zap.String("app", appName),
+				zap.String("schedule", scheduleName),
+				zap.Error(rerr),
+			)
+			return
+		}
+		for range ch { //nolint:revive // drain results; the runner records them internally
 		}
 	}
 
@@ -347,15 +309,7 @@ func (m *Manager) executeSchedule(
 					zap.String("app", appName),
 					zap.String("schedule", scheduleName),
 				)
-				_ = pluginMgr.Close()
-				if rec != nil {
-					_ = rec.Close()
-				}
 				return nil
-			}
-			_ = pluginMgr.Close()
-			if rec != nil {
-				_ = rec.Close()
 			}
 			return fmt.Errorf("submit to queue: %w", qErr)
 		}
