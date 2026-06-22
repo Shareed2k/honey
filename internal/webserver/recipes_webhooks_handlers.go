@@ -128,13 +128,9 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 	t := time.Now()
 	submitErr := api.webhookQueue.Submit(func() {
 		ctx := context.Background()
-		mgr, _ := plugins.Open(ctx, api.opts.Config) // async owns its own manager lifecycle
 		defer func() {
 			if scopedKey != "" {
 				api.webhookDedupCache.Delete(scopedKey)
-			}
-			if mgr != nil {
-				_ = mgr.Close()
 			}
 			if rec != nil {
 				_ = rec.Close()
@@ -162,37 +158,29 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 				HostCount:         len(searchOut.Records),
 				RecipeContentHash: hash,
 				StartedAt:         time.Now().UTC(),
-				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, maxWebExecRecords),
+				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, engine.RecipeMetaHostLimit),
 			})
 		}
 
-		secRes, _ := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), mgr)
-		runParams := engine.CueRecipeRunParams{
-			Recipe:         recipe,
-			RecipeDir:      filepath.Dir(recipePath),
-			Records:        searchOut.Records,
-			SSHUser:        sshUser,
-			CLIEnv:         envMap,
-			ConfigPath:     api.opts.ConfigPath,
-			AISystemPrompt: aiPrompt,
-			SecretResolver: secRes,
-			PluginMgr:      mgr,
-			Execute:        true,
-			Obs:            api.metrics,
-			Reg:            api.opts.ExecRegistry,
-			Pools:          api.pgPools,
-			Cache:          api.sshCache,
-		}
-
-		ch := make(chan engine.HostExecResult, cueExecChannelCap)
-		go func() {
-			defer close(ch)
-			_ = engine.StreamCueRecipeSteps(ctx, runParams, ch)
-		}()
-		for res := range ch {
+		// Inject the pre-created recorder so its ID is known synchronously above;
+		// the runner records results into it but does NOT close it (we do, in defer).
+		ch, rerr := api.runner.Execute(ctx, engine.RunRequest{
+			Recipe:           recipe,
+			RecipeSourcePath: recipePath,
+			RecipeDir:        filepath.Dir(recipePath),
+			Records:          searchOut.Records,
+			SSHUser:          sshUser,
+			Env:              envMap,
+			AISystemPrompt:   aiPrompt,
+			Recorder:         rec,
+		})
+		if rerr != nil {
 			if rec != nil {
-				rec.RecordHostExecResult(res)
+				rec.RecordError(rerr)
 			}
+			return
+		}
+		for range ch { //nolint:revive // drain results; the runner records them into rec internally
 		}
 	})
 	zap.L().Debug("webhook stage", zap.String("stage", "enqueue"), zap.Duration("dur", time.Since(t)))
@@ -216,7 +204,7 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt string, pluginMgr *plugins.Manager) {
+func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt string, _ *plugins.Manager) {
 	if scopedKey != "" {
 		defer api.webhookDedupCache.Delete(scopedKey)
 	}
@@ -233,66 +221,33 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	secRes, _ := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), pluginMgr)
-	runParams := engine.CueRecipeRunParams{
-		Recipe:         recipe,
-		RecipeDir:      filepath.Dir(recipePath),
-		Records:        searchOut.Records,
-		SSHUser:        sshUser,
-		CLIEnv:         envMap,
-		ConfigPath:     api.opts.ConfigPath,
-		AISystemPrompt: aiPrompt,
-		SecretResolver: secRes,
-		PluginMgr:      pluginMgr,
-		Execute:        true,
-		Obs:            api.metrics,
-		Reg:            api.opts.ExecRegistry,
-		Pools:          api.pgPools,
-		Cache:          api.sshCache,
+	ch, err := api.runner.Execute(r.Context(), engine.RunRequest{
+		Recipe:           recipe,
+		RecipeSourcePath: recipePath,
+		RecipeDir:        filepath.Dir(recipePath),
+		Records:          searchOut.Records,
+		SSHUser:          sshUser,
+		Env:              envMap,
+		AISystemPrompt:   aiPrompt,
+		RecordSession:    strings.TrimSpace(api.opts.RecordDir) != "",
+		RecordLabel:      "web-webhook-" + webhookName,
+	})
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
 	}
 
-	var rec *engine.SessionRecorder
-	if strings.TrimSpace(api.opts.RecordDir) != "" {
-		rec, err = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-webhook-"+webhookName, sshUser, len(searchOut.Records))
-		if err != nil {
-			httpError(w, err, http.StatusInternalServerError)
-			return
-		}
-		hash, _ := recipe.HashJSON()
-		rec.RecordRecipeMeta(engine.RecipeMeta{
-			RecipePath:        recipePath,
-			HostCount:         len(searchOut.Records),
-			RecipeContentHash: hash,
-			StartedAt:         time.Now().UTC(),
-			Hosts:             engine.HostsForRecipeMeta(searchOut.Records, maxWebExecRecords),
-		})
-	}
-	defer func() {
-		if rec != nil {
-			_ = rec.Close()
-		}
-	}()
-
-	ch := make(chan engine.HostExecResult, cueExecChannelCap)
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(ch)
-		errCh <- engine.StreamCueRecipeSteps(r.Context(), runParams, ch)
-	}()
-
-	var results []engine.HostExecResult
+	results := make([]engine.HostExecResult, 0, len(searchOut.Records))
+	var runFailed bool
 	for res := range ch {
-		if rec != nil {
-			rec.RecordHostExecResult(res)
+		if res.Provider == "engine" && res.Name == "recipe-run" && !res.Success {
+			runFailed = true
+			continue // synthetic run-failure marker; not a host result
 		}
 		results = append(results, res)
 	}
-
-	if streamErr := <-errCh; streamErr != nil {
-		if rec != nil {
-			rec.RecordError(streamErr)
-		}
-		httpError(w, streamErr, http.StatusInternalServerError)
+	if runFailed {
+		httpError(w, fmt.Errorf("recipe execution failed"), http.StatusInternalServerError)
 		return
 	}
 
