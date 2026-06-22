@@ -37,10 +37,14 @@ type RecipesAPI struct {
 	sshCache              *engine.ClientCache
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
+	runner                *engine.RecipeRunner
 
 	webhookDedupCache *ttlcache.Cache[string, string]
 	webhookDedupMu    sync.Mutex
 }
+
+// *pluginCache must satisfy engine.PluginProvider so the runner can borrow it.
+var _ engine.PluginProvider = (*pluginCache)(nil)
 
 // NewRecipesAPI creates a new isolated router and handler set for Recipes.
 func NewRecipesAPI(
@@ -60,7 +64,7 @@ func NewRecipesAPI(
 	)
 	go dedupCache.Start()
 
-	return &RecipesAPI{
+	api := &RecipesAPI{
 		opts:                  opts,
 		metrics:               metrics,
 		webhookQueue:          webhookQueue,
@@ -72,6 +76,17 @@ func NewRecipesAPI(
 		recipeGraphCache:      graphCache,
 		webhookDedupCache:     dedupCache,
 	}
+	api.runner = engine.NewRecipeRunner(engine.RunnerOptions{
+		ConfigPath:   opts.ConfigPath,
+		Config:       opts.Config,
+		ExecRegistry: opts.ExecRegistry,
+		Metrics:      metrics,
+		Pools:        pgPools,
+		Cache:        sshCache,
+		Plugins:      plugins,
+		RecordDir:    opts.RecordDir,
+	})
+	return api
 }
 
 // Routes returns a chi.Router with all standard recipe endpoints mounted.
