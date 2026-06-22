@@ -164,7 +164,7 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 
 		// Inject the pre-created recorder so its ID is known synchronously above;
 		// the runner records results into it but does NOT close it (we do, in defer).
-		ch, rerr := api.runner.Execute(ctx, engine.RunRequest{
+		if rerr := api.runner.ExecuteAndWait(ctx, engine.RunRequest{
 			Recipe:           recipe,
 			RecipeSourcePath: recipePath,
 			RecipeDir:        filepath.Dir(recipePath),
@@ -173,14 +173,8 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 			Env:              envMap,
 			AISystemPrompt:   aiPrompt,
 			Recorder:         rec,
-		})
-		if rerr != nil {
-			if rec != nil {
-				rec.RecordError(rerr)
-			}
-			return
-		}
-		for range ch { //nolint:revive // drain results; the runner records them into rec internally
+		}); rerr != nil && rec != nil {
+			rec.RecordError(rerr)
 		}
 	})
 	zap.L().Debug("webhook stage", zap.String("stage", "enqueue"), zap.Duration("dur", time.Since(t)))

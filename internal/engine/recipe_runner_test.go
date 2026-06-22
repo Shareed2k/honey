@@ -116,3 +116,36 @@ func TestRecipeRunner_Execute_releasesPluginAfterChannelDrains(t *testing.T) {
 	require.NotEmpty(t, got, "a run with no hosts emits a synthetic failed result")
 	require.False(t, got[len(got)-1].Success)
 }
+
+func TestRecipeRunner_ExecuteAndWait_surfacesRunError(t *testing.T) {
+	fp := &fakePluginProvider{}
+	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+
+	// No records → run fails; ExecuteAndWait drains and returns the run error.
+	err := r.ExecuteAndWait(context.Background(), RunRequest{
+		Recipe:  parseTestRecipe(t, dryRunRecipe),
+		Records: nil,
+	})
+	require.Error(t, err)
+	require.Equal(t, 1, fp.released, "plugin released after the run drains")
+}
+
+func TestRecipeRunner_ExecuteAndWait_preflightError(t *testing.T) {
+	fp := &fakePluginProvider{}
+	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+
+	const recipeWithPrompt = `
+recipe: {
+	name: "needs-prompt"
+	type: "linear"
+	defaults: prompts: { TARGET: { required: true } }
+	steps: [ { host: "*", command: "echo $TARGET" } ]
+}
+`
+	err := r.ExecuteAndWait(context.Background(), RunRequest{
+		Recipe: parseTestRecipe(t, recipeWithPrompt),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "TARGET")
+	require.Equal(t, 1, fp.released)
+}
