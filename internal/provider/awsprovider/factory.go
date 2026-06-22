@@ -14,7 +14,9 @@ import (
 const overrideKey = "aws"
 
 func awsOverride(overrides searchrun.ProviderOverrides) (o config.AWSBackend) {
-	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	if len(overrides[overrideKey]) > 0 {
+		_ = json.Unmarshal(overrides[overrideKey], &o) // overrides are optional
+	}
 	return o
 }
 

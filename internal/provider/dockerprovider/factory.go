@@ -23,7 +23,9 @@ type ConfigProvider interface {
 const overrideKey = "docker"
 
 func dockerOverride(overrides searchrun.ProviderOverrides) (o config.DockerBackend) {
-	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	if len(overrides[overrideKey]) > 0 {
+		_ = json.Unmarshal(overrides[overrideKey], &o) // overrides are optional
+	}
 	return o
 }
 

@@ -24,7 +24,9 @@ type ConfigProvider interface {
 const overrideKey = "truenas"
 
 func truenasOverride(overrides searchrun.ProviderOverrides) (o config.TrueNASBackend) {
-	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	if len(overrides[overrideKey]) > 0 {
+		_ = json.Unmarshal(overrides[overrideKey], &o) // overrides are optional
+	}
 	return o
 }
 

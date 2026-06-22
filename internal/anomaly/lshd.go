@@ -87,7 +87,7 @@ func (d *lshdDetector) computeSimHash(tokens []string) uint64 {
 	for _, t := range tokens {
 		weight := d.computeWeight(t)
 		h := fnv.New64a()
-		h.Write([]byte(t))
+		_, _ = h.Write([]byte(t)) // hash.Hash.Write never returns an error
 		hVal := h.Sum64()
 
 		for i := 0; i < 64; i++ {

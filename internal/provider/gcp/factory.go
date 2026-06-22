@@ -22,7 +22,9 @@ type ConfigProvider interface {
 const overrideKey = "gcp"
 
 func gcpOverride(overrides searchrun.ProviderOverrides) (o config.GCPBackend) {
-	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	if len(overrides[overrideKey]) > 0 {
+		_ = json.Unmarshal(overrides[overrideKey], &o) // overrides are optional
+	}
 	return o
 }
 
