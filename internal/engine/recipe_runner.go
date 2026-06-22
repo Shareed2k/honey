@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -75,21 +76,32 @@ type RunRequest struct {
 	Recorder *SessionRecorder
 }
 
-// DryRun validates prompts and renders the recipe plan text. When RecordSession
-// is set (and no recorder is injected), it records the plan into a fresh
-// recording. The borrowed plugin manager is always released before returning.
-func (r *RecipeRunner) DryRun(_ context.Context, req RunRequest) (string, error) {
-	_, release := r.opts.Plugins.Borrow()
+// DryRun validates prompts and produces the recipe plan via the executor-based
+// dry-run (each step's ExecuteDryRun), matching what a live run would attempt.
+// When RecordSession is set (and no recorder is injected), it records the plan
+// into a fresh recording. The borrowed plugin manager is always released before
+// returning.
+func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, error) {
+	mgr, release := r.opts.Plugins.Borrow()
 	defer release()
 
-	if _, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env); err != nil {
-		return "", err
-	}
-
-	plan, _, err := cuetry.RenderDryRunPlan(req.Recipe)
+	validatedEnv, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env)
 	if err != nil {
 		return "", err
 	}
+	req.Env = validatedEnv
+
+	params, err := r.buildRunParams(req, mgr)
+	if err != nil {
+		return "", err
+	}
+	params.Execute = false // dry-run: render the plan, do not run steps
+
+	var buf bytes.Buffer
+	if runErr := RunCueRecipeSteps(ctx, &buf, params, nil); runErr != nil {
+		return "", runErr
+	}
+	plan := buf.String()
 
 	rec, ownRec, err := r.acquireRecorder(req)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/plugins"
 )
 
@@ -44,11 +45,15 @@ func TestRecipeRunner_DryRun_returnsPlanAndReleasesPlugin(t *testing.T) {
 
 	plan, err := r.DryRun(context.Background(), RunRequest{
 		Recipe:  parseTestRecipe(t, dryRunRecipe),
-		Records: nil,
+		Records: []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}},
 		Env:     nil,
 	})
 	require.NoError(t, err)
 	require.Contains(t, plan, "echo hello")
+	// Executor-based dry-run emits the trailing notice; static RenderDryRunPlan
+	// does not. Asserting it locks DryRun to the executor path (matches the old
+	// handleCueExec behavior consumed by clients).
+	require.Contains(t, plan, "Dry-run only")
 	require.Equal(t, 1, fp.released, "borrowed plugin manager must be released")
 }
 
