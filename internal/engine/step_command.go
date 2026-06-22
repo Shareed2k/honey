@@ -43,7 +43,7 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 	kvTunnel := cuetry.KVTunnelEnabled(step, run.Params.Recipe.Defaults)
 
 	cmdFunc := func(r hosts.Record, kv map[string]string) string {
-		env, err := cuetry.EffectiveEnvForRunEx(ctx, true, run.Params.SecretResolver, b, run.Params.Recipe.Defaults, run.Params.CLIEnv, &r, CueEnvRunOpts(&run.Params.Recipe, run.OutputStore, run.OutputCapture, KvReaderFromCoordinator(run.RecipeKV), false))
+		env, err := run.StepEnv(ctx, b, &r, true, false)
 		if err != nil {
 			return fmt.Sprintf("echo 'env err: %s'", err.Error())
 		}
@@ -231,7 +231,7 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 	}
 
 	cmdFunc := func(r hosts.Record, kv map[string]string) string {
-		env, err := cuetry.EffectiveEnvForRunEx(ctx, true, run.Params.SecretResolver, b, run.Params.Recipe.Defaults, run.Params.CLIEnv, &r, CueEnvRunOpts(&run.Params.Recipe, run.OutputStore, run.OutputCapture, KvReaderFromCoordinator(run.RecipeKV), false))
+		env, err := run.StepEnv(ctx, b, &r, true, false)
 		if err != nil {
 			return fmt.Sprintf("echo 'env err: %s'", err.Error())
 		}
