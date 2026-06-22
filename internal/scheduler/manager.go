@@ -289,16 +289,12 @@ func (m *Manager) executeSchedule(
 
 	// The runner owns the plugin and recorder lifecycle for the whole run.
 	run := func() {
-		ch, rerr := m.runner.Execute(runCtx, req)
-		if rerr != nil {
-			zap.L().Error("scheduler: recipe execution failed to start",
+		if rerr := m.runner.ExecuteAndWait(runCtx, req); rerr != nil {
+			zap.L().Error("scheduler: recipe execution failed",
 				zap.String("app", appName),
 				zap.String("schedule", scheduleName),
 				zap.Error(rerr),
 			)
-			return
-		}
-		for range ch { //nolint:revive // drain results; the runner records them internally
 		}
 	}
 

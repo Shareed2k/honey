@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -248,4 +249,22 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 	}()
 
 	return ch, nil
+}
+
+// ExecuteAndWait runs the recipe to completion and discards the streamed host
+// results — for callers that only need the run's side effects (session
+// recording) and not the per-host stream. Pre-flight errors are returned as-is;
+// a run failure surfaces as a non-nil error.
+func (r *RecipeRunner) ExecuteAndWait(ctx context.Context, req RunRequest) error {
+	ch, err := r.Execute(ctx, req)
+	if err != nil {
+		return err
+	}
+	var runErr error
+	for res := range ch {
+		if res.Provider == "engine" && res.Name == "recipe-run" && !res.Success {
+			runErr = fmt.Errorf("recipe run failed: %s", res.ErrMsg)
+		}
+	}
+	return runErr
 }
