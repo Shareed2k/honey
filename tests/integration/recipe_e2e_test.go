@@ -844,3 +844,199 @@ recipe: {
 	assert.True(t, results[0].Success, "build failed: %s", results[0].ErrMsg)
 	assert.True(t, results[1].Success, "push failed: %s", results[1].ErrMsg)
 }
+
+// ── K8s action coverage (delete, scale, rollout_restart, wait, exec, create_job) ──
+
+// k8sTestRecord starts k3s, writes its kubeconfig to a temp file, and returns a
+// record wired with Meta["kubeconfig"] (the path newK8sClients actually reads).
+func k8sTestRecord(t *testing.T) hosts.Record {
+	t.Helper()
+	kcPath := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, os.WriteFile(kcPath, startK3s(t), 0o600))
+	return hosts.Record{
+		Provider:  "test",
+		Name:      "k8s-test",
+		PrimaryIP: "127.0.0.1",
+		Meta:      map[string]string{"kubeconfig": kcPath},
+	}
+}
+
+// k8sDeploymentManifest returns a minimal busybox Deployment manifest (column-0
+// YAML, suitable for embedding in a CUE triple-quoted string).
+func k8sDeploymentManifest(name string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %s
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: %s
+  template:
+    metadata:
+      labels:
+        app: %s
+    spec:
+      containers:
+        - name: c
+          image: busybox:1.36
+          command: ["sleep", "3600"]`, name, name, name)
+}
+
+func TestRecipeE2E_K8sDelete(t *testing.T) {
+	rec := k8sTestRecord(t)
+	reg := &testRegistry{}
+
+	cue := `
+recipe: {
+	name: "e2e-k8s-delete"
+	type: "linear"
+	steps: [
+		{ host: "*", k8s: { apply: { manifest: """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e2e-del
+  namespace: default
+data:
+  key: value
+""" } } },
+		{ host: "*", k8s: { delete: { resource: "configmap/e2e-del" } } },
+	]
+}
+`
+	results := runRecipeE2E(t, cue, rec, reg, 120*time.Second)
+	require.Len(t, results, 2)
+	assert.True(t, results[0].Success, "apply failed: %s", results[0].ErrMsg)
+	assert.True(t, results[1].Success, "delete failed: %s", results[1].ErrMsg)
+}
+
+func TestRecipeE2E_K8sScale(t *testing.T) {
+	rec := k8sTestRecord(t)
+	reg := &testRegistry{}
+
+	cue := fmt.Sprintf(`
+recipe: {
+	name: "e2e-k8s-scale"
+	type: "linear"
+	steps: [
+		{ host: "*", k8s: { apply: { manifest: """
+%s
+""" } } },
+		{ host: "*", k8s: { scale: { resource: "deployment/e2e-scale", replicas: 2 } } },
+	]
+}
+`, k8sDeploymentManifest("e2e-scale"))
+
+	results := runRecipeE2E(t, cue, rec, reg, 120*time.Second)
+	require.Len(t, results, 2)
+	assert.True(t, results[0].Success, "apply failed: %s", results[0].ErrMsg)
+	assert.True(t, results[1].Success, "scale failed: %s", results[1].ErrMsg)
+}
+
+func TestRecipeE2E_K8sRolloutRestart(t *testing.T) {
+	rec := k8sTestRecord(t)
+	reg := &testRegistry{}
+
+	cue := fmt.Sprintf(`
+recipe: {
+	name: "e2e-k8s-rollout-restart"
+	type: "linear"
+	steps: [
+		{ host: "*", k8s: { apply: { manifest: """
+%s
+""" } } },
+		{ host: "*", k8s: { rollout_restart: { resource: "deployment/e2e-rr", wait: false } } },
+	]
+}
+`, k8sDeploymentManifest("e2e-rr"))
+
+	results := runRecipeE2E(t, cue, rec, reg, 120*time.Second)
+	require.Len(t, results, 2)
+	assert.True(t, results[0].Success, "apply failed: %s", results[0].ErrMsg)
+	assert.True(t, results[1].Success, "rollout_restart failed: %s", results[1].ErrMsg)
+}
+
+func TestRecipeE2E_K8sWait(t *testing.T) {
+	rec := k8sTestRecord(t)
+	reg := &testRegistry{}
+
+	cue := fmt.Sprintf(`
+recipe: {
+	name: "e2e-k8s-wait"
+	type: "linear"
+	steps: [
+		{ host: "*", k8s: { apply: { manifest: """
+%s
+""" } } },
+		{ host: "*", k8s: { wait: { resource: "deployment/e2e-wait", "for": "condition=Available", timeout: "90s" } } },
+	]
+}
+`, k8sDeploymentManifest("e2e-wait"))
+
+	results := runRecipeE2E(t, cue, rec, reg, 150*time.Second)
+	require.Len(t, results, 2)
+	assert.True(t, results[0].Success, "apply failed: %s", results[0].ErrMsg)
+	assert.True(t, results[1].Success, "wait failed: %s", results[1].ErrMsg)
+}
+
+func TestRecipeE2E_K8sExec(t *testing.T) {
+	rec := k8sTestRecord(t)
+	reg := &testRegistry{}
+
+	cue := `
+recipe: {
+	name: "e2e-k8s-exec"
+	type: "linear"
+	steps: [
+		{ host: "*", k8s: { apply: { manifest: """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-pod
+  namespace: default
+spec:
+  containers:
+    - name: c
+      image: busybox:1.36
+      command: ["sleep", "3600"]
+""" } } },
+		{ host: "*", k8s: { wait: { resource: "pod/e2e-pod", "for": "condition=Ready", timeout: "90s" } } },
+		{ host: "*", k8s: { exec: { pod: "e2e-pod", command: ["echo", "exec-ok"] } } },
+	]
+}
+`
+	results := runRecipeE2E(t, cue, rec, reg, 150*time.Second)
+	require.Len(t, results, 3)
+	assert.True(t, results[0].Success, "apply failed: %s", results[0].ErrMsg)
+	assert.True(t, results[1].Success, "wait failed: %s", results[1].ErrMsg)
+	assert.True(t, results[2].Success, "exec failed: %s", results[2].ErrMsg)
+	assert.Contains(t, results[2].Output, "exec-ok")
+}
+
+func TestRecipeE2E_K8sCreateJob(t *testing.T) {
+	rec := k8sTestRecord(t)
+	reg := &testRegistry{}
+
+	cue := `
+recipe: {
+	name: "e2e-k8s-create-job"
+	type: "linear"
+	steps: [
+		{ host: "*", k8s: { create_job: {
+			name: "e2e-job"
+			image: "busybox:1.36"
+			command: ["sh", "-c", "echo job-done"]
+			restart_policy: "Never"
+			wait: true
+			ttl_seconds: 120
+		} } },
+	]
+}
+`
+	results := runRecipeE2E(t, cue, rec, reg, 150*time.Second)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Success, "create_job failed: %s", results[0].ErrMsg)
+}
