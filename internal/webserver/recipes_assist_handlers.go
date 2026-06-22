@@ -1,7 +1,6 @@
 package webserver
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -166,37 +165,20 @@ func (api *RecipesAPI) handleRecipesAssist(w http.ResponseWriter, r *http.Reques
 	} else {
 		if len(jobs) > 0 {
 			mergeK8sDebugImageFromRecipe(recipe, jobs)
-			user := api.sshUser(body.SSHUser)
-			recipeDir := filepath.Dir(cp)
-			var buf bytes.Buffer
-			aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
-			secRes, resErr := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(api.opts.Config), pluginMgr)
-			if resErr != nil {
-				planNote = "secret resolver: " + resErr.Error()
+			plan, runErr := api.runner.DryRun(r.Context(), engine.RunRequest{
+				Recipe:           recipe,
+				RecipeSourcePath: cp,
+				RecipeDir:        filepath.Dir(cp),
+				Records:          jobs,
+				SSHUser:          api.sshUser(body.SSHUser),
+				AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath),
+			})
+			if runErr != nil {
+				planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
 			} else {
-				runErr := engine.RunCueRecipeSteps(r.Context(), &buf, engine.CueRecipeRunParams{
-					Recipe:         recipe,
-					RecipeDir:      recipeDir,
-					Records:        jobs,
-					SSHUser:        user,
-					ConfigPath:     api.opts.ConfigPath,
-					AISystemPrompt: aiPrompt,
-					SecretResolver: secRes,
-					PluginMgr:      pluginMgr,
-					Execute:        false,
-					Obs:            api.metrics,
-					Reg:            api.opts.ExecRegistry,
-					Pools:          api.pgPools,
-					Cache:          api.sshCache,
-				}, nil)
-				plan := buf.String()
-				if runErr != nil {
-					planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
-				} else {
-					planNote = clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes)
-					if strings.TrimSpace(planNote) == "" {
-						planNote = "(dry-run produced empty plan)"
-					}
+				planNote = clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes)
+				if strings.TrimSpace(planNote) == "" {
+					planNote = "(dry-run produced empty plan)"
 				}
 			}
 		} else {
