@@ -1,0 +1,118 @@
+package engine
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/plugins"
+)
+
+// fakePluginProvider satisfies PluginProvider without opening real plugins.
+type fakePluginProvider struct {
+	released int
+}
+
+func (f *fakePluginProvider) Borrow() (*plugins.Manager, func()) {
+	return nil, func() { f.released++ }
+}
+
+// parseTestRecipe is a small helper to parse inline CUE for tests.
+func parseTestRecipe(t *testing.T, content string) cuetry.Recipe {
+	t.Helper()
+	rec, err := cuetry.ParseRemoteRecipe([]byte(content), nil)
+	require.NoError(t, err)
+	return rec
+}
+
+const dryRunRecipe = `
+recipe: {
+	name: "dry-test"
+	type: "linear"
+	steps: [
+		{ host: "*", command: "echo hello" },
+	]
+}
+`
+
+func TestRecipeRunner_DryRun_returnsPlanAndReleasesPlugin(t *testing.T) {
+	fp := &fakePluginProvider{}
+	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+
+	plan, err := r.DryRun(context.Background(), RunRequest{
+		Recipe:  parseTestRecipe(t, dryRunRecipe),
+		Records: nil,
+		Env:     nil,
+	})
+	require.NoError(t, err)
+	require.Contains(t, plan, "echo hello")
+	require.Equal(t, 1, fp.released, "borrowed plugin manager must be released")
+}
+
+func TestRecipeRunner_DryRun_missingRequiredPromptErrors(t *testing.T) {
+	fp := &fakePluginProvider{}
+	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+
+	const recipeWithPrompt = `
+recipe: {
+	name: "needs-prompt"
+	type: "linear"
+	defaults: prompts: { TARGET: { required: true } }
+	steps: [ { host: "*", command: "echo $TARGET" } ]
+}
+`
+	_, err := r.DryRun(context.Background(), RunRequest{
+		Recipe: parseTestRecipe(t, recipeWithPrompt),
+		Env:    nil,
+	})
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "TARGET"), "error should name the missing prompt")
+	require.Equal(t, 1, fp.released, "plugin must be released even on validation error")
+}
+
+func TestRecipeRunner_Execute_missingRequiredPromptErrorsSync(t *testing.T) {
+	fp := &fakePluginProvider{}
+	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+
+	const recipeWithPrompt = `
+recipe: {
+	name: "needs-prompt"
+	type: "linear"
+	defaults: prompts: { TARGET: { required: true } }
+	steps: [ { host: "*", command: "echo $TARGET" } ]
+}
+`
+	ch, err := r.Execute(context.Background(), RunRequest{
+		Recipe: parseTestRecipe(t, recipeWithPrompt),
+		Env:    nil,
+	})
+	require.Error(t, err, "missing required prompt is a synchronous pre-flight error")
+	require.Nil(t, ch)
+	require.Equal(t, 1, fp.released, "plugin must be released on pre-flight error")
+}
+
+func TestRecipeRunner_Execute_releasesPluginAfterChannelDrains(t *testing.T) {
+	fp := &fakePluginProvider{}
+	// No ExecRegistry/records → StreamCueRecipeSteps returns the "no hosts" error,
+	// which the runner surfaces as a synthetic failed result, then closes the channel.
+	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+
+	ch, err := r.Execute(context.Background(), RunRequest{
+		Recipe:  parseTestRecipe(t, dryRunRecipe),
+		Records: nil,
+	})
+	require.NoError(t, err, "pre-flight (prompt+secret) succeeded; run errors arrive on the channel")
+	require.NotNil(t, ch)
+
+	var got []HostExecResult
+	for res := range ch {
+		got = append(got, res)
+	}
+	// Channel is closed → plugin released exactly once.
+	require.Equal(t, 1, fp.released)
+	require.NotEmpty(t, got, "a run with no hosts emits a synthetic failed result")
+	require.False(t, got[len(got)-1].Success)
+}
