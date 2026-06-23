@@ -55,6 +55,33 @@ deny_reason := "prod tier blocked" if data.inventory.vars.tier == "prod"
 	}
 }
 
+func TestEnforcer_DecisionAndRequires(t *testing.T) {
+	src := `package honey
+import rego.v1
+default allow := false
+default deny_reason := "needs step-up"
+decision := "require_biometric"
+requires := ["explicit_approval", "biometric"]
+`
+	enf, err := NewFromSource(context.Background(), "d.rego", src)
+	if err != nil {
+		t.Fatalf("NewFromSource: %v", err)
+	}
+	d, err := enf.Evaluate(context.Background(), map[string]any{"actor": "alice"})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if d.Allow {
+		t.Fatal("expected deny")
+	}
+	if d.Decision != "require_biometric" {
+		t.Fatalf("decision = %q", d.Decision)
+	}
+	if len(d.Requires) != 2 || d.Requires[0] != "explicit_approval" || d.Requires[1] != "biometric" {
+		t.Fatalf("requires = %v", d.Requires)
+	}
+}
+
 func TestEnforcer_FromSourceDeny(t *testing.T) {
 	src := `package honey
 import rego.v1
