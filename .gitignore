@@ -5,7 +5,7 @@ website/.docusaurus/
 website/.npm-cache/
 website/.npm-tmp/
 
-docs/
+docs/*
 
 webui/node_modules/
 contrib/ansible/inventory_plugins/__pycache__
@@ -20,3 +20,4 @@ models
 runtime
 honey
 .env
+.claude/*
