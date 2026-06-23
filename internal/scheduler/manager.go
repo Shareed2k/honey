@@ -22,6 +22,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/queue"
 	"github.com/shareed2k/honey/internal/safepath"
@@ -49,6 +50,7 @@ type Options struct {
 	Metrics        *metrics.Registry
 	Pools          *postgres.PoolManager
 	Cache          *engine.ClientCache // optional shared SSH client cache; nil = per-run cache
+	Enforcer       *policy.Enforcer    // optional OPA gate; nil = allow all
 }
 
 // Manager builds and runs all cron schedules derived from recipe apps.
@@ -77,6 +79,7 @@ func New(opts Options) (*Manager, error) {
 		Cache:        opts.Cache,
 		Plugins:      openClosePlugins{cfg: opts.Config},
 		RecordDir:    opts.RecordDir,
+		Enforcer:     opts.Enforcer,
 	})
 	m.register()
 	return m, nil

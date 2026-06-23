@@ -85,6 +85,7 @@ func NewRecipesAPI(
 		Cache:        sshCache,
 		Plugins:      plugins,
 		RecordDir:    opts.RecordDir,
+		Enforcer:     opts.Enforcer,
 	})
 	return api
 }
