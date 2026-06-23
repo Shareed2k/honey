@@ -188,3 +188,14 @@
 {"ts":"2026-06-23T07:26:36.828Z","hook":"iteration-context","action":"skip","iterationCount":5,"reason":"no-tsv"}
 {"ts":"2026-06-23T07:27:12.937Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
 {"ts":"2026-06-23T07:50:56.038Z","hook":"iteration-context","action":"skip","iterationCount":6}
+{"ts":"2026-06-23T08:56:02.797Z","hook":"iteration-context","action":"skip","iterationCount":7}
+{"ts":"2026-06-23T08:56:31.584Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
+{"ts":"2026-06-23T09:05:34.533Z","hook":"iteration-context","action":"skip","iterationCount":8}
+{"ts":"2026-06-23T09:06:14.443Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
+{"ts":"2026-06-23T09:06:39.945Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
+{"ts":"2026-06-23T09:07:07.351Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
+{"ts":"2026-06-23T09:46:21.199Z","hook":"iteration-context","action":"skip","iterationCount":9}
+{"ts":"2026-06-23T09:54:54.593Z","hook":"iteration-context","action":"skip","iterationCount":10,"reason":"no-tsv"}
+{"ts":"2026-06-23T09:54:54.600Z","hook":"dev-rules-reminder","action":"skip","reason":"iteration-context-fired"}
+{"ts":"2026-06-23T09:58:29.534Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
+{"ts":"2026-06-23T10:08:15.518Z","hook":"scout-block","action":"block","tool":"Bash","path":"build/test","matched":"build/test"}
