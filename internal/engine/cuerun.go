@@ -15,6 +15,7 @@ type CueRecipeRunParams struct {
 	RecipeDir      string
 	Records        []hosts.Record
 	SSHUser        string
+	ActorID        string // caller identity for OPA policy input; "" resolves to "api"
 	CLIEnv         map[string]string
 	ConfigPath     string
 	AISystemPrompt string

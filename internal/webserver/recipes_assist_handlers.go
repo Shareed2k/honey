@@ -171,6 +171,7 @@ func (api *RecipesAPI) handleRecipesAssist(w http.ResponseWriter, r *http.Reques
 				RecipeDir:        filepath.Dir(cp),
 				Records:          jobs,
 				SSHUser:          api.sshUser(body.SSHUser),
+				ActorID:          actorFromCtx(r.Context()),
 				AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath),
 			})
 			if runErr != nil {

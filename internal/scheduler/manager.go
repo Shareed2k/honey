@@ -277,6 +277,7 @@ func (m *Manager) executeSchedule(
 		RecipeDir:        filepath.Dir(recipePath),
 		Records:          searchOut.Records,
 		SSHUser:          sshUser,
+		ActorID:          "cron:" + appName,
 		Env:              cliEnv,
 		AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath),
 		RecordSession:    strings.TrimSpace(m.opts.RecordDir) != "",

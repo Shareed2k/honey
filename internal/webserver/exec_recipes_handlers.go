@@ -651,6 +651,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		RecipeDir:        recipeDir,
 		Records:          jobs,
 		SSHUser:          user,
+		ActorID:          actorFromCtx(r.Context()),
 		Env:              cliEnv,
 		AISystemPrompt:   aiPrompt,
 		RecordSession:    wantRec,
