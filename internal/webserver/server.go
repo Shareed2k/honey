@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/proxy"
 	"github.com/shareed2k/honey/internal/queue"
@@ -61,6 +63,9 @@ type Options struct {
 	// TrustedProxyNets lists peer networks allowed to assert caller identity via
 	// the X-Honey-User header. nil disables the trusted-header path.
 	TrustedProxyNets []*net.IPNet
+	// Enforcer, when non-nil, gates every authenticated API request through OPA.
+	// nil disables the API policy gate.
+	Enforcer *policy.Enforcer
 }
 
 // Server is the honey web UI HTTP server.
@@ -277,6 +282,24 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
 		r = r.WithContext(context.WithValue(r.Context(), ctxActorKey, actor))
+
+		if s.opts.Enforcer != nil {
+			d, err := s.opts.Enforcer.Evaluate(r.Context(), map[string]any{
+				"action": "api_request",
+				"actor":  actor,
+				"method": r.Method,
+				"path":   r.URL.Path,
+			})
+			if err != nil || !d.Allow {
+				reason := "forbidden by policy"
+				if d.DenyReason != "" {
+					reason = d.DenyReason
+				}
+				http.Error(w, `{"error":`+strconv.Quote(reason)+`}`, http.StatusForbidden)
+				return
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
