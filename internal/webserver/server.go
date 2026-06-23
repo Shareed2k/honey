@@ -31,6 +31,7 @@ import (
 	"github.com/shareed2k/honey/internal/scheduler"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
+	"github.com/shareed2k/honey/internal/webauthn"
 	"go.uber.org/zap"
 )
 
@@ -70,6 +71,9 @@ type Options struct {
 	// Approvals holds pending require_approval runs. When nil, NewServer creates a
 	// default in-memory store so the approval endpoints and recipe gate share one.
 	Approvals *approval.Store
+	// WebAuthn, when non-nil, enables passkey biometric step-up for
+	// require_biometric verdicts and the /api/v1/webauthn/* endpoints.
+	WebAuthn *webauthn.Manager
 }
 
 // Server is the honey web UI HTTP server.
@@ -182,6 +186,10 @@ func (s *Server) routes() error {
 		r.Get("/openapi.json", s.handleOpenAPIJSON)
 		r.Get("/approvals", s.handleListApprovals)
 		r.Post("/approvals/{id}", s.handleDecideApproval)
+		r.Post("/webauthn/register/begin", s.handleWebAuthnRegisterBegin)
+		r.Post("/webauthn/register/finish", s.handleWebAuthnRegisterFinish)
+		r.Post("/webauthn/assert/begin", s.handleWebAuthnAssertBegin)
+		r.Post("/webauthn/assert/finish", s.handleWebAuthnAssertFinish)
 		r.Get("/providers", s.handleProviders)
 		r.Get("/backends", s.handleBackends)
 		r.Get("/logs/default", s.handleLogsDefault)

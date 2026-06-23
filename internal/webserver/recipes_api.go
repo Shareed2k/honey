@@ -76,6 +76,10 @@ func NewRecipesAPI(
 		recipeGraphCache:      graphCache,
 		webhookDedupCache:     dedupCache,
 	}
+	var biometric engine.BiometricVerifier
+	if opts.WebAuthn != nil {
+		biometric = opts.WebAuthn
+	}
 	api.runner = engine.NewRecipeRunner(engine.RunnerOptions{
 		ConfigPath:   opts.ConfigPath,
 		Config:       opts.Config,
@@ -87,6 +91,7 @@ func NewRecipesAPI(
 		RecordDir:    opts.RecordDir,
 		Enforcer:     opts.Enforcer,
 		Approvals:    opts.Approvals,
+		Biometric:    biometric,
 	})
 	return api
 }

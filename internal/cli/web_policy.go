@@ -3,17 +3,20 @@ package cli
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/policy"
+	"github.com/shareed2k/honey/internal/webauthn"
 )
 
 // Environment variables that activate OPA authorization and actor identity.
@@ -21,6 +24,9 @@ const (
 	policyDirEnv      = "HONEY_POLICY_DIR"      // dir of .rego files; enables the OPA gates
 	jwtPublicKeyEnv   = "HONEY_JWT_PUBLIC_KEY"  // base64 Ed25519 public key; enables JWT identity
 	trustedProxiesEnv = "HONEY_TRUSTED_PROXIES" // CSV of CIDRs/IPs trusted to assert X-Honey-User
+	webauthnRPIDEnv   = "HONEY_WEBAUTHN_RPID"   // relying-party id; enables passkey biometric step-up
+	webauthnOriginEnv = "HONEY_WEBAUTHN_ORIGIN" // relying-party origin (e.g. https://honey.example)
+	webauthnSecretEnv = "HONEY_WEBAUTHN_SECRET" // #nosec G101 -- env var name, not a secret; HMAC secret for biometric tokens
 )
 
 // webAuthConfig holds the optional OPA + identity wiring resolved from the
@@ -30,6 +36,7 @@ type webAuthConfig struct {
 	enforcer    *policy.Enforcer
 	jwtPubKey   ed25519.PublicKey
 	trustedNets []*net.IPNet
+	webauthn    *webauthn.Manager
 }
 
 // resolveWebAuthConfig reads HONEY_POLICY_DIR, HONEY_JWT_PUBLIC_KEY, and
@@ -69,7 +76,33 @@ func resolveWebAuthConfig(ctx context.Context, file *config.File) (webAuthConfig
 		zap.L().Info("trusted-proxy identity header enabled", zap.Int("networks", len(nets)))
 	}
 
+	if rpID := strings.TrimSpace(os.Getenv(webauthnRPIDEnv)); rpID != "" {
+		mgr, err := buildWebAuthn(rpID)
+		if err != nil {
+			return cfg, fmt.Errorf("%s: %w", webauthnRPIDEnv, err)
+		}
+		cfg.webauthn = mgr
+		zap.L().Info("WebAuthn biometric step-up enabled", zap.String("rpid", rpID))
+	}
+
 	return cfg, nil
+}
+
+// buildWebAuthn constructs the passkey manager from env. The token secret falls
+// back to a random per-process value (tokens then don't survive a restart).
+func buildWebAuthn(rpID string) (*webauthn.Manager, error) {
+	origin := strings.TrimSpace(os.Getenv(webauthnOriginEnv))
+	if origin == "" {
+		origin = "https://" + rpID
+	}
+	secret := []byte(strings.TrimSpace(os.Getenv(webauthnSecretEnv)))
+	if len(secret) == 0 {
+		secret = make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return nil, err
+		}
+	}
+	return webauthn.New(rpID, origin, secret, 5*time.Minute)
 }
 
 // inventoryData converts a config's inventory into the OPA data document

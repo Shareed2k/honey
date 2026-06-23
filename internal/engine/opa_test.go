@@ -161,6 +161,42 @@ recipe: {
 	require.Empty(t, got[1].Analysis.Signals)
 }
 
+// --- Biometric admission gate (v2 Task 8) ---------------------------------
+
+type stubBiometric struct{ validToken string }
+
+func (s stubBiometric) VerifyToken(_, token string) bool { return token == s.validToken }
+
+func TestAdmitRecipe_RequireBiometric(t *testing.T) {
+	enf := mustPolicy(t, `package honey
+import rego.v1
+default allow := false
+default deny_reason := ""
+default decision := ""
+allow if { input.action == "recipe_execute"; input.execution.biometricVerified == true }
+decision := "require_biometric" if { input.action == "recipe_execute"; not input.execution.biometricVerified }
+deny_reason := "biometric required" if { input.action == "recipe_execute"; not input.execution.biometricVerified }`)
+
+	r := NewRecipeRunner(RunnerOptions{
+		Plugins:   &fakePluginProvider{},
+		Enforcer:  enf,
+		Biometric: stubBiometric{validToken: "good-token"},
+	})
+
+	// No token → denied.
+	err := r.admitRecipe(context.Background(), RunRequest{ActorID: "alice", RecipeSourcePath: "r.cue"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "biometric")
+
+	// Valid token → re-eval with biometricVerified=true → admitted.
+	err = r.admitRecipe(context.Background(), RunRequest{ActorID: "alice", RecipeSourcePath: "r.cue", BiometricToken: "good-token"})
+	require.NoError(t, err)
+
+	// Wrong token → denied.
+	err = r.admitRecipe(context.Background(), RunRequest{ActorID: "alice", RecipeSourcePath: "r.cue", BiometricToken: "bad"})
+	require.Error(t, err)
+}
+
 // --- Command risk gate ----------------------------------------------------
 
 func TestGateCommandRisk_BuiltinCritical(t *testing.T) {
