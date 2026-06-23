@@ -77,7 +77,7 @@ func writePolicy(t *testing.T, rego string) string {
 // newEnforcer builds a *policy.Enforcer from a rego string.
 func newEnforcer(t *testing.T, rego string) *policy.Enforcer {
 	t.Helper()
-	enf, err := policy.New(context.Background(), writePolicy(t, rego))
+	enf, err := policy.New(context.Background(), writePolicy(t, rego), nil)
 	if err != nil {
 		t.Fatalf("policy.New: %v", err)
 	}

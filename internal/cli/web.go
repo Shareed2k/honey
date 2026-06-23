@@ -83,7 +83,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		onReady = func() { _ = openBrowser(url) }
 	}
 
-	authCfg, err := resolveWebAuthConfig(context.Background())
+	authCfg, err := resolveWebAuthConfig(context.Background(), cfg)
 	if err != nil {
 		return fmt.Errorf("web auth config: %w", err)
 	}
