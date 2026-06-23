@@ -14,6 +14,8 @@ const sidebars = {
     'recordings',
     'web-ui',
     'inventory',
+    'authorization',
+    'command-risk',
     'cue-recipes',
     'plugins',
     'plugins-development',
