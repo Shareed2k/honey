@@ -44,6 +44,23 @@ recipe: {
 	return p
 }
 
+// writeCmdRecipeCustom writes a one-step recipe with an arbitrary command.
+func writeCmdRecipeCustom(t *testing.T, name, command string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, name+".cue")
+	content := fmt.Sprintf(`
+recipe: {
+	name: %q
+	steps: [
+		{ host: "*", command: %q },
+	]
+}
+`, name, command)
+	require.NoError(t, os.WriteFile(p, []byte(content), 0o600))
+	return p
+}
+
 // cueExecServer registers recipePath as an app (so it passes the recipe-path
 // allowlist) and boots a server with the supplied auth/policy options.
 func cueExecServer(t *testing.T, target sshTarget, recipePath string, opts webserver.Options) string {
