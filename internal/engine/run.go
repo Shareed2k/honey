@@ -219,6 +219,48 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 	return <-errCh
 }
 
+// filterTargetsByPolicy asks the OPA enforcer which hosts this actor may run
+// the step against, returning the allowed hosts and skip results for the denied
+// ones (so they remain visible in the run output). A nil enforcer admits every
+// host unchanged.
+func filterTargetsByPolicy(ctx context.Context, run *CueRun, kind string, targets []hosts.Record) ([]hosts.Record, []HostExecResult, error) {
+	if run.Params.Enforcer == nil {
+		return targets, nil, nil
+	}
+	actor := run.Params.ActorID
+	if actor == "" {
+		actor = "api"
+	}
+	var (
+		kept    []hosts.Record
+		skipped []HostExecResult
+	)
+	for _, t := range targets {
+		d, err := run.Params.Enforcer.Evaluate(ctx, map[string]any{
+			"action":    "step_execute",
+			"actor":     actor,
+			"step_kind": kind,
+			"host":      t.Name,
+			"host_meta": t.Meta,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("policy evaluation: %w", err)
+		}
+		if d.Allow {
+			kept = append(kept, t)
+			continue
+		}
+		sk := WhenSkippedResult(t)
+		reason := d.DenyReason
+		if reason == "" {
+			reason = "policy"
+		}
+		sk.Output = "(skipped: " + reason + ")"
+		skipped = append(skipped, sk)
+	}
+	return kept, skipped, nil
+}
+
 // CueGetLocalIsDirectory ...
 func CueGetLocalIsDirectory(localField, absResolved string) (bool, error) {
 	t := strings.TrimSpace(localField)
@@ -432,7 +474,18 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 	}
 	targets = CueApplyRecipeSSHDialOptions(run.Params.Recipe, RemoteOpts(step), targets)
 
+	// OPA host-list filtering: drop targets this actor may not run this step on.
+	targets, policySkipped, err := filterTargetsByPolicy(ctx, run, kind, targets)
+	if err != nil {
+		return nil, fmt.Errorf("step %d: %w", i, err)
+	}
+
 	if strings.TrimSpace(step.Base().Loop) != "" || step.Base().LoopFrom != nil {
+		for _, sk := range policySkipped {
+			res := sk
+			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
+			out <- res
+		}
 		return StreamCueLoopStep(ctx, run, i, step, targets, history, out)
 	}
 
@@ -444,6 +497,8 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 			return nil, fmt.Errorf("step %d: %w", i, err)
 		}
 	}
+	// Policy-denied hosts flow through the same skip-emit path as when-skips.
+	whenSkipped = append(policySkipped, whenSkipped...)
 
 	ch := make(chan HostExecResult, len(targets))
 	done := make(chan struct{})

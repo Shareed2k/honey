@@ -195,6 +195,7 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 		Reg:            r.opts.ExecRegistry,
 		Pools:          r.opts.Pools,
 		Cache:          r.opts.Cache,
+		Enforcer:       r.opts.Enforcer,
 	}, nil
 }
 

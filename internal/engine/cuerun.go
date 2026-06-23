@@ -6,6 +6,7 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
 )
 
@@ -26,7 +27,8 @@ type CueRecipeRunParams struct {
 	Reg            hostexec.Registry
 	Obs            metrics.Observer
 	Pools          *postgres.PoolManager
-	Cache          *ClientCache // optional shared cache; nil = create a fresh per-run cache
+	Cache          *ClientCache     // optional shared cache; nil = create a fresh per-run cache
+	Enforcer       *policy.Enforcer // optional OPA host-filter gate; nil = allow all
 }
 
 // CueRun ...
