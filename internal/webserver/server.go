@@ -18,6 +18,7 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/shareed2k/honey/internal/approval"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostapi"
@@ -66,6 +67,9 @@ type Options struct {
 	// Enforcer, when non-nil, gates every authenticated API request through OPA.
 	// nil disables the API policy gate.
 	Enforcer *policy.Enforcer
+	// Approvals holds pending require_approval runs. When nil, NewServer creates a
+	// default in-memory store so the approval endpoints and recipe gate share one.
+	Approvals *approval.Store
 }
 
 // Server is the honey web UI HTTP server.
@@ -107,6 +111,9 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	if opts.MaxUploadSize <= 0 {
 		opts.MaxUploadSize = 100 << 20
+	}
+	if opts.Approvals == nil {
+		opts.Approvals = approval.NewStore(24 * time.Hour)
 	}
 	if opts.ExecRegistry != nil {
 		opts.ExecRegistry.Reconfigure(opts.Config)
@@ -173,6 +180,8 @@ func (s *Server) routes() error {
 
 		r.Get("/meta", s.handleMeta)
 		r.Get("/openapi.json", s.handleOpenAPIJSON)
+		r.Get("/approvals", s.handleListApprovals)
+		r.Post("/approvals/{id}", s.handleDecideApproval)
 		r.Get("/providers", s.handleProviders)
 		r.Get("/backends", s.handleBackends)
 		r.Get("/logs/default", s.handleLogsDefault)

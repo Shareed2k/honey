@@ -3,6 +3,7 @@ package webserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,6 +79,7 @@ type CueExecRequest struct {
 	RecipeContent map[string]interface{} `json:"recipe_content,omitempty"`
 	Execute       bool                   `json:"execute"`
 	SSHUser       string                 `json:"ssh_user"`
+	ApprovalID    string                 `json:"approval_id,omitempty"`
 	Records       []hosts.Record         `json:"records"`
 	Env           []string               `json:"env,omitempty"`
 	RecordSession bool                   `json:"record_session"`
@@ -575,6 +577,22 @@ func (api *RecipesAPI) resolveCueExecRecipe(body CueExecRequest, records []hosts
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/cue-exec [post]
 // @Security BearerAuth
+// writeExecError maps a run error to an HTTP response: a pending-approval error
+// becomes 202 with the approval id; anything else is a 400.
+func writeExecError(w http.ResponseWriter, err error) {
+	if pending, ok := errors.AsType[*engine.ErrPendingApproval](err); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "pending_approval",
+			"id":     pending.ID,
+			"reason": pending.Reason,
+		})
+		return
+	}
+	httpError(w, err, http.StatusBadRequest)
+}
+
 func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -653,6 +671,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		Records:          jobs,
 		SSHUser:          user,
 		ActorID:          actorFromCtx(r.Context()),
+		ApprovalID:       body.ApprovalID,
 		Env:              cliEnv,
 		AISystemPrompt:   aiPrompt,
 		RecordSession:    wantRec,
@@ -691,7 +710,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		req.Recorder = rec
 		ch, err := api.runner.Execute(r.Context(), req)
 		if err != nil {
-			httpError(w, err, http.StatusBadRequest)
+			writeExecError(w, err)
 			return
 		}
 		if rec != nil {
@@ -707,7 +726,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	req.RecordLabel = "web-cue-exec"
 	ch, err := api.runner.Execute(r.Context(), req)
 	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
+		writeExecError(w, err)
 		return
 	}
 	results := make([]engine.HostExecResult, 0, len(jobs))
