@@ -13,6 +13,7 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
 )
 
@@ -41,7 +42,8 @@ type RunnerOptions struct {
 	Pools        *postgres.PoolManager
 	Cache        *ClientCache // optional shared SSH client cache; nil = per-run cache
 	Plugins      PluginProvider
-	RecordDir    string // "" disables session recording
+	RecordDir    string           // "" disables session recording
+	Enforcer     *policy.Enforcer // optional OPA admission gate; nil = allow all
 }
 
 // RecipeRunner owns the full recipe-execution lifecycle: prompt validation,
@@ -196,6 +198,44 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 	}, nil
 }
 
+// admitRecipe asks the OPA enforcer whether this actor may run this recipe, as
+// a pre-execution admission gate. A nil enforcer (OPA disabled) always admits.
+func (r *RecipeRunner) admitRecipe(ctx context.Context, req RunRequest) error {
+	if r.opts.Enforcer == nil {
+		return nil
+	}
+	actor := req.ActorID
+	if actor == "" {
+		actor = "api"
+	}
+	d, err := r.opts.Enforcer.Evaluate(ctx, map[string]any{
+		"action": "recipe_execute",
+		"actor":  actor,
+		"recipe": req.RecipeSourcePath,
+		"hosts":  hostNames(req.Records),
+	})
+	if err != nil {
+		return fmt.Errorf("policy evaluation: %w", err)
+	}
+	if !d.Allow {
+		reason := d.DenyReason
+		if reason == "" {
+			reason = "denied by policy"
+		}
+		return fmt.Errorf("recipe admission: %s", reason)
+	}
+	return nil
+}
+
+// hostNames extracts record names for policy input.
+func hostNames(records []hosts.Record) []string {
+	names := make([]string, len(records))
+	for i, rec := range records {
+		names[i] = rec.Name
+	}
+	return names
+}
+
 // Execute validates prompts, builds run params, and streams the recipe over its
 // target hosts. Pre-flight errors (prompt validation, secret resolver, recorder
 // creation) are returned synchronously. Once execution starts, run errors arrive
@@ -203,6 +243,10 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 // plugin-release and (when not injected) recorder-close lifecycle, completing
 // when the returned channel closes.
 func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan HostExecResult, error) {
+	if err := r.admitRecipe(ctx, req); err != nil {
+		return nil, err
+	}
+
 	mgr, release := r.opts.Plugins.Borrow()
 
 	validatedEnv, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env)
