@@ -170,7 +170,7 @@ func TestOPAE2E_Webhook_Admission(t *testing.T) {
 
 	t.Run("admission allows webhook run", func(t *testing.T) {
 		out := "/tmp/opa_webhook_allow.txt"
-		allowAll, err := policy.New(context.Background(), "") // embedded default = allow
+		allowAll, err := policy.New(context.Background(), "", nil) // embedded default = allow
 		require.NoError(t, err)
 		base := webhookOPAServer(t, target, out, allowAll)
 
