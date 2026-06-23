@@ -472,12 +472,22 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-// newTestServer boots a webserver.Server on a known free port and returns its base URL.
-// The server is shut down automatically via t.Cleanup.
+// newTestServer boots a webserver.Server on a free loopback port and returns its
+// base URL. The server is shut down automatically via t.Cleanup.
 func newTestServer(t *testing.T, opts webserver.Options) string {
 	t.Helper()
+	base, _ := newTestServerOn(t, opts, "127.0.0.1")
+	return base
+}
+
+// newTestServerOn boots a webserver.Server bound to bindHost on a free port and
+// returns its loopback base URL plus the chosen port. Bind to "0.0.0.0" when a
+// container (e.g. a reverse proxy) must reach the server via host.docker.internal;
+// the returned base URL always dials 127.0.0.1 for in-process test clients.
+func newTestServerOn(t *testing.T, opts webserver.Options, bindHost string) (string, int) {
+	t.Helper()
 	port := freePort(t)
-	opts.ListenAddr = fmt.Sprintf("127.0.0.1:%d", port)
+	opts.ListenAddr = fmt.Sprintf("%s:%d", bindHost, port)
 	if opts.Token == "" {
 		opts.Token = "test-token"
 	}
@@ -508,7 +518,64 @@ func newTestServer(t *testing.T, opts webserver.Options) string {
 		t.Fatal("server startup timeout")
 	}
 
-	return fmt.Sprintf("http://127.0.0.1:%d", port)
+	return fmt.Sprintf("http://127.0.0.1:%d", port), port
+}
+
+// startCaddy starts a Caddy reverse proxy in front of an in-process honey server
+// listening on the host at honeyPort. testcontainers HostAccessPorts forwards the
+// host port so Caddy reaches it at host.testcontainers.internal (works across
+// docker backends incl. colima). Caddy strips any client-supplied X-Honey-User and
+// re-derives it from X-Auth-User (so the proxy — not the client — is the identity
+// authority), passing Authorization through unchanged. Returns Caddy's base URL.
+func startCaddy(t *testing.T, honeyPort int) string {
+	t.Helper()
+	caddyfile := fmt.Sprintf(`{
+	admin off
+	auto_https off
+}
+:80 {
+	reverse_proxy %s:%d {
+		header_up X-Honey-User {http.request.header.X-Auth-User}
+	}
+}
+`, testcontainers.HostInternal, honeyPort)
+
+	dir := t.TempDir()
+	cfPath := filepath.Join(dir, "Caddyfile")
+	if err := os.WriteFile(cfPath, []byte(caddyfile), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatalf("write Caddyfile: %v", err)
+	}
+
+	ctx := context.Background()
+	req := testcontainers.ContainerRequest{
+		Image:           "caddy:2-alpine",
+		ExposedPorts:    []string{"80/tcp"},
+		HostAccessPorts: []int{honeyPort},
+		Files: []testcontainers.ContainerFile{{
+			HostFilePath:      cfPath,
+			ContainerFilePath: "/etc/caddy/Caddyfile",
+			FileMode:          0o644,
+		}},
+		WaitingFor: wait.ForListeningPort("80/tcp").WithStartupTimeout(60 * time.Second),
+	}
+	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
+	if err != nil {
+		t.Skipf("start caddy skipped: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Terminate(context.Background()) })
+
+	h, err := c.Host(ctx)
+	if err != nil {
+		t.Fatalf("caddy host: %v", err)
+	}
+	p, err := c.MappedPort(ctx, "80")
+	if err != nil {
+		t.Fatalf("caddy port: %v", err)
+	}
+	return fmt.Sprintf("http://%s:%s", h, p.Port())
 }
 
 // authHeader returns the Authorization header for the test token.
