@@ -6,7 +6,42 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/shareed2k/honey/internal/hosts"
 )
+
+// gateInteractiveSession asks OPA whether actor may open an interactive shell on
+// the target (action "interactive_session"). A nil enforcer always allows.
+func (s *Server) gateInteractiveSession(r *http.Request, rec hosts.Record) error {
+	if s.opts.Enforcer == nil {
+		return nil
+	}
+	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
+	d, err := s.opts.Enforcer.Evaluate(r.Context(), map[string]any{
+		"action": "interactive_session",
+		"actor":  actor,
+		"target": map[string]any{
+			"name":     rec.Name,
+			"provider": rec.Provider,
+			"env":      rec.Meta["env"],
+			"groups":   rec.Groups,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("policy: %w", err)
+	}
+	if !d.Allow {
+		return fmt.Errorf("%s", reasonOrForbidden(d.DenyReason))
+	}
+	return nil
+}
+
+func reasonOrForbidden(s string) string {
+	if s == "" {
+		return "forbidden by policy"
+	}
+	return s
+}
 
 // handleListApprovals returns the current pending/decided approval records.
 func (s *Server) handleListApprovals(w http.ResponseWriter, _ *http.Request) {

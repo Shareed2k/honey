@@ -106,6 +106,11 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	if patched, err := json.Marshal(hello); err == nil {
 		helloRaw = patched
 	}
+
+	if err := s.gateInteractiveSession(r, hello.Record); err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("session denied: "+err.Error()))
+		return
+	}
 	cols, rows := hello.Cols, hello.Rows
 	if cols <= 0 {
 		cols = 120

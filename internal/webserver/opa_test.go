@@ -13,6 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
 )
 
@@ -170,6 +171,36 @@ func TestResolveWebhookActor(t *testing.T) {
 			t.Fatalf("actor = %q, want webhook:myapp", got)
 		}
 	})
+}
+
+func TestGateInteractiveSession(t *testing.T) {
+	const src = `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if {
+	input.action == "interactive_session"
+	input.target.env == "prod"
+}
+deny_reason := "no interactive shells on prod" if {
+	input.action == "interactive_session"
+	input.target.env == "prod"
+}`
+	enf, err := policy.NewFromSource(context.Background(), "s.rego", src)
+	if err != nil {
+		t.Fatalf("NewFromSource: %v", err)
+	}
+	s := newTestServer(t, Options{Enforcer: enf})
+	req := httptest.NewRequest("GET", "/ws/ssh", nil)
+
+	prod := hosts.Record{Name: "p1", Provider: "ssh", Meta: map[string]string{"env": "prod"}}
+	if err := s.gateInteractiveSession(req, prod); err == nil {
+		t.Fatal("prod interactive session should be denied")
+	}
+	stg := hosts.Record{Name: "s1", Provider: "ssh", Meta: map[string]string{"env": "staging"}}
+	if err := s.gateInteractiveSession(req, stg); err != nil {
+		t.Fatalf("staging session should be allowed: %v", err)
+	}
 }
 
 func TestAuthMiddleware_OPAGate(t *testing.T) {
