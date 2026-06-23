@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/policy"
 )
 
@@ -33,16 +35,20 @@ type webAuthConfig struct {
 // resolveWebAuthConfig reads HONEY_POLICY_DIR, HONEY_JWT_PUBLIC_KEY, and
 // HONEY_TRUSTED_PROXIES. A malformed key or CIDR is a hard error (misconfigured
 // security settings must not silently degrade to "off").
-func resolveWebAuthConfig(ctx context.Context) (webAuthConfig, error) {
+func resolveWebAuthConfig(ctx context.Context, file *config.File) (webAuthConfig, error) {
 	var cfg webAuthConfig
 
 	if dir := strings.TrimSpace(os.Getenv(policyDirEnv)); dir != "" {
-		enf, err := policy.New(ctx, dir)
+		data, err := inventoryData(file)
+		if err != nil {
+			return cfg, fmt.Errorf("%s: inventory data: %w", policyDirEnv, err)
+		}
+		enf, err := policy.New(ctx, dir, data)
 		if err != nil {
 			return cfg, fmt.Errorf("%s: %w", policyDirEnv, err)
 		}
 		cfg.enforcer = enf
-		zap.L().Info("OPA policy enabled", zap.String("dir", dir))
+		zap.L().Info("OPA policy enabled", zap.String("dir", dir), zap.Bool("inventory", data != nil))
 	}
 
 	if raw := strings.TrimSpace(os.Getenv(jwtPublicKeyEnv)); raw != "" {
@@ -64,6 +70,29 @@ func resolveWebAuthConfig(ctx context.Context) (webAuthConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// inventoryData converts a config's inventory into the OPA data document
+// {"inventory": ...} via a JSON round-trip. Returns nil when there is no
+// inventory to expose (no config, or empty inventory) so the enforcer skips the
+// data store entirely.
+func inventoryData(file *config.File) (map[string]any, error) {
+	if file == nil {
+		return nil, nil
+	}
+	inv := file.Inventory
+	if len(inv.Vars) == 0 && len(inv.Groups) == 0 && len(inv.Hosts) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(inv)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return map[string]any{"inventory": m}, nil
 }
 
 // parseEd25519PublicKey decodes a base64 (standard or raw) Ed25519 public key.

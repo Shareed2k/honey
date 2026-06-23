@@ -8,14 +8,41 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/shareed2k/honey/internal/config"
 )
+
+func TestInventoryData(t *testing.T) {
+	if d, err := inventoryData(nil); err != nil || d != nil {
+		t.Fatalf("nil config → nil data, got %v err %v", d, err)
+	}
+	if d, err := inventoryData(&config.File{}); err != nil || d != nil {
+		t.Fatalf("empty inventory → nil data, got %v err %v", d, err)
+	}
+
+	file := &config.File{Inventory: config.Inventory{
+		Vars: map[string]config.InventoryValue{"tier": config.MustInventoryValue("prod")},
+	}}
+	d, err := inventoryData(file)
+	if err != nil {
+		t.Fatalf("inventoryData: %v", err)
+	}
+	inv, ok := d["inventory"].(map[string]any)
+	if !ok {
+		t.Fatalf("data.inventory not a map: %T", d["inventory"])
+	}
+	vars, ok := inv["vars"].(map[string]any)
+	if !ok || vars["tier"] != "prod" {
+		t.Fatalf("inventory.vars.tier = %v, want prod", vars["tier"])
+	}
+}
 
 func TestResolveWebAuthConfig_AllDisabledByDefault(t *testing.T) {
 	t.Setenv(policyDirEnv, "")
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "")
 
-	cfg, err := resolveWebAuthConfig(context.Background())
+	cfg, err := resolveWebAuthConfig(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("resolveWebAuthConfig: %v", err)
 	}
@@ -37,7 +64,7 @@ default allow := false
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "")
 
-	cfg, err := resolveWebAuthConfig(context.Background())
+	cfg, err := resolveWebAuthConfig(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("resolveWebAuthConfig: %v", err)
 	}
@@ -58,7 +85,7 @@ func TestResolveWebAuthConfig_BadPolicyDirErrors(t *testing.T) {
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "")
 
-	if _, err := resolveWebAuthConfig(context.Background()); err == nil {
+	if _, err := resolveWebAuthConfig(context.Background(), nil); err == nil {
 		t.Fatal("expected error for missing policy dir")
 	}
 }
@@ -69,7 +96,7 @@ func TestResolveWebAuthConfig_JWTKey(t *testing.T) {
 	t.Setenv(jwtPublicKeyEnv, base64.StdEncoding.EncodeToString(pub))
 	t.Setenv(trustedProxiesEnv, "")
 
-	cfg, err := resolveWebAuthConfig(context.Background())
+	cfg, err := resolveWebAuthConfig(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("resolveWebAuthConfig: %v", err)
 	}
@@ -83,13 +110,13 @@ func TestResolveWebAuthConfig_BadJWTKeyErrors(t *testing.T) {
 	t.Setenv(jwtPublicKeyEnv, "not-base64!!!")
 	t.Setenv(trustedProxiesEnv, "")
 
-	if _, err := resolveWebAuthConfig(context.Background()); err == nil {
+	if _, err := resolveWebAuthConfig(context.Background(), nil); err == nil {
 		t.Fatal("expected error for malformed JWT key")
 	}
 
 	// Valid base64 but wrong length.
 	t.Setenv(jwtPublicKeyEnv, base64.StdEncoding.EncodeToString([]byte("short")))
-	if _, err := resolveWebAuthConfig(context.Background()); err == nil {
+	if _, err := resolveWebAuthConfig(context.Background(), nil); err == nil {
 		t.Fatal("expected error for wrong key length")
 	}
 }
@@ -99,7 +126,7 @@ func TestResolveWebAuthConfig_TrustedProxies(t *testing.T) {
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "127.0.0.0/8, 10.0.0.5")
 
-	cfg, err := resolveWebAuthConfig(context.Background())
+	cfg, err := resolveWebAuthConfig(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("resolveWebAuthConfig: %v", err)
 	}
@@ -122,7 +149,7 @@ func TestResolveWebAuthConfig_BadProxyErrors(t *testing.T) {
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "not-an-ip")
 
-	if _, err := resolveWebAuthConfig(context.Background()); err == nil {
+	if _, err := resolveWebAuthConfig(context.Background(), nil); err == nil {
 		t.Fatal("expected error for invalid proxy entry")
 	}
 }

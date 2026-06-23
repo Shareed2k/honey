@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/open-policy-agent/opa/v1/rego"
+	"github.com/open-policy-agent/opa/v1/storage/inmem"
 )
 
 //go:embed policies/*.rego
@@ -30,19 +31,21 @@ type Enforcer struct {
 }
 
 // New builds an Enforcer from .rego modules. When policyDir is non-empty its
-// *.rego files are loaded; otherwise the embedded default policy is used.
-func New(ctx context.Context, policyDir string) (*Enforcer, error) {
+// *.rego files are loaded; otherwise the embedded default policy is used. data,
+// when non-empty, is exposed to policies as the base document — e.g.
+// data["inventory"] becomes data.inventory in rego.
+func New(ctx context.Context, policyDir string, data map[string]any) (*Enforcer, error) {
 	modules, err := loadModules(policyDir)
 	if err != nil {
 		return nil, err
 	}
-	return prepareEnforcer(ctx, modules)
+	return prepareEnforcer(ctx, modules, data)
 }
 
 // NewFromSource compiles a single named .rego source into an Enforcer. Used by
 // the in-recipe opa step, which loads a policy file relative to the recipe.
 func NewFromSource(ctx context.Context, name, src string) (*Enforcer, error) {
-	return prepareEnforcer(ctx, map[string]string{name: src})
+	return prepareEnforcer(ctx, map[string]string{name: src}, nil)
 }
 
 // Evaluate runs the policy against input and returns the Decision. A query that
@@ -61,9 +64,12 @@ func (e *Enforcer) Evaluate(ctx context.Context, input map[string]any) (Decision
 	return Decision{Allow: allow, DenyReason: reason}, nil
 }
 
-func prepareEnforcer(ctx context.Context, modules map[string]string) (*Enforcer, error) {
-	opts := make([]func(*rego.Rego), 0, len(modules)+1)
+func prepareEnforcer(ctx context.Context, modules map[string]string, data map[string]any) (*Enforcer, error) {
+	opts := make([]func(*rego.Rego), 0, len(modules)+2)
 	opts = append(opts, rego.Query("data.honey"))
+	if len(data) > 0 {
+		opts = append(opts, rego.Store(inmem.NewFromObject(data)))
+	}
 	for path, src := range modules {
 		opts = append(opts, rego.Module(path, src))
 	}
