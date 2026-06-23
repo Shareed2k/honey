@@ -85,7 +85,8 @@ type CueExecRequest struct {
 
 // CueExecDryRunResponse is the JSON body when cue-exec runs in dry-run mode.
 type CueExecDryRunResponse struct {
-	Plan string `json:"plan"`
+	Plan           string            `json:"plan"`
+	RiskAssessment []engine.StepRisk `json:"risk_assessment,omitempty"`
 }
 
 // CueExecExecuteResponse is the JSON body when cue-exec runs with execute true.
@@ -665,7 +666,10 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(CueExecDryRunResponse{Plan: plan})
+		_ = json.NewEncoder(w).Encode(CueExecDryRunResponse{
+			Plan:           plan,
+			RiskAssessment: api.runner.AssessCommandRisk(r.Context(), req),
+		})
 		return
 	}
 
