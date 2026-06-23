@@ -112,6 +112,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		Enforcer:           authCfg.enforcer,
 		JWTPubKey:          authCfg.jwtPubKey,
 		TrustedProxyNets:   authCfg.trustedNets,
+		WebAuthn:           authCfg.webauthn,
 	})
 	if err != nil {
 		return err

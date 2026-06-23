@@ -672,6 +672,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		SSHUser:          user,
 		ActorID:          actorFromCtx(r.Context()),
 		ApprovalID:       body.ApprovalID,
+		BiometricToken:   strings.TrimSpace(r.Header.Get("X-Honey-Biometric")),
 		Env:              cliEnv,
 		AISystemPrompt:   aiPrompt,
 		RecordSession:    wantRec,

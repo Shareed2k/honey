@@ -43,9 +43,16 @@ type RunnerOptions struct {
 	Pools        *postgres.PoolManager
 	Cache        *ClientCache // optional shared SSH client cache; nil = per-run cache
 	Plugins      PluginProvider
-	RecordDir    string           // "" disables session recording
-	Enforcer     *policy.Enforcer // optional OPA admission gate; nil = allow all
-	Approvals    *approval.Store  // optional pending-approval store; nil = require_approval hard-denies
+	RecordDir    string            // "" disables session recording
+	Enforcer     *policy.Enforcer  // optional OPA admission gate; nil = allow all
+	Approvals    *approval.Store   // optional pending-approval store; nil = require_approval hard-denies
+	Biometric    BiometricVerifier // optional WebAuthn token verifier; nil = require_biometric hard-denies
+}
+
+// BiometricVerifier verifies a biometric step-up token for an actor. Implemented
+// by *webauthn.Manager; an interface here keeps the engine free of that import.
+type BiometricVerifier interface {
+	VerifyToken(actor, token string) bool
 }
 
 // RecipeRunner owns the full recipe-execution lifecycle: prompt validation,
@@ -74,7 +81,10 @@ type RunRequest struct {
 	ActorID string
 	// ApprovalID references a previously-created approval that, once approved,
 	// lets a require_approval recipe proceed.
-	ApprovalID     string
+	ApprovalID string
+	// BiometricToken is a WebAuthn step-up token that satisfies a require_biometric
+	// verdict for the actor.
+	BiometricToken string
 	Env            map[string]string
 	AISystemPrompt string
 	RecordSession  bool
@@ -215,13 +225,16 @@ func (r *RecipeRunner) admitRecipe(ctx context.Context, req RunRequest) error {
 		return nil
 	}
 	actor := actorOrAPI(req.ActorID)
-	d, err := r.evalAdmission(ctx, actor, req, "", "")
+	d, err := r.evalAdmission(ctx, actor, req, nil)
 	if err != nil {
 		return fmt.Errorf("policy evaluation: %w", err)
 	}
 
-	if d.Decision == "require_approval" {
+	switch d.Decision {
+	case "require_approval":
 		return r.handleApproval(ctx, actor, req, d)
+	case "require_biometric":
+		return r.handleBiometric(ctx, actor, req, d)
 	}
 	if !d.Allow {
 		return fmt.Errorf("recipe admission: %s", reasonOr(d.DenyReason, "denied by policy"))
@@ -229,13 +242,11 @@ func (r *RecipeRunner) admitRecipe(ctx context.Context, req RunRequest) error {
 	return nil
 }
 
-// evalAdmission runs the recipe_execute policy, optionally carrying an approver
-// and the approved flag for a re-evaluation after approval.
-func (r *RecipeRunner) evalAdmission(ctx context.Context, actor string, req RunRequest, approver, approved string) (policy.Decision, error) {
-	exec := map[string]any{}
-	if approved != "" {
-		exec["approved"] = true
-		exec["approver"] = approver
+// evalAdmission runs the recipe_execute policy with optional execution extras
+// (e.g. approved/approver, biometricVerified) for a re-evaluation after step-up.
+func (r *RecipeRunner) evalAdmission(ctx context.Context, actor string, req RunRequest, exec map[string]any) (policy.Decision, error) {
+	if exec == nil {
+		exec = map[string]any{}
 	}
 	return r.opts.Enforcer.Evaluate(ctx, map[string]any{
 		"action":    "recipe_execute",
@@ -246,13 +257,28 @@ func (r *RecipeRunner) evalAdmission(ctx context.Context, actor string, req RunR
 	})
 }
 
+// handleBiometric resolves a require_biometric verdict: a valid biometric token
+// for the actor re-evaluates with biometricVerified=true; otherwise it denies.
+func (r *RecipeRunner) handleBiometric(ctx context.Context, actor string, req RunRequest, d policy.Decision) error {
+	if r.opts.Biometric != nil && req.BiometricToken != "" && r.opts.Biometric.VerifyToken(actor, req.BiometricToken) {
+		again, err := r.evalAdmission(ctx, actor, req, map[string]any{"biometricVerified": true, "approver": actor})
+		if err != nil {
+			return fmt.Errorf("policy evaluation: %w", err)
+		}
+		if again.Allow {
+			return nil
+		}
+	}
+	return fmt.Errorf("recipe admission: %s", reasonOr(d.DenyReason, "biometric verification required"))
+}
+
 // handleApproval resolves a require_approval verdict: an approved id that the
 // policy now allows proceeds; otherwise a pending run is created and
 // ErrPendingApproval returned.
 func (r *RecipeRunner) handleApproval(ctx context.Context, actor string, req RunRequest, d policy.Decision) error {
 	if r.opts.Approvals != nil && req.ApprovalID != "" {
 		if rec, ok := r.opts.Approvals.Get(req.ApprovalID); ok && rec.Status == approval.StatusApproved {
-			again, err := r.evalAdmission(ctx, actor, req, rec.Approver, rec.ID)
+			again, err := r.evalAdmission(ctx, actor, req, map[string]any{"approved": true, "approver": rec.Approver})
 			if err != nil {
 				return fmt.Errorf("policy evaluation: %w", err)
 			}
