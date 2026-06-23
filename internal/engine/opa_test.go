@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
@@ -132,6 +133,32 @@ func TestFilterTargetsByPolicy_NilEnforcerPassThrough(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, targets, kept)
 	require.Nil(t, skipped)
+}
+
+// --- Dry-run risk assessment (v2 Task 6) ----------------------------------
+
+func TestAssessCommandRisk(t *testing.T) {
+	const recipe = `
+recipe: {
+	name: "risk-assess"
+	type: "linear"
+	steps: [
+		{ host: "*", command: "rm -rf /" },
+		{ host: "*", command: "uptime" },
+	]
+}
+`
+	r := NewRecipeRunner(RunnerOptions{Plugins: &fakePluginProvider{}})
+	got := r.AssessCommandRisk(context.Background(), RunRequest{Recipe: parseTestRecipe(t, recipe)})
+	require.Len(t, got, 2)
+
+	require.Equal(t, "rm -rf /", got[0].Command)
+	require.True(t, got[0].Analysis.Critical)
+	require.Equal(t, commandrisk.SeverityCritical, got[0].Analysis.MaxSeverity)
+
+	require.Equal(t, "uptime", got[1].Command)
+	require.False(t, got[1].Analysis.Critical)
+	require.Empty(t, got[1].Analysis.Signals)
 }
 
 // --- Command risk gate ----------------------------------------------------
