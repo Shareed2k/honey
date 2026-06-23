@@ -82,6 +82,12 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	if webBrowser {
 		onReady = func() { _ = openBrowser(url) }
 	}
+
+	authCfg, err := resolveWebAuthConfig(context.Background())
+	if err != nil {
+		return fmt.Errorf("web auth config: %w", err)
+	}
+
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:         webListen,
 		Token:              token,
@@ -103,6 +109,9 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		Refresh:            flagRefresh,
 		AllowLogsCommand:   webAllowLogsCommand,
 		OnReady:            onReady,
+		Enforcer:           authCfg.enforcer,
+		JWTPubKey:          authCfg.jwtPubKey,
+		TrustedProxyNets:   authCfg.trustedNets,
 	})
 	if err != nil {
 		return err

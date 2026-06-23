@@ -147,6 +147,7 @@ func NewServer(opts Options) (*Server, error) {
 			Metrics:        opts.Metrics,
 			Pools:          pgPools,
 			Cache:          s.fileClientCache,
+			Enforcer:       opts.Enforcer,
 		})
 		if err != nil {
 			zap.L().Warn("scheduler init failed, schedules disabled", zap.Error(err))
