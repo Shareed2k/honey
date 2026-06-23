@@ -86,6 +86,7 @@ func NewRecipesAPI(
 		Plugins:      plugins,
 		RecordDir:    opts.RecordDir,
 		Enforcer:     opts.Enforcer,
+		Approvals:    opts.Approvals,
 	})
 	return api
 }

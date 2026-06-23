@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shareed2k/honey/internal/approval"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -44,6 +45,7 @@ type RunnerOptions struct {
 	Plugins      PluginProvider
 	RecordDir    string           // "" disables session recording
 	Enforcer     *policy.Enforcer // optional OPA admission gate; nil = allow all
+	Approvals    *approval.Store  // optional pending-approval store; nil = require_approval hard-denies
 }
 
 // RecipeRunner owns the full recipe-execution lifecycle: prompt validation,
@@ -69,7 +71,10 @@ type RunRequest struct {
 	SSHUser          string
 	// ActorID is the caller identity (JWT subject or trusted-proxy header),
 	// used as OPA policy input. Empty resolves to "api" downstream.
-	ActorID        string
+	ActorID string
+	// ApprovalID references a previously-created approval that, once approved,
+	// lets a require_approval recipe proceed.
+	ApprovalID     string
 	Env            map[string]string
 	AISystemPrompt string
 	RecordSession  bool
@@ -202,31 +207,83 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 
 // admitRecipe asks the OPA enforcer whether this actor may run this recipe, as
 // a pre-execution admission gate. A nil enforcer (OPA disabled) always admits.
+// When the policy returns require_approval, the run is held: if an approved
+// approval id was supplied (and the policy then allows), it proceeds; otherwise
+// a pending run is created and ErrPendingApproval is returned.
 func (r *RecipeRunner) admitRecipe(ctx context.Context, req RunRequest) error {
 	if r.opts.Enforcer == nil {
 		return nil
 	}
-	actor := req.ActorID
-	if actor == "" {
-		actor = "api"
-	}
-	d, err := r.opts.Enforcer.Evaluate(ctx, map[string]any{
-		"action": "recipe_execute",
-		"actor":  actor,
-		"recipe": req.RecipeSourcePath,
-		"hosts":  hostNames(req.Records),
-	})
+	actor := actorOrAPI(req.ActorID)
+	d, err := r.evalAdmission(ctx, actor, req, "", "")
 	if err != nil {
 		return fmt.Errorf("policy evaluation: %w", err)
 	}
+
+	if d.Decision == "require_approval" {
+		return r.handleApproval(ctx, actor, req, d)
+	}
 	if !d.Allow {
-		reason := d.DenyReason
-		if reason == "" {
-			reason = "denied by policy"
-		}
-		return fmt.Errorf("recipe admission: %s", reason)
+		return fmt.Errorf("recipe admission: %s", reasonOr(d.DenyReason, "denied by policy"))
 	}
 	return nil
+}
+
+// evalAdmission runs the recipe_execute policy, optionally carrying an approver
+// and the approved flag for a re-evaluation after approval.
+func (r *RecipeRunner) evalAdmission(ctx context.Context, actor string, req RunRequest, approver, approved string) (policy.Decision, error) {
+	exec := map[string]any{}
+	if approved != "" {
+		exec["approved"] = true
+		exec["approver"] = approver
+	}
+	return r.opts.Enforcer.Evaluate(ctx, map[string]any{
+		"action":    "recipe_execute",
+		"actor":     actor,
+		"recipe":    req.RecipeSourcePath,
+		"hosts":     hostNames(req.Records),
+		"execution": exec,
+	})
+}
+
+// handleApproval resolves a require_approval verdict: an approved id that the
+// policy now allows proceeds; otherwise a pending run is created and
+// ErrPendingApproval returned.
+func (r *RecipeRunner) handleApproval(ctx context.Context, actor string, req RunRequest, d policy.Decision) error {
+	if r.opts.Approvals != nil && req.ApprovalID != "" {
+		if rec, ok := r.opts.Approvals.Get(req.ApprovalID); ok && rec.Status == approval.StatusApproved {
+			again, err := r.evalAdmission(ctx, actor, req, rec.Approver, rec.ID)
+			if err != nil {
+				return fmt.Errorf("policy evaluation: %w", err)
+			}
+			if again.Allow {
+				return nil
+			}
+		}
+	}
+	reason := reasonOr(d.DenyReason, "approval required")
+	if r.opts.Approvals == nil {
+		return fmt.Errorf("recipe admission: %s (no approval store configured)", reason)
+	}
+	rec := r.opts.Approvals.Create(actor, req.RecipeSourcePath, hostNames(req.Records), reason)
+	return &ErrPendingApproval{ID: rec.ID, Reason: reason}
+}
+
+// ErrPendingApproval signals that a run is held pending human approval.
+type ErrPendingApproval struct {
+	ID     string
+	Reason string
+}
+
+func (e *ErrPendingApproval) Error() string {
+	return fmt.Sprintf("pending approval %s: %s", e.ID, e.Reason)
+}
+
+func reasonOr(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }
 
 // invFromConfig returns the config inventory, or the zero value when no config.
