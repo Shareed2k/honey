@@ -507,6 +507,52 @@ func (s *AIStep) Validate(vc StepValidateCtx) error {
 var _ Step = (*AIStep)(nil)
 
 // ---------------------------------------------------------------------------
+// opa (local) — no RemoteExec
+// ---------------------------------------------------------------------------
+
+// OPAStep evaluates an OPA/rego policy inline during recipe execution. It runs
+// locally (host must be "_") and fails when the policy denies, so authors can
+// gate later steps via depends / when on this step's success.
+type OPAStep struct {
+	StepBase
+	OPA *RecipeOPA `json:"opa,omitempty"`
+}
+
+// RecipeOPA is the opa step's action block: which policy to load and what extra
+// input to pass alongside the actor identity.
+type RecipeOPA struct {
+	// Policy is a path to a .rego file (package honey), relative to the recipe
+	// directory unless absolute.
+	Policy string `json:"policy"`
+	// Input is an arbitrary object merged into the OPA input document under the
+	// caller-supplied keys, alongside the built-in actor and recipe fields.
+	Input map[string]any `json:"input,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *OPAStep) Kind() string { return KindOPA }
+
+// Clone returns a deep copy of the step (safe for loop fan-out mutation).
+func (s *OPAStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields; shared rules run separately.
+func (s *OPAStep) Validate(vc StepValidateCtx) error {
+	i := vc.Index
+	if s.OPA == nil {
+		return fmt.Errorf("cuetry: steps[%d]: internal opa step", i)
+	}
+	if strings.TrimSpace(s.OPA.Policy) == "" {
+		return fmt.Errorf("cuetry: steps[%d].opa.policy is required", i)
+	}
+	if strings.TrimSpace(s.Host) != MatchLocalAIHost {
+		return fmt.Errorf("cuetry: steps[%d]: opa step host must be %q", i, MatchLocalAIHost)
+	}
+	return nil
+}
+
+var _ Step = (*OPAStep)(nil)
+
+// ---------------------------------------------------------------------------
 // registration
 // ---------------------------------------------------------------------------
 
@@ -525,4 +571,5 @@ func init() {
 	RegisterStep(KindRecipe, []string{"recipe"}, func() Step { return &RecipeStep{} })
 	RegisterStep(KindAgentTransfer, []string{"agent_transfer"}, func() Step { return &AgentTransferStep{} })
 	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })
+	RegisterStep(KindOPA, []string{"opa"}, func() Step { return &OPAStep{} })
 }
