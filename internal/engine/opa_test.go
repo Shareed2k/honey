@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
 )
@@ -90,6 +91,38 @@ allow if input.host != "h2"
 	require.Equal(t, "h2", skipped[0].Name)
 	require.True(t, skipped[0].Skipped)
 	require.Contains(t, skipped[0].Output, "host blocked")
+}
+
+func TestFilterTargetsByPolicy_HostVars(t *testing.T) {
+	// Policy denies a host whose resolved inventory var tier == "prod".
+	enf := mustPolicy(t, `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if {
+	input.action == "step_execute"
+	input.host_vars.tier == "prod"
+}
+deny_reason := "prod host blocked" if {
+	input.action == "step_execute"
+	input.host_vars.tier == "prod"
+}`)
+	inv := config.Inventory{Hosts: map[string]config.InventoryHost{
+		"h2": {Vars: map[string]config.InventoryValue{"tier": config.MustInventoryValue("prod")}},
+	}}
+	run := &CueRun{Params: CueRecipeRunParams{Enforcer: enf, ActorID: "alice", Inventory: inv}}
+	targets := []hosts.Record{
+		{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"},
+		{Provider: "static", Name: "h2", PrimaryIP: "2.2.2.2"},
+	}
+
+	kept, skipped, err := filterTargetsByPolicy(context.Background(), run, "command", targets)
+	require.NoError(t, err)
+	require.Len(t, kept, 1)
+	require.Equal(t, "h1", kept[0].Name)
+	require.Len(t, skipped, 1)
+	require.Equal(t, "h2", skipped[0].Name)
+	require.Contains(t, skipped[0].Output, "prod host blocked")
 }
 
 func TestFilterTargetsByPolicy_NilEnforcerPassThrough(t *testing.T) {

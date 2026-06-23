@@ -23,6 +23,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/inventory"
 	"github.com/shareed2k/honey/internal/plugins"
 	"go.uber.org/zap"
 )
@@ -242,6 +243,7 @@ func filterTargetsByPolicy(ctx context.Context, run *CueRun, kind string, target
 			"step_kind": kind,
 			"host":      t.Name,
 			"host_meta": t.Meta,
+			"host_vars": hostVarsForPolicy(t, run.Params.Inventory),
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("policy evaluation: %w", err)
@@ -259,6 +261,20 @@ func filterTargetsByPolicy(ctx context.Context, run *CueRun, kind string, target
 		skipped = append(skipped, sk)
 	}
 	return kept, skipped, nil
+}
+
+// hostVarsForPolicy resolves a host's effective inventory vars (global + matching
+// groups + host-specific) into a JSON-like map for OPA input.host_vars. It works
+// on a one-element copy so the run's shared records are never mutated. A best-
+// effort resolve: on error or empty inventory the record's existing vars are used.
+func hostVarsForPolicy(rec hosts.Record, inv config.Inventory) map[string]any {
+	cp := []hosts.Record{rec}
+	_ = inventory.Apply(cp, inv)
+	out := make(map[string]any, len(cp[0].Vars))
+	for k, v := range cp[0].Vars {
+		out[k] = v.Any()
+	}
+	return out
 }
 
 // CueGetLocalIsDirectory ...

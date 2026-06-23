@@ -196,6 +196,7 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 		Pools:          r.opts.Pools,
 		Cache:          r.opts.Cache,
 		Enforcer:       r.opts.Enforcer,
+		Inventory:      invFromConfig(r.opts.Config),
 	}, nil
 }
 
@@ -226,6 +227,14 @@ func (r *RecipeRunner) admitRecipe(ctx context.Context, req RunRequest) error {
 		return fmt.Errorf("recipe admission: %s", reason)
 	}
 	return nil
+}
+
+// invFromConfig returns the config inventory, or the zero value when no config.
+func invFromConfig(f *config.File) config.Inventory {
+	if f == nil {
+		return config.Inventory{}
+	}
+	return f.Inventory
 }
 
 // hostNames extracts record names for policy input.
