@@ -1,0 +1,112 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/shareed2k/honey/internal/commandrisk"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/policy"
+)
+
+// riskDisableEnv, when set to a truthy value, bypasses the command risk gate
+// entirely (including built-in critical denies). Escape hatch for trusted runs.
+const riskDisableEnv = "HONEY_RISK_DISABLE"
+
+// actorOrAPI returns the actor id, defaulting to "api" when empty.
+func actorOrAPI(actor string) string {
+	if strings.TrimSpace(actor) == "" {
+		return "api"
+	}
+	return actor
+}
+
+// riskGateDisabled reports whether the gate is turned off via the environment.
+func riskGateDisabled() bool {
+	v := strings.TrimSpace(os.Getenv(riskDisableEnv))
+	return v != "" && v != "0" && !strings.EqualFold(v, "false")
+}
+
+// gateCommandRisk analyzes a raw shell command and decides, per target, whether
+// it may run. Built-in critical patterns always deny (unless HONEY_RISK_DISABLE).
+// When an OPA enforcer is configured it makes the contextual decision via the
+// "command_exec" action; require_approval / require_biometric verdicts deny with
+// a clear reason in this non-interactive path (the approval flow is a later phase).
+// Returns the allowed targets and skip results for denied ones — mirroring
+// filterTargetsByPolicy so denied hosts stay visible in the run output.
+func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand string, targets []hosts.Record) (allowed []hosts.Record, skipped []HostExecResult, err error) {
+	if riskGateDisabled() || strings.TrimSpace(rawCommand) == "" {
+		return targets, nil, nil
+	}
+
+	analysis := commandrisk.Analyze(rawCommand)
+	enforcer := run.Params.Enforcer
+	actor := actorOrAPI(run.Params.ActorID)
+
+	for _, t := range targets {
+		reason, denied, evalErr := commandRiskDecision(ctx, enforcer, actor, kind, rawCommand, analysis, run, t)
+		if evalErr != nil {
+			return nil, nil, evalErr
+		}
+		if !denied {
+			allowed = append(allowed, t)
+			continue
+		}
+		sk := WhenSkippedResult(t)
+		sk.Output = "(blocked: " + reason + ")"
+		skipped = append(skipped, sk)
+	}
+	return allowed, skipped, nil
+}
+
+// commandRiskDecision returns (reason, denied, err) for one target. Built-in
+// critical signals deny first; otherwise the OPA enforcer (if any) decides.
+func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, kind, rawCommand string, analysis commandrisk.Analysis, run *CueRun, t hosts.Record) (string, bool, error) {
+	if crit := analysis.FirstCritical(); crit != nil {
+		return "command risk: " + crit.Reason, true, nil
+	}
+	if enforcer == nil {
+		return "", false, nil
+	}
+
+	input := map[string]any{
+		"action": "command_exec",
+		"actor":  actor,
+		"command": map[string]any{
+			"raw":          rawCommand,
+			"riskSignals":  analysis.Signals,
+			"detected":     analysis.Detected,
+			"max_severity": string(analysis.MaxSeverity),
+		},
+		"target": map[string]any{
+			"name":      t.Name,
+			"provider":  t.Provider,
+			"env":       t.Meta["env"],
+			"groups":    t.Groups,
+			"host_vars": hostVarsForPolicy(t, run.Params.Inventory),
+		},
+		"execution": map[string]any{
+			"recipe":  run.Params.Recipe.Name,
+			"dry_run": !run.Params.Execute,
+			"step":    kind,
+		},
+	}
+
+	d, err := enforcer.Evaluate(ctx, input)
+	if err != nil {
+		return "", false, fmt.Errorf("command risk policy: %w", err)
+	}
+	if d.Allow && d.Decision != "require_approval" && d.Decision != "require_biometric" && d.Decision != "deny" {
+		return "", false, nil
+	}
+	reason := d.DenyReason
+	if reason == "" {
+		reason = "denied by policy"
+	}
+	if len(d.Requires) > 0 {
+		reason += " (requires: " + strings.Join(d.Requires, ", ") + ")"
+	}
+	return reason, true, nil
+}

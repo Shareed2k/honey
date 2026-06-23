@@ -38,6 +38,19 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 	if !ok {
 		return fmt.Errorf("internal: command step has wrong type %T", step)
 	}
+
+	targets, riskSkipped, err := gateCommandRisk(ctx, run, kind, cs.Command, targets)
+	if err != nil {
+		return err
+	}
+	for _, sk := range riskSkipped {
+		AnnotateCueStepResult(&sk, stepIdx, step, kind)
+		ch <- sk
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
 	b := step.Base()
 	runAs := cuetry.EffectiveRunAs(b, run.Params.Recipe.Defaults)
 	kvTunnel := cuetry.KVTunnelEnabled(step, run.Params.Recipe.Defaults)
@@ -228,6 +241,23 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 
 	if _, statErr := os.Stat(localAbs); statErr != nil {
 		return fmt.Errorf("script: local file %q: %w", localAbs, statErr)
+	}
+
+	// Risk-gate the script body (best-effort: unreadable file → no analysis).
+	// #nosec G304 -- localAbs is a recipe-author path resolved within the recipe dir.
+	if scriptSrc, rerr := os.ReadFile(localAbs); rerr == nil {
+		var riskSkipped []HostExecResult
+		targets, riskSkipped, err = gateCommandRisk(ctx, run, kind, string(scriptSrc), targets)
+		if err != nil {
+			return err
+		}
+		for _, sk := range riskSkipped {
+			AnnotateCueStepResult(&sk, stepIdx, step, kind)
+			ch <- sk
+		}
+		if len(targets) == 0 {
+			return nil
+		}
 	}
 
 	cmdFunc := func(r hosts.Record, kv map[string]string) string {

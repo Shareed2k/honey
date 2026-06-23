@@ -228,10 +228,7 @@ func filterTargetsByPolicy(ctx context.Context, run *CueRun, kind string, target
 	if run.Params.Enforcer == nil {
 		return targets, nil, nil
 	}
-	actor := run.Params.ActorID
-	if actor == "" {
-		actor = "api"
-	}
+	actor := actorOrAPI(run.Params.ActorID)
 	var (
 		kept    []hosts.Record
 		skipped []HostExecResult
