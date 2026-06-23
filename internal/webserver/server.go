@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,6 +54,13 @@ type Options struct {
 	Refresh            bool
 	AllowLogsCommand   bool
 	OnReady            func() // called after the listener is bound, before serving
+
+	// JWTPubKey, when non-nil, enables Ed25519 JWT identity resolution: a valid
+	// bearer JWT's subject claim becomes the request actor. nil disables JWT.
+	JWTPubKey ed25519.PublicKey
+	// TrustedProxyNets lists peer networks allowed to assert caller identity via
+	// the X-Honey-User header. nil disables the trusted-header path.
+	TrustedProxyNets []*net.IPNet
 }
 
 // Server is the honey web UI HTTP server.
@@ -267,6 +275,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
+		actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
+		r = r.WithContext(context.WithValue(r.Context(), ctxActorKey, actor))
 		next.ServeHTTP(w, r)
 	})
 }

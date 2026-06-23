@@ -65,10 +65,13 @@ type RunRequest struct {
 	RecipeDir        string
 	Records          []hosts.Record
 	SSHUser          string
-	Env              map[string]string
-	AISystemPrompt   string
-	RecordSession    bool
-	RecordLabel      string
+	// ActorID is the caller identity (JWT subject or trusted-proxy header),
+	// used as OPA policy input. Empty resolves to "api" downstream.
+	ActorID        string
+	Env            map[string]string
+	AISystemPrompt string
+	RecordSession  bool
+	RecordLabel    string
 	// Recorder, when non-nil, is used as-is and NOT closed by the runner (the
 	// caller owns its lifecycle — needed by the async webhook, which must know
 	// the recording ID before deferred execution). When nil and RecordSession
@@ -179,6 +182,7 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 		RecipeDir:      req.RecipeDir,
 		Records:        req.Records,
 		SSHUser:        req.SSHUser,
+		ActorID:        req.ActorID,
 		CLIEnv:         req.Env,
 		ConfigPath:     r.opts.ConfigPath,
 		AISystemPrompt: req.AISystemPrompt,

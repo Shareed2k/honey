@@ -160,3 +160,31 @@
 {"ts":"2026-06-22T19:24:56.909Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
 {"ts":"2026-06-22T19:26:21.072Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
 {"ts":"2026-06-22T19:28:28.937Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
+{"ts":"2026-06-22T19:29:19.020Z","hook":"iteration-context","action":"skip","iterationCount":4}
+{"ts":"2026-06-22T19:34:39.726Z","hook":"iteration-context","action":"skip","iterationCount":5,"reason":"no-tsv"}
+{"ts":"2026-06-22T19:34:49.197Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
+{"ts":"2026-06-22T19:34:55.723Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
+{"ts":"2026-06-22T19:51:25.527Z","hook":"scout-block","action":"block","tool":"Bash","path":"build/push/pull/exec/stop","matched":"build/push/pull/exec/stop"}
+{"ts":"2026-06-22T20:18:46.172Z","hook":"iteration-context","action":"skip","iterationCount":6}
+{"ts":"2026-06-22T20:25:04.412Z","hook":"iteration-context","action":"skip","iterationCount":7}
+{"ts":"2026-06-22T20:52:13.072Z","hook":"iteration-context","action":"skip","iterationCount":8}
+{"ts":"2026-06-22T20:52:38.379Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
+{"ts":"2026-06-22T20:53:24.066Z","hook":"privacy-block","action":"block","tool":"Read","path":"/Users/shareed2k/.cursor/projects/empty-window/hostctl/internal/cuetry/secret_resolver.go"}
+{"ts":"2026-06-22T20:53:25.735Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
+{"ts":"2026-06-22T20:53:28.893Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
+{"ts":"2026-06-22T21:06:12.901Z","hook":"stop-notify","projectName":"hostctl","duration":"unknown","iterations":0}
+{"ts":"2026-06-22T21:06:12.927Z","hook":"stop-notify","projectName":"hostctl","duration":"1h 56m","iterations":0}
+{"ts":"2026-06-22T21:07:18.673Z","hook":"session-init","projectRoot":"/Users/shareed2k/.cursor/projects/empty-window/hostctl","gitBranch":"add_inventory"}
+{"ts":"2026-06-22T21:07:19.749Z","hook":"session-init","projectRoot":"/Users/shareed2k/.cursor/projects/empty-window/hostctl","gitBranch":"add_inventory"}
+{"ts":"2026-06-22T21:07:20.676Z","hook":"stop-notify","projectName":"hostctl","duration":"0m 2s","iterations":0}
+{"ts":"2026-06-23T04:23:39.722Z","hook":"iteration-context","action":"skip","iterationCount":1}
+{"ts":"2026-06-23T04:35:51.164Z","hook":"iteration-context","action":"skip","iterationCount":2}
+{"ts":"2026-06-23T06:44:56.604Z","hook":"session-init","projectRoot":"/Users/shareed2k/.cursor/projects/empty-window/hostctl","gitBranch":"add_inventory"}
+{"ts":"2026-06-23T06:49:53.785Z","hook":"iteration-context","action":"skip","iterationCount":1}
+{"ts":"2026-06-23T06:50:14.888Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
+{"ts":"2026-06-23T06:54:28.919Z","hook":"iteration-context","action":"skip","iterationCount":2}
+{"ts":"2026-06-23T06:56:41.546Z","hook":"iteration-context","action":"skip","iterationCount":3}
+{"ts":"2026-06-23T06:58:31.742Z","hook":"iteration-context","action":"skip","iterationCount":4}
+{"ts":"2026-06-23T07:26:36.828Z","hook":"iteration-context","action":"skip","iterationCount":5,"reason":"no-tsv"}
+{"ts":"2026-06-23T07:27:12.937Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
+{"ts":"2026-06-23T07:50:56.038Z","hook":"iteration-context","action":"skip","iterationCount":6}
