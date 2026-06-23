@@ -118,6 +118,9 @@ func newSSHTarget(t *testing.T) sshTarget {
 		hosts.Record{Provider: "test", Name: "ssh-test", PrimaryIP: host},
 		port,
 	)
+	// Identity file lets the /ws/ssh web shell (DialSSHLeafForRecord) authenticate
+	// to the container; cue-exec/webhook paths use the exec registry dialer instead.
+	rec = hosts.CloneWithMetaSSHIdentityFile(rec, keyFile)
 	return sshTarget{
 		rec:       rec,
 		searchReg: searchrun.NewRegistry([]searchrun.ProviderFactory{webhookTestFactory{rec: rec}}),
