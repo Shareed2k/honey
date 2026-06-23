@@ -118,6 +118,10 @@ const schemaSource = `
 		data?: {...}
 		output?: string
 	})
+	opa?: close({
+		policy: string
+		input?: {...}
+	})
 	plugin?: close({
 		id:     string
 		action: string
