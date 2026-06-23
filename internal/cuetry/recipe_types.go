@@ -40,7 +40,10 @@ type RecipeSubRecipe struct {
 
 // RecipeWebhook defines a webhook trigger for a recipe.
 type RecipeWebhook struct {
-	AuthSecret     string            `json:"auth_secret,omitempty"`
+	AuthSecret string `json:"auth_secret,omitempty"`
+	// Actor is a gjson path into the webhook payload whose value becomes the OPA
+	// actor (e.g. "sender.login"). Lower priority than a trusted header / JWT.
+	Actor          string            `json:"actor,omitempty"`
 	Extract        map[string]string `json:"extract,omitempty"`
 	Async          *bool             `json:"async,omitempty"`
 	IdempotencyKey string            `json:"idempotency_key,omitempty"`
