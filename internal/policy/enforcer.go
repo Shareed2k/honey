@@ -22,6 +22,13 @@ var embeddedPolicies embed.FS
 type Decision struct {
 	Allow      bool
 	DenyReason string
+	// Decision is the optional fine-grained verdict a policy may set:
+	// "allow" | "deny" | "require_approval" | "require_biometric". Empty when the
+	// policy only sets allow/deny_reason.
+	Decision string
+	// Requires lists optional preconditions a policy demands, e.g.
+	// ["explicit_approval", "biometric"]. Empty when unset.
+	Requires []string
 }
 
 // Enforcer holds a prepared rego query over the data.honey package. It is safe
@@ -61,7 +68,28 @@ func (e *Enforcer) Evaluate(ctx context.Context, input map[string]any) (Decision
 	obj, _ := rs[0].Expressions[0].Value.(map[string]any)
 	allow, _ := obj["allow"].(bool)
 	reason, _ := obj["deny_reason"].(string)
-	return Decision{Allow: allow, DenyReason: reason}, nil
+	decision, _ := obj["decision"].(string)
+	return Decision{
+		Allow:      allow,
+		DenyReason: reason,
+		Decision:   decision,
+		Requires:   toStringSlice(obj["requires"]),
+	}, nil
+}
+
+// toStringSlice converts a rego array value ([]any of strings) to []string.
+func toStringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok || len(arr) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func prepareEnforcer(ctx context.Context, modules map[string]string, data map[string]any) (*Enforcer, error) {
