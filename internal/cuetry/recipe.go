@@ -294,6 +294,7 @@ const schemaSource = `
 })
 #Webhook: close({
 	auth_secret?:     string
+	actor?:           string
 	extract?:         {[string]: string}
 	async?:           bool
 	idempotency_key?: string
