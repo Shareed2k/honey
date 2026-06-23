@@ -51,6 +51,23 @@ func authenticateWebhook(ctx context.Context, api *RecipesAPI, webhook cuetry.Re
 	return nil
 }
 
+// resolveWebhookActor picks the OPA actor for a webhook run: a trusted-proxy /
+// JWT identity if present, else the configured payload gjson path, else the
+// synthetic "webhook:<app>" fallback.
+func (api *RecipesAPI) resolveWebhookActor(r *http.Request, webhook cuetry.RecipeWebhook, body []byte, appName string) string {
+	if u := userFromRequest(r, api.opts.TrustedProxyNets, api.opts.JWTPubKey); u != "api" {
+		return u
+	}
+	if path := strings.TrimSpace(webhook.Actor); path != "" {
+		if v := gjson.GetBytes(body, path); v.Exists() {
+			if s := strings.TrimSpace(v.String()); s != "" {
+				return s
+			}
+		}
+	}
+	return "webhook:" + appName
+}
+
 func extractWebhookPayload(r *http.Request, webhook cuetry.RecipeWebhook) ([]byte, []string, error) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -109,7 +126,7 @@ func checkWebhookIdempotency(api *RecipesAPI, webhook cuetry.RecipeWebhook, body
 	return scopedKey, false
 }
 
-func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt string, _ *plugins.Manager) {
+func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, _ *plugins.Manager) {
 	if api.webhookQueue == nil {
 		httpError(w, fmt.Errorf("server queue not configured"), http.StatusInternalServerError)
 		return
@@ -170,7 +187,7 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 			RecipeDir:        filepath.Dir(recipePath),
 			Records:          searchOut.Records,
 			SSHUser:          sshUser,
-			ActorID:          "webhook:" + appName,
+			ActorID:          actor,
 			Env:              envMap,
 			AISystemPrompt:   aiPrompt,
 			Recorder:         rec,
@@ -199,7 +216,7 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt string, _ *plugins.Manager) {
+func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, _ *plugins.Manager) {
 	if scopedKey != "" {
 		defer api.webhookDedupCache.Delete(scopedKey)
 	}
@@ -222,7 +239,7 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		RecipeDir:        filepath.Dir(recipePath),
 		Records:          searchOut.Records,
 		SSHUser:          sshUser,
-		ActorID:          "webhook:" + appName,
+		ActorID:          actor,
 		Env:              envMap,
 		AISystemPrompt:   aiPrompt,
 		RecordSession:    strings.TrimSpace(api.opts.RecordDir) != "",
@@ -363,16 +380,18 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	actor := api.resolveWebhookActor(r, webhook, body, appName)
+
 	isAsync := webhook.Async != nil && *webhook.Async
 
 	// ---- Async path: return 202 immediately; search + execution run in the queue. ----
 	if isAsync {
-		handleAsyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, pluginMgr)
+		handleAsyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor, pluginMgr)
 		return
 	}
 
 	// ---- Synchronous path: search + execute inline, return full results. ----
-	handleSyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, pluginMgr)
+	handleSyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor, pluginMgr)
 }
 
 // WebhookResultResponse is returned by GET /api/v1/webhooks/results/{id}
