@@ -25,6 +25,8 @@ var (
 	flagExecShell    string
 	flagExecQuiet    bool
 	flagExecOutput   string
+	flagExecCheck    bool
+	flagExecShellchk bool
 )
 
 var execCmd = &cobra.Command{
@@ -58,6 +60,8 @@ func init() {
 	execCmd.Flags().StringVar(&flagExecShell, "shell", "auto", "Command shell: auto, sh, bash, raw, powershell")
 	execCmd.Flags().BoolVar(&flagExecQuiet, "quiet", false, "Show status lines only (no stdout blocks)")
 	execCmd.Flags().StringVarP(&flagExecOutput, "output", "o", "text", "Output format: text or json")
+	execCmd.Flags().BoolVar(&flagExecCheck, "check", false, "Analyze command risk and print the decision without executing")
+	execCmd.Flags().BoolVar(&flagExecShellchk, "shellcheck", false, "With --check, also run shellcheck if installed")
 }
 
 func validateExecFlags() error {
@@ -135,6 +139,12 @@ func runExec(cmd *cobra.Command, args []string) error {
 			jobs = append(jobs, r)
 		}
 	}
+	if flagExecCheck {
+		// Risk analysis only — no execution; tolerate an empty host set (per-target
+		// policy simply has nothing to evaluate).
+		return runExecCheck(cmd.Context(), remoteCmd, jobs)
+	}
+
 	if len(jobs) == 0 {
 		return fmt.Errorf("no connectable records match %q", target)
 	}
