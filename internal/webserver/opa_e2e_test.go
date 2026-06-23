@@ -12,6 +12,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/policy"
 )
 
@@ -122,6 +123,53 @@ func TestParseEd25519PublicKey_RoundTrip(t *testing.T) {
 	if !ed25519.PublicKey(decoded).Equal(pub) {
 		t.Fatal("round-trip mismatch")
 	}
+}
+
+func TestResolveWebhookActor(t *testing.T) {
+	_, ipNet, _ := net.ParseCIDR("127.0.0.0/8")
+	api := &RecipesAPI{opts: Options{TrustedProxyNets: []*net.IPNet{ipNet}}}
+	body := []byte(`{"sender":{"login":"octocat"}}`)
+
+	newReq := func(remote, userHeader string) *http.Request {
+		r := httptest.NewRequest("POST", "/api/v1/webhooks/myapp/hook1", nil)
+		r.RemoteAddr = remote
+		if userHeader != "" {
+			r.Header.Set(trustedUserHeader, userHeader)
+		}
+		return r
+	}
+
+	t.Run("trusted header wins over payload", func(t *testing.T) {
+		got := api.resolveWebhookActor(newReq("127.0.0.1:9", "alice"),
+			cuetry.RecipeWebhook{Actor: "sender.login"}, body, "myapp")
+		if got != "alice" {
+			t.Fatalf("actor = %q, want alice", got)
+		}
+	})
+
+	t.Run("payload path when no trusted header", func(t *testing.T) {
+		got := api.resolveWebhookActor(newReq("8.8.8.8:9", "mallory"), // untrusted peer → header ignored
+			cuetry.RecipeWebhook{Actor: "sender.login"}, body, "myapp")
+		if got != "octocat" {
+			t.Fatalf("actor = %q, want octocat", got)
+		}
+	})
+
+	t.Run("fallback to webhook:app", func(t *testing.T) {
+		got := api.resolveWebhookActor(newReq("8.8.8.8:9", ""),
+			cuetry.RecipeWebhook{}, body, "myapp")
+		if got != "webhook:myapp" {
+			t.Fatalf("actor = %q, want webhook:myapp", got)
+		}
+	})
+
+	t.Run("fallback when payload path missing", func(t *testing.T) {
+		got := api.resolveWebhookActor(newReq("8.8.8.8:9", ""),
+			cuetry.RecipeWebhook{Actor: "does.not.exist"}, body, "myapp")
+		if got != "webhook:myapp" {
+			t.Fatalf("actor = %q, want webhook:myapp", got)
+		}
+	})
 }
 
 func TestAuthMiddleware_OPAGate(t *testing.T) {
