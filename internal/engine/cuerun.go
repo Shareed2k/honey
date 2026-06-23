@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -29,6 +30,7 @@ type CueRecipeRunParams struct {
 	Pools          *postgres.PoolManager
 	Cache          *ClientCache     // optional shared cache; nil = create a fresh per-run cache
 	Enforcer       *policy.Enforcer // optional OPA host-filter gate; nil = allow all
+	Inventory      config.Inventory // config inventory; resolved per-host into OPA host_vars
 }
 
 // CueRun ...
