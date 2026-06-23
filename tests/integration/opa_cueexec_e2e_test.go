@@ -229,6 +229,68 @@ deny_reason := "host blocked" if {
 	}
 }
 
+// --- inventory host_vars driving the host filter --------------------------
+
+func TestOPAE2E_CueExec_InventoryHostVar(t *testing.T) {
+	target := newSSHTarget(t)
+	// Deny step_execute on any host whose resolved inventory var blocked == true.
+	enf := newEnforcer(t, `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if {
+	input.action == "step_execute"
+	input.host_vars.blocked == true
+}
+deny_reason := "host blocked by inventory" if {
+	input.action == "step_execute"
+	input.host_vars.blocked == true
+}`)
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	out := "/tmp/opa_inv_hostvar.txt"
+	recipePath := writeCmdRecipe(t, "opa-inv-hostvar", out)
+
+	configPath := filepath.Join(t.TempDir(), "honey.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o600))
+	base := newTestServer(t, webserver.Options{
+		Token:          "test-token",
+		Enforcer:       enf,
+		ConfigPath:     configPath,
+		SearchRegistry: target.searchReg,
+		ExecRegistry:   target.execReg,
+		Config: &config.File{
+			Apps: map[string]apps.AppConfig{
+				"opa_app": {Type: apps.AppTypeRecipe, TargetRecipe: recipePath, Target: "ssh-test"},
+			},
+			Defaults: config.Defaults{SSHUser: "testuser"},
+			Inventory: config.Inventory{
+				Hosts: map[string]config.InventoryHost{
+					"ssh-test": {Vars: map[string]config.InventoryValue{"blocked": config.MustInventoryValue(true)}},
+				},
+			},
+		},
+	})
+
+	resp := postCueExec(t, client, base, recipePath, []hosts.Record{target.rec}, []string{"MARK=ran"},
+		map[string]string{"Authorization": authHeader()})
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	results := decodeResults(t, resp)
+	var sawSkip bool
+	for _, r := range results {
+		if skipped, _ := r["Skipped"].(bool); skipped {
+			sawSkip = true
+		}
+	}
+	assert.True(t, sawSkip, "host blocked by inventory var should be skipped: %v", results)
+
+	if _, err := target.readFile(t, out); err == nil {
+		t.Fatal("inventory-blocked host must not run the command")
+	}
+}
+
 // --- Task 5: opa step (allow & deny) -------------------------------------
 
 // writeOPAStepRecipe writes a recipe (opa step + command step) and its policy
