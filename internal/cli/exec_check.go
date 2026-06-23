@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/shareed2k/honey/internal/aichat"
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
@@ -36,6 +37,8 @@ func runExecCheck(ctx context.Context, command string, jobs []hosts.Record) erro
 	if flagExecShellchk {
 		printShellcheck(command)
 	}
+
+	printLLMAdvice(ctx, command, a)
 
 	denied := a.Critical
 	if a.Critical {
@@ -115,6 +118,25 @@ func evalCheckPolicy(ctx context.Context, enf *policy.Enforcer, command string, 
 		}
 	}
 	return denied
+}
+
+// printLLMAdvice prints an advisory LLM classification when HONEY_RISK_LLM=1 and
+// a model endpoint is reachable. It is advisory only and never affects the exit
+// code; any error is reported and ignored.
+func printLLMAdvice(ctx context.Context, command string, a commandrisk.Analysis) {
+	if v := strings.TrimSpace(os.Getenv("HONEY_RISK_LLM")); v == "" || v == "0" || strings.EqualFold(v, "false") {
+		return
+	}
+	advisor := commandrisk.NewLLMAdvisor(aichat.Complete, strings.TrimSpace(os.Getenv("OPENAI_MODEL")))
+	advice, err := advisor.Advise(ctx, command, a.Detected)
+	if err != nil {
+		fmt.Fprintf(os.Stdout, "LLM advisory: unavailable (%v)\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stdout, "LLM advisory (not authoritative): risk=%s reasons=%v\n", advice.Risk, advice.Reasons)
+	if advice.Explanation != "" {
+		fmt.Fprintf(os.Stdout, "  %s\n", advice.Explanation)
+	}
 }
 
 // printShellcheck runs shellcheck on the command when the binary is on PATH,
