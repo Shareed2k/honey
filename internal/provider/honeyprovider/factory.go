@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shareed2k/honey/internal/config"
@@ -52,50 +53,79 @@ func (f honeyFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend {
 
 func (f honeyFactory) BackendRows() []config.BackendRow {
 	var rows []config.BackendRow
-	client := &http.Client{Timeout: 2 * time.Second}
+	backends := f.cfg.HoneyBackends()
 
-	for _, b := range f.cfg.HoneyBackends() {
-		// 1. Add the Honey backend itself
+	if len(backends) == 0 {
+		return nil
+	}
+
+	// 1. Add the Honey backends themselves
+	for _, b := range backends {
 		rows = append(rows, config.BackendRow{
 			Kind: "honey",
 			Name: b.Name,
 			Hint: b.URL,
 		})
-
-		// 2. Fetch remote backends
-		fetchURL := strings.TrimRight(b.URL, "/") + "/api/v1/config/backends"
-		req, err := http.NewRequest(http.MethodGet, fetchURL, nil)
-		if err != nil {
-			continue
-		}
-		if b.Token != "" {
-			req.Header.Set("Authorization", "Bearer "+b.Token)
-		}
-
-		// Handle insecure TLS
-		if b.Insecure {
-			tr := &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-			}
-			client.Transport = tr
-		} else {
-			client.Transport = nil // Use default
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-
-		if resp.StatusCode == http.StatusOK {
-			var out hostapi.ListBackendsOutput
-			if err := json.NewDecoder(resp.Body).Decode(&out); err == nil {
-				// Append fetched backends
-				rows = append(rows, out.Backends...)
-			}
-		}
-		resp.Body.Close()
 	}
+
+	// 2. Fetch remote backends concurrently
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	// Use DisableKeepAlives to prevent connection leaks for these short-lived fetches.
+	defaultClient := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+		},
+	}
+	insecureClient := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, // #nosec G402
+		},
+	}
+
+	for _, b := range backends {
+		b := b // capture loop variable
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			fetchURL := strings.TrimRight(b.URL, "/") + "/api/v1/config/backends"
+			req, err := http.NewRequest(http.MethodGet, fetchURL, nil)
+			if err != nil {
+				return
+			}
+			if b.Token != "" {
+				req.Header.Set("Authorization", "Bearer "+b.Token)
+			}
+
+			client := defaultClient
+			if b.Insecure {
+				client = insecureClient
+			}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusOK {
+				var out hostapi.ListBackendsOutput
+				if err := json.NewDecoder(resp.Body).Decode(&out); err == nil {
+					mu.Lock()
+					rows = append(rows, out.Backends...)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 	return rows
 }
 
