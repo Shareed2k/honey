@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.honey.mobile.data.RecipeDao
 import com.honey.mobile.data.RecipeEntity
+import com.honey.mobile.data.SecretsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -36,7 +37,10 @@ import org.json.JSONObject
 import javax.inject.Inject
 
 @HiltViewModel
-class RecipesViewModel @Inject constructor(private val dao: RecipeDao) : ViewModel() {
+class RecipesViewModel @Inject constructor(
+    private val dao: RecipeDao,
+    private val secrets: SecretsStore
+) : ViewModel() {
     val recipes: StateFlow<List<RecipeEntity>> =
         dao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -85,7 +89,8 @@ class RecipesViewModel @Inject constructor(private val dao: RecipeDao) : ViewMod
 
             try {
                 // Call Go code directly! Data boundary must use JSON strings.
-                val jsonRequest = JSONObject().put("recipe", recipe.content).toString()
+                val resolvedContent = secrets.resolve(recipe.content)
+                val jsonRequest = JSONObject().put("recipe", resolvedContent).toString()
                 val resultJson = Mobile.executeRecipe(jsonRequest, callback)
                 kotlinx.coroutines.delay(2000)
                 _executionState.value = ExecutionState.Idle
