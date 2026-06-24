@@ -10,8 +10,10 @@ OUT_DIR="android/app/libs"
 mkdir -p "$OUT_DIR"
 
 echo "Ensuring gomobile is installed..."
-go install golang.org/x/mobile/cmd/gomobile@latest
-gomobile init
+if ! command -v gomobile >/dev/null 2>&1; then
+    go install golang.org/x/mobile/cmd/gomobile@latest
+    gomobile init
+fi
 
 echo "Building AAR for Android..."
 # We compile the pkg/mobile package into an AAR library.

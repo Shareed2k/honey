@@ -87,10 +87,12 @@ class RecipesViewModel @Inject constructor(private val dao: RecipeDao) : ViewMod
                 // Call Go code directly! Data boundary must use JSON strings.
                 val jsonRequest = JSONObject().put("recipe", recipe.content).toString()
                 val resultJson = Mobile.executeRecipe(jsonRequest, callback)
+                kotlinx.coroutines.delay(2000)
                 _executionState.value = ExecutionState.Idle
                 _snackbarEvent.send("Success: ${resultJson ?: "Success"}")
             } catch (e: Exception) {
                 android.util.Log.e("RecipesViewModel", "Error running recipe", e)
+                kotlinx.coroutines.delay(2000)
                 _executionState.value = ExecutionState.Idle
                 _snackbarEvent.send("Error: ${e.message ?: "Unknown error"}")
             }

@@ -51,3 +51,23 @@ dependencies {
     implementation(libs.room.ktx)
     kapt(libs.room.compiler)
 }
+
+tasks.register<Exec>("buildHoneyAar") {
+    group = "build"
+    description = "Builds the honey.aar library using gomobile"
+    
+    val repoRoot = rootProject.projectDir.parentFile
+    
+    inputs.dir(File(repoRoot, "pkg/mobile"))
+    inputs.file(File(repoRoot, "scripts/build-android.sh"))
+    outputs.file(File(projectDir, "libs/honey.aar"))
+    
+    workingDir = repoRoot
+    commandLine("bash", "scripts/build-android.sh")
+}
+
+afterEvaluate {
+    tasks.named("preBuild") {
+        dependsOn("buildHoneyAar")
+    }
+}
