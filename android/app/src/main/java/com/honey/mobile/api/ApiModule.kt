@@ -12,6 +12,8 @@ object ApiModule {
     @Provides
     @Singleton
     fun provideHoneyApi(): HoneyApi {
+        // TODO: Replace dummy implementation with native Mobile AAR calls.
+        // This is necessary to keep the app compiling, but currently leaves other screens silently broken.
         return object : HoneyApi {
             override suspend fun getMeta(): MetaResponse = MetaResponse("0.1.0-mobile")
             override suspend fun getBackends(): List<Backend> = emptyList()

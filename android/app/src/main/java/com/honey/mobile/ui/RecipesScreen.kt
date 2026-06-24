@@ -46,10 +46,12 @@ class RecipesViewModel @Inject constructor(private val dao: RecipeDao) : ViewMod
 
     private val callback = object : LogCallback {
         override fun onLog(msg: String?) {
+            android.util.Log.d("RecipesViewModel", "onLog: $msg")
             // Push to UI state
         }
 
         override fun onProgress(progressJSON: String?) {
+            android.util.Log.d("RecipesViewModel", "onProgress: $progressJSON")
             // Push to UI state
         }
     }
@@ -61,7 +63,7 @@ class RecipesViewModel @Inject constructor(private val dao: RecipeDao) : ViewMod
                 val resultJson = Mobile.executeRecipe(recipe.content, callback)
                 // Handle result...
             } catch (e: Exception) {
-                // Handle error
+                android.util.Log.e("RecipesViewModel", "Error running recipe", e)
             }
         }
     }
