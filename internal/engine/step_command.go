@@ -39,7 +39,7 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 		return fmt.Errorf("internal: command step has wrong type %T", step)
 	}
 
-	targets, riskSkipped, err := gateCommandRisk(ctx, run, kind, cs.Command, targets)
+	targets, riskSkipped, err := gateCommandRisk(ctx, run, kind, cs.Command, cs.Interpreter, targets)
 	if err != nil {
 		return err
 	}
@@ -247,7 +247,7 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 	// #nosec G304 -- localAbs is a recipe-author path resolved within the recipe dir.
 	if scriptSrc, rerr := os.ReadFile(localAbs); rerr == nil {
 		var riskSkipped []HostExecResult
-		targets, riskSkipped, err = gateCommandRisk(ctx, run, kind, string(scriptSrc), targets)
+		targets, riskSkipped, err = gateCommandRisk(ctx, run, kind, string(scriptSrc), ss.Interpreter, targets)
 		if err != nil {
 			return err
 		}

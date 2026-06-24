@@ -55,6 +55,15 @@ func TestReportRecipeRisk(t *testing.T) {
 			wantContain: "Policy: deny — blocked",
 		},
 		{
+			name: "python interpreter header",
+			risks: []engine.StepRisk{
+				{StepIndex: 0, Kind: "command", Host: "web-1", Command: "print(\"hi\")", Interpreter: "python3", Analysis: commandrisk.AnalyzeStep("print(\"hi\")", "python3")},
+			},
+			hasPolicy:   false,
+			wantDenied:  false,
+			wantContain: "[command:python3]",
+		},
+		{
 			name: "require approval",
 			risks: []engine.StepRisk{
 				{

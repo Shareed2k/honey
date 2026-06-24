@@ -225,7 +225,7 @@ func (a *Analysis) inspectRedirect(r *syntax.Redirect) {
 		return
 	}
 	target := r.Word.Lit()
-	if strings.HasPrefix(target, "/dev/sd") || strings.HasPrefix(target, "/dev/nvme") || strings.HasPrefix(target, "/dev/vd") {
+	if isBlockDevicePath(target) {
 		a.add(RiskSignal{ID: "DD_WRITE_BLOCK_DEVICE", Severity: SeverityCritical, Reason: "redirect overwrites a block device"})
 	}
 }

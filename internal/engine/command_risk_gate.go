@@ -36,12 +36,12 @@ func riskGateDisabled() bool {
 // a clear reason in this non-interactive path (the approval flow is a later phase).
 // Returns the allowed targets and skip results for denied ones — mirroring
 // filterTargetsByPolicy so denied hosts stay visible in the run output.
-func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand string, targets []hosts.Record) (allowed []hosts.Record, skipped []HostExecResult, err error) {
+func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpreter string, targets []hosts.Record) (allowed []hosts.Record, skipped []HostExecResult, err error) {
 	if riskGateDisabled() || strings.TrimSpace(rawCommand) == "" {
 		return targets, nil, nil
 	}
 
-	analysis := commandrisk.Analyze(rawCommand)
+	analysis := commandrisk.AnalyzeStep(rawCommand, interpreter)
 	enforcer := run.Params.Enforcer
 	actor := actorOrAPI(run.Params.ActorID)
 
@@ -79,6 +79,7 @@ func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, 
 			"riskSignals":  analysis.Signals,
 			"detected":     analysis.Detected,
 			"max_severity": string(analysis.MaxSeverity),
+			"interpreter":  analysis.Interpreter,
 		},
 		"target": map[string]any{
 			"name":      t.Name,
