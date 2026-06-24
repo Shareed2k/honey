@@ -16,13 +16,6 @@ data class ConfigDefaults(
 
 data class ConfigBackends(
     val local: List<LocalBackendConfig> = emptyList(),
-    val kubernetes: List<K8sBackendConfig> = emptyList(),
-    val aws: List<AwsBackendConfig> = emptyList(),
-    val gcp: List<GcpBackendConfig> = emptyList(),
-    val consul: List<ConsulBackendConfig> = emptyList(),
-    val proxmox: List<ProxmoxBackendConfig> = emptyList(),
-    val truenas: List<TrueNasBackendConfig> = emptyList(),
-    val docker: List<DockerBackendConfig> = emptyList(),
     val honey: List<HoneyBackendConfig> = emptyList()
 )
 
@@ -35,51 +28,6 @@ data class LocalHostConfig(
     val name: String,
     @SerializedName("primary_ip") val primaryIp: String,
     @SerializedName("ssh_user") val sshUser: String = ""
-)
-
-data class K8sBackendConfig(
-    val name: String,
-    val context: String = "",
-    val kubeconfig: String = "",
-    val mode: String = "nodes"
-)
-
-data class AwsBackendConfig(
-    val name: String,
-    val profile: String = "",
-    val region: String = ""
-)
-
-data class GcpBackendConfig(
-    val name: String,
-    val project: String = "",
-    val zone: String = ""
-)
-
-data class ConsulBackendConfig(
-    val name: String,
-    val addr: String = "",
-    val token: String = ""
-)
-
-data class ProxmoxBackendConfig(
-    val name: String,
-    val url: String = "",
-    val user: String = "",
-    val password: String = ""
-)
-
-data class TrueNasBackendConfig(
-    val name: String,
-    val url: String = "",
-    val username: String = "",
-    @SerializedName("api_key") val apiKey: String = ""
-)
-
-data class DockerBackendConfig(
-    val name: String,
-    val host: String = "",
-    val socket: String = ""
 )
 
 data class HoneyBackendConfig(

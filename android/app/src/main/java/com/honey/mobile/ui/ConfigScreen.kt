@@ -56,13 +56,6 @@ class ConfigViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             val updated = when (item) {
                 is LocalBackendConfig   -> replaceOrAddLocal(_config.value, item)
-                is K8sBackendConfig     -> replaceOrAddK8s(_config.value, item)
-                is AwsBackendConfig     -> replaceOrAddAws(_config.value, item)
-                is GcpBackendConfig     -> replaceOrAddGcp(_config.value, item)
-                is ConsulBackendConfig  -> replaceOrAddConsul(_config.value, item)
-                is ProxmoxBackendConfig -> replaceOrAddProxmox(_config.value, item)
-                is TrueNasBackendConfig -> replaceOrAddTrueNas(_config.value, item)
-                is DockerBackendConfig  -> replaceOrAddDocker(_config.value, item)
                 is HoneyBackendConfig   -> replaceOrAddHoney(_config.value, item)
                 else -> _config.value
             }
@@ -75,13 +68,6 @@ class ConfigViewModel @Inject constructor(
             val b = _config.value.backends
             val updated = _config.value.copy(backends = when (type) {
                 "local"      -> b.copy(local = b.local.filterNot { it.name == name })
-                "kubernetes" -> b.copy(kubernetes = b.kubernetes.filterNot { it.name == name })
-                "aws"        -> b.copy(aws = b.aws.filterNot { it.name == name })
-                "gcp"        -> b.copy(gcp = b.gcp.filterNot { it.name == name })
-                "consul"     -> b.copy(consul = b.consul.filterNot { it.name == name })
-                "proxmox"    -> b.copy(proxmox = b.proxmox.filterNot { it.name == name })
-                "truenas"    -> b.copy(truenas = b.truenas.filterNot { it.name == name })
-                "docker"     -> b.copy(docker = b.docker.filterNot { it.name == name })
                 "honey"      -> b.copy(honey = b.honey.filterNot { it.name == name })
                 else -> b
             })
@@ -91,32 +77,11 @@ class ConfigViewModel @Inject constructor(
 
     fun flatBackends(cfg: HoneyConfig): List<BackendItem> = buildList {
         cfg.backends.local.forEach      { add(BackendItem("local",      it.name, "${it.hosts.size} hosts")) }
-        cfg.backends.kubernetes.forEach { add(BackendItem("kubernetes", it.name, it.context)) }
-        cfg.backends.aws.forEach        { add(BackendItem("aws",        it.name, it.region)) }
-        cfg.backends.gcp.forEach        { add(BackendItem("gcp",        it.name, it.project)) }
-        cfg.backends.consul.forEach     { add(BackendItem("consul",     it.name, it.addr)) }
-        cfg.backends.proxmox.forEach    { add(BackendItem("proxmox",    it.name, it.url)) }
-        cfg.backends.truenas.forEach    { add(BackendItem("truenas",    it.name, it.url)) }
-        cfg.backends.docker.forEach     { add(BackendItem("docker",     it.name, it.host.ifBlank { it.socket })) }
         cfg.backends.honey.forEach      { add(BackendItem("honey",      it.name, it.url)) }
     }
 
     private fun replaceOrAddLocal(cfg: HoneyConfig, item: LocalBackendConfig) =
         cfg.copy(backends = cfg.backends.copy(local = cfg.backends.local.filterNot { it.name == item.name } + item))
-    private fun replaceOrAddK8s(cfg: HoneyConfig, item: K8sBackendConfig) =
-        cfg.copy(backends = cfg.backends.copy(kubernetes = cfg.backends.kubernetes.filterNot { it.name == item.name } + item))
-    private fun replaceOrAddAws(cfg: HoneyConfig, item: AwsBackendConfig) =
-        cfg.copy(backends = cfg.backends.copy(aws = cfg.backends.aws.filterNot { it.name == item.name } + item))
-    private fun replaceOrAddGcp(cfg: HoneyConfig, item: GcpBackendConfig) =
-        cfg.copy(backends = cfg.backends.copy(gcp = cfg.backends.gcp.filterNot { it.name == item.name } + item))
-    private fun replaceOrAddConsul(cfg: HoneyConfig, item: ConsulBackendConfig) =
-        cfg.copy(backends = cfg.backends.copy(consul = cfg.backends.consul.filterNot { it.name == item.name } + item))
-    private fun replaceOrAddProxmox(cfg: HoneyConfig, item: ProxmoxBackendConfig) =
-        cfg.copy(backends = cfg.backends.copy(proxmox = cfg.backends.proxmox.filterNot { it.name == item.name } + item))
-    private fun replaceOrAddTrueNas(cfg: HoneyConfig, item: TrueNasBackendConfig) =
-        cfg.copy(backends = cfg.backends.copy(truenas = cfg.backends.truenas.filterNot { it.name == item.name } + item))
-    private fun replaceOrAddDocker(cfg: HoneyConfig, item: DockerBackendConfig) =
-        cfg.copy(backends = cfg.backends.copy(docker = cfg.backends.docker.filterNot { it.name == item.name } + item))
     private fun replaceOrAddHoney(cfg: HoneyConfig, item: HoneyBackendConfig) =
         cfg.copy(backends = cfg.backends.copy(honey = cfg.backends.honey.filterNot { it.name == item.name } + item))
 }
@@ -259,7 +224,7 @@ private fun DefaultsTab(defaults: ConfigDefaults, onSave: (String, String) -> Un
 
 @Composable
 private fun BackendTypePickerDialog(onDismiss: () -> Unit, onSelect: (String) -> Unit) {
-    val types = listOf("local", "kubernetes", "aws", "gcp", "consul", "proxmox", "truenas", "docker", "honey")
+    val types = listOf("local", "honey")
     var selected by remember { mutableStateOf(types[0]) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -302,13 +267,6 @@ private fun BackendFormDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (type) {
                     "local"      -> LocalForm(initial as? LocalBackendConfig, onSave, onDismiss)
-                    "kubernetes" -> K8sForm(initial as? K8sBackendConfig, onSave, onDismiss)
-                    "aws"        -> AwsForm(initial as? AwsBackendConfig, onSave, onDismiss)
-                    "gcp"        -> GcpForm(initial as? GcpBackendConfig, onSave, onDismiss)
-                    "consul"     -> ConsulForm(initial as? ConsulBackendConfig, secretKeys, onSave, onDismiss)
-                    "proxmox"    -> ProxmoxForm(initial as? ProxmoxBackendConfig, secretKeys, onSave, onDismiss)
-                    "truenas"    -> TrueNasForm(initial as? TrueNasBackendConfig, secretKeys, onSave, onDismiss)
-                    "docker"     -> DockerForm(initial as? DockerBackendConfig, onSave, onDismiss)
                     "honey"      -> HoneyForm(initial as? HoneyBackendConfig, secretKeys, onSave, onDismiss)
                 }
             }
@@ -445,321 +403,6 @@ private fun LocalForm(
 }
 
 @Composable
-private fun K8sForm(
-    initial: K8sBackendConfig?,
-    onSave: (Any) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var context by remember { mutableStateOf(initial?.context ?: "") }
-    var kubeconfig by remember { mutableStateOf(initial?.kubeconfig ?: "") }
-    var mode by remember { mutableStateOf(initial?.mode ?: "nodes") }
-
-    var nameError by remember { mutableStateOf<String?>(null) }
-    var contextError by remember { mutableStateOf<String?>(null) }
-
-    ValidatedTextField(
-        value = name, onValueChange = { name = it; nameError = null },
-        label = "Name *", errorMessage = nameError
-    )
-    ValidatedTextField(
-        value = context, onValueChange = { context = it; contextError = null },
-        label = "Context *", errorMessage = contextError
-    )
-    ValidatedTextField(
-        value = kubeconfig, onValueChange = { kubeconfig = it },
-        label = "Kubeconfig path"
-    )
-    ValidatedTextField(
-        value = mode, onValueChange = { mode = it },
-        label = "Mode (nodes/pods)"
-    )
-    TextButton(
-        onClick = {
-            var isValid = true
-            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
-            if (context.isBlank()) { contextError = "Context is required"; isValid = false }
-            if (isValid) {
-                onSave(K8sBackendConfig(name = name, context = context, kubeconfig = kubeconfig, mode = mode))
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Save") }
-}
-
-@Composable
-private fun AwsForm(
-    initial: AwsBackendConfig?,
-    onSave: (Any) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var profile by remember { mutableStateOf(initial?.profile ?: "") }
-    var region by remember { mutableStateOf(initial?.region ?: "") }
-
-    var nameError by remember { mutableStateOf<String?>(null) }
-    var regionError by remember { mutableStateOf<String?>(null) }
-
-    ValidatedTextField(
-        value = name, onValueChange = { name = it; nameError = null },
-        label = "Name *", errorMessage = nameError
-    )
-    ValidatedTextField(
-        value = profile, onValueChange = { profile = it },
-        label = "AWS Profile"
-    )
-    ValidatedTextField(
-        value = region, onValueChange = { region = it; regionError = null },
-        label = "Region *", errorMessage = regionError
-    )
-    TextButton(
-        onClick = {
-            var isValid = true
-            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
-            if (region.isBlank()) { regionError = "Region is required"; isValid = false }
-            if (isValid) {
-                onSave(AwsBackendConfig(name = name, profile = profile, region = region))
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Save") }
-}
-
-@Composable
-private fun GcpForm(
-    initial: GcpBackendConfig?,
-    onSave: (Any) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var project by remember { mutableStateOf(initial?.project ?: "") }
-    var zone by remember { mutableStateOf(initial?.zone ?: "") }
-
-    var nameError by remember { mutableStateOf<String?>(null) }
-    var projectError by remember { mutableStateOf<String?>(null) }
-
-    ValidatedTextField(
-        value = name, onValueChange = { name = it; nameError = null },
-        label = "Name *", errorMessage = nameError
-    )
-    ValidatedTextField(
-        value = project, onValueChange = { project = it; projectError = null },
-        label = "GCP Project *", errorMessage = projectError
-    )
-    ValidatedTextField(
-        value = zone, onValueChange = { zone = it },
-        label = "Zone"
-    )
-    TextButton(
-        onClick = {
-            var isValid = true
-            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
-            if (project.isBlank()) { projectError = "Project is required"; isValid = false }
-            if (isValid) {
-                onSave(GcpBackendConfig(name = name, project = project, zone = zone))
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Save") }
-}
-
-@Composable
-private fun ConsulForm(
-    initial: ConsulBackendConfig?,
-    secretKeys: List<String>,
-    onSave: (Any) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var addr by remember { mutableStateOf(initial?.addr ?: "") }
-    var token by remember { mutableStateOf(initial?.token ?: "") }
-
-    var nameError by remember { mutableStateOf<String?>(null) }
-    var addrError by remember { mutableStateOf<String?>(null) }
-
-    ValidatedTextField(
-        value = name, onValueChange = { name = it; nameError = null },
-        label = "Name *", errorMessage = nameError
-    )
-    ValidatedTextField(
-        value = addr, onValueChange = { addr = it; addrError = null },
-        label = "Address (e.g. 127.0.0.1:8500) *", errorMessage = addrError,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-    )
-    SecretKeyPicker(
-        label = "Token",
-        value = token,
-        secretKeys = secretKeys,
-        onValueChange = { token = it }
-    )
-    TextButton(
-        onClick = {
-            var isValid = true
-            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
-            if (addr.isBlank()) { 
-                addrError = "Address is required"
-                isValid = false 
-            } else if (!Validators.isValidUrl(addr) && !Validators.isValidIp(addr.substringBefore(":"))) {
-                addrError = "Invalid Address"
-                isValid = false
-            }
-            if (isValid) {
-                onSave(ConsulBackendConfig(name = name, addr = addr, token = token))
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Save") }
-}
-
-@Composable
-private fun ProxmoxForm(
-    initial: ProxmoxBackendConfig?,
-    secretKeys: List<String>,
-    onSave: (Any) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var url by remember { mutableStateOf(initial?.url ?: "") }
-    var user by remember { mutableStateOf(initial?.user ?: "") }
-    var password by remember { mutableStateOf(initial?.password ?: "") }
-
-    var nameError by remember { mutableStateOf<String?>(null) }
-    var urlError by remember { mutableStateOf<String?>(null) }
-    var userError by remember { mutableStateOf<String?>(null) }
-
-    ValidatedTextField(
-        value = name, onValueChange = { name = it; nameError = null },
-        label = "Name *", errorMessage = nameError
-    )
-    ValidatedTextField(
-        value = url, onValueChange = { url = it; urlError = null },
-        label = "URL *", errorMessage = urlError,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-    )
-    ValidatedTextField(
-        value = user, onValueChange = { user = it; userError = null },
-        label = "User *", errorMessage = userError
-    )
-    SecretKeyPicker(
-        label = "Password",
-        value = password,
-        secretKeys = secretKeys,
-        onValueChange = { password = it }
-    )
-    TextButton(
-        onClick = {
-            var isValid = true
-            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
-            if (url.isBlank()) {
-                urlError = "URL is required"
-                isValid = false
-            } else if (!Validators.isValidUrl(url)) {
-                urlError = "Invalid URL"
-                isValid = false
-            }
-            if (user.isBlank()) { userError = "User is required"; isValid = false }
-            if (isValid) {
-                onSave(ProxmoxBackendConfig(name = name, url = url, user = user, password = password))
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Save") }
-}
-
-@Composable
-private fun TrueNasForm(
-    initial: TrueNasBackendConfig?,
-    secretKeys: List<String>,
-    onSave: (Any) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var url by remember { mutableStateOf(initial?.url ?: "") }
-    var username by remember { mutableStateOf(initial?.username ?: "") }
-    var apiKey by remember { mutableStateOf(initial?.apiKey ?: "") }
-
-    var nameError by remember { mutableStateOf<String?>(null) }
-    var urlError by remember { mutableStateOf<String?>(null) }
-    var usernameError by remember { mutableStateOf<String?>(null) }
-
-    ValidatedTextField(
-        value = name, onValueChange = { name = it; nameError = null },
-        label = "Name *", errorMessage = nameError
-    )
-    ValidatedTextField(
-        value = url, onValueChange = { url = it; urlError = null },
-        label = "URL *", errorMessage = urlError,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-    )
-    ValidatedTextField(
-        value = username, onValueChange = { username = it; usernameError = null },
-        label = "Username *", errorMessage = usernameError
-    )
-    SecretKeyPicker(
-        label = "API Key",
-        value = apiKey,
-        secretKeys = secretKeys,
-        onValueChange = { apiKey = it }
-    )
-    TextButton(
-        onClick = {
-            var isValid = true
-            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
-            if (url.isBlank()) {
-                urlError = "URL is required"
-                isValid = false
-            } else if (!Validators.isValidUrl(url)) {
-                urlError = "Invalid URL"
-                isValid = false
-            }
-            if (username.isBlank()) { usernameError = "Username is required"; isValid = false }
-            if (isValid) {
-                onSave(TrueNasBackendConfig(name = name, url = url, username = username, apiKey = apiKey))
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Save") }
-}
-
-@Composable
-private fun DockerForm(
-    initial: DockerBackendConfig?,
-    onSave: (Any) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var host by remember { mutableStateOf(initial?.host ?: "") }
-    var socket by remember { mutableStateOf(initial?.socket ?: "") }
-
-    var nameError by remember { mutableStateOf<String?>(null) }
-
-    ValidatedTextField(
-        value = name, onValueChange = { name = it; nameError = null },
-        label = "Name *", errorMessage = nameError
-    )
-    ValidatedTextField(
-        value = host, onValueChange = { host = it },
-        label = "Host (tcp://…)",
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-    )
-    ValidatedTextField(
-        value = socket, onValueChange = { socket = it },
-        label = "Socket path"
-    )
-    TextButton(
-        onClick = {
-            var isValid = true
-            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
-            // Bypass strict validation for host since docker expects schemes like tcp:// or unix://
-            if (isValid) {
-                onSave(DockerBackendConfig(name = name, host = host, socket = socket))
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    ) { Text("Save") }
-}
-
-@Composable
 private fun HoneyForm(
     initial: HoneyBackendConfig?,
     secretKeys: List<String>,
@@ -888,13 +531,6 @@ fun SecretKeyPicker(
 
 private fun findBackend(cfg: HoneyConfig, type: String, name: String): Any? = when (type) {
     "local"      -> cfg.backends.local.find { it.name == name }
-    "kubernetes" -> cfg.backends.kubernetes.find { it.name == name }
-    "aws"        -> cfg.backends.aws.find { it.name == name }
-    "gcp"        -> cfg.backends.gcp.find { it.name == name }
-    "consul"     -> cfg.backends.consul.find { it.name == name }
-    "proxmox"    -> cfg.backends.proxmox.find { it.name == name }
-    "truenas"    -> cfg.backends.truenas.find { it.name == name }
-    "docker"     -> cfg.backends.docker.find { it.name == name }
     "honey"      -> cfg.backends.honey.find { it.name == name }
     else         -> null
 }
