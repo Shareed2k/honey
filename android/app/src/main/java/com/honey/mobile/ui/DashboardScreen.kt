@@ -50,25 +50,39 @@ fun DashboardScreen(vm: DashboardViewModel = hiltViewModel()) {
         
         Spacer(Modifier.height(8.dp))
         
-        OutlinedTextField(
-            value = state.selectedProviders.joinToString(", "),
-            onValueChange = { vm.updateProviders(it) },
-            label = { Text("Providers (comma separated)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+        val uniqueProviders = remember(state.availableBackends) {
+            state.availableBackends.map { it.provider }.distinct().sorted()
+        }
+        val uniqueBackends = remember(state.availableBackends) {
+            state.availableBackends.map { it.name }.distinct().sorted()
+        }
+
+        MultiSelectDropdown(
+            label = "Providers",
+            options = uniqueProviders,
+            selectedOptions = state.selectedProviders,
+            onToggleOption = { vm.toggleProvider(it) }
         )
         
         Spacer(Modifier.height(8.dp))
         
-        OutlinedTextField(
-            value = state.selectedBackends.joinToString(", "),
-            onValueChange = { vm.updateBackends(it) },
-            label = { Text("Backends (comma separated)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+        MultiSelectDropdown(
+            label = "Backends",
+            options = uniqueBackends,
+            selectedOptions = state.selectedBackends,
+            onToggleOption = { vm.toggleBackend(it) }
         )
         
         Spacer(Modifier.height(16.dp))
+
+        if (state.error != null) {
+            Text(
+                text = state.error!!,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+        }
         
         Button(
             onClick = { vm.search() },
@@ -93,6 +107,54 @@ fun DashboardScreen(vm: DashboardViewModel = hiltViewModel()) {
                         Text(host.provider, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MultiSelectDropdown(
+    label: String,
+    options: List<String>,
+    selectedOptions: Set<String>,
+    onToggleOption: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        OutlinedTextField(
+            value = if (selectedOptions.isEmpty()) "All" else selectedOptions.joinToString(", "),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            modifier = Modifier.menuAnchor().fillMaxWidth()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                val selected = selectedOptions.contains(option)
+                DropdownMenuItem(
+                    text = { 
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = selected, onCheckedChange = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(option)
+                        }
+                    },
+                    onClick = {
+                        onToggleOption(option)
+                    },
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                )
             }
         }
     }

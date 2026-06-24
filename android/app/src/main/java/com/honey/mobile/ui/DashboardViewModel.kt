@@ -15,9 +15,11 @@ data class DashboardState(
     val backendCount: Int = 0,
     val loading: Boolean = true,
     val nameQuery: String = "",
-    val selectedProviders: List<String> = emptyList(),
-    val selectedBackends: List<String> = emptyList(),
-    val results: List<com.honey.mobile.api.HostRecord> = emptyList()
+    val selectedProviders: Set<String> = emptySet(),
+    val selectedBackends: Set<String> = emptySet(),
+    val results: List<com.honey.mobile.api.HostRecord> = emptyList(),
+    val availableBackends: List<com.honey.mobile.api.Backend> = emptyList(),
+    val error: String? = null
 )
 
 @HiltViewModel
@@ -31,7 +33,7 @@ class DashboardViewModel @Inject constructor(private val api: HoneyApi) : ViewMo
 
     fun refresh() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(loading = true)
+            _state.value = _state.value.copy(loading = true, error = null)
             try {
                 val meta = api.getMeta()
                 val backends = api.getBackends()
@@ -39,10 +41,11 @@ class DashboardViewModel @Inject constructor(private val api: HoneyApi) : ViewMo
                     online = true,
                     version = meta.version,
                     backendCount = backends.size,
+                    availableBackends = backends,
                     loading = false
                 )
             } catch (e: Exception) {
-                _state.value = _state.value.copy(online = false, loading = false)
+                _state.value = _state.value.copy(online = false, loading = false, error = e.message ?: "Failed to refresh")
             }
         }
     }
@@ -51,19 +54,25 @@ class DashboardViewModel @Inject constructor(private val api: HoneyApi) : ViewMo
         _state.value = _state.value.copy(nameQuery = query)
     }
 
-    fun updateProviders(providers: String) {
-        val list = providers.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        _state.value = _state.value.copy(selectedProviders = list)
+    fun toggleProvider(provider: String) {
+        val current = _state.value.selectedProviders
+        val newSet = if (current.contains(provider)) current - provider else current + provider
+        _state.value = _state.value.copy(selectedProviders = newSet)
     }
 
-    fun updateBackends(backends: String) {
-        val list = backends.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        _state.value = _state.value.copy(selectedBackends = list)
+    fun toggleBackend(backend: String) {
+        val current = _state.value.selectedBackends
+        val newSet = if (current.contains(backend)) current - backend else current + backend
+        _state.value = _state.value.copy(selectedBackends = newSet)
+    }
+
+    fun dismissError() {
+        _state.value = _state.value.copy(error = null)
     }
 
     fun search() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(loading = true)
+            _state.value = _state.value.copy(loading = true, error = null)
             try {
                 val state = _state.value
                 val req = com.honey.mobile.api.SearchRequest(
@@ -74,7 +83,7 @@ class DashboardViewModel @Inject constructor(private val api: HoneyApi) : ViewMo
                 val results = api.searchHosts(req)
                 _state.value = state.copy(results = results, loading = false)
             } catch (e: Exception) {
-                _state.value = _state.value.copy(loading = false)
+                _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to search")
             }
         }
     }
