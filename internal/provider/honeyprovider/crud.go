@@ -2,6 +2,8 @@ package honeyprovider
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 
 	"charm.land/huh/v2"
 	"github.com/shareed2k/honey/internal/config"
@@ -23,13 +25,24 @@ func (c honeyCRUD) ListOptions() []huh.Option[string] {
 }
 
 func (c honeyCRUD) Add() error {
-	var name, url, token string
+	var name, serverURL, token string
 	var insecure bool
 
 	if err := huh.NewForm(
 		huh.NewGroup(
-			huh.NewInput().Title("Backend name").Value(&name),
-			huh.NewInput().Title("Honey server URL").Value(&url),
+			huh.NewInput().Title("Backend name").Value(&name).Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return fmt.Errorf("name cannot be empty")
+				}
+				return nil
+			}),
+			huh.NewInput().Title("Honey server URL").Value(&serverURL).Validate(func(s string) error {
+				u, err := url.Parse(s)
+				if err != nil || u.Scheme == "" || u.Host == "" {
+					return fmt.Errorf("must be a valid URL")
+				}
+				return nil
+			}),
 			huh.NewInput().Title("Auth token (optional)").Value(&token),
 			huh.NewConfirm().Title("Insecure TLS?").Value(&insecure),
 		),
@@ -39,7 +52,7 @@ func (c honeyCRUD) Add() error {
 
 	c.cfg.SetHoneyBackends(append(c.cfg.HoneyBackends(), config.HoneyBackend{
 		Name:     name,
-		URL:      url,
+		URL:      serverURL,
 		Token:    token,
 		Insecure: insecure,
 	}))
@@ -54,8 +67,19 @@ func (c honeyCRUD) Edit(idx int) error {
 
 	if err := huh.NewForm(
 		huh.NewGroup(
-			huh.NewInput().Title("Backend name").Value(&b.Name),
-			huh.NewInput().Title("Honey server URL").Value(&b.URL),
+			huh.NewInput().Title("Backend name").Value(&b.Name).Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return fmt.Errorf("name cannot be empty")
+				}
+				return nil
+			}),
+			huh.NewInput().Title("Honey server URL").Value(&b.URL).Validate(func(s string) error {
+				u, err := url.Parse(s)
+				if err != nil || u.Scheme == "" || u.Host == "" {
+					return fmt.Errorf("must be a valid URL")
+				}
+				return nil
+			}),
 			huh.NewInput().Title("Auth token (optional)").Value(&b.Token),
 			huh.NewConfirm().Title("Insecure TLS?").Value(&b.Insecure),
 		),
