@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -423,10 +425,10 @@ func TestParseYAMLAppliesDefaultTags(t *testing.T) {
 }
 
 func TestSaveValidation(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-
 	t.Run("invalid config", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+
 		f := &File{
 			Version: 1,
 			Backends: Backends{
@@ -437,12 +439,18 @@ func TestSaveValidation(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected validation error, got nil")
 		}
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
+		if !strings.Contains(err.Error(), "validation") {
+			t.Fatalf("expected validation error, got: %v", err)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("file should not exist if validation failed")
 		}
 	})
 
 	t.Run("valid config", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+
 		f := &File{
 			Version: 1,
 			Backends: Backends{
@@ -453,7 +461,7 @@ func TestSaveValidation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			t.Fatal("file should exist after successful save")
 		}
 	})

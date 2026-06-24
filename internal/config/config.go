@@ -268,6 +268,9 @@ func (f *File) Save(path string) error {
 	if path == "" {
 		return errors.New("config path empty")
 	}
+	if err := f.Validate(); err != nil {
+		return fmt.Errorf("validation: %w", err)
+	}
 	b, err := yaml.Marshal(f)
 	if err != nil {
 		return fmt.Errorf("serialize config: %w", err)
