@@ -1,31 +1,32 @@
-# Task 2 Report: Update Kotlin HoneyApi & Models
+## Task 2 Report: Refactor LocalForm for Dynamic Hosts
 
-## What I implemented
-1. Updated `SearchRequest` in `Models.kt` to match the Go struct `SearchHostsInput` fields (`name`, `providers`, `backends`).
-2. Added `SearchResponse` to `Models.kt` as requested in the brief.
-3. Updated `ApiModule.kt` to provide a working implementation for `HoneyApi.searchHosts`. It converts the `SearchRequest` into a JSON string, passes it to the `Mobile.searchHosts` gomobile binding, and parses the returned JSON string into a `List<HostRecord>`.
+### What was implemented
+- Refactored `LocalForm` in `android/app/src/main/java/com/honey/mobile/ui/ConfigScreen.kt` to use the `ValidatedTextField` component.
+- Replaced the single string input (comma-separated "name:ip" parsing) for hosts with a dynamic list of `LocalHostConfig` objects.
+- Added UI components for adding and removing hosts from the list dynamically.
+- Implemented state tracking for both `hosts` and their associated validation errors (`hostErrors`).
+- Ensured validation logic requires `name`, `host.name`, and `host.primaryIp` to be non-blank before allowing a save.
 
-## Tests & Test Results
-No Kotlin unit tests exist for `ApiModule` or `HoneyApi` in the `android` project yet. 
-I verified that the project compiles properly with `./gradlew assembleDebug`, which passed successfully:
-```
-BUILD SUCCESSFUL in 5s
-42 actionable tasks: 14 executed, 28 up-to-date
-```
+### What was tested and test results
+- Verified compilation by running `cd android && ./gradlew assembleDebug`.
+- **Result:** `BUILD SUCCESSFUL in 4s` (44 actionable tasks: 8 executed, 36 up-to-date)
 
-## Files Changed
-- `android/app/src/main/java/com/honey/mobile/api/Models.kt`
-- `android/app/src/main/java/com/honey/mobile/api/ApiModule.kt`
+### Files changed
+- `android/app/src/main/java/com/honey/mobile/ui/ConfigScreen.kt`
 
-## Self-Review Findings
-- The implementation strictly adheres to the task brief instructions.
-- JSON mapping correctly uses `optJSONArray` and `optString` for robustness.
-- The return type remains `List<HostRecord>`, matching existing code patterns.
+### Self-review findings
+- Checked the use of `ValidatedTextField` to ensure `label`, `value`, `errorMessage`, and `onValueChange` are bound properly.
+- Kept the changes scoped entirely within `LocalForm` except for the newly required import `import com.honey.mobile.ui.components.ValidatedTextField`.
+- Found no stray warnings or unnecessary code. It aligns with the requested specs exactly.
 
-## Concerns
-- No automated unit tests for `ApiModule` as they were not requested/do not currently exist in the android sub-project.
-- JSON parsing is done manually. Using Gson or Moshi could make this cleaner, but sticking to manual `JSONObject` is fine for keeping dependencies simple for now.
+### Commits
+- `f00749f feat(android): refactor LocalForm to use dynamic list and validation`
 
-## Fix Report
-- Removed the `try { ... } catch (e: Exception) { ... }` block that swallowed exceptions in `ApiModule.kt` to allow exceptions to properly bubble up instead of masking failures as an empty list.
-- Wrapped the JNI call (`Mobile.searchHosts`) and JSON parsing in `withContext(Dispatchers.IO)` to ensure the synchronous/blocking native calls don't block the caller's coroutine dispatcher.
+## Fix Report: Task 2 Review Issues
+
+### What was fixed
+- **Missing IP/Target Validation**: Added check to validate IP or URL using `com.honey.mobile.util.Validators.isValidIp` and `isValidUrl`. Showed error "Invalid IP or Target" when validation fails.
+- **Parallel State Lists & Compose Keys**: Introduced `HostFormState` data class with a stable UUID. Refactored `LocalForm` to use this single state class, replacing the parallel `hosts` and `hostErrors` lists. Wrapped the items in `key(state.id) { ... }` inside the Compose list so it tracks correctly across deletions.
+
+### Build Verification
+- Verified compilation by running `./gradlew assembleDebug` in `android` directory. Build successful.

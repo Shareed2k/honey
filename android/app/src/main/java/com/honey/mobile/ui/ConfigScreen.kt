@@ -20,6 +20,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.honey.mobile.data.*
 import com.honey.mobile.ui.components.ValidatedTextField
+import com.honey.mobile.util.Validators
+import java.util.UUID
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -312,6 +314,13 @@ private fun BackendFormDialog(
 // Individual backend forms
 // ---------------------------------------------------------------------------
 
+data class HostFormState(
+    val config: LocalHostConfig, 
+    val nameError: String? = null, 
+    val ipError: String? = null, 
+    val id: String = UUID.randomUUID().toString()
+)
+
 @Composable
 private fun LocalForm(
     initial: LocalBackendConfig?,
@@ -321,15 +330,16 @@ private fun LocalForm(
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var nameError by remember { mutableStateOf<String?>(null) }
     
-    // Store hosts dynamically
+    // Store hosts as a single state list
     var hosts by remember { 
         mutableStateOf(
-            if (initial != null && initial.hosts.isNotEmpty()) initial.hosts
-            else listOf(LocalHostConfig("", ""))
+            if (initial != null && initial.hosts.isNotEmpty()) {
+                initial.hosts.map { HostFormState(it) }
+            } else {
+                listOf(HostFormState(LocalHostConfig("", "")))
+            }
         )
     }
-    // Track errors for hosts
-    var hostErrors by remember { mutableStateOf(List(hosts.size) { Pair<String?, String?>(null, null) }) }
 
     ValidatedTextField(
         value = name, 
@@ -341,45 +351,49 @@ private fun LocalForm(
     Spacer(Modifier.height(8.dp))
     Text("Hosts", style = MaterialTheme.typography.titleMedium)
     
-    hosts.forEachIndexed { index, host ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                ValidatedTextField(
-                    value = host.name,
-                    onValueChange = { newVal -> 
-                        val newHosts = hosts.toMutableList().apply { set(index, host.copy(name = newVal)) }
-                        hosts = newHosts
-                        val newErrors = hostErrors.toMutableList().apply { set(index, get(index).copy(first = null)) }
-                        hostErrors = newErrors
-                    },
-                    label = "Host Name *",
-                    errorMessage = hostErrors.getOrNull(index)?.first
-                )
-                ValidatedTextField(
-                    value = host.primaryIp,
-                    onValueChange = { newVal -> 
-                        val newHosts = hosts.toMutableList().apply { set(index, host.copy(primaryIp = newVal)) }
-                        hosts = newHosts
-                        val newErrors = hostErrors.toMutableList().apply { set(index, get(index).copy(second = null)) }
-                        hostErrors = newErrors
-                    },
-                    label = "Primary IP / Target *",
-                    errorMessage = hostErrors.getOrNull(index)?.second
-                )
+    hosts.forEachIndexed { index, state ->
+        key(state.id) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    ValidatedTextField(
+                        value = state.config.name,
+                        onValueChange = { newVal -> 
+                            val newHosts = hosts.toMutableList()
+                            newHosts[index] = state.copy(
+                                config = state.config.copy(name = newVal),
+                                nameError = null
+                            )
+                            hosts = newHosts
+                        },
+                        label = "Host Name *",
+                        errorMessage = state.nameError
+                    )
+                    ValidatedTextField(
+                        value = state.config.primaryIp,
+                        onValueChange = { newVal -> 
+                            val newHosts = hosts.toMutableList()
+                            newHosts[index] = state.copy(
+                                config = state.config.copy(primaryIp = newVal),
+                                ipError = null
+                            )
+                            hosts = newHosts
+                        },
+                        label = "Primary IP / Target *",
+                        errorMessage = state.ipError
+                    )
+                }
+                IconButton(onClick = {
+                    hosts = hosts.filterIndexed { i, _ -> i != index }
+                }) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete Host")
+                }
             }
-            IconButton(onClick = {
-                hosts = hosts.filterIndexed { i, _ -> i != index }
-                hostErrors = hostErrors.filterIndexed { i, _ -> i != index }
-            }) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete Host")
-            }
+            Spacer(Modifier.height(4.dp))
         }
-        Spacer(Modifier.height(4.dp))
     }
     
     TextButton(onClick = {
-        hosts = hosts + LocalHostConfig("", "")
-        hostErrors = hostErrors + Pair(null, null)
+        hosts = hosts + HostFormState(LocalHostConfig("", ""))
     }) { Text("+ Add Host") }
 
     Spacer(Modifier.height(8.dp))
@@ -393,17 +407,29 @@ private fun LocalForm(
                 isValid = false
             }
             
-            val newHostErrors = hosts.map { h ->
+            val newHosts = hosts.map { state ->
                 var hNameErr: String? = null
                 var hIpErr: String? = null
-                if (h.name.isBlank()) { hNameErr = "Host Name is required"; isValid = false }
-                if (h.primaryIp.isBlank()) { hIpErr = "IP/Target is required"; isValid = false }
-                Pair(hNameErr, hIpErr)
+                
+                if (state.config.name.isBlank()) { 
+                    hNameErr = "Host Name is required"
+                    isValid = false 
+                }
+                
+                if (state.config.primaryIp.isBlank()) { 
+                    hIpErr = "IP/Target is required"
+                    isValid = false 
+                } else if (!Validators.isValidIp(state.config.primaryIp) && !Validators.isValidUrl(state.config.primaryIp)) {
+                    hIpErr = "Invalid IP or Target"
+                    isValid = false
+                }
+                
+                state.copy(nameError = hNameErr, ipError = hIpErr)
             }
-            hostErrors = newHostErrors
+            hosts = newHosts
 
             if (isValid) {
-                onSave(LocalBackendConfig(name = name, hosts = hosts))
+                onSave(LocalBackendConfig(name = name, hosts = hosts.map { it.config }))
             }
         },
         modifier = Modifier.fillMaxWidth()
