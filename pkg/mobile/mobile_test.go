@@ -1,6 +1,7 @@
 package mobile_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/shareed2k/honey/pkg/mobile"
@@ -67,5 +68,30 @@ func TestExecuteRecipe(t *testing.T) {
 				t.Errorf("ExecuteRecipe() callback log = %v, want %v", gotLog, tt.wantLog)
 			}
 		})
+	}
+}
+
+func TestLoadConfigMissing(t *testing.T) {
+	got, err := mobile.LoadConfig(t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadConfig on empty dir: %v", err)
+	}
+	if got == "" {
+		t.Error("expected non-empty JSON")
+	}
+}
+
+func TestSaveAndLoadConfig(t *testing.T) {
+	dir := t.TempDir()
+	payload := `{"version":1,"defaults":{"ssh_user":"root"},"backends":{}}`
+	if err := mobile.SaveConfig(dir, payload); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	got, err := mobile.LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig after save: %v", err)
+	}
+	if !strings.Contains(got, "root") {
+		t.Errorf("expected ssh_user=root in result, got: %s", got)
 	}
 }
