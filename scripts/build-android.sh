@@ -17,7 +17,7 @@ fi
 
 echo "Building AAR for Android..."
 # We compile the pkg/mobile package into an AAR library.
-gomobile bind -target=android/arm64 -o "$OUT_DIR/honey.aar" \
-  -ldflags="-extldflags=-Wl,-z,max-page-size=0x4000" ./pkg/mobile
+gomobile bind -target=android/arm64 -trimpath -o "$OUT_DIR/honey.aar" \
+  -ldflags="-s -w -extldflags=-Wl,-z,max-page-size=0x4000" ./pkg/mobile
 
 echo "Build complete: $OUT_DIR/honey.aar"

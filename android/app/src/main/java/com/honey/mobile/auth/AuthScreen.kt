@@ -8,7 +8,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun AuthScreen(onRequestAuth: () -> Unit) {
+fun AuthScreen(
+    error: String?,
+    onRequestAuth: () -> Unit
+) {
     LaunchedEffect(Unit) { onRequestAuth() }
     Column(
         Modifier.fillMaxSize(),
@@ -18,5 +21,14 @@ fun AuthScreen(onRequestAuth: () -> Unit) {
         Text("Honey", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(24.dp))
         Button(onClick = onRequestAuth) { Text("Authenticate") }
+        if (error != null) {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = error,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 32.dp)
+            )
+        }
     }
 }

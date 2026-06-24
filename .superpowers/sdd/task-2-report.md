@@ -40,3 +40,7 @@
 2.  **Minor**: Limited the error response body reading to 4096 bytes in `honey.go` using `io.LimitReader` to prevent memory exhaustion on large error payloads.
 3.  **Minor**: Updated slice deletion in `crud.go` (`Delete` method) to allocate a new slice instead of modifying the shared backing array, ensuring safe updates.
 4.  **Important**: Fixed resource leak where `http.Client` and `http.Transport` were constructed on every `Search()` call, causing idle connection leaks. Initialized `http.Client` once per backend using `sync.Once`.
+
+### Fixes Applied from Second Review
+1.  **Important**: Changed `require.NoError` to `assert.NoError` with an early return inside the `http.HandlerFunc` in `honey_test.go` to prevent abrupt termination of the goroutine via `runtime.Goexit()`.
+2.  **Minor**: Changed `Edit` method in `crud.go` to clone the config slice (`append([]config.HoneyBackend(nil), backends...)`) before mutating it, preventing accidental modification of the shared backing array.

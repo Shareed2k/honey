@@ -64,8 +64,9 @@ func (c honeyCRUD) Edit(idx int) error {
 	}
 
 	backends := c.cfg.HoneyBackends()
-	backends[idx] = b
-	c.cfg.SetHoneyBackends(backends)
+	newBackends := append([]config.HoneyBackend(nil), backends...)
+	newBackends[idx] = b
+	c.cfg.SetHoneyBackends(newBackends)
 	return nil
 }
 

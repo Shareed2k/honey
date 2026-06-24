@@ -2,8 +2,8 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
-    kotlin("kapt")
 }
 
 android {
@@ -37,7 +37,7 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.activity)
     implementation(libs.hilt.android)
-    kapt(libs.hilt.compiler)
+    ksp(libs.hilt.compiler)
     implementation(files("libs/honey.aar"))
     implementation(libs.coroutines.android)
     implementation(libs.core.ktx)
@@ -50,7 +50,7 @@ dependencies {
     implementation(libs.appcompat)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
-    kapt(libs.room.compiler)
+    ksp(libs.room.compiler)
     implementation(libs.security.crypto)
     implementation(libs.gson)
     testImplementation("junit:junit:4.13.2")

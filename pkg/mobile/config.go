@@ -9,7 +9,9 @@ import (
 )
 
 // InitDefaultConfig initializes the config.yaml file with default paths if they are not set.
-func InitDefaultConfig(configDir, cacheDir, recordDir, recipesDir string) error {
+func InitDefaultConfig(homeDir, configDir, cacheDir, recordDir, recipesDir string) error {
+	_ = os.Setenv("HOME", homeDir)
+
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return err
 	}

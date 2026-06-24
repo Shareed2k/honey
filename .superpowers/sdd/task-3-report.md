@@ -1,61 +1,25 @@
-# Task 3: Build UI on DashboardScreen
+# Task 3: Refactor Other Backend Forms - Report
 
-## What I implemented
-- Updated `DashboardState` in `DashboardViewModel.kt` to include `nameQuery`, `selectedProviders`, `selectedBackends` (both as `List<String>`), and `results` (as `List<HostRecord>`).
-- Implemented `updateNameQuery`, `updateProviders`, and `updateBackends` functions to update state. The providers and backends functions accept comma-separated strings and split them.
-- Implemented `search()` function in `DashboardViewModel.kt` that fetches matching hosts from `HoneyApi.searchHosts()` using the state inputs.
-- Completely rewrote `DashboardScreen.kt` replacing the static dashboard with:
-  - An `OutlinedTextField` for the host name search.
-  - An `OutlinedTextField` for comma-separated Providers search.
-  - An `OutlinedTextField` for comma-separated Backends search.
-  - A Search `Button`.
-  - A `LazyColumn` rendering the results as cards showing host names and providers.
-- Added JUnit 4 and kotlinx-coroutines-test to `build.gradle.kts` to enable proper TDD.
+## What was implemented
+- Refactored `K8sForm`, `AwsForm`, `GcpForm`, `ConsulForm`, `ProxmoxForm`, `TrueNasForm`, and `DockerForm` in `android/app/src/main/java/com/honey/mobile/ui/ConfigScreen.kt`.
+- Replaced `OutlinedTextField` with `ValidatedTextField` for all fields in the affected forms.
+- Added explicit state variables for tracking validation errors (e.g., `nameError`, `urlError`).
+- Applied inline validation in the `onClick` handler of the "Save" button to enforce required fields (with `.isBlank()`) and prevent calling `onSave` if validation fails.
+- Configured correct keyboard options (`KeyboardOptions(keyboardType = KeyboardType.Uri)`) for fields expecting URLs/IPs/URIs.
+- Integrated `Validators.isValidUrl(url)` for URL fields on applicable forms (`ConsulForm`, `ProxmoxForm`, `TrueNasForm`).
 
-## What I tested and test results
-- Wrote unit tests for `DashboardViewModelTest.kt` verifying the search flow.
-- Verified that initially, the results are empty.
-- Verified that search state updates on changing queries.
-- Mocked the API and verified `search()` parses constraints and populates `results` correctly.
-- Test Output (`./gradlew :app:testDebugUnitTest --tests "com.honey.mobile.ui.DashboardViewModelTest"`):
-```
-BUILD SUCCESSFUL in 4s
-33 actionable tasks: 16 executed, 17 up-to-date
-```
-
-## TDD Evidence
-**RED:**
-```bash
-> Task :app:compileDebugUnitTestKotlin FAILED
-e: file:///Users/shareed2k/.cursor/projects/empty-window/hostctl/android/app/src/test/java/com/honey/mobile/ui/DashboardViewModelTest.kt:50:48 Unresolved reference 'nameQuery'.
-e: file:///Users/shareed2k/.cursor/projects/empty-window/hostctl/android/app/src/test/java/com/honey/mobile/ui/DashboardViewModelTest.kt:51:69 Unresolved reference 'results'.
-...
-```
-Reason: The test correctly failed to compile since the expected properties and functions on `DashboardViewModel` were missing (the implementation hadn't been written yet).
-
-**GREEN:**
-```bash
-BUILD SUCCESSFUL in 4s
-33 actionable tasks: 16 executed, 17 up-to-date
-```
-Reason: The code was updated to include the missing properties and `search` function with API call integration.
+## What was tested and test results
+- Executed `cd android && ./gradlew assembleDebug`
+- Results: Build completed successfully (`BUILD SUCCESSFUL in 5s`), confirming no Kotlin syntax errors, missing imports, or type mismatches were introduced during the refactor.
 
 ## Files changed
-- `android/app/build.gradle.kts`
-- `android/app/src/main/java/com/honey/mobile/ui/DashboardViewModel.kt`
-- `android/app/src/main/java/com/honey/mobile/ui/DashboardScreen.kt`
-- `android/app/src/test/java/com/honey/mobile/ui/DashboardViewModelTest.kt`
+- `android/app/src/main/java/com/honey/mobile/ui/ConfigScreen.kt`
 
 ## Self-review findings
-- The requirements were successfully met.
-- The comma-separated TextFields serve well as simple Multi-select text inputs. Compose drop-downs without underlying selections available are hard to populate up-front without additional API requests. So, TextFields are more solid and less error-prone for filtering based on task guidelines.
-- Tested successfully using `runTest` from the `kotlinx-coroutines-test` library.
+- Checked that only the requested forms were modified.
+- Verified that required imports for `KeyboardOptions` and `KeyboardType` were added correctly.
+- Ensured that `Validators.isValidUrl` logic strictly aligns with the guidelines in the brief (only used on URL/Addr fields where applicable).
+- Confirmed that `onSave` is safely gated behind the `isValid` boolean check.
 
-## Any issues or concerns
-- None. The Android build runs clean, and all requested UI components and ViewModel integrations have been correctly wired up to the API.
-
-## Fixes Implemented
-- **Critical**: Replaced the `OutlinedTextField` elements for Providers and Backends in `DashboardScreen.kt` with a custom `MultiSelectDropdown` composable that uses checkboxes for multi-selection. Extracted the available options from the state.
-- **Critical**: Replaced the text-based comma splitting logic in `DashboardViewModel.kt` with a `Set<String>` approach for Providers and Backends (`toggleProvider` and `toggleBackend`), resolving the issue that broke the user's typing experience.
-- **Important**: Added an `error` state in `DashboardState` to correctly capture swallowed exceptions in `search()` and `refresh()`. Surfaced the error message in the UI using a `Text` element.
-- **Minor**: Added `availableBackends` to `DashboardState` to populate the new dropdowns correctly, and populated it on `refresh()`.
+## Issues or concerns
+- None. The task objectives have been successfully met and the build is passing.

@@ -34,13 +34,20 @@ class MainActivity : AppCompatActivity() {
                 if (unlocked) {
                     HoneyNavApp()
                 } else {
-                    AuthScreen(onRequestAuth = {
-                        BiometricHelper.prompt(
-                            activity = this,
-                            onSuccess = { authVm.unlock() },
-                            onFail = { /* stays on auth screen */ }
-                        )
-                    })
+                    var authError by remember { mutableStateOf<String?>(null) }
+                    AuthScreen(
+                        error = authError,
+                        onRequestAuth = {
+                            BiometricHelper.prompt(
+                                activity = this@MainActivity,
+                                onSuccess = {
+                                    authError = null
+                                    authVm.unlock()
+                                },
+                                onFail = { error -> authError = error }
+                            )
+                        }
+                    )
                 }
             }
         }

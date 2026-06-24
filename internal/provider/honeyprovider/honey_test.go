@@ -27,7 +27,9 @@ func TestHoneySearch(t *testing.T) {
 
 		var req searchRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			return
+		}
 
 		assert.Equal(t, "test", req.Name)
 
