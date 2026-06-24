@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Build honey for Android (arm64). Requires Go 1.26+.
-# Output lands in android/app/src/main/assets/ for the Gradle project.
+# Build honey for Android using gomobile
+# Output lands in android/app/libs/honey.aar for the Gradle project.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="$REPO_ROOT/android/app/src/main/assets"
+cd "$REPO_ROOT"
+
+OUT_DIR="android/app/libs"
 mkdir -p "$OUT_DIR"
 
-VERSION="$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo "dev")"
-LDFLAGS="-s -w -X main.version=$VERSION"
+echo "Ensuring gomobile is installed..."
+go install golang.org/x/mobile/cmd/gomobile@latest
+gomobile init
 
-echo "Building honey for android/arm64 (version: $VERSION)..."
-GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
-  go build -tags mobile -trimpath -ldflags="$LDFLAGS" \
-  -o "$OUT_DIR/honey-arm64" \
-  "$REPO_ROOT/cmd/honey"
+echo "Building AAR for Android..."
+# We compile the pkg/mobile package into an AAR library.
+gomobile bind -target=android/arm64 -o "$OUT_DIR/honey.aar" ./pkg/mobile
 
-echo "Built: $OUT_DIR/honey-arm64 ($(du -h "$OUT_DIR/honey-arm64" | cut -f1))"
+echo "Build complete: $OUT_DIR/honey.aar"
