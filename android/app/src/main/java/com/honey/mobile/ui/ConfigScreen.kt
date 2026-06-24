@@ -336,10 +336,14 @@ private fun LocalForm(
             if (name.isNotBlank()) {
                 val hosts = hostsRaw.split(",")
                     .map { it.trim() }
-                    .filter { it.contains(":") }
+                    .filter { it.isNotBlank() }
                     .map { pair ->
-                        val parts = pair.split(":", limit = 2)
-                        LocalHostConfig(name = parts[0].trim(), primaryIp = parts[1].trim())
+                        if (pair.contains(":")) {
+                            val parts = pair.split(":", limit = 2)
+                            LocalHostConfig(name = parts[0].trim(), primaryIp = parts[1].trim())
+                        } else {
+                            LocalHostConfig(name = pair, primaryIp = pair)
+                        }
                     }
                 onSave(LocalBackendConfig(name = name, hosts = hosts))
             }
