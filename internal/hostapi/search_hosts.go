@@ -76,17 +76,18 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput, reg hostexec.Registr
 		reg.Reconfigure(cfg)
 	}
 
+	wantBackends := hosts.ParseBackendNames(in.Backends)
 	q := hosts.Query{
 		NameSubstring: in.Name,
 		NameRegex:     in.NameRegex,
 		Providers:     hosts.ParseProviders(in.Providers),
+		Backends:      wantBackends,
 	}
 	MergeSearchDefaultsFromConfig(cfg, &q)
 
 	provs := searchReg.BuildProviders(in.Overrides)
-	want := hosts.ParseBackendNames(in.Backends)
-	if len(want) > 0 {
-		provs = hosts.FilterBackendsByNames(provs, want)
+	if len(wantBackends) > 0 {
+		provs = hosts.FilterBackendsByNames(provs, wantBackends)
 		if len(provs) == 0 {
 			return out, fmt.Errorf("no backends match backends=%q", in.Backends)
 		}

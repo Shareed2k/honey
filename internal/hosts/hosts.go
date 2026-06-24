@@ -26,6 +26,7 @@ type Query struct {
 	NameSubstring string
 	NameRegex     string
 	Providers     []string // e.g. gcp, aws, k8s, consul — empty means all
+	Backends      []string // e.g. aws:dev, gcp:prod — empty means all
 }
 
 // MatchesName applies NameSubstring, NameRegex, or accepts all if both empty.
