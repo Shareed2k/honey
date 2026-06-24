@@ -10,7 +10,7 @@ type BackendRow struct {
 // HoneyBackend configures a remote honey server backend.
 type HoneyBackend struct {
 	Name     string `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
-	URL      string `yaml:"url" json:"url" honey:"label=Honey Server URL" validate:"required,url" mod:"trim"`
+	URL      string `yaml:"url" json:"url" honey:"label=Honey Server URL" validate:"required" mod:"trim"`
 	Token    string `yaml:"token,omitempty" json:"token,omitempty" honey:"label=Auth Token;secret" mod:"trim"`
 	Insecure bool   `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`
 }

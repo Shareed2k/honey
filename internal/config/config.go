@@ -206,7 +206,7 @@ type KubernetesBackend struct {
 // ConsulBackend configures one HashiCorp Consul catalog listing.
 type ConsulBackend struct {
 	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
-	Addr           string         `yaml:"addr" json:"addr" honey:"label=Address" validate:"required,url" mod:"trim"`
+	Addr           string         `yaml:"addr" json:"addr" honey:"label=Address" validate:"required" mod:"trim"`
 	Datacenter     string         `yaml:"datacenter,omitempty" json:"datacenter,omitempty" honey:"label=Datacenter" mod:"trim"`
 	Token          string         `yaml:"token,omitempty" json:"token,omitempty" honey:"label=Token;secret" mod:"trim"`
 	DockerDiscover DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover"`
@@ -215,7 +215,7 @@ type ConsulBackend struct {
 // ProxmoxBackend configures one Proxmox VE listing.
 type ProxmoxBackend struct {
 	Name           string         `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
-	URL            string         `yaml:"url" json:"url" honey:"label=URL" validate:"required,url" mod:"trim"`
+	URL            string         `yaml:"url" json:"url" honey:"label=URL" validate:"required" mod:"trim"`
 	User           string         `yaml:"user,omitempty" json:"user,omitempty" honey:"label=User" validate:"required_without=TokenID" mod:"trim"`
 	Password       string         `yaml:"password,omitempty" json:"password,omitempty" honey:"label=Password;secret" validate:"required_without=TokenSecret" mod:"trim"`
 	TokenID        string         `yaml:"token_id,omitempty" json:"token_id,omitempty" honey:"label=Token ID" validate:"required_without=User" mod:"trim"`
@@ -228,7 +228,7 @@ type ProxmoxBackend struct {
 // TrueNASBackend configures one TrueNAS SCALE controller (WebSocket API 25.04+).
 type TrueNASBackend struct {
 	Name             string `yaml:"name" json:"name" honey:"label=Name" validate:"required" mod:"trim"`
-	URL              string `yaml:"url" json:"url" honey:"label=URL" validate:"required,url" mod:"trim"`
+	URL              string `yaml:"url" json:"url" honey:"label=URL" validate:"required" mod:"trim"`
 	Username         string `yaml:"username,omitempty" json:"username,omitempty" honey:"label=API key username (default root)" mod:"trim"`
 	APIKey           string `yaml:"api_key" json:"api_key" honey:"label=API key;secret" validate:"required" mod:"trim"`
 	Insecure         bool   `yaml:"insecure" json:"insecure" honey:"label=Insecure TLS;default=false"`

@@ -15,26 +15,26 @@ data class ConfigDefaults(
 )
 
 data class ConfigBackends(
-    val local: List<LocalBackendConfig> = emptyList(),
-    val honey: List<HoneyBackendConfig> = emptyList()
+    @SerializedName("local") val local: List<LocalBackendConfig> = emptyList(),
+    @SerializedName("honey") val honey: List<HoneyBackendConfig> = emptyList()
 )
 
 data class LocalBackendConfig(
-    val name: String,
-    val hosts: List<LocalHostConfig> = emptyList()
+    @SerializedName("name") val name: String,
+    @SerializedName("hosts") val hosts: List<LocalHostConfig> = emptyList()
 )
 
 data class LocalHostConfig(
-    val name: String,
+    @SerializedName("name") val name: String,
     @SerializedName("primary_ip") val primaryIp: String,
     @SerializedName("ssh_user") val sshUser: String = ""
 )
 
 data class HoneyBackendConfig(
-    val name: String,
-    val url: String = "",
-    val token: String = "",
-    val insecure: Boolean = false
+    @SerializedName("name") val name: String,
+    @SerializedName("url") val url: String = "",
+    @SerializedName("token") val token: String = "",
+    @SerializedName("insecure") val insecure: Boolean = false
 )
 
 data class BackendItem(

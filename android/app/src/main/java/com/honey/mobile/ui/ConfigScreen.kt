@@ -54,12 +54,17 @@ class ConfigViewModel @Inject constructor(
 
     fun upsertBackend(item: Any) {
         viewModelScope.launch(Dispatchers.IO) {
-            val updated = when (item) {
-                is LocalBackendConfig   -> replaceOrAddLocal(_config.value, item)
-                is HoneyBackendConfig   -> replaceOrAddHoney(_config.value, item)
-                else -> _config.value
+            try {
+                val updated = when (item) {
+                    is LocalBackendConfig   -> replaceOrAddLocal(_config.value, item)
+                    is HoneyBackendConfig   -> replaceOrAddHoney(_config.value, item)
+                    else -> _config.value
+                }
+                repo.save(updated)
+                _config.value = updated
+            } catch (e: Exception) {
+                android.util.Log.e("ConfigViewModel", "Failed to save backend", e)
             }
-            repo.save(updated); _config.value = updated
         }
     }
 

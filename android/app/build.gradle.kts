@@ -63,7 +63,9 @@ tasks.register<Exec>("buildHoneyAar") {
     
     val repoRoot = rootProject.projectDir.parentFile
     
-    inputs.dir(File(repoRoot, "pkg/mobile"))
+    inputs.dir(File(repoRoot, "cmd"))
+    inputs.dir(File(repoRoot, "internal"))
+    inputs.dir(File(repoRoot, "pkg"))
     inputs.file(File(repoRoot, "scripts/build-android.sh"))
     outputs.file(File(projectDir, "libs/honey.aar"))
     
