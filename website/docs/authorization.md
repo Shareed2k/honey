@@ -55,9 +55,61 @@ export HONEY_TRUSTED_PROXIES="10.0.0.0/8,192.168.0.0/16"
 export HONEY_JWT_PUBLIC_KEY="$(base64 < ed25519_pub.raw)"
 ```
 
+### JWT end-to-end
+
+Generate an Ed25519 keypair, hand Honey the public key, and sign tokens whose
+`sub` claim is the actor:
+
+```bash
+# 1. keypair (raw 32-byte public key → base64)
+openssl genpkey -algorithm ed25519 -out ed25519.pem
+openssl pkey -in ed25519.pem -pubout -outform DER \
+  | tail -c 32 | base64 > ed25519_pub.b64
+
+# 2. tell Honey the public key
+export HONEY_JWT_PUBLIC_KEY="$(cat ed25519_pub.b64)"
+honey web
+
+# 3. call the API with a signed bearer token (sub → actor)
+curl -H "Authorization: Bearer $JWT" $HONEY/api/v1/recipes
+```
+
+The token's `sub` (e.g. `alice@example.com`) becomes `input.actor` for every
+decision. An invalid or expired signature is rejected; the request then falls
+back to the shared-token `api` actor only if it also carries the shared token.
+
 Webhook runs resolve their actor from a trusted header/JWT, else the recipe's
 `webhook.actor` (a gjson path into the payload, e.g. `sender.login`), else
 `webhook:<app>`.
+
+Declare `actor` per-webhook in the [recipe](/cue-recipes) — it is a gjson path
+into the incoming payload:
+
+```cue
+recipe: {
+	name: "deploy-on-push"
+	webhooks: {
+		"github_push": {
+			auth_secret: "env:GH_WEBHOOK_SECRET"
+			actor:       "pusher.name" // gjson path → input.actor
+			extract: {COMMIT: "after"}
+		}
+	}
+	steps: [{host: "web-*", command: "deploy.sh \(env.COMMIT)"}]
+}
+```
+
+```bash
+# payload {"pusher":{"name":"alice"},"after":"abc123"} → actor "alice"
+# route is /api/v1/webhooks/{app_name}/{webhook_name}
+curl -XPOST -H "Authorization: $GH_WEBHOOK_SECRET" \
+  -d '{"pusher":{"name":"alice"},"after":"abc123"}' \
+  $HONEY/api/v1/webhooks/my-app/github_push
+```
+
+A trusted `X-Honey-User` header or a JWT on the request **overrides** the gjson
+`actor`; if neither is present and there is no `actor` path, the actor is
+`webhook:deploy-on-push`.
 
 ## Decision points
 
@@ -149,6 +201,28 @@ After a successful assertion the client receives a short-lived
 `biometric_token`, replayed as the `X-Honey-Biometric` header on the
 `require_biometric` run.
 
+End-to-end, a prod run gated by the policy above:
+
+```bash
+# 1. run a prod recipe → held, server asks for a passkey
+curl -XPOST $HONEY/api/v1/cue-exec \
+  -d '{"recipe_path":"deploy.cue","execute":true,"records":[...]}'
+# → 202 {"status":"require_biometric"}
+
+# 2. assert the passkey (begin → sign in the browser/authenticator → finish)
+curl -XPOST $HONEY/api/v1/webauthn/assert/begin  -d '{"actor":"alice@example.com"}'
+curl -XPOST $HONEY/api/v1/webauthn/assert/finish -d '<signed assertion>'
+# → {"biometric_token":"<token>"}
+
+# 3. re-run with the token in the header → input.execution.biometricVerified
+curl -XPOST $HONEY/api/v1/cue-exec \
+  -H "X-Honey-Biometric: <token>" \
+  -d '{"recipe_path":"deploy.cue","execute":true,"records":[...]}'
+```
+
+The token is short-lived and single-purpose — a fresh assertion is required for
+each `require_biometric` run.
+
 ## In-recipe policy checks (`opa` step)
 
 Recipes can evaluate a policy inline and fail/branch on the result:
@@ -165,6 +239,45 @@ steps: [
 The step compiles the referenced `.rego` (relative to the recipe dir),
 evaluates it with `{actor, recipe, ...custom input}`, and fails the step when
 `allow == false` — usable with `when` / `depends` to gate later steps.
+
+A graph recipe where a compliance check gates the deploy — the `deploy` step
+only runs once `gate` succeeds:
+
+```cue
+recipe: {
+	name: "guarded-deploy"
+	type: "graph"
+	steps: [
+		{
+			id:   "gate"
+			host: "_"
+			opa: {
+				policy: "policies/compliance.rego"
+				input: {change_ticket: "CHG-1024", window: "maintenance"}
+			}
+		},
+		{
+			id:      "deploy"
+			host:    "web-*"
+			depends: ["gate"]
+			command: "deploy.sh"
+		},
+	]
+}
+```
+
+```rego
+# policies/compliance.rego
+package honey
+import rego.v1
+
+default allow := false
+
+allow if {
+	input.change_ticket != ""
+	input.window == "maintenance"
+}
+```
 
 ## Environment variables
 
