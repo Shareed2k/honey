@@ -1,0 +1,9 @@
+# Build outputs
+/app/build/
+/build/
+
+# Gradle cache / wrapper downloads (keep wrapper scripts and jar)
+.gradle/
+
+# Local config (machine-specific SDK path)
+local.properties
