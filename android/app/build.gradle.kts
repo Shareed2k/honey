@@ -42,4 +42,8 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.coroutines.android)
     implementation(libs.core.ktx)
+    implementation(libs.nav.compose)
+    implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.hilt.navigation.compose)
+    implementation(libs.compose.material.icons)
 }
