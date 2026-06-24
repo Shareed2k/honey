@@ -6,6 +6,7 @@ import com.honey.mobile.api.HoneyApi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -33,19 +34,19 @@ class DashboardViewModel @Inject constructor(private val api: HoneyApi) : ViewMo
 
     fun refresh() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(loading = true, error = null)
+            _state.update { it.copy(loading = true, error = null) }
             try {
                 val meta = api.getMeta()
                 val backends = api.getBackends()
-                _state.value = _state.value.copy(
+                _state.update { it.copy(
                     online = true,
                     version = meta.version,
                     backendCount = backends.size,
                     availableBackends = backends,
                     loading = false
-                )
+                ) }
             } catch (e: Exception) {
-                _state.value = _state.value.copy(online = false, loading = false, error = e.message ?: "Failed to refresh")
+                _state.update { it.copy(online = false, loading = false, error = e.message ?: "Failed to refresh") }
             }
         }
     }
@@ -72,18 +73,18 @@ class DashboardViewModel @Inject constructor(private val api: HoneyApi) : ViewMo
 
     fun search() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(loading = true, error = null)
+            _state.update { it.copy(loading = true, error = null) }
             try {
-                val state = _state.value
+                val currentState = _state.value
                 val req = com.honey.mobile.api.SearchRequest(
-                    name = state.nameQuery,
-                    providers = state.selectedProviders.joinToString(","),
-                    backends = state.selectedBackends.joinToString(",")
+                    name = currentState.nameQuery,
+                    providers = currentState.selectedProviders.joinToString(","),
+                    backends = currentState.selectedBackends.joinToString(",")
                 )
                 val results = api.searchHosts(req)
-                _state.value = state.copy(results = results, loading = false)
+                _state.update { it.copy(results = results, loading = false) }
             } catch (e: Exception) {
-                _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to search")
+                _state.update { it.copy(loading = false, error = e.message ?: "Failed to search") }
             }
         }
     }

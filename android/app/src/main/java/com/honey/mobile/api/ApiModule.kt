@@ -4,6 +4,8 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.qualifiers.ApplicationContext
+import android.content.Context
 import javax.inject.Singleton
 import org.json.JSONObject
 import org.json.JSONArray
@@ -16,14 +18,33 @@ import kotlinx.coroutines.Dispatchers
 object ApiModule {
     @Provides
     @Singleton
-    fun provideHoneyApi(): HoneyApi {
+    fun provideHoneyApi(@ApplicationContext context: Context): HoneyApi {
         // TODO: Replace dummy implementation with native Mobile AAR calls.
         // This is necessary to keep the app compiling, but currently leaves other screens silently broken.
         return object : HoneyApi {
             override suspend fun getMeta(): MetaResponse = MetaResponse("dummy")
-            override suspend fun getBackends(): List<Backend> = emptyList()
+            override suspend fun getBackends(): List<Backend> = withContext(Dispatchers.IO) {
+                val reqJson = JSONObject().apply {
+                    put("config_path", "${context.filesDir.absolutePath}/config/config.yaml")
+                }.toString()
+                
+                val respJson = Mobile.listBackends(reqJson)
+                val jsonObj = JSONObject(respJson)
+                val backendsArray = jsonObj.optJSONArray("backends") ?: JSONArray()
+                
+                val parsedBackends = mutableListOf<Backend>()
+                for (i in 0 until backendsArray.length()) {
+                    val backendObj = backendsArray.getJSONObject(i)
+                    val name = backendObj.optString("name", "")
+                    val provider = backendObj.optString("provider", "")
+                    val env = if (backendObj.has("env")) backendObj.getString("env") else null
+                    parsedBackends.add(Backend(name = name, provider = provider, env = env))
+                }
+                parsedBackends
+            }
             override suspend fun searchHosts(req: SearchRequest): List<HostRecord> = withContext(Dispatchers.IO) {
                 val reqJson = JSONObject().apply {
+                    put("config_path", "${context.filesDir.absolutePath}/config/config.yaml")
                     put("name", req.name)
                     put("providers", req.providers)
                     put("backends", req.backends)
