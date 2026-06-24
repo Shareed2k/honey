@@ -10,6 +10,7 @@ core-ktx = "1.13.1"
 nav-compose = "2.7.7"
 lifecycle-runtime-compose = "2.8.3"
 hilt-navigation-compose = "1.2.0"
+room = "2.6.1"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
@@ -29,6 +30,9 @@ hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-com
 compose-material-icons = { group = "androidx.compose.material", name = "material-icons-core" }
 biometric = { group = "androidx.biometric", name = "biometric", version = "1.1.0" }
 appcompat = { group = "androidx.appcompat", name = "appcompat", version = "1.7.0" }
+room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
