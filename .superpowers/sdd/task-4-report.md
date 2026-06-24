@@ -39,3 +39,9 @@
 - `RecipesScreen.kt`: Updated `RecipesViewModel` to track the recipe execution state via an `ExecutionState` sealed class and a `StateFlow`.
 - `RecipesScreen.kt`: The catch block for `Mobile.executeRecipe` now updates the `StateFlow` with the error, which is then observed by the UI and surfaced via a `Snackbar`.
 - `RecipesScreen.kt`: `LogCallback` methods (`onLog` and `onProgress`) now update the `StateFlow` to emit progress updates to the UI state.
+
+## Fixes Post-Third-Review
+- `RecipesScreen.kt`: Fixed anti-pattern with Compose state handling for one-off events. Replaced state-driven snackbar with a `Channel<String>` (`snackbarEvent`) and a `LaunchedEffect` observer.
+- `RecipesScreen.kt`: Fixed global constraint violation. The `recipe.content` string is now wrapped into a JSON object `{"recipe": "..."}` using `JSONObject` before being passed to `Mobile.executeRecipe`.
+- `RecipesScreen.kt`: Fixed state merging defect in `LogCallback`. Now using `.update` to appropriately merge `log` and `progress` fields into the existing `ExecutionState.Running` instance, instead of replacing it entirely.
+- `RecipesScreen.kt`: Addressed minor issue of shared callback and state across concurrent runs. Moved `LogCallback` instantiation inside `runRecipe` execution block, and prevented concurrent runs by disabling the Play button if any recipe is running (`enabled = !isRunning`).
