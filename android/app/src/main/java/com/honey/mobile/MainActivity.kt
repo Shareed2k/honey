@@ -2,7 +2,7 @@ package com.honey.mobile
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -11,21 +11,38 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.honey.mobile.auth.AuthScreen
+import com.honey.mobile.auth.AuthViewModel
+import com.honey.mobile.auth.BiometricHelper
 import com.honey.mobile.ui.*
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         startForegroundService(Intent(this, HoneyService::class.java))
         setContent {
             MaterialTheme {
-                HoneyNavApp()
+                val authVm: AuthViewModel = hiltViewModel()
+                val unlocked by authVm.unlocked.collectAsStateWithLifecycle()
+                if (unlocked) {
+                    HoneyNavApp()
+                } else {
+                    AuthScreen(onRequestAuth = {
+                        BiometricHelper.prompt(
+                            activity = this,
+                            onSuccess = { authVm.unlock() },
+                            onFail = { /* stays on auth screen */ }
+                        )
+                    })
+                }
             }
         }
     }
