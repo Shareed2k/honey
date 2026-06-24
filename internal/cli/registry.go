@@ -18,7 +18,8 @@ import (
 
 var globalSearchRegistry *searchrun.Registry
 
-func getSearchRegistry() *searchrun.Registry {
+// GetSearchRegistry returns the global search registry, initializing it if necessary.
+func GetSearchRegistry() *searchrun.Registry {
 	if globalSearchRegistry == nil {
 		globalSearchRegistry = searchrun.NewRegistry(all.Factories(all.Deps{
 			K8sInteractive:    engine.K8sInteractiveRunner(),
@@ -112,5 +113,5 @@ func (sshFallbackExecutor) DialUpstream(_ context.Context, _ string, _ hosts.Rec
 
 // buildHostExecRegistry constructs the host execution registry.
 func buildHostExecRegistry() hostexec.Registry {
-	return &executionRouter{searchReg: getSearchRegistry()}
+	return &executionRouter{searchReg: GetSearchRegistry()}
 }

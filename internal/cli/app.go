@@ -69,7 +69,7 @@ func init() {
 	appOpenCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	appOpenCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	appOpenCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
-	getSearchRegistry().RegisterAllProviderFlags(appOpenCmd)
+	GetSearchRegistry().RegisterAllProviderFlags(appOpenCmd)
 }
 
 func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, cache *engine.ClientCache) (proxy.Dialer, io.Closer, error) {
@@ -98,7 +98,7 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, c
 		Providers:  searchProviders,
 		Backends:   searchBackends,
 	}
-	out, err := hostapi.SearchHosts(ctx, &in, buildHostExecRegistry(), getSearchRegistry())
+	out, err := hostapi.SearchHosts(ctx, &in, buildHostExecRegistry(), GetSearchRegistry())
 	if err != nil {
 		if app.TargetRegex != "" {
 			return nil, nil, fmt.Errorf("resolve target (regex %q): %w", app.TargetRegex, err)

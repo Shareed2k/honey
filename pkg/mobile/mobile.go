@@ -1,5 +1,35 @@
 package mobile
 
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/shareed2k/honey/internal/cli"
+	"github.com/shareed2k/honey/internal/hostapi"
+)
+
+// SearchHosts takes a JSON serialized hostapi.SearchHostsInput and returns a JSON serialized hostapi.SearchHostsOutput.
+func SearchHosts(requestJSON string) (string, error) {
+	var input hostapi.SearchHostsInput
+	if err := json.Unmarshal([]byte(requestJSON), &input); err != nil {
+		return "", err
+	}
+
+	reg := cli.GetSearchRegistry()
+
+	out, err := hostapi.SearchHosts(context.Background(), &input, nil, reg)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := json.Marshal(out)
+	if err != nil {
+		return "", err
+	}
+
+	return string(resp), nil
+}
+
 // ExecuteRecipe is the gomobile entrypoint.
 func ExecuteRecipe(requestJSON string, cb LogCallback) (string, error) {
 	_ = requestJSON // unused for now

@@ -95,3 +95,22 @@ func TestSaveAndLoadConfig(t *testing.T) {
 		t.Errorf("expected ssh_user=root in result, got: %s", got)
 	}
 }
+
+func TestSearchHosts(t *testing.T) {
+	// Request a backend that doesn't exist or is purely local to avoid network calls.
+	// We'll ask for a non-existent backend to ensure it doesn't try connecting to k8s/docker.
+	// But hostapi.SearchHosts will return an error if no backends match: "no backends match backends=..."
+	// Let's test the error case as it proves parsing works.
+	requestJSON := `{"name":"test-host","no_cache":true,"backends":"dummy-backend"}`
+	_, err := mobile.SearchHosts(requestJSON)
+	if err == nil {
+		t.Fatalf("SearchHosts() expected error for missing backend, got nil")
+	}
+	if !strings.Contains(err.Error(), "no backends match") {
+		t.Errorf("SearchHosts() expected 'no backends match' error, got: %v", err)
+	}
+
+	// Now let's try with empty string so it doesn't fail JSON parsing
+	// Wait, if we use a real provider but prevent network calls?
+	// The problem is k8s tries to connect. Let's just use the error case to verify the plumbing.
+}

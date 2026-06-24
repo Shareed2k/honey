@@ -92,7 +92,7 @@ func runEgress(cmd *cobra.Command, args []string) error {
 			SSHUser:    flagSSHUser,
 			Providers:  flagProviders,
 			Backends:   flagBackends,
-		}, buildHostExecRegistry(), getSearchRegistry())
+		}, buildHostExecRegistry(), GetSearchRegistry())
 		if err != nil {
 			return fmt.Errorf("resolve %q: %w", hostArg, err)
 		}

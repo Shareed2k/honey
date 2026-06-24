@@ -95,7 +95,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		ConfigPath:         cfgPath,
 		Config:             cfg,
 		ExecRegistry:       buildHostExecRegistry(),
-		SearchRegistry:     getSearchRegistry(),
+		SearchRegistry:     GetSearchRegistry(),
 		RecordDir:          recordDir,
 		LocalFilesRoot:     webFilesRoot,
 		AgentBinaryPath:    webAgentBin,
