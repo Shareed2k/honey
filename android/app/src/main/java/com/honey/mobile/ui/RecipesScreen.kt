@@ -6,6 +6,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,10 +20,13 @@ import androidx.lifecycle.viewModelScope
 import com.honey.mobile.data.RecipeDao
 import com.honey.mobile.data.RecipeEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import mobile.LogCallback
+import mobile.Mobile
 import javax.inject.Inject
 
 @HiltViewModel
@@ -37,6 +42,28 @@ class RecipesViewModel @Inject constructor(private val dao: RecipeDao) : ViewMod
 
     fun delete(recipe: RecipeEntity) {
         viewModelScope.launch { dao.delete(recipe) }
+    }
+
+    private val callback = object : LogCallback {
+        override fun onLog(msg: String?) {
+            // Push to UI state
+        }
+
+        override fun onProgress(progressJSON: String?) {
+            // Push to UI state
+        }
+    }
+
+    fun runRecipe(recipe: RecipeEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Call Go code directly!
+                val resultJson = Mobile.executeRecipe(recipe.content, callback)
+                // Handle result...
+            } catch (e: Exception) {
+                // Handle error
+            }
+        }
     }
 }
 
@@ -76,8 +103,11 @@ fun RecipesScreen(vm: RecipesViewModel = hiltViewModel()) {
                         supportingContent = { if (r.description.isNotBlank()) Text(r.description) },
                         trailingContent = {
                             Row {
+                                IconButton(onClick = { vm.runRecipe(r) }) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = "Run")
+                                }
                                 IconButton(onClick = { editing = r; showDialog = true }) {
-                                    Icon(Icons.Default.Add, contentDescription = "Edit")
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit")
                                 }
                                 IconButton(onClick = { vm.delete(r) }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Delete")

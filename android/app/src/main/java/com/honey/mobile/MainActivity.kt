@@ -27,7 +27,6 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        startForegroundService(Intent(this, HoneyService::class.java))
         setContent {
             MaterialTheme {
                 val authVm: AuthViewModel = hiltViewModel()
