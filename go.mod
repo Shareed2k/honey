@@ -36,6 +36,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-playground/mold/v4 v4.5.1
 	github.com/go-playground/validator/v10 v10.30.3
+	github.com/go-python/gpython v0.2.1-0.20260302130241-444ae5ed29cf
 	github.com/go-task/slim-sprig/v3 v3.0.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/go-webauthn/webauthn v0.17.4

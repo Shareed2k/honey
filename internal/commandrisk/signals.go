@@ -1,8 +1,10 @@
-// Package commandrisk analyzes shell commands for dangerous patterns. It parses
-// a command to an AST (mvdan.cc/sh) and emits deterministic risk signals — it
-// never executes anything and performs no network I/O. The signals feed an OPA
-// policy decision and user-facing risk review; an LLM may later explain them but
-// is never authoritative.
+// Package commandrisk analyzes recipe commands for dangerous patterns. It parses
+// a command to an AST and emits deterministic risk signals — it never executes
+// anything and performs no network I/O. Shell commands are parsed with
+// mvdan.cc/sh; Python steps (interpreter "python3") are parsed with gpython, and
+// shell strings passed to os.system / subprocess.* recurse into the shell
+// detectors. The signals feed an OPA policy decision and user-facing risk
+// review; an LLM may later explain them but is never authoritative.
 package commandrisk
 
 // Severity ranks a risk signal. Critical signals are hard-denied by the engine
@@ -58,6 +60,9 @@ type Analysis struct {
 	// ParseError is set when the command could not be parsed; this also yields a
 	// medium UNPARSEABLE_COMMAND signal rather than a hard failure.
 	ParseError string `json:"parse_error,omitempty"`
+	// Interpreter is the step's declared interpreter (e.g. "python3", "bash"), or
+	// empty for the default shell. It selects the parser and is passed to policy.
+	Interpreter string `json:"interpreter,omitempty"`
 }
 
 // add records a signal and updates MaxSeverity / Critical.

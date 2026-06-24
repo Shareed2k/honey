@@ -68,6 +68,36 @@ What a few commands resolve to (signal ID and severity):
 | `apt-get remove nginx` | `PACKAGE_REMOVE` | medium |
 | `echo $(hostname)` | `COMMAND_SUBSTITUTION` | medium |
 
+## Interpreter-aware analysis
+
+A recipe `command`/`script` step may declare an `interpreter` (e.g.
+`interpreter: "python3"`). The risk engine picks the parser to match — it never
+shell-parses a non-shell body:
+
+- **Shell** (`sh`/`bash`/`zsh`/`ksh`/`dash`, or unset) → parsed with `mvdan/sh`
+  (everything above).
+- **Python** (`python3`/`python`) → parsed with [gpython](https://github.com/go-python/gpython)
+  into a Python AST (still **no execution**). Detectors walk the AST; shell
+  strings handed to `os.system` / `subprocess.*` recurse back into the shell
+  analyzer, so a python wrapper around a dangerous command is still caught.
+- **Other** interpreters (`node`, `ruby`, …) → not parsed (no bogus signals);
+  the decision is left entirely to OPA, which receives the interpreter.
+
+The step's interpreter is always passed to policy as `input.command.interpreter`.
+
+Python detectors:
+
+| Python | Signal | Severity |
+| --- | --- | --- |
+| `os.system("rm -rf /")` | `DELETE_ROOT_PATH` (via shell recursion) | **critical** |
+| `subprocess.run(["rm","-rf","/etc"])` | `DELETE_ROOT_PATH` | **critical** |
+| `shutil.rmtree("/")` | `PYTHON_RMTREE_SYSTEM_PATH` | **critical** |
+| `shutil.rmtree("/tmp/x")` | `PYTHON_RMTREE` | high |
+| `os.remove("/etc/passwd")` | `PYTHON_DELETE_SYSTEM_PATH` | **critical** |
+| `open("/dev/sda","wb")` | `DD_WRITE_BLOCK_DEVICE` | **critical** |
+| `eval(user_input)` | `PYTHON_DYNAMIC_EXEC` | medium |
+| `os.system(cmd)` (runtime-built) | `PYTHON_DYNAMIC_SHELL_EXEC` | medium |
+
 ## Policy input
 
 The `command_exec` action receives:
@@ -79,6 +109,7 @@ The `command_exec` action receives:
   "command": {
     "raw": "kubectl delete pod x -n prod",
     "max_severity": "high",
+    "interpreter": "",
     "riskSignals": [{"id": "KUBECTL_DELETE", "severity": "high", "reason": "kubectl delete"}],
     "detected": {"commands": ["kubectl"], "flags": [], "paths": []}
   },
@@ -181,6 +212,27 @@ decision := "require_approval" if {
 	input.action == "command_exec"
 	input.command.max_severity == "high"
 	not input.execution.approved
+}
+```
+
+**Interpreter gate** — block Python steps on prod (the interpreter is in the
+input even for non-shell steps the engine does not parse):
+
+```rego
+package honey
+import rego.v1
+
+default allow := true
+
+allow := false if {
+	input.action == "command_exec"
+	input.command.interpreter == "python3"
+	input.target.env == "prod"
+}
+deny_reason := "python steps are not allowed on prod" if {
+	input.action == "command_exec"
+	input.command.interpreter == "python3"
+	input.target.env == "prod"
 }
 ```
 

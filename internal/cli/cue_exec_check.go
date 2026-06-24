@@ -41,7 +41,11 @@ func reportRecipeRisk(w io.Writer, risks []engine.StepRisk, hasPolicy bool) bool
 
 	var denied bool
 	for _, r := range risks {
-		fmt.Fprintf(w, "Step %d [%s] host=%s: %s\n", r.StepIndex, r.Kind, r.Host, firstLine(r.Command))
+		label := r.Kind
+		if r.Interpreter != "" {
+			label += ":" + r.Interpreter
+		}
+		fmt.Fprintf(w, "Step %d [%s] host=%s: %s\n", r.StepIndex, label, r.Host, firstLine(r.Command))
 		if r.Analysis.MaxSeverity == "" {
 			fmt.Fprintln(w, "  Risk: none")
 		} else {
