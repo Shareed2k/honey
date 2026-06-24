@@ -22,7 +22,8 @@ data class ConfigBackends(
     val consul: List<ConsulBackendConfig> = emptyList(),
     val proxmox: List<ProxmoxBackendConfig> = emptyList(),
     val truenas: List<TrueNasBackendConfig> = emptyList(),
-    val docker: List<DockerBackendConfig> = emptyList()
+    val docker: List<DockerBackendConfig> = emptyList(),
+    val honey: List<HoneyBackendConfig> = emptyList()
 )
 
 data class LocalBackendConfig(
@@ -79,6 +80,13 @@ data class DockerBackendConfig(
     val name: String,
     val host: String = "",
     val socket: String = ""
+)
+
+data class HoneyBackendConfig(
+    val name: String,
+    val url: String = "",
+    val token: String = "",
+    val insecure: Boolean = false
 )
 
 data class BackendItem(
