@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -20,10 +21,13 @@ type Honey struct {
 	URL      string
 	Token    string
 	Insecure bool
+
+	clientOnce sync.Once
+	client     *http.Client
 }
 
 // ID returns the backend identifier.
-func (Honey) ID() string { return "honey" }
+func (h *Honey) ID() string { return "honey" }
 
 // BackendName returns the optional config label.
 func (h *Honey) BackendName() string { return strings.TrimSpace(h.Name) }
@@ -67,21 +71,23 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 		req.Header.Set("Authorization", "Bearer "+h.Token)
 	}
 
-	var tr *http.Transport
-	if t, ok := http.DefaultTransport.(*http.Transport); ok {
-		tr = t.Clone()
-	} else {
-		tr = &http.Transport{}
-	}
-	if h.Insecure {
-		if tr.TLSClientConfig == nil {
-			tr.TLSClientConfig = &tls.Config{}
+	h.clientOnce.Do(func() {
+		var tr *http.Transport
+		if t, ok := http.DefaultTransport.(*http.Transport); ok {
+			tr = t.Clone()
+		} else {
+			tr = &http.Transport{}
 		}
-		tr.TLSClientConfig.InsecureSkipVerify = true
-	}
+		if h.Insecure {
+			if tr.TLSClientConfig == nil {
+				tr.TLSClientConfig = &tls.Config{}
+			}
+			tr.TLSClientConfig.InsecureSkipVerify = true
+		}
+		h.client = &http.Client{Transport: tr}
+	})
 
-	client := &http.Client{Transport: tr}
-	resp, err := client.Do(req)
+	resp, err := h.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}

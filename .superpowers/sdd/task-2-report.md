@@ -39,3 +39,4 @@
 1.  **Important**: Fixed unsafe type assertion for `http.DefaultTransport` in `honey.go` by safely checking the type before cloning, falling back to a new `http.Transport` to avoid panics.
 2.  **Minor**: Limited the error response body reading to 4096 bytes in `honey.go` using `io.LimitReader` to prevent memory exhaustion on large error payloads.
 3.  **Minor**: Updated slice deletion in `crud.go` (`Delete` method) to allocate a new slice instead of modifying the shared backing array, ensuring safe updates.
+4.  **Important**: Fixed resource leak where `http.Client` and `http.Transport` were constructed on every `Search()` call, causing idle connection leaks. Initialized `http.Client` once per backend using `sync.Once`.
