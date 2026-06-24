@@ -63,6 +63,7 @@ class ConfigViewModel @Inject constructor(
                 is ProxmoxBackendConfig -> replaceOrAddProxmox(_config.value, item)
                 is TrueNasBackendConfig -> replaceOrAddTrueNas(_config.value, item)
                 is DockerBackendConfig  -> replaceOrAddDocker(_config.value, item)
+                is HoneyBackendConfig   -> replaceOrAddHoney(_config.value, item)
                 else -> _config.value
             }
             repo.save(updated); _config.value = updated
@@ -81,6 +82,7 @@ class ConfigViewModel @Inject constructor(
                 "proxmox"    -> b.copy(proxmox = b.proxmox.filterNot { it.name == name })
                 "truenas"    -> b.copy(truenas = b.truenas.filterNot { it.name == name })
                 "docker"     -> b.copy(docker = b.docker.filterNot { it.name == name })
+                "honey"      -> b.copy(honey = b.honey.filterNot { it.name == name })
                 else -> b
             })
             repo.save(updated); _config.value = updated
@@ -96,6 +98,7 @@ class ConfigViewModel @Inject constructor(
         cfg.backends.proxmox.forEach    { add(BackendItem("proxmox",    it.name, it.url)) }
         cfg.backends.truenas.forEach    { add(BackendItem("truenas",    it.name, it.url)) }
         cfg.backends.docker.forEach     { add(BackendItem("docker",     it.name, it.host.ifBlank { it.socket })) }
+        cfg.backends.honey.forEach      { add(BackendItem("honey",      it.name, it.url)) }
     }
 
     private fun replaceOrAddLocal(cfg: HoneyConfig, item: LocalBackendConfig) =
@@ -114,6 +117,8 @@ class ConfigViewModel @Inject constructor(
         cfg.copy(backends = cfg.backends.copy(truenas = cfg.backends.truenas.filterNot { it.name == item.name } + item))
     private fun replaceOrAddDocker(cfg: HoneyConfig, item: DockerBackendConfig) =
         cfg.copy(backends = cfg.backends.copy(docker = cfg.backends.docker.filterNot { it.name == item.name } + item))
+    private fun replaceOrAddHoney(cfg: HoneyConfig, item: HoneyBackendConfig) =
+        cfg.copy(backends = cfg.backends.copy(honey = cfg.backends.honey.filterNot { it.name == item.name } + item))
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +259,7 @@ private fun DefaultsTab(defaults: ConfigDefaults, onSave: (String, String) -> Un
 
 @Composable
 private fun BackendTypePickerDialog(onDismiss: () -> Unit, onSelect: (String) -> Unit) {
-    val types = listOf("local", "kubernetes", "aws", "gcp", "consul", "proxmox", "truenas", "docker")
+    val types = listOf("local", "kubernetes", "aws", "gcp", "consul", "proxmox", "truenas", "docker", "honey")
     var selected by remember { mutableStateOf(types[0]) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -304,6 +309,7 @@ private fun BackendFormDialog(
                     "proxmox"    -> ProxmoxForm(initial as? ProxmoxBackendConfig, secretKeys, onSave, onDismiss)
                     "truenas"    -> TrueNasForm(initial as? TrueNasBackendConfig, secretKeys, onSave, onDismiss)
                     "docker"     -> DockerForm(initial as? DockerBackendConfig, onSave, onDismiss)
+                    "honey"      -> HoneyForm(initial as? HoneyBackendConfig, secretKeys, onSave, onDismiss)
                 }
             }
         },
@@ -753,6 +759,62 @@ private fun DockerForm(
     ) { Text("Save") }
 }
 
+@Composable
+private fun HoneyForm(
+    initial: HoneyBackendConfig?,
+    secretKeys: List<String>,
+    onSave: (Any) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var url by remember { mutableStateOf(initial?.url ?: "") }
+    var token by remember { mutableStateOf(initial?.token ?: "") }
+    var insecure by remember { mutableStateOf(initial?.insecure ?: false) }
+
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var urlError by remember { mutableStateOf<String?>(null) }
+
+    ValidatedTextField(
+        value = name, onValueChange = { name = it; nameError = null },
+        label = "Name *", errorMessage = nameError
+    )
+    ValidatedTextField(
+        value = url, onValueChange = { url = it; urlError = null },
+        label = "URL *", errorMessage = urlError,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+    )
+    SecretKeyPicker(
+        label = "Token",
+        value = token,
+        secretKeys = secretKeys,
+        onValueChange = { token = it }
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+    ) {
+        Checkbox(checked = insecure, onCheckedChange = { insecure = it })
+        Text("Insecure (skip TLS verify)", modifier = Modifier.padding(start = 8.dp))
+    }
+    TextButton(
+        onClick = {
+            var isValid = true
+            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            if (url.isBlank()) {
+                urlError = "URL is required"
+                isValid = false
+            } else if (!Validators.isValidUrl(url)) {
+                urlError = "Invalid URL"
+                isValid = false
+            }
+            if (isValid) {
+                onSave(HoneyBackendConfig(name = name, url = url, token = token, insecure = insecure))
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("Save") }
+}
+
 // ---------------------------------------------------------------------------
 // SecretKeyPicker
 // ---------------------------------------------------------------------------
@@ -833,5 +895,6 @@ private fun findBackend(cfg: HoneyConfig, type: String, name: String): Any? = wh
     "proxmox"    -> cfg.backends.proxmox.find { it.name == name }
     "truenas"    -> cfg.backends.truenas.find { it.name == name }
     "docker"     -> cfg.backends.docker.find { it.name == name }
+    "honey"      -> cfg.backends.honey.find { it.name == name }
     else         -> null
 }
