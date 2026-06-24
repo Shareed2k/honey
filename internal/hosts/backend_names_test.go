@@ -91,3 +91,18 @@ func TestFilterBackendsByNamesLegacyNameOnly(t *testing.T) {
 		t.Fatalf("legacy name-only should match both: len %d", len(out))
 	}
 }
+
+func TestFilterBackendsByNamesHoneyBypass(t *testing.T) {
+	t.Parallel()
+	provs := []Backend{
+		stubBackend{id: "honey", name: "remote-proxy"},
+		stubBackend{id: "k8s", name: "prod"},
+	}
+	out := FilterBackendsByNames(provs, []string{"prod"})
+	if len(out) != 2 {
+		t.Fatalf("expected honey proxy to bypass filter and be included, got len %d", len(out))
+	}
+	if out[0].(stubBackend).id != "honey" {
+		t.Errorf("expected first to be honey")
+	}
+}

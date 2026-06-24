@@ -51,6 +51,9 @@ func providerKindMatches(p Backend, kind string) bool {
 }
 
 func backendMatchesFilter(p Backend, f backendFilter) bool {
+	if p.ID() == "honey" {
+		return true // Honey providers act as transparent proxies
+	}
 	n := strings.TrimSpace(strings.ToLower(p.BackendName()))
 	if n == "" || f.name == "" || n != f.name {
 		return false
