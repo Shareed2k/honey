@@ -421,3 +421,40 @@ func TestParseYAMLAppliesDefaultTags(t *testing.T) {
 		t.Fatalf("defaults.logs.anomaly_freq_ratio = %v want 5.0", f.Defaults.Logs.AnomalyFreqRatio)
 	}
 }
+
+func TestSaveValidation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	t.Run("invalid config", func(t *testing.T) {
+		f := &File{
+			Version: 1,
+			Backends: Backends{
+				Honey: []HoneyBackend{{Name: "", URL: "not-a-url"}}, // Invalid: empty name, bad URL format
+			},
+		}
+		err := f.Save(path)
+		if err == nil {
+			t.Fatal("expected validation error, got nil")
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("file should not exist if validation failed")
+		}
+	})
+
+	t.Run("valid config", func(t *testing.T) {
+		f := &File{
+			Version: 1,
+			Backends: Backends{
+				Honey: []HoneyBackend{{Name: "test", URL: "https://honey.local"}},
+			},
+		}
+		err := f.Save(path)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Fatal("file should exist after successful save")
+		}
+	})
+}
