@@ -156,6 +156,7 @@ type Backends struct {
 	Proxmox    []ProxmoxBackend    `yaml:"proxmox" json:"proxmox" honey:"label=Proxmox;order=50" validate:"dive" mod:"dive"`
 	TrueNAS    []TrueNASBackend    `yaml:"truenas" json:"truenas" honey:"label=TrueNAS;order=55" validate:"dive" mod:"dive"`
 	Local      []LocalBackend      `yaml:"local" json:"local" honey:"label=Local;order=60" validate:"dive" mod:"dive"`
+	Honey      []HoneyBackend      `yaml:"honey" json:"honey" honey:"label=Honey (Remote);order=65" validate:"dive" mod:"dive"`
 	Docker     []DockerBackend     `yaml:"docker" json:"docker" honey:"label=Docker;order=35" validate:"dive" mod:"dive"`
 }
 
@@ -411,7 +412,8 @@ func (f *File) HasAnyBackend() bool {
 		len(f.Backends.Consul) > 0 ||
 		len(f.Backends.Proxmox) > 0 ||
 		len(f.Backends.Local) > 0 ||
-		len(f.Backends.Docker) > 0
+		len(f.Backends.Docker) > 0 ||
+		len(f.Backends.Honey) > 0
 }
 
 // ResolvePath returns an explicit path from --config or HONEY_CONFIG
