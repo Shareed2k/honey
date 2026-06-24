@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -39,18 +40,13 @@ func (h *Honey) CacheIdentity() string {
 
 var _ hosts.Backend = (*Honey)(nil)
 
-type searchRequest struct {
-	Name      string `json:"name,omitempty"`
-	NameRegex string `json:"name_regex,omitempty"`
-}
-
 type searchResponse struct {
 	Records []hosts.Record `json:"records"`
 }
 
 // Search queries the remote honey server for hosts matching the query.
 func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
-	reqBody := searchRequest{
+	reqBody := hostapi.SearchHostsInput{
 		Name:      q.NameSubstring,
 		NameRegex: q.NameRegex,
 	}

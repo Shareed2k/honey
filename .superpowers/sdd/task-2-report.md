@@ -44,3 +44,6 @@
 ### Fixes Applied from Second Review
 1.  **Important**: Changed `require.NoError` to `assert.NoError` with an early return inside the `http.HandlerFunc` in `honey_test.go` to prevent abrupt termination of the goroutine via `runtime.Goexit()`.
 2.  **Minor**: Changed `Edit` method in `crud.go` to clone the config slice (`append([]config.HoneyBackend(nil), backends...)`) before mutating it, preventing accidental modification of the shared backing array.
+
+### Fixes Applied from Third Review
+1.  **Important**: Removed redefined `searchRequest` struct and updated `Search()` in `honey.go` to use `hostapi.SearchHostsInput` from `github.com/shareed2k/honey/internal/hostapi` to ensure the payload stays in sync with the API contract. Updated `honey_test.go` accordingly.

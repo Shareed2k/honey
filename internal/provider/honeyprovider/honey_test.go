@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestHoneySearch(t *testing.T) {
 		assert.Equal(t, "/api/v1/search", r.URL.Path)
 		assert.Equal(t, "Bearer my-token", r.Header.Get("Authorization"))
 
-		var req searchRequest
+		var req hostapi.SearchHostsInput
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if !assert.NoError(t, err) {
 			return
