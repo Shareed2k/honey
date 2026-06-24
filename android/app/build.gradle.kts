@@ -30,6 +30,15 @@ android {
     }
 }
 
+tasks.register<Exec>("buildHoneyBinary") {
+    description = "Cross-compile honey for Android arm64"
+    workingDir = rootDir.parentFile // repo root
+    commandLine("bash", "scripts/build-android.sh")
+    inputs.file("$workingDir/cmd/honey/main.go")
+    outputs.file("$projectDir/src/main/assets/honey-arm64")
+}
+tasks.named("preBuild") { dependsOn("buildHoneyBinary") }
+
 dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
