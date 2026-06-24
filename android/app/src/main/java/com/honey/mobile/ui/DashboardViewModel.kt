@@ -13,7 +13,11 @@ data class DashboardState(
     val online: Boolean = false,
     val version: String = "",
     val backendCount: Int = 0,
-    val loading: Boolean = true
+    val loading: Boolean = true,
+    val nameQuery: String = "",
+    val selectedProviders: List<String> = emptyList(),
+    val selectedBackends: List<String> = emptyList(),
+    val results: List<com.honey.mobile.api.HostRecord> = emptyList()
 )
 
 @HiltViewModel
@@ -31,14 +35,46 @@ class DashboardViewModel @Inject constructor(private val api: HoneyApi) : ViewMo
             try {
                 val meta = api.getMeta()
                 val backends = api.getBackends()
-                _state.value = DashboardState(
+                _state.value = _state.value.copy(
                     online = true,
                     version = meta.version,
                     backendCount = backends.size,
                     loading = false
                 )
             } catch (e: Exception) {
-                _state.value = DashboardState(online = false, loading = false)
+                _state.value = _state.value.copy(online = false, loading = false)
+            }
+        }
+    }
+
+    fun updateNameQuery(query: String) {
+        _state.value = _state.value.copy(nameQuery = query)
+    }
+
+    fun updateProviders(providers: String) {
+        val list = providers.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        _state.value = _state.value.copy(selectedProviders = list)
+    }
+
+    fun updateBackends(backends: String) {
+        val list = backends.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        _state.value = _state.value.copy(selectedBackends = list)
+    }
+
+    fun search() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true)
+            try {
+                val state = _state.value
+                val req = com.honey.mobile.api.SearchRequest(
+                    name = state.nameQuery,
+                    providers = state.selectedProviders.joinToString(","),
+                    backends = state.selectedBackends.joinToString(",")
+                )
+                val results = api.searchHosts(req)
+                _state.value = state.copy(results = results, loading = false)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(loading = false)
             }
         }
     }
