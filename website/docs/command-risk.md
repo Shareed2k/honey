@@ -80,6 +80,9 @@ shell-parses a non-shell body:
   into a Python AST (still **no execution**). Detectors walk the AST; shell
   strings handed to `os.system` / `subprocess.*` recurse back into the shell
   analyzer, so a python wrapper around a dangerous command is still caught.
+  gpython implements a pre-3.6 grammar, so modern syntax (f-strings, walrus,
+  `match`) cannot be parsed; such a step yields a **low** `PYTHON_PARSE_INCOMPLETE`
+  note (analysis skipped, *not* a risk) and the decision is left to OPA.
 - **Other** interpreters (`node`, `ruby`, …) → not parsed (no bogus signals);
   the decision is left entirely to OPA, which receives the interpreter.
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 func init() {
@@ -244,8 +245,8 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 	}
 
 	// Risk-gate the script body (best-effort: unreadable file → no analysis).
-	// #nosec G304 -- localAbs is a recipe-author path resolved within the recipe dir.
-	if scriptSrc, rerr := os.ReadFile(localAbs); rerr == nil {
+	// safepath.ReadFile reads via os.Root on the parent dir, so the basename
+	if scriptSrc, rerr := safepath.ReadFile(localAbs); rerr == nil {
 		var riskSkipped []HostExecResult
 		targets, riskSkipped, err = gateCommandRisk(ctx, run, kind, string(scriptSrc), ss.Interpreter, targets)
 		if err != nil {
