@@ -1,7 +1,14 @@
 package honeyprovider
 
 import (
+	"crypto/tls"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -44,13 +51,50 @@ func (f honeyFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend {
 }
 
 func (f honeyFactory) BackendRows() []config.BackendRow {
-	rows := make([]config.BackendRow, 0, len(f.cfg.HoneyBackends()))
+	var rows []config.BackendRow
+	client := &http.Client{Timeout: 2 * time.Second}
+
 	for _, b := range f.cfg.HoneyBackends() {
+		// 1. Add the Honey backend itself
 		rows = append(rows, config.BackendRow{
 			Kind: "honey",
 			Name: b.Name,
 			Hint: b.URL,
 		})
+
+		// 2. Fetch remote backends
+		fetchURL := strings.TrimRight(b.URL, "/") + "/api/v1/config/backends"
+		req, err := http.NewRequest(http.MethodGet, fetchURL, nil)
+		if err != nil {
+			continue
+		}
+		if b.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+b.Token)
+		}
+
+		// Handle insecure TLS
+		if b.Insecure {
+			tr := &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
+			}
+			client.Transport = tr
+		} else {
+			client.Transport = nil // Use default
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			var out hostapi.ListBackendsOutput
+			if err := json.NewDecoder(resp.Body).Decode(&out); err == nil {
+				// Append fetched backends
+				rows = append(rows, out.Backends...)
+			}
+		}
+		resp.Body.Close()
 	}
 	return rows
 }
