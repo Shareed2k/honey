@@ -33,3 +33,9 @@
 - `RecipesScreen.kt`: Added `Log.e` to the catch block around `Mobile.executeRecipe` so exceptions aren't silently swallowed.
 - `RecipesScreen.kt`: Added `Log.d` to the empty `LogCallback` implementations (`onLog` and `onProgress`) to help verify the Kotlin/Go boundary during manual testing.
 - `ApiModule.kt`: Added a TODO comment explaining that the dummy `HoneyApi` implementation needs to be replaced with native `Mobile` AAR calls, acknowledging that it leaves other screens silently broken.
+
+## Fixes Post-Second-Review
+- `ApiModule.kt`: Updated dummy `HoneyApi` methods to throw `NotImplementedError("Pending AAR migration")` instead of returning empty lists or fake data so that failures in other screens are loud and obvious rather than silently broken.
+- `RecipesScreen.kt`: Updated `RecipesViewModel` to track the recipe execution state via an `ExecutionState` sealed class and a `StateFlow`.
+- `RecipesScreen.kt`: The catch block for `Mobile.executeRecipe` now updates the `StateFlow` with the error, which is then observed by the UI and surfaced via a `Snackbar`.
+- `RecipesScreen.kt`: `LogCallback` methods (`onLog` and `onProgress`) now update the `StateFlow` to emit progress updates to the UI state.

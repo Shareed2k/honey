@@ -21,8 +21,10 @@ import com.honey.mobile.data.RecipeDao
 import com.honey.mobile.data.RecipeEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import mobile.LogCallback
@@ -44,36 +46,71 @@ class RecipesViewModel @Inject constructor(private val dao: RecipeDao) : ViewMod
         viewModelScope.launch { dao.delete(recipe) }
     }
 
+    sealed class ExecutionState {
+        object Idle : ExecutionState()
+        data class Running(val progress: String? = null, val log: String? = null) : ExecutionState()
+        data class Success(val result: String) : ExecutionState()
+        data class Error(val message: String) : ExecutionState()
+    }
+
+    private val _executionState = MutableStateFlow<ExecutionState>(ExecutionState.Idle)
+    val executionState: StateFlow<ExecutionState> = _executionState.asStateFlow()
+
     private val callback = object : LogCallback {
         override fun onLog(msg: String?) {
             android.util.Log.d("RecipesViewModel", "onLog: $msg")
-            // Push to UI state
+            _executionState.value = ExecutionState.Running(log = msg)
         }
 
         override fun onProgress(progressJSON: String?) {
             android.util.Log.d("RecipesViewModel", "onProgress: $progressJSON")
-            // Push to UI state
+            _executionState.value = ExecutionState.Running(progress = progressJSON)
         }
     }
 
     fun runRecipe(recipe: RecipeEntity) {
         viewModelScope.launch(Dispatchers.IO) {
+            _executionState.value = ExecutionState.Running()
             try {
                 // Call Go code directly!
                 val resultJson = Mobile.executeRecipe(recipe.content, callback)
-                // Handle result...
+                _executionState.value = ExecutionState.Success(resultJson ?: "Success")
             } catch (e: Exception) {
                 android.util.Log.e("RecipesViewModel", "Error running recipe", e)
+                _executionState.value = ExecutionState.Error(e.message ?: "Unknown error")
             }
         }
+    }
+
+    fun clearExecutionState() {
+        _executionState.value = ExecutionState.Idle
     }
 }
 
 @Composable
 fun RecipesScreen(vm: RecipesViewModel = hiltViewModel()) {
     val recipes by vm.recipes.collectAsStateWithLifecycle()
+    val executionState by vm.executionState.collectAsStateWithLifecycle()
     var showDialog by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<RecipeEntity?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(executionState) {
+        when (val state = executionState) {
+            is RecipesViewModel.ExecutionState.Error -> {
+                snackbarHostState.showSnackbar("Error: ${state.message}")
+                vm.clearExecutionState()
+            }
+            is RecipesViewModel.ExecutionState.Success -> {
+                snackbarHostState.showSnackbar("Success: ${state.result}")
+                vm.clearExecutionState()
+            }
+            is RecipesViewModel.ExecutionState.Running -> {
+                // Could display progress/log in UI if desired
+            }
+            RecipesViewModel.ExecutionState.Idle -> {}
+        }
+    }
 
     if (showDialog) {
         RecipeDialog(
@@ -87,6 +124,7 @@ fun RecipesScreen(vm: RecipesViewModel = hiltViewModel()) {
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(onClick = { editing = null; showDialog = true }) {
                 Icon(Icons.Default.Add, contentDescription = "New recipe")
