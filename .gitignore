@@ -18,6 +18,6 @@ contrib/ansible/inventory_plugins/__pycache__
 
 models
 runtime
-honey
+/honey
 .env
 .claude/*

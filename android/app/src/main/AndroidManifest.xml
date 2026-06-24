@@ -15,5 +15,12 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <service
+            android:name=".HoneyService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false"/>
+        <property
+            android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+            android:value="Runs honey infrastructure automation server on localhost"/>
     </application>
 </manifest>

@@ -41,4 +41,5 @@ dependencies {
     implementation(libs.retrofit.gson)
     implementation(libs.okhttp.logging)
     implementation(libs.coroutines.android)
+    implementation(libs.core.ktx)
 }
