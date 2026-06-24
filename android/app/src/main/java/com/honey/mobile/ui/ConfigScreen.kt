@@ -13,6 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -447,24 +449,34 @@ private fun K8sForm(
     var kubeconfig by remember { mutableStateOf(initial?.kubeconfig ?: "") }
     var mode by remember { mutableStateOf(initial?.mode ?: "nodes") }
 
-    OutlinedTextField(
-        value = name, onValueChange = { name = it },
-        label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var contextError by remember { mutableStateOf<String?>(null) }
+
+    ValidatedTextField(
+        value = name, onValueChange = { name = it; nameError = null },
+        label = "Name *", errorMessage = nameError
     )
-    OutlinedTextField(
-        value = context, onValueChange = { context = it },
-        label = { Text("Context") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = context, onValueChange = { context = it; contextError = null },
+        label = "Context *", errorMessage = contextError
     )
-    OutlinedTextField(
+    ValidatedTextField(
         value = kubeconfig, onValueChange = { kubeconfig = it },
-        label = { Text("Kubeconfig path") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+        label = "Kubeconfig path"
     )
-    OutlinedTextField(
+    ValidatedTextField(
         value = mode, onValueChange = { mode = it },
-        label = { Text("Mode (nodes/pods)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+        label = "Mode (nodes/pods)"
     )
     TextButton(
-        onClick = { if (name.isNotBlank()) onSave(K8sBackendConfig(name = name, context = context, kubeconfig = kubeconfig, mode = mode)) },
+        onClick = {
+            var isValid = true
+            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            if (context.isBlank()) { contextError = "Context is required"; isValid = false }
+            if (isValid) {
+                onSave(K8sBackendConfig(name = name, context = context, kubeconfig = kubeconfig, mode = mode))
+            }
+        },
         modifier = Modifier.fillMaxWidth()
     ) { Text("Save") }
 }
@@ -479,20 +491,30 @@ private fun AwsForm(
     var profile by remember { mutableStateOf(initial?.profile ?: "") }
     var region by remember { mutableStateOf(initial?.region ?: "") }
 
-    OutlinedTextField(
-        value = name, onValueChange = { name = it },
-        label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var regionError by remember { mutableStateOf<String?>(null) }
+
+    ValidatedTextField(
+        value = name, onValueChange = { name = it; nameError = null },
+        label = "Name *", errorMessage = nameError
     )
-    OutlinedTextField(
+    ValidatedTextField(
         value = profile, onValueChange = { profile = it },
-        label = { Text("AWS Profile") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+        label = "AWS Profile"
     )
-    OutlinedTextField(
-        value = region, onValueChange = { region = it },
-        label = { Text("Region") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = region, onValueChange = { region = it; regionError = null },
+        label = "Region *", errorMessage = regionError
     )
     TextButton(
-        onClick = { if (name.isNotBlank()) onSave(AwsBackendConfig(name = name, profile = profile, region = region)) },
+        onClick = {
+            var isValid = true
+            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            if (region.isBlank()) { regionError = "Region is required"; isValid = false }
+            if (isValid) {
+                onSave(AwsBackendConfig(name = name, profile = profile, region = region))
+            }
+        },
         modifier = Modifier.fillMaxWidth()
     ) { Text("Save") }
 }
@@ -507,20 +529,30 @@ private fun GcpForm(
     var project by remember { mutableStateOf(initial?.project ?: "") }
     var zone by remember { mutableStateOf(initial?.zone ?: "") }
 
-    OutlinedTextField(
-        value = name, onValueChange = { name = it },
-        label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var projectError by remember { mutableStateOf<String?>(null) }
+
+    ValidatedTextField(
+        value = name, onValueChange = { name = it; nameError = null },
+        label = "Name *", errorMessage = nameError
     )
-    OutlinedTextField(
-        value = project, onValueChange = { project = it },
-        label = { Text("GCP Project") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = project, onValueChange = { project = it; projectError = null },
+        label = "GCP Project *", errorMessage = projectError
     )
-    OutlinedTextField(
+    ValidatedTextField(
         value = zone, onValueChange = { zone = it },
-        label = { Text("Zone") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+        label = "Zone"
     )
     TextButton(
-        onClick = { if (name.isNotBlank()) onSave(GcpBackendConfig(name = name, project = project, zone = zone)) },
+        onClick = {
+            var isValid = true
+            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            if (project.isBlank()) { projectError = "Project is required"; isValid = false }
+            if (isValid) {
+                onSave(GcpBackendConfig(name = name, project = project, zone = zone))
+            }
+        },
         modifier = Modifier.fillMaxWidth()
     ) { Text("Save") }
 }
@@ -536,13 +568,17 @@ private fun ConsulForm(
     var addr by remember { mutableStateOf(initial?.addr ?: "") }
     var token by remember { mutableStateOf(initial?.token ?: "") }
 
-    OutlinedTextField(
-        value = name, onValueChange = { name = it },
-        label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var addrError by remember { mutableStateOf<String?>(null) }
+
+    ValidatedTextField(
+        value = name, onValueChange = { name = it; nameError = null },
+        label = "Name *", errorMessage = nameError
     )
-    OutlinedTextField(
-        value = addr, onValueChange = { addr = it },
-        label = { Text("Address (e.g. 127.0.0.1:8500)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = addr, onValueChange = { addr = it; addrError = null },
+        label = "Address (e.g. 127.0.0.1:8500) *", errorMessage = addrError,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
     )
     SecretKeyPicker(
         label = "Token",
@@ -551,7 +587,20 @@ private fun ConsulForm(
         onValueChange = { token = it }
     )
     TextButton(
-        onClick = { if (name.isNotBlank()) onSave(ConsulBackendConfig(name = name, addr = addr, token = token)) },
+        onClick = {
+            var isValid = true
+            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            if (addr.isBlank()) { 
+                addrError = "Address is required"
+                isValid = false 
+            } else if (!Validators.isValidUrl(addr)) {
+                addrError = "Invalid Address"
+                isValid = false
+            }
+            if (isValid) {
+                onSave(ConsulBackendConfig(name = name, addr = addr, token = token))
+            }
+        },
         modifier = Modifier.fillMaxWidth()
     ) { Text("Save") }
 }
@@ -568,17 +617,22 @@ private fun ProxmoxForm(
     var user by remember { mutableStateOf(initial?.user ?: "") }
     var password by remember { mutableStateOf(initial?.password ?: "") }
 
-    OutlinedTextField(
-        value = name, onValueChange = { name = it },
-        label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var urlError by remember { mutableStateOf<String?>(null) }
+    var userError by remember { mutableStateOf<String?>(null) }
+
+    ValidatedTextField(
+        value = name, onValueChange = { name = it; nameError = null },
+        label = "Name *", errorMessage = nameError
     )
-    OutlinedTextField(
-        value = url, onValueChange = { url = it },
-        label = { Text("URL") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = url, onValueChange = { url = it; urlError = null },
+        label = "URL *", errorMessage = urlError,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
     )
-    OutlinedTextField(
-        value = user, onValueChange = { user = it },
-        label = { Text("User") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = user, onValueChange = { user = it; userError = null },
+        label = "User *", errorMessage = userError
     )
     SecretKeyPicker(
         label = "Password",
@@ -587,7 +641,21 @@ private fun ProxmoxForm(
         onValueChange = { password = it }
     )
     TextButton(
-        onClick = { if (name.isNotBlank()) onSave(ProxmoxBackendConfig(name = name, url = url, user = user, password = password)) },
+        onClick = {
+            var isValid = true
+            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            if (url.isBlank()) {
+                urlError = "URL is required"
+                isValid = false
+            } else if (!Validators.isValidUrl(url)) {
+                urlError = "Invalid URL"
+                isValid = false
+            }
+            if (user.isBlank()) { userError = "User is required"; isValid = false }
+            if (isValid) {
+                onSave(ProxmoxBackendConfig(name = name, url = url, user = user, password = password))
+            }
+        },
         modifier = Modifier.fillMaxWidth()
     ) { Text("Save") }
 }
@@ -604,17 +672,22 @@ private fun TrueNasForm(
     var username by remember { mutableStateOf(initial?.username ?: "") }
     var apiKey by remember { mutableStateOf(initial?.apiKey ?: "") }
 
-    OutlinedTextField(
-        value = name, onValueChange = { name = it },
-        label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var urlError by remember { mutableStateOf<String?>(null) }
+    var usernameError by remember { mutableStateOf<String?>(null) }
+
+    ValidatedTextField(
+        value = name, onValueChange = { name = it; nameError = null },
+        label = "Name *", errorMessage = nameError
     )
-    OutlinedTextField(
-        value = url, onValueChange = { url = it },
-        label = { Text("URL") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = url, onValueChange = { url = it; urlError = null },
+        label = "URL *", errorMessage = urlError,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
     )
-    OutlinedTextField(
-        value = username, onValueChange = { username = it },
-        label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = username, onValueChange = { username = it; usernameError = null },
+        label = "Username *", errorMessage = usernameError
     )
     SecretKeyPicker(
         label = "API Key",
@@ -623,7 +696,21 @@ private fun TrueNasForm(
         onValueChange = { apiKey = it }
     )
     TextButton(
-        onClick = { if (name.isNotBlank()) onSave(TrueNasBackendConfig(name = name, url = url, username = username, apiKey = apiKey)) },
+        onClick = {
+            var isValid = true
+            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            if (url.isBlank()) {
+                urlError = "URL is required"
+                isValid = false
+            } else if (!Validators.isValidUrl(url)) {
+                urlError = "Invalid URL"
+                isValid = false
+            }
+            if (username.isBlank()) { usernameError = "Username is required"; isValid = false }
+            if (isValid) {
+                onSave(TrueNasBackendConfig(name = name, url = url, username = username, apiKey = apiKey))
+            }
+        },
         modifier = Modifier.fillMaxWidth()
     ) { Text("Save") }
 }
@@ -638,20 +725,29 @@ private fun DockerForm(
     var host by remember { mutableStateOf(initial?.host ?: "") }
     var socket by remember { mutableStateOf(initial?.socket ?: "") }
 
-    OutlinedTextField(
-        value = name, onValueChange = { name = it },
-        label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    var nameError by remember { mutableStateOf<String?>(null) }
+
+    ValidatedTextField(
+        value = name, onValueChange = { name = it; nameError = null },
+        label = "Name *", errorMessage = nameError
     )
-    OutlinedTextField(
+    ValidatedTextField(
         value = host, onValueChange = { host = it },
-        label = { Text("Host (tcp://…)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+        label = "Host (tcp://…)",
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
     )
-    OutlinedTextField(
+    ValidatedTextField(
         value = socket, onValueChange = { socket = it },
-        label = { Text("Socket path") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+        label = "Socket path"
     )
     TextButton(
-        onClick = { if (name.isNotBlank()) onSave(DockerBackendConfig(name = name, host = host, socket = socket)) },
+        onClick = {
+            var isValid = true
+            if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            if (isValid) {
+                onSave(DockerBackendConfig(name = name, host = host, socket = socket))
+            }
+        },
         modifier = Modifier.fillMaxWidth()
     ) { Text("Save") }
 }
