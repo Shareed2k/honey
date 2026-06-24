@@ -19,6 +19,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.honey.mobile.data.*
+import com.honey.mobile.ui.components.ValidatedTextField
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -318,33 +319,90 @@ private fun LocalForm(
     onDismiss: () -> Unit
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
-    // hosts as "name:ip" pairs, comma-separated
-    var hostsRaw by remember {
-        mutableStateOf(initial?.hosts?.joinToString(", ") { "${it.name}:${it.primaryIp}" } ?: "")
+    var nameError by remember { mutableStateOf<String?>(null) }
+    
+    // Store hosts dynamically
+    var hosts by remember { 
+        mutableStateOf(
+            if (initial != null && initial.hosts.isNotEmpty()) initial.hosts
+            else listOf(LocalHostConfig("", ""))
+        )
     }
+    // Track errors for hosts
+    var hostErrors by remember { mutableStateOf(List(hosts.size) { Pair<String?, String?>(null, null) }) }
 
-    OutlinedTextField(
-        value = name, onValueChange = { name = it },
-        label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+    ValidatedTextField(
+        value = name, 
+        onValueChange = { name = it; nameError = null },
+        label = "Name *", 
+        errorMessage = nameError
     )
-    OutlinedTextField(
-        value = hostsRaw, onValueChange = { hostsRaw = it },
-        label = { Text("Hosts (name:ip, …)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
-    )
+    
+    Spacer(Modifier.height(8.dp))
+    Text("Hosts", style = MaterialTheme.typography.titleMedium)
+    
+    hosts.forEachIndexed { index, host ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                ValidatedTextField(
+                    value = host.name,
+                    onValueChange = { newVal -> 
+                        val newHosts = hosts.toMutableList().apply { set(index, host.copy(name = newVal)) }
+                        hosts = newHosts
+                        val newErrors = hostErrors.toMutableList().apply { set(index, get(index).copy(first = null)) }
+                        hostErrors = newErrors
+                    },
+                    label = "Host Name *",
+                    errorMessage = hostErrors.getOrNull(index)?.first
+                )
+                ValidatedTextField(
+                    value = host.primaryIp,
+                    onValueChange = { newVal -> 
+                        val newHosts = hosts.toMutableList().apply { set(index, host.copy(primaryIp = newVal)) }
+                        hosts = newHosts
+                        val newErrors = hostErrors.toMutableList().apply { set(index, get(index).copy(second = null)) }
+                        hostErrors = newErrors
+                    },
+                    label = "Primary IP / Target *",
+                    errorMessage = hostErrors.getOrNull(index)?.second
+                )
+            }
+            IconButton(onClick = {
+                hosts = hosts.filterIndexed { i, _ -> i != index }
+                hostErrors = hostErrors.filterIndexed { i, _ -> i != index }
+            }) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete Host")
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+    
+    TextButton(onClick = {
+        hosts = hosts + LocalHostConfig("", "")
+        hostErrors = hostErrors + Pair(null, null)
+    }) { Text("+ Add Host") }
+
+    Spacer(Modifier.height(8.dp))
+
     TextButton(
         onClick = {
-            if (name.isNotBlank()) {
-                val hosts = hostsRaw.split(",")
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .map { pair ->
-                        if (pair.contains(":")) {
-                            val parts = pair.split(":", limit = 2)
-                            LocalHostConfig(name = parts[0].trim(), primaryIp = parts[1].trim())
-                        } else {
-                            LocalHostConfig(name = pair, primaryIp = pair)
-                        }
-                    }
+            var isValid = true
+            
+            if (name.isBlank()) {
+                nameError = "Name is required"
+                isValid = false
+            }
+            
+            val newHostErrors = hosts.map { h ->
+                var hNameErr: String? = null
+                var hIpErr: String? = null
+                if (h.name.isBlank()) { hNameErr = "Host Name is required"; isValid = false }
+                if (h.primaryIp.isBlank()) { hIpErr = "IP/Target is required"; isValid = false }
+                Pair(hNameErr, hIpErr)
+            }
+            hostErrors = newHostErrors
+
+            if (isValid) {
                 onSave(LocalBackendConfig(name = name, hosts = hosts))
             }
         },
