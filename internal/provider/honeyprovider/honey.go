@@ -49,6 +49,8 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 	reqBody := hostapi.SearchHostsInput{
 		Name:      q.NameSubstring,
 		NameRegex: q.NameRegex,
+		Providers: strings.Join(q.Providers, ","),
+		Backends:  strings.Join(q.Backends, ","),
 	}
 
 	b, err := json.Marshal(reqBody)
