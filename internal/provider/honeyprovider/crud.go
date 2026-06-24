@@ -74,6 +74,9 @@ func (c honeyCRUD) Delete(idx int) error {
 		return fmt.Errorf("index out of bounds")
 	}
 	backends := c.cfg.HoneyBackends()
-	c.cfg.SetHoneyBackends(append(backends[:idx], backends[idx+1:]...))
+	newBackends := make([]config.HoneyBackend, 0, len(backends)-1)
+	newBackends = append(newBackends, backends[:idx]...)
+	newBackends = append(newBackends, backends[idx+1:]...)
+	c.cfg.SetHoneyBackends(newBackends)
 	return nil
 }

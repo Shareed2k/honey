@@ -67,7 +67,12 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 		req.Header.Set("Authorization", "Bearer "+h.Token)
 	}
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	var tr *http.Transport
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = t.Clone()
+	} else {
+		tr = &http.Transport{}
+	}
 	if h.Insecure {
 		if tr.TLSClientConfig == nil {
 			tr.TLSClientConfig = &tls.Config{}
@@ -83,7 +88,7 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 

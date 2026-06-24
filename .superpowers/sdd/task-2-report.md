@@ -1,32 +1,41 @@
-## Task 2 Report: Refactor LocalForm for Dynamic Hosts
+## Task 2 Report: Implement honeyprovider in Go
 
 ### What was implemented
-- Refactored `LocalForm` in `android/app/src/main/java/com/honey/mobile/ui/ConfigScreen.kt` to use the `ValidatedTextField` component.
-- Replaced the single string input (comma-separated "name:ip" parsing) for hosts with a dynamic list of `LocalHostConfig` objects.
-- Added UI components for adding and removing hosts from the list dynamically.
-- Implemented state tracking for both `hosts` and their associated validation errors (`hostErrors`).
-- Ensured validation logic requires `name`, `host.name`, and `host.primaryIp` to be non-blank before allowing a save.
+- Created `internal/provider/honeyprovider/honey.go` implementing the `hosts.Backend` interface to query remote honey servers using `SearchHostsInput`-compatible payloads.
+- Created `internal/provider/honeyprovider/factory.go` implementing `searchrun.ProviderFactory` and `searchrun.BackendConfigRegistry` to correctly instantiate the backend from the config file.
+- Created `internal/provider/honeyprovider/crud.go` implementing the interactive config forms using `charm.land/huh/v2` for managing the `HoneyBackend` array.
+- Updated `internal/provider/all/all.go` to add `HoneyBackends()` and `HoneyBackendSlicePtr()` methods and registered `honeyprovider.NewFactory(adapter)` alongside other built-in providers.
+- Created `internal/provider/honeyprovider/honey_test.go` to mock an HTTP server and verify the functionality of `Honey.Search()`.
 
-### What was tested and test results
-- Verified compilation by running `cd android && ./gradlew assembleDebug`.
-- **Result:** `BUILD SUCCESSFUL in 4s` (44 actionable tasks: 8 executed, 36 up-to-date)
+### Tests and Evidence
+- Ran `go test ./internal/provider/honeyprovider/...` (1/1 passing).
+- Fixed a nil pointer issue that caused a failure in `TestProvidersEndpoint` inside `internal/webserver` by properly returning an empty `&Honey{}` struct instead of `nil` in `factory.Default()`.
 
-### Files changed
-- `android/app/src/main/java/com/honey/mobile/ui/ConfigScreen.kt`
+**TDD Evidence**:
+- RED (implicitly caught during integration tests after initial implementation): `panic: runtime error: invalid memory address or nil pointer dereference` when webserver test called `factory.Default().ID()` because my `Default()` returned `nil`.
+- GREEN: Changed `Default()` to return `&Honey{}`. Ran `go test -v ./internal/webserver/...` and all passed. `TestHoneySearch` also passing cleanly:
+  ```
+  === RUN   TestHoneySearch
+  --- PASS: TestHoneySearch (0.00s)
+  PASS
+  ok  	github.com/shareed2k/honey/internal/provider/honeyprovider	0.918s
+  ```
 
-### Self-review findings
-- Checked the use of `ValidatedTextField` to ensure `label`, `value`, `errorMessage`, and `onValueChange` are bound properly.
-- Kept the changes scoped entirely within `LocalForm` except for the newly required import `import com.honey.mobile.ui.components.ValidatedTextField`.
-- Found no stray warnings or unnecessary code. It aligns with the requested specs exactly.
+### Files Changed
+- `A internal/provider/honeyprovider/honey.go`
+- `A internal/provider/honeyprovider/factory.go`
+- `A internal/provider/honeyprovider/crud.go`
+- `A internal/provider/honeyprovider/honey_test.go`
+- `M internal/provider/all/all.go`
 
-### Commits
-- `f00749f feat(android): refactor LocalForm to use dynamic list and validation`
+### Self-Review Findings
+- The `Default` factory function must never return `nil`, which is a common pitfall that I hit and resolved during testing.
+- `revive` lint failed initially due to missing package comment, which was added to `honey.go`.
 
-## Fix Report: Task 2 Review Issues
+### Issues or Concerns
+- No outstanding concerns. The implementation follows the established patterns for other providers.
 
-### What was fixed
-- **Missing IP/Target Validation**: Added check to validate IP or URL using `com.honey.mobile.util.Validators.isValidIp` and `isValidUrl`. Showed error "Invalid IP or Target" when validation fails.
-- **Parallel State Lists & Compose Keys**: Introduced `HostFormState` data class with a stable UUID. Refactored `LocalForm` to use this single state class, replacing the parallel `hosts` and `hostErrors` lists. Wrapped the items in `key(state.id) { ... }` inside the Compose list so it tracks correctly across deletions.
-
-### Build Verification
-- Verified compilation by running `./gradlew assembleDebug` in `android` directory. Build successful.
+### Fixes Applied from Review
+1.  **Important**: Fixed unsafe type assertion for `http.DefaultTransport` in `honey.go` by safely checking the type before cloning, falling back to a new `http.Transport` to avoid panics.
+2.  **Minor**: Limited the error response body reading to 4096 bytes in `honey.go` using `io.LimitReader` to prevent memory exhaustion on large error payloads.
+3.  **Minor**: Updated slice deletion in `crud.go` (`Delete` method) to allocate a new slice instead of modifying the shared backing array, ensuring safe updates.
