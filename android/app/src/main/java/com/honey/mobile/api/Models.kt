@@ -11,7 +11,16 @@ data class Backend(
     val env: String? = null
 )
 
-data class SearchRequest(val query: String)
+data class SearchRequest(
+    val name: String = "",
+    val providers: String = "",
+    val backends: String = ""
+)
+
+data class SearchResponse(
+    val records: List<HostRecord>,
+    val count: Int
+)
 
 data class HostRecord(
     val name: String,
