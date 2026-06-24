@@ -20,6 +20,7 @@ import (
 var (
 	flagCueExecExecute bool
 	flagCueExecProfile bool
+	flagCueExecCheck   bool
 	flagCueExecEnv     []string
 	flagRetryFailed    string
 
@@ -67,6 +68,7 @@ func init() {
 	cueExecCmd.Flags().AddFlagSet(searchCmd.Flags())
 	cueExecCmd.Flags().BoolVar(&flagCueExecExecute, "execute", false, "Run steps over SSH/SFTP (default: dry-run, print resolved plan only)")
 	cueExecCmd.Flags().BoolVar(&flagCueExecProfile, "profile", false, "Print execution profile (CPU, Mem, Network, SSH stats) after run")
+	cueExecCmd.Flags().BoolVar(&flagCueExecCheck, "check", false, "Analyze per-step recipe risk and print the decision without executing")
 	cueExecCmd.Flags().StringArrayVarP(&flagCueExecEnv, "env", "e", nil, "Remote env for command/script (repeat: -e KEY=value); overrides recipe env on duplicate keys")
 	cueExecCmd.Flags().StringVar(&flagRetryFailed, "retry-failed", "", "Re-run only hosts that did not succeed in this recording (basename, e.g. 20260529_….hrec.jsonl)")
 }
@@ -115,6 +117,10 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	cliEnv, err := cuetry.ParseEnvKeyValuePairs(flagCueExecEnv)
 	if err != nil {
 		return err
+	}
+
+	if flagCueExecCheck {
+		return runCueExecCheck(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records)
 	}
 
 	if recipe.Defaults != nil && recipe.Defaults.K8sDebugImage != "" {

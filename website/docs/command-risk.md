@@ -234,12 +234,40 @@ Detected: commands=[kubectl] flags=[] paths=[delete pod x -n prod]
 Policy[prod-1]: deny — high-risk command on prod
 ```
 
+### Checking a whole recipe (`cue-exec --check`)
+
+`honey exec --check` analyzes a single command. To preview the risk of an entire
+[recipe](/cue-recipes) without running it, add `--check` to `cue-exec`:
+
+```bash
+honey cue-exec deploy.cue "prod-*" --check
+```
+
+It analyzes every `command` and `script` step (the same per-step analysis and
+`command_exec` decision the web dry-run produces), prints one block per step,
+executes nothing, and exits non-zero if any step is a built-in critical pattern
+or denied by policy. With `HONEY_POLICY_DIR` set, each step also shows its policy
+verdict.
+
+```text
+$ HONEY_POLICY_DIR=/etc/honey/policies honey cue-exec deploy.cue "prod-1" --check
+Step 0 [command] host=prod-*: systemctl restart app
+  Risk: high
+    - [high] SYSTEMCTL_STOP_SERVICE: service stop/restart/disable
+  Policy: require_approval
+Step 1 [command] host=prod-*: rm -rf /var/cache/app/*
+  Risk: high
+    - [high] RM_RECURSIVE_FORCE: recursive delete
+  Policy: allow
+```
+
 ## Dry-run review
 
 A cue-exec dry-run (`execute: false`) returns a `risk_assessment` array
 alongside the plan — one entry per command/script step with its analysis and
 (when OPA is configured) the policy decision — so a UI can show a review before
-the operator confirms.
+the operator confirms. This is the **web** surface; the CLI prints the same
+per-step preview via [`cue-exec --check`](#checking-a-whole-recipe-cue-exec---check).
 
 ```json
 {
