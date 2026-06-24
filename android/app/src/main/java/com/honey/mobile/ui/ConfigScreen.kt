@@ -593,7 +593,7 @@ private fun ConsulForm(
             if (addr.isBlank()) { 
                 addrError = "Address is required"
                 isValid = false 
-            } else if (!Validators.isValidUrl(addr)) {
+            } else if (!Validators.isValidUrl(addr) && !Validators.isValidIp(addr.substringBefore(":"))) {
                 addrError = "Invalid Address"
                 isValid = false
             }
@@ -744,6 +744,7 @@ private fun DockerForm(
         onClick = {
             var isValid = true
             if (name.isBlank()) { nameError = "Name is required"; isValid = false }
+            // Bypass strict validation for host since docker expects schemes like tcp:// or unix://
             if (isValid) {
                 onSave(DockerBackendConfig(name = name, host = host, socket = socket))
             }
@@ -762,6 +763,7 @@ fun SecretKeyPicker(
     label: String,
     value: String,
     secretKeys: List<String>,
+    errorMessage: String? = null,
     onValueChange: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -777,7 +779,9 @@ fun SecretKeyPicker(
                 onValueChange = { manualValue = it; onValueChange(it) },
                 label = { Text(label) },
                 singleLine = true,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                isError = errorMessage != null,
+                supportingText = errorMessage?.let { { Text(it) } }
             )
             if (secretKeys.isNotEmpty()) {
                 IconButton(onClick = { manualMode = false }) {
@@ -795,7 +799,9 @@ fun SecretKeyPicker(
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                 modifier = Modifier
                     .menuAnchor()
-                    .fillMaxWidth()
+                    .fillMaxWidth(),
+                isError = errorMessage != null,
+                supportingText = errorMessage?.let { { Text(it) } }
             )
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 secretKeys.forEach { key ->

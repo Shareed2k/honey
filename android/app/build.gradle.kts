@@ -45,6 +45,7 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.compose.material.icons)
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.biometric)
     implementation(libs.appcompat)
     implementation(libs.room.runtime)
