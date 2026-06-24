@@ -9,6 +9,25 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+type dummyConfigAdapter struct{}
+
+func (d dummyConfigAdapter) TrueNASBackends() []config.TrueNASBackend {
+	return config.Get().Backends.TrueNAS
+}
+
+func (d dummyConfigAdapter) TrueNASBackendSlicePtr() *[]config.TrueNASBackend {
+	cfg := config.Get()
+	return &cfg.Backends.TrueNAS
+}
+
+func (d dummyConfigAdapter) SetTrueNASBackends(b []config.TrueNASBackend) {
+	config.Get().Backends.TrueNAS = b
+}
+
+func (d dummyConfigAdapter) DockerDiscover() config.DockerDiscover {
+	return config.DockerDiscover{}
+}
+
 func TestShouldUseTrueNASShell(t *testing.T) {
 	t.Parallel()
 	cfg := &config.File{
@@ -19,9 +38,10 @@ func TestShouldUseTrueNASShell(t *testing.T) {
 			},
 		},
 	}
-	reg := searchrun.NewRegistry([]searchrun.ProviderFactory{truenasprovider.NewFactory(nil, nil)})
-	reg.ReconfigureFromConfig(cfg)
-	defer reg.ReconfigureFromConfig(nil)
+	config.Set(cfg)
+	reg := searchrun.NewRegistry([]searchrun.ProviderFactory{truenasprovider.NewFactory(nil, nil, dummyConfigAdapter{})})
+	reg.ReconfigureFromConfig()
+	defer config.Set(&config.File{})
 
 	rec := hosts.Record{
 		Provider: "truenas",

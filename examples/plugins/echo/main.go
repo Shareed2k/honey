@@ -10,9 +10,11 @@ import (
 	"github.com/shareed2k/honey/pkg/pluginpdk"
 )
 
-const apiVersion = "honey.plugins/v1"
-const echoPrefix = "echo:"
-const transformMarker = "// honey-echo-transform\n"
+const (
+	apiVersion      = "honey.plugins/v1"
+	echoPrefix      = "echo:"
+	transformMarker = "// honey-echo-transform\n"
+)
 
 //go:wasmimport extism:host/user host_exec
 func hostExec(inputOffset uint64) uint64
@@ -28,15 +30,15 @@ type cueTransformOutput struct {
 }
 
 type executeStepInput struct {
-	APIVersion string `json:"api_version"`
-	StepIndex  int    `json:"step_index"`
-	Host       []byte `json:"host"`
+	APIVersion string            `json:"api_version"`
+	StepIndex  int               `json:"step_index"`
+	Host       []byte            `json:"host"`
 	Env        map[string]string `json:"env,omitempty"`
-	PluginID   string `json:"plugin_id"`
-	Action     string `json:"action"`
-	Config     []byte `json:"config,omitempty"`
-	Execute    bool   `json:"execute"`
-	SecretsDry bool   `json:"secrets_dry_run"`
+	PluginID   string            `json:"plugin_id"`
+	Action     string            `json:"action"`
+	Config     []byte            `json:"config,omitempty"`
+	Execute    bool              `json:"execute"`
+	SecretsDry bool              `json:"secrets_dry_run"`
 }
 
 type executeStepOutput struct {

@@ -2,14 +2,19 @@
 package webserver
 
 import (
+	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/safepath"
@@ -89,10 +94,7 @@ func setTokenCookie(w http.ResponseWriter, r *http.Request, value string) {
 }
 
 func tokenFromRequest(r *http.Request, token string) bool {
-	got := strings.TrimSpace(r.Header.Get("Authorization"))
-	if strings.HasPrefix(strings.ToLower(got), "bearer ") {
-		got = strings.TrimSpace(got[7:])
-	}
+	got := bearerFromRequest(r)
 	if got == "" {
 		got = strings.TrimSpace(r.Header.Get("X-Honey-Token"))
 	}
@@ -105,4 +107,98 @@ func tokenFromRequest(r *http.Request, token string) bool {
 		}
 	}
 	return got != "" && got == token
+}
+
+// trustedUserHeader carries the caller identity asserted by a trusted reverse
+// proxy (the Grafana X-WEBAUTH-USER pattern). It is honored only for requests
+// originating from a configured trusted-proxy network — never from arbitrary
+// clients, which could otherwise forge any identity.
+const trustedUserHeader = "X-Honey-User"
+
+// contextKey is an unexported type so context values set here cannot collide
+// with keys from other packages.
+type contextKey int
+
+const ctxActorKey contextKey = iota
+
+// userFromRequest resolves the caller identity AFTER authentication passes.
+// Priority: trusted-proxy header > JWT subject claim > "api" (legacy shared
+// token, which carries no identity). The result feeds OPA policy input.
+func userFromRequest(r *http.Request, trustedNets []*net.IPNet, jwtPubKey ed25519.PublicKey) string {
+	if isTrustedProxy(r, trustedNets) {
+		if u := strings.TrimSpace(r.Header.Get(trustedUserHeader)); u != "" {
+			return u
+		}
+	}
+	if bearer := bearerFromRequest(r); bearer != "" {
+		if sub, err := jwtSubject(bearer, jwtPubKey); err == nil && sub != "" {
+			return sub
+		}
+	}
+	return "api"
+}
+
+// isTrustedProxy reports whether the request's immediate peer is within one of
+// the configured trusted-proxy networks. Empty config means no peer is trusted.
+func isTrustedProxy(r *http.Request, nets []*net.IPNet) bool {
+	if len(nets) == 0 {
+		return false
+	}
+	ipStr, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		ipStr = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(ipStr))
+	if ip == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// bearerFromRequest extracts the bearer token from the Authorization header, or
+// "" when absent. Shared by token auth and JWT identity resolution.
+func bearerFromRequest(r *http.Request) string {
+	v := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(v), "bearer ") {
+		return strings.TrimSpace(v[7:])
+	}
+	return ""
+}
+
+// jwtSubject parses and verifies an Ed25519-signed JWT, returning its subject
+// claim. Returns an error when no key is configured, the signature is invalid,
+// or the subject is empty.
+func jwtSubject(tokenStr string, pubKey ed25519.PublicKey) (string, error) {
+	if pubKey == nil {
+		return "", fmt.Errorf("no public key configured")
+	}
+	tok, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{},
+		func(t *jwt.Token) (any, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodEd25519); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			}
+			return pubKey, nil
+		})
+	if err != nil {
+		return "", err
+	}
+	c, ok := tok.Claims.(*jwt.RegisteredClaims)
+	if !ok || c.Subject == "" {
+		return "", fmt.Errorf("missing sub claim")
+	}
+	return c.Subject, nil
+}
+
+// actorFromCtx returns the resolved caller identity stored by authMiddleware,
+// defaulting to "api" when none was set (e.g. auth disabled, or a non-HTTP path).
+func actorFromCtx(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxActorKey).(string); ok && v != "" {
+		return v
+	}
+	return "api"
 }

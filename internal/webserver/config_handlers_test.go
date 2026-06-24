@@ -37,7 +37,7 @@ func TestConfigPutReloadsInMemoryDefaults(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/config", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/yaml")
-	s.withAuth(s.handleConfigPut)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT %d: %s", rec.Code, rec.Body.String())
 	}

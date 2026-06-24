@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 	"go.uber.org/zap"
 )
@@ -38,18 +40,18 @@ type FilesCopyRequest struct {
 
 // FilesAgentTransferRequest is the JSON body for agent-mediated file transfer.
 type FilesAgentTransferRequest struct {
-	SSHUser         string               `json:"ssh_user"`
-	AgentLocalPath  string               `json:"agent_local_path,omitempty"`
-	AgentRemoteDir  string               `json:"agent_remote_dir,omitempty"`
-	SourceRecord    hosts.Record         `json:"source_record"`
-	SourcePath      string               `json:"source_path"`
-	DestRecord      hosts.Record         `json:"dest_record"`
-	DestPath        string               `json:"dest_path"`
-	Cloud           ui.AgentCloudBackend `json:"cloud"`
-	CloudBackendRef *ui.CloudBackendRef  `json:"cloud_backend_ref,omitempty"`
-	Credentials     map[string]string    `json:"credentials"`
-	KeepObject      bool                 `json:"keep_object,omitempty"`
-	MaxRetries      int                  `json:"max_retries,omitempty"`
+	SSHUser         string                   `json:"ssh_user"`
+	AgentLocalPath  string                   `json:"agent_local_path,omitempty"`
+	AgentRemoteDir  string                   `json:"agent_remote_dir,omitempty"`
+	SourceRecord    hosts.Record             `json:"source_record"`
+	SourcePath      string                   `json:"source_path"`
+	DestRecord      hosts.Record             `json:"dest_record"`
+	DestPath        string                   `json:"dest_path"`
+	Cloud           engine.AgentCloudBackend `json:"cloud"`
+	CloudBackendRef *engine.CloudBackendRef  `json:"cloud_backend_ref,omitempty"`
+	Credentials     map[string]string        `json:"credentials"`
+	KeepObject      bool                     `json:"keep_object,omitempty"`
+	MaxRetries      int                      `json:"max_retries,omitempty"`
 }
 
 // FilesLocalListResponse is the JSON body for local list results.
@@ -61,13 +63,13 @@ type FilesLocalListResponse struct {
 
 // FilesRemoteListResponse is the JSON body for remote list results.
 type FilesRemoteListResponse struct {
-	Path    string               `json:"path"`
-	Entries []ui.RemoteFileEntry `json:"entries"`
+	Path    string                   `json:"path"`
+	Entries []engine.RemoteFileEntry `json:"entries"`
 }
 
 // FilesAgentTransferResponse is the JSON body for agent transfer results.
 type FilesAgentTransferResponse struct {
-	Events []ui.AgentTransferEvent `json:"events"`
+	Events []engine.AgentTransferEvent `json:"events"`
 }
 
 // FilesCopyResponse is returned by POST /api/v1/files/copy.
@@ -140,7 +142,7 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := s.sshUser(req.SSHUser)
-	if !hosts.IsConnectableRecord(req.Record) {
+	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
@@ -182,11 +184,11 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := s.sshUser(req.SSHUser)
-	if !hosts.IsConnectableRecord(req.Record) {
+	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
-	localAbs, err := ui.ResolveLocalPathUnderRoot(s.localFilesRoot(), req.LocalPath)
+	localAbs, err := safepath.JoinUnder(s.localFilesRoot(), req.LocalPath)
 	if err != nil {
 		httpError(w, fmt.Errorf("local path: %w", err), http.StatusBadRequest)
 		return
@@ -252,7 +254,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	user := s.sshUser(req.SSHUser)
-	signingHints, err := ui.ResolveAgentTransferSigningHints(s.opts.ConfigPath, req.Cloud, req.CloudBackendRef)
+	signingHints, err := engine.ResolveAgentTransferSigningHints(s.opts.ConfigPath, req.Cloud, req.CloudBackendRef)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -260,8 +262,9 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	if len(req.Credentials) > 0 {
 		zap.L().Warn("ignoring direct credentials in honey-managed credential mode", zap.Int("count", len(req.Credentials)))
 	}
-	transferCfg := ui.LoadTransferConfigFromConfigPath(s.opts.ConfigPath)
-	zap.L().Debug("web agent transfer request received",
+	transferCfg := engine.LoadTransferConfigFromConfigPath(s.opts.ConfigPath)
+	zap.L().Debug(
+		"web agent transfer request received",
 		zap.String("source_name", req.SourceRecord.Name),
 		zap.String("source_provider", req.SourceRecord.Provider),
 		zap.String("destination_name", req.DestRecord.Name),
@@ -278,13 +281,13 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusOK)
 		enc := json.NewEncoder(w)
 		fl, _ := w.(http.Flusher)
-		emit := func(ev ui.AgentTransferEvent) {
+		emit := func(ev engine.AgentTransferEvent) {
 			_ = enc.Encode(ev)
 			if fl != nil {
 				fl.Flush()
 			}
 		}
-		_, err := ui.RunAgentTransferWithFallback(
+		_, err := engine.RunAgentTransferWithFallback(
 			r.Context(),
 			s.fileClientCache,
 			user,
@@ -304,7 +307,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 			emit,
 		)
 		if err != nil {
-			emit(ui.AgentTransferEvent{
+			emit(engine.AgentTransferEvent{
 				Stage:     "fatal_error",
 				Success:   false,
 				Error:     err.Error(),
@@ -322,7 +325,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	}
 
 	transferStart := time.Now()
-	events, err := ui.RunAgentTransferWithFallback(
+	events, err := engine.RunAgentTransferWithFallback(
 		r.Context(),
 		s.fileClientCache,
 		user,
@@ -346,7 +349,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 			s.metrics.ObserveAgentTransfer("error", time.Since(transferStart))
 		}
 		status := http.StatusBadGateway
-		if ui.IsAgentTransferValidationError(err) {
+		if engine.IsAgentTransferValidationError(err) {
 			status = http.StatusBadRequest
 		}
 		httpError(w, fmt.Errorf("agent transfer: %w", err), status)

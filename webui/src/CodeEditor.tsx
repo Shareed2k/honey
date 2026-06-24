@@ -8,7 +8,7 @@ import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 import type { Extension } from '@codemirror/state';
 import { useMemo } from 'react';
-import { lintScript } from './api';
+import { lintScript } from './api/exec';
 
 export type EditorLanguage = 'bash' | 'python' | 'plain' | 'cue';
 
@@ -124,7 +124,6 @@ function cueLinter() {
       
       while ((match = regex.exec(content)) !== null) {
         const fullMatch = match[0];
-        const prefix = match[1] + match[2]; // e.g. command: """
         const scriptContent = match[3];
         
         // We only lint if the script actually has content
@@ -162,7 +161,7 @@ function cueLinter() {
               message: d.message || 'syntax error',
             });
           }
-        } catch (e) {
+        } catch {
           // ignore network errors per block
         }
       }

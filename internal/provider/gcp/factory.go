@@ -11,36 +11,49 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+// ConfigProvider defines the configuration dependency required by this provider.
+type ConfigProvider interface {
+	GCPBackends() []config.GCPBackend
+	GCPBackendSlicePtr() *[]config.GCPBackend
+	SetGCPBackends([]config.GCPBackend)
+	DockerDiscover() config.DockerDiscover
+}
+
 const overrideKey = "gcp"
 
 func gcpOverride(overrides searchrun.ProviderOverrides) (o config.GCPBackend) {
-	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	if len(overrides[overrideKey]) > 0 {
+		_ = json.Unmarshal(overrides[overrideKey], &o) // overrides are optional
+	}
 	return o
 }
 
 // NewFactory returns a new factory for this provider.
-func NewFactory() searchrun.ProviderFactory {
-	return gcpFactory{}
+func NewFactory(cfg ConfigProvider) searchrun.ProviderFactory {
+	searchrun.RegisterCRUD(gcpCRUD{cfg: cfg})
+	return gcpFactory{cfg: cfg}
 }
 
-type gcpFactory struct{}
+type gcpFactory struct {
+	cfg ConfigProvider
+}
 
-func (gcpFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
+func (f gcpFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
 	o := gcpOverride(overrides)
-	out := make([]hosts.Backend, 0, len(cfg.Backends.GCP))
-	for _, e := range cfg.Backends.GCP {
+	out := make([]hosts.Backend, 0, len(f.cfg.GCPBackends()))
+	for _, e := range f.cfg.GCPBackends() {
 		proj := searchrun.FirstNonEmpty(e.Project, o.Project, cliFlags.project)
 		zone := searchrun.FirstNonEmpty(e.Zone, o.Zone, cliFlags.zone)
 		b := searchrun.WithDockerDiscover(
 			&GCP{Name: e.Name, Project: proj, Zone: zone},
-			searchrun.MergeDockerDiscover(cfg.Defaults.DockerDiscover, e.DockerDiscover),
+			searchrun.MergeDockerDiscover(f.cfg.DockerDiscover(), e.DockerDiscover),
 		)
 		out = append(out, b)
 	}
 	return out
 }
 
-func (gcpFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+func (f gcpFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
 	o := gcpOverride(overrides)
 	proj := searchrun.FirstNonEmpty(o.Project, cliFlags.project)
 	zone := searchrun.FirstNonEmpty(o.Zone, cliFlags.zone)
@@ -50,16 +63,18 @@ func (gcpFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
 	)
 }
 
-func (gcpFactory) BackendRows(cfg *config.File) []config.BackendRow {
-	rows := make([]config.BackendRow, 0, len(cfg.Backends.GCP))
-	for _, e := range cfg.Backends.GCP {
+func (f gcpFactory) BackendRows() []config.BackendRow {
+	rows := make([]config.BackendRow, 0, len(f.cfg.GCPBackends()))
+	for _, e := range f.cfg.GCPBackends() {
 		rows = append(rows, config.BackendRow{Kind: "gcp", Name: e.Name, Hint: strings.TrimSpace(e.Project)})
 	}
 	return rows
 }
 
-func (gcpFactory) BackendKind() string { return "gcp" }
+func (f gcpFactory) BackendKind() string { return "gcp" }
 
-func (gcpFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.GCP }
+func (f gcpFactory) BackendSlicePtr() any {
+	return f.cfg.GCPBackendSlicePtr()
+}
 
-func (gcpFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
+func (f gcpFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }

@@ -1,9 +1,9 @@
 package webserver
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,8 +14,8 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -27,7 +27,6 @@ const (
 	maxWebExecArgs      = 64
 	maxWebExecArgLen    = 4 << 10
 	maxRecipeViewBytes  = 512 << 10
-	cueExecChannelCap   = 4096
 	execModeCommand     = "command"
 	execModeScript      = "script"
 	execConnectableHint = "need IP, k8s pod, or docker container"
@@ -71,7 +70,7 @@ type ExecRequest struct {
 
 // ExecResponse is the JSON body for a successful exec run.
 type ExecResponse struct {
-	Results []ui.HostExecResult `json:"results"`
+	Results []engine.HostExecResult `json:"results"`
 }
 
 // CueExecRequest is the JSON body for POST /api/v1/cue-exec.
@@ -80,6 +79,7 @@ type CueExecRequest struct {
 	RecipeContent map[string]interface{} `json:"recipe_content,omitempty"`
 	Execute       bool                   `json:"execute"`
 	SSHUser       string                 `json:"ssh_user"`
+	ApprovalID    string                 `json:"approval_id,omitempty"`
 	Records       []hosts.Record         `json:"records"`
 	Env           []string               `json:"env,omitempty"`
 	RecordSession bool                   `json:"record_session"`
@@ -87,19 +87,33 @@ type CueExecRequest struct {
 
 // CueExecDryRunResponse is the JSON body when cue-exec runs in dry-run mode.
 type CueExecDryRunResponse struct {
-	Plan string `json:"plan"`
+	Plan           string            `json:"plan"`
+	RiskAssessment []engine.StepRisk `json:"risk_assessment,omitempty"`
 }
 
 // CueExecExecuteResponse is the JSON body when cue-exec runs with execute true.
 type CueExecExecuteResponse struct {
-	Results []ui.HostExecResult `json:"results"`
+	Results []engine.HostExecResult `json:"results"`
 }
 
-func allowedRecipePathSet() map[string]struct{} {
+func (s *Server) allowedRecipePathSet() map[string]struct{} {
 	out := make(map[string]struct{})
 	for _, p := range config.ListDefaultRecipes() {
 		if cp, err := filepath.Abs(filepath.Clean(p)); err == nil {
 			out[cp] = struct{}{}
+		}
+	}
+	if s != nil && s.opts.Config != nil {
+		for _, app := range s.opts.Config.Apps {
+			p := strings.TrimSpace(app.TargetRecipe)
+			if p != "" {
+				if !filepath.IsAbs(p) && s.opts.ConfigPath != "" {
+					p = filepath.Join(filepath.Dir(s.opts.ConfigPath), p)
+				}
+				if cp, err := filepath.Abs(filepath.Clean(p)); err == nil {
+					out[cp] = struct{}{}
+				}
+			}
 		}
 	}
 	return out
@@ -120,7 +134,7 @@ func normalizeRecipePath(p string) (string, error) {
 // @Success 200 {object} RecipesListResponse
 // @Router /api/v1/recipes [get]
 // @Security BearerAuth
-func (*Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -156,7 +170,7 @@ func (*Server) handleRecipesList(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/recipes/view [post]
 // @Security BearerAuth
-func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -171,7 +185,7 @@ func (*Server) handleRecipesView(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	allowed := allowedRecipePathSet()
+	allowed := api.allowedRecipePathSet()
 	if _, ok := allowed[cp]; !ok {
 		httpError(w, fmt.Errorf("recipe path not allowed"), http.StatusBadRequest)
 		return
@@ -270,9 +284,9 @@ func (s *Server) validateExecRequest(body ExecRequest) (string, error) {
 	return mode, nil
 }
 
-func (s *Server) handleRecipesSchema(w http.ResponseWriter, _ *http.Request) {
+func (api *RecipesAPI) handleRecipesSchema(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	schema := cuetry.BuildRecipeStepJSONSchema()
+	schema := cuetry.BuildStepJSONSchema()
 	_ = json.NewEncoder(w).Encode(schema)
 }
 
@@ -283,7 +297,7 @@ func (s *Server) handleRecipesSchema(w http.ResponseWriter, _ *http.Request) {
 // @Produce json
 // @Param stream query int false "set to 1 for NDJSON streaming"
 // @Param body body ExecRequest true "remote exec request"
-// @Success 200 {object} ExecResponse "JSON body; NDJSON stream of ui.HostExecResult when stream=1"
+// @Success 200 {object} ExecResponse "JSON body; NDJSON stream of engine.HostExecResult when stream=1"
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/exec [post]
 // @Security BearerAuth
@@ -314,7 +328,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	}
 	user := s.sshUser(body.SSHUser)
 	jobs := filterConnectableRecords(body.Records)
-	var scriptUnconnectable []ui.HostExecResult
+	var scriptUnconnectable []engine.HostExecResult
 	if mode == execModeScript {
 		scriptUnconnectable = buildUnconnectableExecResults(body.Records)
 	} else if len(jobs) == 0 {
@@ -325,7 +339,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	if mode == execModeScript {
 		recordJobCount = len(body.Records)
 	}
-	scriptOpts := ui.ScriptUploadRunOptions{
+	scriptOpts := engine.ScriptUploadRunOptions{
 		ScriptInterpreter:     strings.TrimSpace(body.ScriptInterpreter),
 		InterpreterArgsQuoted: body.InterpreterArgsQuoted,
 		RemoveRemoteFile:      execRemoveTmpFile(body),
@@ -340,20 +354,20 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	s.handleExecSync(w, body, mode, cmd, user, jobs, scriptUnconnectable, recordJobCount, scriptOpts)
 }
 
-func (s *Server) handleExecStream(w http.ResponseWriter, body ExecRequest, mode, cmd, user string, jobs []hosts.Record, scriptUnconnectable []ui.HostExecResult, recordJobCount int, scriptOpts ui.ScriptUploadRunOptions) {
+func (s *Server) handleExecStream(w http.ResponseWriter, body ExecRequest, mode, cmd, user string, jobs []hosts.Record, scriptUnconnectable []engine.HostExecResult, recordJobCount int, scriptOpts engine.ScriptUploadRunOptions) {
 	execStart := time.Now()
-	var rec *ui.SessionRecorder
+	var rec *engine.SessionRecorder
 	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
 	if wantRec {
 		var err error
-		rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-exec", user, recordJobCount)
+		rec, err = engine.NewBatchSessionRecorder(s.opts.RecordDir, "web-exec", user, recordJobCount)
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
 		defer func() { _ = rec.Close() }()
 	}
-	ch := make(chan ui.HostExecResult, len(jobs))
+	ch := make(chan engine.HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
 		if mode == execModeScript {
@@ -363,12 +377,12 @@ func (s *Server) handleExecStream(w http.ResponseWriter, body ExecRequest, mode,
 			if len(jobs) == 0 {
 				return
 			}
-			if err := ui.StreamScriptContentRunParallel(context.Background(), user, jobs, body.Command, body.FileExtension, scriptOpts, ch, ui.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry}); err != nil {
-				ch <- ui.HostExecResult{Name: "web-exec", Provider: "web", Success: false, ErrMsg: err.Error()}
+			if err := engine.StreamScriptContentRunParallel(context.Background(), user, jobs, body.Command, body.FileExtension, scriptOpts, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry}); err != nil {
+				ch <- engine.HostExecResult{Name: "web-exec", Provider: "web", Success: false, ErrMsg: err.Error()}
 			}
 			return
 		}
-		_ = ui.StreamSSHParallel(context.Background(), user, jobs, false, func(_ hosts.Record, _ map[string]string) string { return cmd }, ch, ui.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry})
+		_ = engine.StreamSSHParallel(context.Background(), user, jobs, false, func(_ hosts.Record, _ map[string]string) string { return cmd }, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry})
 	}()
 	streamHostExecNDJSON(w, ch, rec)
 	if s.metrics != nil {
@@ -376,26 +390,26 @@ func (s *Server) handleExecStream(w http.ResponseWriter, body ExecRequest, mode,
 	}
 }
 
-func (s *Server) handleExecSync(w http.ResponseWriter, body ExecRequest, mode, cmd, user string, jobs []hosts.Record, scriptUnconnectable []ui.HostExecResult, recordJobCount int, scriptOpts ui.ScriptUploadRunOptions) {
+func (s *Server) handleExecSync(w http.ResponseWriter, body ExecRequest, mode, cmd, user string, jobs []hosts.Record, scriptUnconnectable []engine.HostExecResult, recordJobCount int, scriptOpts engine.ScriptUploadRunOptions) {
 	execStart := time.Now()
-	var rec *ui.SessionRecorder
+	var rec *engine.SessionRecorder
 	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
 	if wantRec {
 		var err error
-		rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-exec", user, recordJobCount)
+		rec, err = engine.NewBatchSessionRecorder(s.opts.RecordDir, "web-exec", user, recordJobCount)
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
 		defer func() { _ = rec.Close() }()
 	}
-	var results []ui.HostExecResult
+	var results []engine.HostExecResult
 	var err error
 	if mode == execModeScript {
 		results = append(results, scriptUnconnectable...)
 		if len(jobs) > 0 {
-			var scriptResults []ui.HostExecResult
-			scriptResults, err = ui.ExecuteScriptContentRunParallel(user, jobs, body.Command, body.FileExtension, scriptOpts, 0, s.opts.ExecRegistry)
+			var scriptResults []engine.HostExecResult
+			scriptResults, err = engine.ExecuteScriptContentRunParallel(user, jobs, body.Command, body.FileExtension, scriptOpts, 0, s.opts.ExecRegistry)
 			if err != nil {
 				if rec != nil {
 					rec.RecordError(err)
@@ -409,7 +423,7 @@ func (s *Server) handleExecSync(w http.ResponseWriter, body ExecRequest, mode, c
 			results = append(results, scriptResults...)
 		}
 	} else {
-		results, err = ui.ExecuteSSHParallel(user, jobs, func(_ hosts.Record) string { return cmd }, 0, s.opts.ExecRegistry)
+		results, err = engine.ExecuteSSHParallel(user, jobs, func(_ hosts.Record) string { return cmd }, 0, s.opts.ExecRegistry)
 		if err != nil {
 			if rec != nil {
 				rec.RecordError(err)
@@ -440,14 +454,14 @@ func (s *Server) handleExecSync(w http.ResponseWriter, body ExecRequest, mode, c
 	_ = json.NewEncoder(w).Encode(ExecResponse{Results: results})
 }
 
-func buildUnconnectableExecResults(recs []hosts.Record) []ui.HostExecResult {
-	var out []ui.HostExecResult
+func buildUnconnectableExecResults(recs []hosts.Record) []engine.HostExecResult {
+	var out []engine.HostExecResult
 	for i := range recs {
 		r := recs[i]
-		if hosts.IsConnectableRecord(r) {
+		if r.IsConnectable() {
 			continue
 		}
-		out = append(out, ui.HostExecResult{
+		out = append(out, engine.HostExecResult{
 			Name:     r.Name,
 			IP:       r.PrimaryIP,
 			Provider: r.Provider,
@@ -461,14 +475,14 @@ func buildUnconnectableExecResults(recs []hosts.Record) []ui.HostExecResult {
 func filterConnectableRecords(recs []hosts.Record) []hosts.Record {
 	var out []hosts.Record
 	for _, r := range recs {
-		if hosts.IsConnectableRecord(r) {
+		if r.IsConnectable() {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-func streamHostExecNDJSON(w http.ResponseWriter, ch <-chan ui.HostExecResult, rec *ui.SessionRecorder) {
+func streamHostExecNDJSON(w http.ResponseWriter, ch <-chan engine.HostExecResult, rec *engine.SessionRecorder) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	if rec != nil {
 		if id := rec.RecordingID(); id != "" {
@@ -510,7 +524,7 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 // the parsed/validated recipe, its on-disk source path (empty for inline),
 // and the recipe's directory (empty for inline). All errors are caller-fixable
 // (HTTP 400 from the handler).
-func resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
+func (api *RecipesAPI) resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts cuetry.ParseOptions) (cuetry.Recipe, string, string, error) {
 	switch {
 	case body.RecipeContent != nil:
 		if strings.TrimSpace(body.RecipePath) != "" {
@@ -533,7 +547,7 @@ func resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts
 		if err != nil {
 			return cuetry.Recipe{}, "", "", err
 		}
-		allowedPaths := allowedRecipePathSet()
+		allowedPaths := api.allowedRecipePathSet()
 		if _, ok := allowedPaths[cp]; !ok {
 			return cuetry.Recipe{}, "", "", fmt.Errorf("recipe_path not allowed")
 		}
@@ -563,9 +577,23 @@ func resolveCueExecRecipe(body CueExecRequest, records []hosts.Record, parseOpts
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/cue-exec [post]
 // @Security BearerAuth
-//
-//nolint:gocyclo
-func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
+// writeExecError maps a run error to an HTTP response: a pending-approval error
+// becomes 202 with the approval id; anything else is a 400.
+func writeExecError(w http.ResponseWriter, err error) {
+	if pending, ok := errors.AsType[*engine.ErrPendingApproval](err); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "pending_approval",
+			"id":     pending.ID,
+			"reason": pending.Reason,
+		})
+		return
+	}
+	httpError(w, err, http.StatusBadRequest)
+}
+
+func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -576,14 +604,10 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pluginMgr, err := plugins.Open(r.Context(), s.opts.Config)
-	if err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
-	}
-	defer func() { _ = pluginMgr.Close() }()
+	pluginMgr, releasePlugins := api.plugins.Borrow()
+	defer releasePlugins()
 
-	recipe, recipeSourcePath, recipeDir, err := resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
+	recipe, recipeSourcePath, recipeDir, err := api.resolveCueExecRecipe(body, body.Records, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -608,176 +632,107 @@ func (s *Server) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
+	cliEnv, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), cliEnv)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
 	mergeK8sDebugImageFromRecipe(recipe, jobs)
 
-	user := s.sshUser(body.SSHUser)
-	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
+	user := api.sshUser(body.SSHUser)
+	wantRec := strings.TrimSpace(api.opts.RecordDir) != "" && body.RecordSession
+	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 
-	recordRecipeMeta := func(rec *ui.SessionRecorder) {
+	recordRecipeMeta := func(rec *engine.SessionRecorder) {
 		if rec == nil {
 			return
 		}
-		hash, _ := cuetry.HashRecipeJSON(recipe)
-
+		hash, _ := recipe.HashJSON()
 		planText, _, _ := cuetry.RenderDryRunPlan(recipe)
 		var graph *cuetry.RecipeGraphPlan
 		if mode, err := cuetry.RecipeExecutionMode(recipe); err == nil && mode == cuetry.ExecutionModeGraph {
 			graph, _ = cuetry.BuildRecipeGraphPlan(recipe)
 		}
-
-		rec.RecordRecipeMeta(ui.RecipeMeta{
+		rec.RecordRecipeMeta(engine.RecipeMeta{
 			RecipePath:        recipeSourcePath,
 			HostCount:         len(jobs),
 			RecipeContentHash: hash,
 			StartedAt:         time.Now().UTC(),
-			Hosts:             ui.HostsForRecipeMeta(jobs, maxWebExecRecords),
+			Hosts:             engine.HostsForRecipeMeta(jobs, maxWebExecRecords),
 			Plan:              planText,
 			Graph:             graph,
 		})
 	}
 
-	secRes, secErr := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(s.opts.Config), pluginMgr)
-	if secErr != nil {
-		httpError(w, secErr, http.StatusInternalServerError)
-		return
+	req := engine.RunRequest{
+		Recipe:           recipe,
+		RecipeSourcePath: recipeSourcePath,
+		RecipeDir:        recipeDir,
+		Records:          jobs,
+		SSHUser:          user,
+		ActorID:          actorFromCtx(r.Context()),
+		ApprovalID:       body.ApprovalID,
+		BiometricToken:   strings.TrimSpace(r.Header.Get("X-Honey-Biometric")),
+		Env:              cliEnv,
+		AISystemPrompt:   aiPrompt,
+		RecordSession:    wantRec,
 	}
 
 	if !body.Execute {
-		var buf bytes.Buffer
-		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		runErr := ui.RunCueRecipeSteps(r.Context(), &buf, ui.CueRecipeRunParams{
-			Recipe:         recipe,
-			RecipeDir:      recipeDir,
-			Records:        jobs,
-			SSHUser:        user,
-			CLIEnv:         cliEnv,
-			ConfigPath:     s.opts.ConfigPath,
-			AISystemPrompt: aiPrompt,
-			SecretResolver: secRes,
-			PluginMgr:      pluginMgr,
-			Execute:        false,
-			Obs:            s.metrics,
-			Reg:            s.opts.ExecRegistry,
-			Pools:          s.pgPools,
-		}, nil)
-		var rec *ui.SessionRecorder
-		if wantRec {
-			var err error
-			rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec-dry", user, len(jobs))
-			if err != nil {
-				httpError(w, err, http.StatusInternalServerError)
-				return
-			}
-			defer func() { _ = rec.Close() }()
-			recordRecipeMeta(rec)
-		}
-		if runErr != nil {
-			if rec != nil {
-				rec.RecordError(runErr)
-			}
-			httpError(w, runErr, http.StatusBadRequest)
+		req.RecordLabel = "web-cue-exec-dry"
+		plan, err := api.runner.DryRun(r.Context(), req)
+		if err != nil {
+			httpError(w, err, http.StatusBadRequest)
 			return
 		}
-		if rec != nil {
-			plan := buf.String()
-			if strings.TrimSpace(plan) == "" {
-				rec.RecordData("plan", []byte("(empty plan)"))
-			} else {
-				rec.RecordData("plan", []byte(plan))
-			}
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(CueExecDryRunResponse{Plan: buf.String()})
-		return
-	}
-	if r.URL.Query().Get("stream") == "1" {
-		var rec *ui.SessionRecorder
-		if wantRec {
-			var err error
-			rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec", user, len(jobs))
-			if err != nil {
-				httpError(w, err, http.StatusInternalServerError)
-				return
-			}
-			defer func() { _ = rec.Close() }()
-			recordRecipeMeta(rec)
-		}
-		ch := make(chan ui.HostExecResult, cueExecChannelCap)
-		go func() {
-			defer close(ch)
-			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-			if err := ui.StreamCueRecipeSteps(r.Context(), ui.CueRecipeRunParams{
-				Recipe:         recipe,
-				RecipeDir:      recipeDir,
-				Records:        jobs,
-				SSHUser:        user,
-				CLIEnv:         cliEnv,
-				ConfigPath:     s.opts.ConfigPath,
-				AISystemPrompt: aiPrompt,
-				SecretResolver: secRes,
-				PluginMgr:      pluginMgr,
-				Execute:        true,
-				Obs:            s.metrics,
-				Reg:            s.opts.ExecRegistry,
-				Pools:          s.pgPools,
-			}, ch); err != nil {
-				ch <- ui.HostExecResult{
-					Name:     "cue-exec",
-					Provider: "web",
-					Success:  false,
-					ErrMsg:   err.Error(),
-				}
-			}
-		}()
-		streamHostExecNDJSON(w, ch, rec)
+		_ = json.NewEncoder(w).Encode(CueExecDryRunResponse{
+			Plan:           plan,
+			RiskAssessment: api.runner.AssessCommandRisk(r.Context(), req),
+		})
 		return
 	}
 
-	var rec *ui.SessionRecorder
-	if wantRec {
-		var err error
-		rec, err = ui.NewBatchSessionRecorder(s.opts.RecordDir, "web-cue-exec", user, len(jobs))
+	// Streaming needs the recording ID synchronously for the X-Honey-Recording-Id
+	// response header, so the recorder is created here and injected. The runner
+	// records results into it; this handler records the recipe meta and closes it.
+	if r.URL.Query().Get("stream") == "1" {
+		var rec *engine.SessionRecorder
+		if wantRec {
+			var rerr error
+			rec, rerr = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-cue-exec", user, len(jobs))
+			if rerr != nil {
+				httpError(w, rerr, http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = rec.Close() }()
+			recordRecipeMeta(rec)
+		}
+		req.Recorder = rec
+		ch, err := api.runner.Execute(r.Context(), req)
 		if err != nil {
-			httpError(w, err, http.StatusInternalServerError)
+			writeExecError(w, err)
 			return
 		}
-		defer func() { _ = rec.Close() }()
-		recordRecipeMeta(rec)
-	}
-	ch := make(chan ui.HostExecResult, cueExecChannelCap)
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(ch)
-		aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-		errCh <- ui.StreamCueRecipeSteps(r.Context(), ui.CueRecipeRunParams{
-			Recipe:         recipe,
-			RecipeDir:      recipeDir,
-			Records:        jobs,
-			SSHUser:        user,
-			CLIEnv:         cliEnv,
-			ConfigPath:     s.opts.ConfigPath,
-			AISystemPrompt: aiPrompt,
-			SecretResolver: secRes,
-			PluginMgr:      pluginMgr,
-			Execute:        true,
-			Obs:            s.metrics,
-			Reg:            s.opts.ExecRegistry,
-			Pools:          s.pgPools,
-		}, ch)
-	}()
-	var results []ui.HostExecResult
-	for res := range ch {
 		if rec != nil {
-			rec.RecordHostExecResult(res)
+			if id := rec.RecordingID(); id != "" {
+				w.Header().Set("X-Honey-Recording-Id", id)
+			}
 		}
-		results = append(results, res)
-	}
-	if err := <-errCh; err != nil {
-		if rec != nil {
-			rec.RecordError(err)
-		}
-		httpError(w, err, http.StatusBadGateway)
+		streamHostExecNDJSON(w, ch, nil) // runner records into the injected recorder
 		return
+	}
+
+	// Non-stream execute: the runner owns the recorder lifecycle entirely.
+	req.RecordLabel = "web-cue-exec"
+	ch, err := api.runner.Execute(r.Context(), req)
+	if err != nil {
+		writeExecError(w, err)
+		return
+	}
+	results := make([]engine.HostExecResult, 0, len(jobs))
+	for res := range ch {
+		results = append(results, res)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(CueExecExecuteResponse{Results: results})

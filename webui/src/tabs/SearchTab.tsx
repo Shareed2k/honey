@@ -3,21 +3,11 @@ import {
   Alert, Button, Card, Checkbox, Input, Modal, Progress, Segmented, Select, Space, Table, Tag, Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import {
-  apiPost,
-  deleteSnippet,
-  execOnHostsStream,
-  listSnippets,
-  saveSnippet,
-  uploadFormDataWithSFTPStream,
-} from '../api';
-import type {
-  ExecOnHostsBody,
-  ExecSnippet,
-  FormDataUploadProgressEvent,
-  HostExecResultRow,
-  UploadStreamServerEvent,
-} from '../api';
+import { apiPost } from '../api/core';
+import { deleteSnippet, execOnHostsStream, listSnippets, saveSnippet } from '../api/exec';
+import { uploadFormDataWithSFTPStream } from '../api/files';
+import type { ExecOnHostsBody, ExecSnippet, HostExecResultRow } from '../api/types/exec';
+import type { FormDataUploadProgressEvent, UploadStreamServerEvent } from '../api/types/files';
 import type { EditorLanguage } from '../CodeEditor';
 import { HostPicker, recordKey } from '../HostPicker';
 
@@ -663,7 +653,7 @@ export function SearchTab({
       title: 'Output / error',
       key: 'output',
       render: (_: unknown, row: HostExecResultRow) => (
-        <pre style={{ margin: 0, fontSize: '0.78rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxWidth: 420 }}>
+        <pre style={{ margin: 0, fontSize: '0.78rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxWidth: '100%' }}>
           {row.ErrMsg ? <Typography.Text type="danger">{row.ErrMsg}</Typography.Text> : null}
           {row.ErrMsg && row.Output ? '\n' : null}
           {row.Output}
@@ -864,8 +854,7 @@ export function SearchTab({
           </Button>
           <Button onClick={clearExecOutput}>Clear results</Button>
         </Space>
-        <Modal
-          title="Save snippet"
+        <Modal maskClosable={false}           title="Save snippet"
           open={saveSnippetOpen}
           onOk={() => void doSaveSnippet()}
           onCancel={() => setSaveSnippetOpen(false)}
@@ -1061,8 +1050,7 @@ export function SearchTab({
       </Typography.Text>
 
       {/* Upload modal */}
-      <Modal
-        open={uploadModalOpen}
+      <Modal maskClosable={false}         open={uploadModalOpen}
         title="SFTP upload"
         onCancel={closeUploadModal}
         footer={<Button onClick={closeUploadModal}>Close</Button>}

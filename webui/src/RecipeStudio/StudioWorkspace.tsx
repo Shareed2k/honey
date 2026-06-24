@@ -3,12 +3,7 @@ import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { 
   ReactFlow, 
   Controls, 
-  Background, 
-  useNodesState, 
-  useEdgesState, 
-  addEdge,
-  Connection,
-  Edge
+  Background
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './studio.css';
@@ -23,22 +18,24 @@ import { LibraryModal } from './LibraryModal';
 import { ParameterPromptModal } from './ParameterPromptModal';
 import { StepRun } from '../RecipesTab/StepRun';
 import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
-import { apiGet, apiPost, fixRecipeErrors, generateRecipe, syncRecipeAST } from '../api';
+import { apiGet, apiPost } from '../api/core';
+import { fixRecipeErrors, generateRecipe, syncRecipeAST } from '../api/recipes';
+import { listStepKinds, stepSchemaForKind } from '../api/recipes';
 import {
+  useRecipeGraph,
   applyWaveLayout,
   buildFlowFromRecipe,
   buildRecipeFromFlow,
   collectAncestorNodeIDs,
   computeWavesFromEdges,
   createStepDraft,
-  listStepKinds,
   recipeNameFromFilename,
   recipeStudioSnippets,
-  stepSchemaForKind,
   uniqueStepID,
   type StepDraft,
-} from './recipeStudioUtils';
-import type { HostExecResultRow, RiskReport } from '../api';
+} from './useRecipeGraph';
+import type { HostExecResultRow } from '../api/types/exec';
+import type { RiskReport } from '../api/types/core';
 
 const CodeEditor = lazy(() => import('../CodeEditor'));
 
@@ -65,11 +62,9 @@ type Props = {
 };
 
 export default function StudioWorkspace({ records = [], selectedRecords = [], sshUser = 'root' }: Props) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
+  const { nodes, setNodes, onNodesChange, edges, setEdges, onEdgesChange, onConnect, stepData, setStepData } = useRecipeGraph();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [schema, setSchema] = useState<any>(null);
-  const [stepData, setStepData] = useState<Record<string, StepDraft>>({});
   const [validating, setValidating] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);
   const [gitLoadModalVisible, setGitLoadModalVisible] = useState(false);
@@ -81,7 +76,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
   const [originalCue, setOriginalCue] = useState<string>('');
-  const [syncingAST, setSyncingAST] = useState(false);
+  // const [syncingAST, setSyncingAST] = useState(false);
   const [runHosts, setRunHosts] = useState<HostRecord[]>([]);
   const [hostPickerOpen, setHostPickerOpen] = useState(false);
   const [pendingRunStepId, setPendingRunStepId] = useState<string | null>(null);
@@ -196,12 +191,6 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
     setSelectedNodeId(node.id);
   };
 
-  // 4. Connect Edges (Dependency mapping)
-  const onConnect = useCallback(
-    (params: Connection | Edge) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
-  );
-
   // 5. Update Node Parameters
   const handleStepDataChange = (nextData: any) => {
     if (!selectedNodeId) return;
@@ -262,7 +251,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       setRunPanelOpen(false);
       setSelectedNodeId(null);
     } finally {
-      setSyncingAST(false);
+      // setSyncingAST(false);
     }
   };
 
@@ -488,7 +477,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
     } finally {
       setValidating(false);
     }
-  }, [applyValidationResultToNodes, buildRecipeJSON, nodes.length, rawMode]);
+  }, [applyValidationResultToNodes, buildRecipeJSON, nodes.length, rawMode, rawContent]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -983,7 +972,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
                  setStepData(newStepData);
                  
                  message.success(`Loaded ${libRecipe.name} from Library`);
-               } catch (e) {
+               } catch {
                  message.success(`Loaded ${libRecipe.name} (Switch to visual manually after fixing validation if needed)`);
                }
             }, 50);
@@ -993,8 +982,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
         }}
       />
 
-      <Modal
-        title="Select hosts to run on"
+      <Modal maskClosable={false}         title="Select hosts to run on"
         open={hostPickerOpen}
         onCancel={() => setHostPickerOpen(false)}
         onOk={handleModalRun}
@@ -1015,6 +1003,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
       <ParameterPromptModal
         open={promptsOpen}
         prompts={recipeDefaults?.prompts || {}}
+        recipeName={recipeNameFromFilename(selectedRecipe)}
         onCancel={() => setPromptsOpen(false)}
         onSubmit={(vals) => {
           setPromptsOpen(false);
@@ -1026,8 +1015,7 @@ export default function StudioWorkspace({ records = [], selectedRecords = [], ss
         }}
       />
 
-      <Modal
-        title="Generate Recipe with AI"
+      <Modal maskClosable={false}         title="Generate Recipe with AI"
         open={generateModalOpen}
         onCancel={() => setGenerateModalOpen(false)}
         okText="Generate"

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/cuetry"
 )
 
 func TestValidateContent_happy(t *testing.T) {
@@ -24,7 +23,7 @@ func TestValidateContent_happy(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesValidateContent)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}
@@ -47,7 +46,7 @@ func TestValidateContent_invalidHost(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesValidateContent)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}
@@ -67,7 +66,7 @@ func TestValidateContent_empty(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesValidateContent)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Fatalf("status=%d", w.Code)
 	}
@@ -84,7 +83,7 @@ func TestRecipesParse_diskRecipe(t *testing.T) {
 	// "not allowed" error — that's fine, swap to whatever path is available.
 	// You may need to pre-configure Options to point at a fixture dir; see how
 	// other tests in this file do it.
-	allowed := allowedRecipePathSet()
+	allowed := s.allowedRecipePathSet()
 	var pickedPath string
 	for p := range allowed {
 		pickedPath = p
@@ -98,7 +97,7 @@ func TestRecipesParse_diskRecipe(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer tok")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesParse)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		// Just a fallback check, recipes parsing in test environment can be tricky
 		t.Logf("status=%d body=%s", w.Code, w.Body.String())
@@ -114,7 +113,7 @@ func TestRecipesParse_disallowedPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/parse", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesParse)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Fatalf("expected 400, got %d (%s)", w.Code, w.Body)
 	}
@@ -131,7 +130,7 @@ func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
 	// We need to know the hash to inject it into the cache. We'll use a mocked hash logic or
 	// just parse it manually to get the hash.
 	recipe, _ := recipeFromContentMap(content)
-	hash, _ := cuetry.HashRecipeJSON(*recipe)
+	hash, _ := recipe.HashJSON()
 
 	cachedResp := &ValidateContentResponse{Plan: "CACHED_PLAN"}
 	srv.recipeValidationCache.Add(hash, cachedResp)
@@ -139,9 +138,10 @@ func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
 	body, _ := json.Marshal(ValidateContentRequest{RecipeContent: content})
 	req := httptest.NewRequest("POST", "/api/v1/recipes/validate-content", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test")
 	w := httptest.NewRecorder()
 
-	srv.handleRecipesValidateContent(w, req)
+	srv.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", w.Code)
@@ -155,10 +155,11 @@ func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
 }
 
 func TestHandleRecipesSyncAST(t *testing.T) {
-	srv := &Server{}
+	srv, _ := NewServer(Options{Token: "dummy", ListenAddr: "127.0.0.1:0"})
 	req := httptest.NewRequest("POST", "/api/v1/recipes/sync-ast", bytes.NewBufferString(`{}`))
+	req.Header.Set("Authorization", "Bearer dummy")
 	w := httptest.NewRecorder()
-	srv.handleRecipesSyncAST(w, req)
+	srv.router.ServeHTTP(w, req)
 
 	if w.Code == http.StatusNotFound {
 		t.Fatalf("handleRecipesSyncAST not implemented")

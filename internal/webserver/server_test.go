@@ -19,7 +19,7 @@ func TestAuthMiddlewareRejectsMissingToken(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/meta", nil)
-	s.withAuth(s.handleMeta)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
 	}
@@ -39,7 +39,7 @@ func TestAuthMiddlewareAcceptsBearer(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/meta", nil)
 	req.Header.Set("Authorization", "Bearer secret")
-	s.withAuth(s.handleMeta)(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}

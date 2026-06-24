@@ -14,8 +14,8 @@ import {
 } from 'antd';
 import { BulbOutlined, DeleteOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { fetchFeedbackRecords, saveFeedbackRecords, suggestFeedbackAnomaly } from '../api';
-import type { FeedbackRecord } from '../api';
+import { fetchFeedbackRecords, saveFeedbackRecords, suggestFeedbackAnomaly } from '../api/logs';
+import type { FeedbackRecord } from '../api/types/logs';
 
 export function FeedbackTab() {
   const [records, setRecords] = useState<FeedbackRecord[]>([]);

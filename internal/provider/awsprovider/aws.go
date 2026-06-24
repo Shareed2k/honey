@@ -91,7 +91,7 @@ func instanceToRecord(inst types.Instance, q hosts.Query) (hosts.Record, bool, e
 	if name == "" && inst.InstanceId != nil {
 		name = aws.ToString(inst.InstanceId)
 	}
-	ok, err := hosts.NameMatches(name, q)
+	ok, err := q.MatchesName(name)
 	if err != nil {
 		return hosts.Record{}, false, err
 	}

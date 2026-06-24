@@ -14,7 +14,8 @@ func assistCreateChatCompletion(ctx context.Context, chatModel, systemPrompt, us
 	ctx2, cancel := context.WithTimeout(ctx, assistUpstreamTimeout())
 	defer cancel()
 
-	zap.L().Debug("assist CreateChatCompletion",
+	zap.L().Debug(
+		"assist CreateChatCompletion",
 		zap.String("model", chatModel),
 		zap.Int("max_tokens", assistMaxTokens()),
 		zap.Duration("timeout", assistUpstreamTimeout()),

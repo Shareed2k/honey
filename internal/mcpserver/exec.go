@@ -7,9 +7,8 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/ui"
 )
 
 type execOnHostInput struct {
@@ -54,7 +53,7 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 		recordDir = serverCfg.Defaults.RecordDir
 	}
 
-	rawResults, err := ui.ExecuteSSHParallel("", []hosts.Record{record}, func(_ hosts.Record) string { return cmd }, 8, nil)
+	rawResults, err := engine.ExecuteSSHParallel("", []hosts.Record{record}, func(_ hosts.Record) string { return cmd }, 8, nil)
 	if err != nil {
 		return nil, execOnHostOutput{}, fmt.Errorf("ssh exec: %w", err)
 	}
@@ -102,8 +101,8 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-func recordExecResult(recordDir string, r ui.HostExecResult) {
-	rec, err := ui.NewSessionRecorder(ui.SessionRecorderOptions{
+func recordExecResult(recordDir string, r engine.HostExecResult) {
+	rec, err := engine.NewSessionRecorder(engine.SessionRecorderOptions{
 		Dir:      recordDir,
 		Trigger:  "mcp",
 		Mode:     "exec",

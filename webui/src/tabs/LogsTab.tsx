@@ -4,8 +4,9 @@ import {
 } from 'antd';
 import { PlayCircleOutlined, StopOutlined, ClearOutlined, BulbOutlined } from '@ant-design/icons';
 import type { HostRecord } from '../HostPicker';
-import { apiPost, fetchLogsDefaults, streamLogs, fetchRcaDiagnosis, fetchLogSummary } from '../api';
-import type { LogsStreamRequest, LogTemplateStat } from '../api';
+import { apiPost } from '../api/core';
+import { fetchLogsDefaults, streamLogs, fetchRcaDiagnosis, fetchLogSummary } from '../api/logs';
+import type { LogsStreamRequest, LogTemplateStat } from '../api/types/logs';
 
 const AiMarkdown = lazy(async () => import('../AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
@@ -555,8 +556,7 @@ export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = fal
       </div>
 
       <Suspense fallback={<Spin size="large" style={{ display: 'block', margin: '40px auto' }} />}>
-        <Modal
-          title="Root Cause Analysis Diagnosis"
+        <Modal maskClosable={false}           title="Root Cause Analysis Diagnosis"
           open={rcaOpen}
           onCancel={() => setRcaOpen(false)}
           footer={null}

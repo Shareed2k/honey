@@ -36,7 +36,8 @@ var (
 	proxmoxBack []ProxmoxBackendRuntime
 )
 
-func reconfigureProxmox(cfg *config.File) {
+func reconfigureProxmox() {
+	cfg := config.Get()
 	rtMu.Lock()
 	defer rtMu.Unlock()
 	proxmoxBack = proxmoxBack[:0]

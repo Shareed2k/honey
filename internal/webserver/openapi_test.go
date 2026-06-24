@@ -18,7 +18,7 @@ func TestOpenAPIJSONRequiresAuth(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil)
-	s.mux.ServeHTTP(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("want 401 without token, got %d", rec.Code)
 	}
@@ -36,7 +36,7 @@ func TestOpenAPIJSONReturnsSpec(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil)
 	req.Header.Set("Authorization", "Bearer tok")
-	s.mux.ServeHTTP(rec, req)
+	s.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d body=%s", rec.Code, rec.Body.String())
 	}

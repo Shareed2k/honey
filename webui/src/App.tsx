@@ -6,21 +6,15 @@ import type { MenuProps } from 'antd';
 import {
   SearchOutlined, FileOutlined, CloudOutlined, SettingOutlined,
   PlayCircleOutlined, ApiOutlined, AppstoreOutlined, DatabaseOutlined, UnorderedListOutlined,
-  CommentOutlined,
+  CommentOutlined, RobotOutlined,
 } from '@ant-design/icons';
-import {
-  apiGet,
-  fetchRecordingsForHost,
-  fetchRecordingsList,
-  fetchRecipeContent,
-  getToken,
-  recipeAssist,
-  startTunnel,
-  fetchHostPorts,
-  fetchRecordingsFailedHosts,
-  fetchRecordingEvents,
-} from './api';
-import type { RecordingListEntry, RecordingsListResponse } from './api';
+import { apiGet, getToken } from './api/core';
+import { fetchRecordingsForHost, fetchRecordingsList, fetchRecordingsFailedHosts, fetchRecordingEvents } from './api/recordings';
+import { fetchRecipeContent } from './api/recipes';
+import { recipeAssist } from './api/assist';
+import { startTunnel } from './api/tunnels';
+import { fetchHostPorts } from './api/exec';
+import type { RecordingListEntry, RecordingsListResponse } from './api/types/recordings';
 import { recordKey } from './HostPicker';
 import type { HostRecord } from './HostPicker';
 import { RecipesTab } from './RecipesTab';
@@ -34,6 +28,7 @@ import { ConfigTab } from './tabs/ConfigTab';
 import { ApiDocsTab } from './tabs/ApiDocsTab';
 import { SearchTab } from './tabs/SearchTab';
 import { FeedbackTab } from './tabs/FeedbackTab';
+import { AgentTab } from './tabs/AgentTab';
 import { SessionReplayModal } from './SessionReplayModal';
 import {
   TerminalTabsModal,
@@ -45,7 +40,7 @@ import {
 type BackendRow = { kind: string; name: string; hint: string };
 
 
-type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback';
+type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback' | 'agent';
 const HighlightedCode = lazy(async () => import('./HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
@@ -312,6 +307,7 @@ export function App() {
     { key: 'apps',     icon: <DatabaseOutlined />,      label: 'Apps & Proxies' },
     { key: 'logs',     icon: <UnorderedListOutlined />, label: 'Logs' },
     { key: 'feedback', icon: <CommentOutlined />,       label: 'Logs Feedback' },
+    { key: 'agent',    icon: <RobotOutlined />,         label: 'AI Agent' },
     { key: 'api-docs', icon: <AppstoreOutlined />,      label: 'API Docs' },
   ];
 
@@ -557,7 +553,7 @@ export function App() {
 
       <Layout>
         <Layout.Content style={{ padding: '16px 20px', overflowY: 'auto', minHeight: 0 }}>
-          {tab === 'search' ? (
+          <div style={{ display: tab === 'search' ? 'block' : 'none', height: '100%' }}>
             <SearchTab
               records={records}
               selectedKeys={selectedKeys}
@@ -578,7 +574,7 @@ export function App() {
               onOpenReplayAll={openReplayAllRecordings}
               onOpenTerminal={handleOpenTerminal}
             />
-          ) : null}
+          </div>
 
           {tab === 'files' ? <FilesTab records={records} backends={backends} /> : null}
           {tab === 'backends' ? <BackendsTab backends={backends} error={backErr} /> : null}
@@ -617,6 +613,8 @@ export function App() {
           {tab === 'api-docs' ? <ApiDocsTab /> : null}
 
           {tab === 'feedback' ? <FeedbackTab /> : null}
+
+          {tab === 'agent' ? <AgentTab assistAvailable={!!meta?.terminal_assist_available} /> : null}
         </Layout.Content>
       </Layout>
 
@@ -658,7 +656,7 @@ export function App() {
               try {
                 const events = await fetchRecordingEvents(fileName);
                 const metaEv = events.find((e) => e.type === 'recipe-meta');
-                const recipePath = (metaEv?.result as any)?.recipe_path;
+                const recipePath = (metaEv?.result as Record<string, unknown>)?.recipe_path as string | undefined;
                 if (!recipePath) {
                   message.warning('Recording does not contain recipe metadata');
                   return;
@@ -693,8 +691,7 @@ export function App() {
             }}
           />
         ) : (
-          <Modal
-            open
+          <Modal maskClosable={false}             open
             title="Session replay"
             onCancel={() => setReplayRecord(null)}
             footer={<Button onClick={() => setReplayRecord(null)}>Close</Button>}
@@ -706,8 +703,7 @@ export function App() {
       ) : null}
 
       {/* Tunnel creation modal */}
-      <Modal
-        open={!!tunnelOpen}
+      <Modal maskClosable={false}         open={!!tunnelOpen}
         title={tunnelOpen ? `Port Forward / Tunnel — ${tunnelOpen.record.name}` : 'Port Forward / Tunnel'}
         onCancel={() => setTunnelOpen(null)}
         footer={null}
@@ -758,8 +754,7 @@ export function App() {
       </Modal>
 
       {/* Recipe preview modal */}
-      <Modal
-        open={!!recipePreview}
+      <Modal maskClosable={false}         open={!!recipePreview}
         title={recipePreview?.title}
         onCancel={() => setRecipePreview(null)}
         footer={<Button onClick={() => setRecipePreview(null)}>Close</Button>}
@@ -779,8 +774,7 @@ export function App() {
 
       {/* Recipe AI assist modal */}
       {recipeAssistOpen ? (
-        <Modal
-          open
+        <Modal maskClosable={false}           open
           title={`AI explain: ${recipeAssistOpen.name}`}
           onCancel={() => closeRecipeAssist()}
           footer={<Button onClick={() => closeRecipeAssist()}>Close</Button>}

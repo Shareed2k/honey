@@ -8,12 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/inventory"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -29,6 +30,7 @@ var (
 	flagRefresh   bool
 	flagCacheDir  string
 	flagBackends  string
+	flagFilters   []string
 )
 
 var searchCmd = &cobra.Command{
@@ -50,6 +52,7 @@ func addSearchCoreFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&flagNameRegex, "name-regex", "", "Regex filter on name (overrides --name substring)")
 	cmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	cmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
+	cmd.Flags().StringArrayVar(&flagFilters, "filter", nil, "Post-discovery filter (repeatable: group:web, var:service=nginx)")
 	cmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
 
 	getSearchRegistry().RegisterAllProviderFlags(cmd)
@@ -94,11 +97,16 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 		}
 	}
 
+	filters := append([]string(nil), flagFilters...)
 	if len(queryArgs) == 1 && q.NameSubstring == "" && q.NameRegex == "" {
-		q.NameSubstring = queryArgs[0]
+		if inventory.IsFilterToken(queryArgs[0]) {
+			filters = append(filters, queryArgs[0])
+		} else {
+			q.NameSubstring = queryArgs[0]
+		}
 	}
 
-	provs := buildProviders(cfg, cmd)
+	provs := getSearchRegistry().BuildProviders(nil)
 	wantBackends := hosts.ParseBackendNames(flagBackends)
 	if len(wantBackends) > 0 {
 		provs = hosts.FilterBackendsByNames(provs, wantBackends)
@@ -112,11 +120,20 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 	if err != nil {
 		return nil, "", nil, cfgPath, err
 	}
+	if cfg != nil {
+		if err := inventory.Apply(records, cfg.Inventory); err != nil {
+			return nil, "", nil, cfgPath, fmt.Errorf("apply inventory: %w", err)
+		}
+	}
+	records, err = inventory.FilterRecords(records, filters)
+	if err != nil {
+		return nil, "", nil, cfgPath, err
+	}
 	return records, sshUser, cfg, cfgPath, nil
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	clientCache := ui.NewClientCache()
+	clientCache := engine.NewClientCache()
 
 	records, sshUser, cfg, cfgPath, err := runSearchCore(cmd, args)
 	if err != nil {
@@ -148,7 +165,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return enc.Encode(records)
 	case "table":
 		defer clientCache.CloseAll()
-		return ui.PrintStaticTable(records)
+		return engine.PrintStaticTable(records)
 	default:
 		recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
 		recordOnStart := recordDirFlagChanged(cmd) && strings.TrimSpace(flagRecordDir) != ""

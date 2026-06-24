@@ -7,7 +7,8 @@ import (
 
 // BuildProviders returns backends from the config file when it defines at least
 // one backend entry; otherwise it requests the default backend from each registered provider.
-func (r *Registry) BuildProviders(cfg *config.File, overrides ProviderOverrides) []hosts.Backend {
+func (r *Registry) BuildProviders(overrides ProviderOverrides) []hosts.Backend {
+	cfg := config.Get()
 	if overrides == nil {
 		overrides = ProviderOverrides{}
 	}
@@ -15,7 +16,7 @@ func (r *Registry) BuildProviders(cfg *config.File, overrides ProviderOverrides)
 
 	if cfg != nil && cfg.HasAnyBackend() {
 		for _, factory := range r.Factories {
-			out = append(out, factory.FromConfig(cfg, overrides)...)
+			out = append(out, factory.FromConfig(overrides)...)
 		}
 		return out
 	}

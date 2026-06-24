@@ -7,19 +7,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/recordings"
 	"github.com/shareed2k/honey/internal/safepath"
-	"github.com/shareed2k/honey/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 var (
 	flagCueExecExecute bool
+	flagCueExecProfile bool
+	flagCueExecCheck   bool
 	flagCueExecEnv     []string
 	flagRetryFailed    string
 
@@ -66,6 +67,8 @@ func init() {
 	rootCmd.AddCommand(cueExecCmd)
 	cueExecCmd.Flags().AddFlagSet(searchCmd.Flags())
 	cueExecCmd.Flags().BoolVar(&flagCueExecExecute, "execute", false, "Run steps over SSH/SFTP (default: dry-run, print resolved plan only)")
+	cueExecCmd.Flags().BoolVar(&flagCueExecProfile, "profile", false, "Print execution profile (CPU, Mem, Network, SSH stats) after run")
+	cueExecCmd.Flags().BoolVar(&flagCueExecCheck, "check", false, "Analyze per-step recipe risk and print the decision without executing")
 	cueExecCmd.Flags().StringArrayVarP(&flagCueExecEnv, "env", "e", nil, "Remote env for command/script (repeat: -e KEY=value); overrides recipe env on duplicate keys")
 	cueExecCmd.Flags().StringVar(&flagRetryFailed, "retry-failed", "", "Re-run only hosts that did not succeed in this recording (basename, e.g. 20260529_….hrec.jsonl)")
 }
@@ -116,6 +119,10 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if flagCueExecCheck {
+		return runCueExecCheck(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records)
+	}
+
 	if recipe.Defaults != nil && recipe.Defaults.K8sDebugImage != "" {
 		for i := range records {
 			if records[i].Provider == "k8s" && records[i].Meta["kind"] == "pod" {
@@ -131,25 +138,25 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	flagSet := recordDirFlagChanged(cmd) && strings.TrimSpace(flagRecordDir) != ""
 	yamlSet := cfg != nil && strings.TrimSpace(cfg.Defaults.RecordDir) != "" && !recordDirFlagChanged(cmd)
 	wantBatch := len(records) > 0 && (flagSet || yamlSet)
-	var rec *ui.SessionRecorder
+	var rec *engine.SessionRecorder
 	if wantBatch {
 		trigger := "cli-cue-exec-dry"
 		if flagCueExecExecute {
 			trigger = "cli-cue-exec"
 		}
 		var err error
-		rec, err = ui.NewBatchSessionRecorder(recordDir, trigger, sshUser, len(records))
+		rec, err = engine.NewBatchSessionRecorder(recordDir, trigger, sshUser, len(records))
 		if err != nil {
 			return err
 		}
 		if rec != nil {
-			hash, _ := cuetry.HashRecipeJSON(recipe)
-			rec.RecordRecipeMeta(ui.RecipeMeta{
+			hash, _ := recipe.HashJSON()
+			rec.RecordRecipeMeta(engine.RecipeMeta{
 				RecipePath:        absRecipe,
 				HostCount:         len(records),
 				RecipeContentHash: hash,
 				StartedAt:         time.Now().UTC(),
-				Hosts:             ui.HostsForRecipeMeta(records, 200),
+				Hosts:             engine.HostsForRecipeMeta(records, 200),
 			})
 		}
 		defer func() { _ = rec.Close() }()
@@ -162,7 +169,17 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return ui.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), ui.CueRecipeRunParams{
+
+	cache := engine.NewClientCache()
+	cache.SetRegistry(buildHostExecRegistry())
+
+	var prof *Profiler
+	if flagCueExecProfile {
+		prof = StartProfiler()
+		defer prof.StopAndPrintReport(len(records), len(recipe.Steps), cache)
+	}
+
+	return engine.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), engine.CueRecipeRunParams{
 		Recipe:         recipe,
 		RecipeDir:      recipeDir,
 		Records:        records,
@@ -174,7 +191,8 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		PluginMgr:      pluginMgr,
 		Execute:        flagCueExecExecute,
 		JSON:           flagOutput == "json" || flagJSON,
-		Reg:            buildHostExecRegistry(),
+		Reg:            cache.Reg(),
+		Cache:          cache,
 	}, rec)
 }
 

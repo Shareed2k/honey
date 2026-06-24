@@ -3,6 +3,7 @@ package cuetry
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
@@ -46,6 +47,14 @@ const schemaSource = `
 #Step: close({
 	id?:      string
 	depends?: [...string]
+	matrix?: {[string]: [...string]}
+	assert?: [...{
+		regex?: string
+		not_regex?: string
+		json_path?: string
+		expected_value?: string
+		exit_code?: int
+	}]
 	host?:    string
 	ssh_port?: int
 	ssh_private_key?: string
@@ -62,6 +71,7 @@ const schemaSource = `
 	})
 	run_as?:  string
 	command?: string
+	interpreter?: string
 	render?:  string
 	put?: close({
 		local:  string
@@ -108,6 +118,10 @@ const schemaSource = `
 		data?: {...}
 		output?: string
 	})
+	opa?: close({
+		policy: string
+		input?: {...}
+	})
 	plugin?: close({
 		id:     string
 		action: string
@@ -133,6 +147,7 @@ const schemaSource = `
 		remote_socat?: bool
 	})
 	docker?: close({
+		socket?: string
 		action: "build" | "push" | "pull" | "run" | "exec" | "stop"
 		output?: string
 		build?: {
@@ -155,6 +170,7 @@ const schemaSource = `
 			volumes?: [...string]
 			env?: {[string]: string}
 			detach?: bool
+			rm?:     bool
 		}
 		exec?: {
 			container: string
@@ -162,6 +178,7 @@ const schemaSource = `
 		}
 		stop?: {
 			container: string
+			rm?:        bool
 		}
 	})
 	k8s?: close({
@@ -240,6 +257,10 @@ const schemaSource = `
 		files?:          [...string]
 		output?:         string
 	})
+	recipe?: close({
+		path:     string
+		prompts?: {[string]: string}
+	})
 	hooks?: close({
 		on_success?: #StepHook
 		on_failure?: #StepHook
@@ -271,9 +292,24 @@ const schemaSource = `
 	})
 	notify_handler?: [...string]
 })
+#Webhook: close({
+	auth_secret?:     string
+	actor?:           string
+	extract?:         {[string]: string}
+	async?:           bool
+	idempotency_key?: string
+	idempotency_ttl?: string
+})
+#Schedule: close({
+	cron:      string
+	timezone?: string
+	env?:      {[string]: string}
+})
 #Recipe: close({
 	name:  string
 	type?: "linear" | "graph"
+	webhooks?:  {[string]: #Webhook}
+	schedules?: {[string]: #Schedule}
 	defaults?: close({
 		run_as?: string
 		env?: {[string]: string}
@@ -282,6 +318,12 @@ const schemaSource = `
 			description?: string
 			type?: string
 			required?: bool
+			choices?: [...string]
+			choices_url?: string
+			choices_json_path?: string
+			default?: string
+			multi?: bool
+			regex?: string
 		})}
 		k8s_debug_image?: string
 		kv_tunnel?: bool
@@ -296,12 +338,46 @@ const schemaSource = `
 })
 `
 
-func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, error) {
+// schemaCtx holds a pre-compiled CUE context and #Recipe schema value.
+// Each instance owns its own *cue.Context so there is no shared mutable state
+// between concurrent borrows.  uses is incremented on every return to the pool;
+// once it reaches maxCtxReuse the entry is dropped (GC reclaims it) so that
+// CUE's per-context interning map does not grow without bound.
+type schemaCtx struct {
+	ctx  *cue.Context
+	def  cue.Value // #Recipe compiled in ctx
+	uses int
+}
+
+const maxCtxReuse = 256
+
+var schemaCtxPool = sync.Pool{New: func() any { return newSchemaCtx() }}
+
+func newSchemaCtx() *schemaCtx {
 	ctx := cuecontext.New()
 	schema := ctx.CompileString(schemaSource)
+	// schemaSource is a package-level constant; a compile error here is a
+	// programming error with no recovery path — panic is acceptable.
 	if err := schema.Err(); err != nil {
-		return cue.Value{}, fmt.Errorf("cuetry: internal schema: %w", err)
+		panic(fmt.Sprintf("cuetry: internal schema compile error: %v", err))
 	}
+	def := schema.LookupPath(cue.ParsePath("#Recipe"))
+	if !def.Exists() {
+		panic("cuetry: internal schema missing #Recipe")
+	}
+	return &schemaCtx{ctx: ctx, def: def}
+}
+
+func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, error) {
+	sc := schemaCtxPool.Get().(*schemaCtx)
+	defer func() {
+		sc.uses++
+		if sc.uses >= maxCtxReuse {
+			return // drop; GC reclaims, pool.New makes a fresh one next time
+		}
+		schemaCtxPool.Put(sc)
+	}()
+	ctx := sc.ctx
 
 	var user cue.Value
 	if len(records) > 0 {
@@ -321,12 +397,7 @@ func compileAndUnifyRecipe(cueBytes []byte, records []hosts.Record) (cue.Value, 
 		return cue.Value{}, fmt.Errorf("cuetry: missing top-level field \"recipe\"")
 	}
 
-	def := schema.LookupPath(cue.ParsePath("#Recipe"))
-	if !def.Exists() {
-		return cue.Value{}, fmt.Errorf("cuetry: internal schema missing #Recipe")
-	}
-
-	unified := def.Unify(recipe)
+	unified := sc.def.Unify(recipe)
 	if err := unified.Validate(cue.Concrete(true), cue.Final()); err != nil {
 		return cue.Value{}, fmt.Errorf("cuetry: validate: %w", formatCueErr(err))
 	}
@@ -401,8 +472,8 @@ func validateStepRunAs(i int, kind string, b *StepBase) error {
 		return nil
 	}
 	switch kind {
-	case KindPut, KindGet, KindAgentTransfer, KindAI, KindTemplate, KindTunnel, KindK8s, KindOpensearch, KindPostgres:
-		return fmt.Errorf("cuetry: steps[%d]: run_as on put/get/agent_transfer/ai/template/tunnel/k8s/opensearch/postgres steps is not supported", i)
+	case KindPut, KindGet, KindAgentTransfer, KindAI, KindTemplate, KindTunnel, KindK8s, KindOpensearch, KindPostgres, KindRecipe:
+		return fmt.Errorf("cuetry: steps[%d]: run_as on put/get/agent_transfer/ai/template/tunnel/k8s/opensearch/postgres/recipe steps is not supported", i)
 	}
 	if err := ValidateRunAsUser(runAs); err != nil {
 		return fmt.Errorf("cuetry: steps[%d].run_as: %w", i, err)
@@ -451,8 +522,8 @@ func validateStepRetry(i int, b *StepBase, defaults *RecipeDefaults) error {
 }
 
 func validateStepEnvAndSecrets(i int, kind string, b *StepBase, secretPrefixes []string) error {
-	if len(b.Env) > 0 && (kind == KindPut || kind == KindGet || kind == KindAgentTransfer || kind == KindAI) {
-		return fmt.Errorf("cuetry: steps[%d]: env is only supported for command, script, plugin, and template steps", i)
+	if len(b.Env) > 0 && (kind == KindAgentTransfer || kind == KindAI) {
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for agent_transfer or ai steps", i)
 	}
 	if len(b.Secrets) > 0 && kind != KindCommand && kind != KindScript && kind != KindPlugin && kind != KindTemplate {
 		return fmt.Errorf("cuetry: steps[%d]: secrets are only supported for command, script, plugin, and template steps", i)

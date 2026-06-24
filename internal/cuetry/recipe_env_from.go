@@ -2,6 +2,7 @@ package cuetry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -34,7 +35,7 @@ func validateStepEnvFrom(stepIdx int, kind string, mode ExecutionMode, step *Ste
 	return nil
 }
 
-func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByName map[string]string) error {
+func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByName map[string]string, matrixExpansions map[string][]string) error {
 	if len(step.EnvFrom) == 0 {
 		return nil
 	}
@@ -44,74 +45,90 @@ func validateEnvFromRefs(stepIdx int, step *StepBase, sg *StepGraph, outputByNam
 	}
 	seenEnv := make(map[string]int)
 	for i, ref := range step.EnvFrom {
-		hasMap := len(ref.Map) > 0
-		hasExtract := len(ref.Extract) > 0
-		hasKv := len(ref.Kv) > 0
-		if !hasMap && !hasExtract && !hasKv {
-			return fmt.Errorf("cuetry: steps[%d].env_from[%d]: at least one of map, extract, or kv is required", stepIdx, i)
+		if err := validateOneEnvFromRef(stepIdx, i, ref, depSet, sg, outputByName, matrixExpansions, seenEnv); err != nil {
+			return err
 		}
-		refStep := strings.TrimSpace(ref.Step)
-		refOut := strings.TrimSpace(ref.FromOutput)
-		hasStep := refStep != ""
-		hasOut := refOut != ""
-		kvOnly := hasKv && !hasMap && !hasExtract
-		if kvOnly {
-			if hasStep || hasOut {
-				return fmt.Errorf("cuetry: steps[%d].env_from[%d]: kv-only entry must not set step or from_output", stepIdx, i)
-			}
-		} else if hasMap || hasExtract {
-			if hasStep == hasOut {
-				return fmt.Errorf("cuetry: steps[%d].env_from[%d]: exactly one of step or from_output is required", stepIdx, i)
-			}
-			if hasStep {
+	}
+	return nil
+}
+
+func validateOneEnvFromRef(stepIdx, i int, ref EnvFromRef, depSet map[string]struct{}, sg *StepGraph, outputByName map[string]string, matrixExpansions map[string][]string, seenEnv map[string]int) error {
+	hasMap := len(ref.Map) > 0
+	hasExtract := len(ref.Extract) > 0
+	hasKv := len(ref.Kv) > 0
+	if !hasMap && !hasExtract && !hasKv {
+		return fmt.Errorf("cuetry: steps[%d].env_from[%d]: at least one of map, extract, or kv is required", stepIdx, i)
+	}
+	refStep := strings.TrimSpace(ref.Step)
+	refOut := strings.TrimSpace(ref.FromOutput)
+	hasStep := refStep != ""
+	hasOut := refOut != ""
+	kvOnly := hasKv && !hasMap && !hasExtract
+	if kvOnly {
+		if hasStep || hasOut {
+			return fmt.Errorf("cuetry: steps[%d].env_from[%d]: kv-only entry must not set step or from_output", stepIdx, i)
+		}
+	} else if hasMap || hasExtract {
+		if hasStep == hasOut {
+			return fmt.Errorf("cuetry: steps[%d].env_from[%d]: exactly one of step or from_output is required", stepIdx, i)
+		}
+		if hasStep {
+			expanded, isMatrix := matrixExpansions[refStep]
+			if !isMatrix {
 				if _, ok := sg.IDToIndex[refStep]; !ok {
 					return fmt.Errorf("cuetry: steps[%d].env_from[%d] references unknown step id %q", stepIdx, i, refStep)
 				}
 				if _, ok := depSet[refStep]; !ok {
 					return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q must appear in depends", stepIdx, i, refStep)
 				}
-			}
-			if hasOut {
-				producer, ok := outputByName[refOut]
-				if !ok {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].from_output references unknown capture name %q", stepIdx, i, refOut)
-				}
-				if _, ok := depSet[producer]; !ok {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].from_output %q: producer step %q must appear in depends", stepIdx, i, refOut, producer)
+			} else {
+				for _, expID := range expanded {
+					if _, ok := depSet[expID]; !ok {
+						return fmt.Errorf("cuetry: steps[%d].env_from[%d].step %q (matrix): expanded step %q must appear in depends", stepIdx, i, refStep, expID)
+					}
 				}
 			}
 		}
-		validateKeys := func(kind string, m map[string]string, fn func(string) error) error {
-			for envKey, val := range m {
-				if prev, dup := seenEnv[envKey]; dup {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d]: duplicate env key %q (also in env_from[%d])", stepIdx, i, envKey, prev)
-				}
-				seenEnv[envKey] = i
-				if err := validateOneEnv(envKey, "x"); err != nil {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].%s key: %w", stepIdx, i, kind, err)
-				}
-				if err := fn(val); err != nil {
-					return fmt.Errorf("cuetry: steps[%d].env_from[%d].%s[%q]: %w", stepIdx, i, kind, envKey, err)
-				}
+		if hasOut {
+			producer, ok := outputByName[refOut]
+			if !ok {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d].from_output references unknown capture name %q", stepIdx, i, refOut)
 			}
-			return nil
-		}
-		if err := validateKeys("map", ref.Map, func(src string) error {
-			if strings.TrimSpace(src) != envFromSourceStdout {
-				return fmt.Errorf("must be %q", envFromSourceStdout)
+			if _, ok := depSet[producer]; !ok {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d].from_output %q: producer step %q must appear in depends", stepIdx, i, refOut, producer)
 			}
-			return nil
-		}); err != nil {
-			return err
 		}
-		if err := validateKeys("extract", ref.Extract, ValidateJQQuery); err != nil {
-			return err
+	}
+	validateKeys := func(kind string, m map[string]string, fn func(string) error) error {
+		for envKey, val := range m {
+			if prev, dup := seenEnv[envKey]; dup {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d]: duplicate env key %q (also in env_from[%d])", stepIdx, i, envKey, prev)
+			}
+			seenEnv[envKey] = i
+			if err := validateOneEnv(envKey, "x"); err != nil {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d].%s key: %w", stepIdx, i, kind, err)
+			}
+			if err := fn(val); err != nil {
+				return fmt.Errorf("cuetry: steps[%d].env_from[%d].%s[%q]: %w", stepIdx, i, kind, envKey, err)
+			}
 		}
-		if err := validateKeys("kv", ref.Kv, func(kvKey string) error {
-			return stepkvValidateKey(strings.TrimSpace(kvKey))
-		}); err != nil {
-			return err
+		return nil
+	}
+	if err := validateKeys("map", ref.Map, func(src string) error {
+		if strings.TrimSpace(src) != envFromSourceStdout {
+			return fmt.Errorf("must be %q", envFromSourceStdout)
 		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := validateKeys("extract", ref.Extract, ValidateJQQuery); err != nil {
+		return err
+	}
+	if err := validateKeys("kv", ref.Kv, func(kvKey string) error {
+		return stepkvValidateKey(strings.TrimSpace(kvKey))
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -164,7 +181,7 @@ func validateUniqueTemplateOutputs(steps []StepWrapper) error {
 }
 
 // MergeEnvFromInto resolves env_from into dst (execute mode). Fails if a mapped value is missing.
-func MergeEnvFromInto(dst map[string]string, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, dryRun bool) error {
+func MergeEnvFromInto(dst map[string]string, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, dryRun bool, matrixExpansions map[string][]string) error {
 	if len(step.EnvFrom) == 0 {
 		return nil
 	}
@@ -183,7 +200,7 @@ func MergeEnvFromInto(dst map[string]string, step *StepBase, store *StepOutputSt
 				}
 				continue
 			}
-			val, err := envFromStdout(store, capture, refStep, refOut, hostName)
+			val, err := envFromStdout(store, capture, refStep, refOut, hostName, matrixExpansions)
 			if err != nil {
 				return err
 			}
@@ -201,7 +218,7 @@ func MergeEnvFromInto(dst map[string]string, step *StepBase, store *StepOutputSt
 				}
 				continue
 			}
-			doc, err = envFromStdout(store, capture, refStep, refOut, hostName)
+			doc, err = envFromStdout(store, capture, refStep, refOut, hostName, matrixExpansions)
 			if err != nil {
 				return err
 			}
@@ -241,11 +258,40 @@ func MergeEnvFromInto(dst map[string]string, step *StepBase, store *StepOutputSt
 	return nil
 }
 
-func envFromStdout(store *StepOutputStore, capture *RecipeOutputCapture, refStep, refOut, hostName string) (string, error) {
+func envFromStdout(store *StepOutputStore, capture *RecipeOutputCapture, refStep, refOut, hostName string, matrixExpansions map[string][]string) (string, error) {
 	if refStep != "" {
 		if store == nil {
 			return "", fmt.Errorf("env_from: no output store for step %q", refStep)
 		}
+
+		if expanded, ok := matrixExpansions[refStep]; ok {
+			var results []string
+			for _, expID := range expanded {
+				var val string
+				var found bool
+				if hostName != "" && hostName != MatchLocalAIHost {
+					val, found = store.Get(expID, hostName)
+				}
+				if !found {
+					val, found = store.FirstStdout(expID)
+				}
+				if found {
+					results = append(results, val)
+				}
+			}
+			if len(results) == 0 {
+				return "", fmt.Errorf("env_from: step %q (matrix) has no stdout for host %q", refStep, hostName)
+			}
+			if len(results) != len(expanded) {
+				return "", fmt.Errorf("env_from: step %q (matrix) missing stdout for some expanded nodes", refStep)
+			}
+			jsonArr, err := json.Marshal(results)
+			if err != nil {
+				return "", fmt.Errorf("env_from: failed to marshal matrix outputs: %w", err)
+			}
+			return string(jsonArr), nil
+		}
+
 		var val string
 		var ok bool
 		if hostName != "" && hostName != MatchLocalAIHost {
@@ -253,9 +299,6 @@ func envFromStdout(store *StepOutputStore, capture *RecipeOutputCapture, refStep
 		}
 		if !ok {
 			val, ok = store.FirstStdout(refStep)
-		}
-		if !ok {
-			val, ok = store.Get(refStep, hostName)
 		}
 		if !ok {
 			return "", fmt.Errorf("env_from: step %q has no stdout for host %q", refStep, hostName)
@@ -273,9 +316,9 @@ func envFromStdout(store *StepOutputStore, capture *RecipeOutputCapture, refStep
 }
 
 // MergeEnvFromIntoTemplateData overlays env_from-resolved keys onto template data (graph mode).
-func MergeEnvFromIntoTemplateData(data map[string]any, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, dryRun bool) error {
+func MergeEnvFromIntoTemplateData(data map[string]any, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, dryRun bool, matrixExpansions map[string][]string) error {
 	env := make(map[string]string)
-	if err := MergeEnvFromInto(env, step, store, capture, kv, hostName, dryRun); err != nil {
+	if err := MergeEnvFromInto(env, step, store, capture, kv, hostName, dryRun, matrixExpansions); err != nil {
 		return err
 	}
 	for k, v := range env {
@@ -285,8 +328,8 @@ func MergeEnvFromIntoTemplateData(data map[string]any, step *StepBase, store *St
 }
 
 // PrepareTemplateData merges env_from and expands ${VAR} in data values (not the Go template body).
-func PrepareTemplateData(data map[string]any, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, extraEnv map[string]string, dryRun bool) error {
-	if err := MergeEnvFromIntoTemplateData(data, step, store, capture, kv, hostName, dryRun); err != nil {
+func PrepareTemplateData(data map[string]any, step *StepBase, store *StepOutputStore, capture *RecipeOutputCapture, kv KVReader, hostName string, extraEnv map[string]string, dryRun bool, matrixExpansions map[string][]string) error {
+	if err := MergeEnvFromIntoTemplateData(data, step, store, capture, kv, hostName, dryRun, matrixExpansions); err != nil {
 		return err
 	}
 	vars := BuildRecipeVarMap(capture, extraEnv)
@@ -400,6 +443,7 @@ func EffectiveEnvForRunEx(ctx context.Context, resolveSecrets bool, resolver Sec
 	var store *StepOutputStore
 	var capture *RecipeOutputCapture
 	var kv KVReader
+	var matrixExp map[string][]string
 	dryRun := false
 	if opts != nil {
 		recipe = opts.Recipe
@@ -413,12 +457,13 @@ func EffectiveEnvForRunEx(ctx context.Context, resolveSecrets bool, resolver Sec
 			return nil, err
 		}
 		mergeHoneyStepID(merged, recipe, step)
+		matrixExp = recipe.MatrixExpansions
 	}
 	hostName := ""
 	if r != nil {
 		hostName = r.Name
 	}
-	if err := MergeEnvFromInto(merged, step, store, capture, kv, hostName, dryRun); err != nil {
+	if err := MergeEnvFromInto(merged, step, store, capture, kv, hostName, dryRun, matrixExp); err != nil {
 		return nil, err
 	}
 	return merged, nil

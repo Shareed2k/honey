@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadBackends(t *testing.T) {
@@ -65,6 +66,31 @@ backends:
 	}
 }
 
+func TestLoadAppsTTLStringDuration(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `
+version: 1
+apps:
+  grafana:
+    type: http
+    upstream: http://127.0.0.1:3000
+    local_port: 3001
+    ttl: 5m
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Apps["grafana"].TTL; got != 5*time.Minute {
+		t.Fatalf("ttl = %s, want 5m", got)
+	}
+}
+
 func TestHasAnyBackendEmpty(t *testing.T) {
 	t.Parallel()
 	var f File
@@ -73,6 +99,62 @@ func TestHasAnyBackendEmpty(t *testing.T) {
 	}
 	if (*File)(nil).HasAnyBackend() {
 		t.Fatal("nil file")
+	}
+}
+
+func TestParseYAMLInventoryVarsAcceptScalars(t *testing.T) {
+	t.Parallel()
+	const data = `
+version: 1
+inventory:
+  vars:
+    service: nginx
+    allow_restart: true
+    restart_timeout: 30
+    ratio: 1.5
+  groups:
+    web:
+      priority: 10
+      match: "host.meta['role'] == 'web'"
+      vars:
+        health_url: http://127.0.0.1/health
+  hosts:
+    web-01:
+      vars:
+        service: nginx-canary
+`
+	f, err := ParseYAML([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Inventory.Vars["service"].String(); got != "nginx" {
+		t.Fatalf("service = %q", got)
+	}
+	if got := f.Inventory.Vars["allow_restart"].Bool(); !got {
+		t.Fatalf("allow_restart = %v", got)
+	}
+	if got := f.Inventory.Vars["restart_timeout"].String(); got != "30" {
+		t.Fatalf("restart_timeout = %q", got)
+	}
+}
+
+func TestParseYAMLInventoryVarsRejectNonScalars(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{name: "map", yaml: "bad: {x: y}"},
+		{name: "list", yaml: "bad: [a, b]"},
+		{name: "null", yaml: "bad: null"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := "version: 1\ninventory:\n  vars:\n    " + tt.yaml + "\n"
+			if _, err := ParseYAML([]byte(data)); err == nil {
+				t.Fatal("expected error")
+			}
+		})
 	}
 }
 

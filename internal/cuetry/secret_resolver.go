@@ -1,6 +1,8 @@
 package cuetry
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"strings"
 
@@ -10,7 +12,10 @@ import (
 )
 
 // SecretResolver resolves recipe secret refs (secure:v1:…) to plaintext at execute time.
-type SecretResolver = secrets.Resolver
+type SecretResolver interface {
+	Handles(ref string) bool
+	Resolve(ctx context.Context, ref string) (string, error)
+}
 
 // SecretResolverOptions configures the default secret resolver.
 type SecretResolverOptions struct {
@@ -50,4 +55,21 @@ func NewSecretResolverWithPlugins(opts SecretResolverOptions, mgr *plugins.Manag
 		secOpts.ExtraBackends = mgr.SecretRefBackends()
 	}
 	return secrets.NewResolver(secOpts)
+}
+
+// StaticSecretResolver provides a static map of secrets for testing and simple use cases.
+type StaticSecretResolver map[string]string
+
+// Handles returns true if the reference exists in the static map.
+func (m StaticSecretResolver) Handles(ref string) bool {
+	_, ok := m[ref]
+	return ok
+}
+
+// Resolve returns the value from the static map if it exists.
+func (m StaticSecretResolver) Resolve(_ context.Context, ref string) (string, error) {
+	if val, ok := m[ref]; ok {
+		return val, nil
+	}
+	return "", fmt.Errorf("secret not found")
 }

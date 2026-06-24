@@ -74,8 +74,25 @@ func newWhenEnv() (*cel.Env, error) {
 		cel.Variable("execute", cel.BoolType),
 		cel.Variable("recipe_name", cel.StringType),
 		cel.Variable("facts", cel.MapType(cel.StringType, cel.DynType)),
-		cel.Function("kv_get",
-			cel.Overload("kv_get_string", []*cel.Type{cel.StringType}, cel.StringType,
+		cel.Variable("vars", cel.MapType(cel.StringType, cel.DynType)),
+		cel.Variable("groups", cel.ListType(cel.StringType)),
+		cel.Function(
+			"in_group",
+			cel.Overload(
+				"in_group_string", []*cel.Type{cel.StringType}, cel.BoolType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					key, ok := args[0].(types.String)
+					if !ok {
+						return types.ValOrErr(args[0], "in_group: expected string group")
+					}
+					return types.Bool(inGroupBinding(string(key)))
+				}),
+			),
+		),
+		cel.Function(
+			"kv_get",
+			cel.Overload(
+				"kv_get_string", []*cel.Type{cel.StringType}, cel.StringType,
 				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
 					key, ok := args[0].(types.String)
 					if !ok {
@@ -85,8 +102,10 @@ func newWhenEnv() (*cel.Env, error) {
 				}),
 			),
 		),
-		cel.Function("kv_has",
-			cel.Overload("kv_has_string", []*cel.Type{cel.StringType}, cel.BoolType,
+		cel.Function(
+			"kv_has",
+			cel.Overload(
+				"kv_has_string", []*cel.Type{cel.StringType}, cel.BoolType,
 				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
 					key, ok := args[0].(types.String)
 					if !ok {
@@ -100,9 +119,10 @@ func newWhenEnv() (*cel.Env, error) {
 }
 
 var (
-	kvBindMu     sync.Mutex
-	kvGetBinding func(string) string
-	kvHasBinding func(string) bool
+	kvBindMu       sync.Mutex
+	kvGetBinding   func(string) string
+	kvHasBinding   func(string) bool
+	inGroupBinding func(string) bool
 )
 
 // WhenEvalOpts carries per-evaluation context for CEL when.
@@ -137,9 +157,10 @@ func EvalWhen(prog *WhenProgram, opts WhenEvalOpts) (bool, error) {
 	}
 	kvBindMu.Lock()
 	defer kvBindMu.Unlock()
-	prevGet, prevHas := kvGetBinding, kvHasBinding
+	prevGet, prevHas, prevInGroup := kvGetBinding, kvHasBinding, inGroupBinding
 	defer func() {
 		kvGetBinding, kvHasBinding = prevGet, prevHas
+		inGroupBinding = prevInGroup
 	}()
 	kv := opts.KV
 	if kv == nil {
@@ -170,11 +191,22 @@ func EvalWhen(prog *WhenProgram, opts WhenEvalOpts) (bool, error) {
 		_, found, err := kv.Get(key)
 		return err == nil && found
 	}
+	inGroupBinding = func(group string) bool {
+		for _, g := range opts.Host.Groups {
+			if g == group {
+				return true
+			}
+		}
+		return false
+	}
 
 	facts := opts.Facts
 	if facts == nil {
 		facts = make(map[string]any)
 	}
+	vars := inventoryVarsToCELMap(opts.Host.Vars)
+	groups := make([]string, len(opts.Host.Groups))
+	copy(groups, opts.Host.Groups)
 
 	act := map[string]any{
 		"host":        hostToCELMap(opts.Host),
@@ -184,6 +216,8 @@ func EvalWhen(prog *WhenProgram, opts WhenEvalOpts) (bool, error) {
 		"execute":     opts.Execute,
 		"recipe_name": opts.RecipeName,
 		"facts":       facts,
+		"vars":        vars,
+		"groups":      groups,
 	}
 	if opts.Dest != nil {
 		act["dest"] = hostToCELMap(*opts.Dest)
@@ -200,6 +234,14 @@ func EvalWhen(prog *WhenProgram, opts WhenEvalOpts) (bool, error) {
 		return false, fmt.Errorf("cuetry: when must evaluate to bool, got %T", out.Value())
 	}
 	return b, nil
+}
+
+func inventoryVarsToCELMap(vars map[string]hosts.InventoryValue) map[string]any {
+	out := make(map[string]any, len(vars))
+	for k, v := range vars {
+		out[k] = v.Any()
+	}
+	return out
 }
 
 func stepkvValidateKey(key string) error {

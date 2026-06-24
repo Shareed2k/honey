@@ -61,7 +61,7 @@ func TestValidateEnvFromRefs_rejectsBothStepAndFromOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = validateEnvFromRefs(1, steps[1].Step.Base(), sg, templateOutputProducers(steps))
+	err = validateEnvFromRefs(1, steps[1].Step.Base(), sg, templateOutputProducers(steps), nil)
 	if err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("got %v", err)
 	}
@@ -78,7 +78,7 @@ func TestMergeEnvFromInto_fromOutput(t *testing.T) {
 		}},
 	}
 	dst := map[string]string{}
-	if err := MergeEnvFromInto(dst, step, nil, outputCap, nil, "", false); err != nil {
+	if err := MergeEnvFromInto(dst, step, nil, outputCap, nil, "", false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if dst["CFG"] != "hello" {

@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
@@ -32,7 +33,7 @@ func RunDockerWebTTY(
 	}
 	defer func() { _ = client.Close() }()
 
-	dc, ok := client.(*dockerNativeClient)
+	dc, ok := client.(*engine.DockerNativeClient)
 	if !ok {
 		return fmt.Errorf("unexpected client type %T", client)
 	}

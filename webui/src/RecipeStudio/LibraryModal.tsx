@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Card, Typography, Spin, Collapse } from 'antd';
-import { fetchLibraryRecipes, type LibraryCategory, type LibraryRecipe } from '../api';
+import { fetchLibraryRecipes } from '../api/recipes';
+import { type LibraryCategory } from '../api/types/core';
+import { type LibraryRecipe } from '../api/types/recipes';
 
 const { Text } = Typography;
 
@@ -24,8 +26,7 @@ export function LibraryModal({ open, onCancel, onSelect }: Props) {
   }, [open]);
 
   return (
-    <Modal
-      title="Recipe Library"
+    <Modal maskClosable={false}       title="Recipe Library"
       open={open}
       onCancel={onCancel}
       footer={null}

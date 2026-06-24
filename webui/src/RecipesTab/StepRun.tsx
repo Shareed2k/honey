@@ -1,17 +1,12 @@
 // webui/src/RecipesTab/StepRun.tsx
 import { useEffect, useRef, useState } from 'react';
 import { Button, Typography } from 'antd';
-import { cueExecStream, type CueExecRequest, type HostExecResultRow, type ParsedRecipe } from '../api';
-import type { HostRecord } from '../HostPicker';
-import type { EnvPair, LiveState } from './types';
+import { cueExecStream } from '../api/exec';
+import { type CueExecRequest, type HostExecResultRow } from '../api/types/exec';
+import type { LiveState } from './types';
+import { useWizard } from './WizardContext';
 
 type Props = {
-  recipe: ParsedRecipe;
-  recipeBasePath: string | null; // null if running from a draft (uses recipe_content)
-  hosts: HostRecord[];
-  envOverrides: EnvPair[];
-  sshUser: string;
-  recordSession: boolean;
   sessionRecordingAvailable: boolean;
   onViewRecording: (fileName: string) => void;
   onRunAgain: () => void;
@@ -21,48 +16,53 @@ type Props = {
 };
 
 export function StepRun(props: Props) {
-  const [state, setState] = useState<LiveState>({ rows: [], status: 'idle' });
+  const { state } = useWizard();
+  const { edits: recipe, recipe: recipeRef, hosts, envOverrides, sshUser, recordSession } = state;
+  const recipeBasePath = recipeRef?.kind === 'disk' ? recipeRef.path : null;
+
+  const [localState, setLocalState] = useState<LiveState>({ rows: [], status: 'idle' });
   const [recordingFileName, setRecordingFileName] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    if (!recipe) return;
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-    setState({ rows: [], status: 'running' });
+    setLocalState({ rows: [], status: 'running' });
     props.onStatusChange?.('running');
     setRecordingFileName(null);
 
-    const env = props.envOverrides
+    const env = envOverrides
       .filter((p) => p.key.trim())
       .map((p) => `${p.key}=${p.value}`);
 
     const payload: CueExecRequest = {
-      recipe_path: props.recipeBasePath ?? undefined,
-      recipe_content: props.recipeBasePath ? undefined : props.recipe,
+      recipe_path: recipeBasePath ?? undefined,
+      recipe_content: recipeBasePath ? undefined : recipe,
       execute: true,
-      ssh_user: props.sshUser,
-      records: props.hosts,
+      ssh_user: sshUser,
+      records: hosts,
       env,
-      record_session: props.recordSession,
+      record_session: recordSession,
     };
 
     cueExecStream(payload, (row: HostExecResultRow) => {
       if (ctrl.signal.aborted) return;
       props.onRow?.(row);
-      setState((s) => ({ ...s, rows: [...s.rows, row] }));
+      setLocalState((s) => ({ ...s, rows: [...s.rows, row] }));
     }, ctrl.signal)
       .then((footer) => {
         if (ctrl.signal.aborted) return;
         if (footer.recording_id) {
           setRecordingFileName(`${footer.recording_id}.hrec.jsonl`);
         }
-        setState((s) => ({ ...s, status: 'ok' }));
+        setLocalState((s) => ({ ...s, status: 'ok' }));
         props.onStatusChange?.('ok');
       })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === 'AbortError') return;
         console.error('cueExecStream failed:', e);
-        setState((s) => ({ ...s, status: 'err' }));
+        setLocalState((s) => ({ ...s, status: 'err' }));
         props.onStatusChange?.('err');
       });
 
@@ -74,15 +74,15 @@ export function StepRun(props: Props) {
 
   function handleCancel() {
     abortRef.current?.abort();
-    setState((s) => ({ ...s, status: 'idle' }));
+    setLocalState((s) => ({ ...s, status: 'idle' }));
     props.onStatusChange?.('idle');
   }
 
-  const ok = state.rows.filter((r) => r.Success).length;
-  const err = state.rows.filter((r) => !r.Success).length;
-  const pending = props.hosts.length - state.rows.length;
+  const ok = localState.rows.filter((r) => r.Success).length;
+  const err = localState.rows.filter((r) => !r.Success).length;
+  const pending = hosts.length - localState.rows.length;
   const canViewRecording =
-    props.recordSession && props.sessionRecordingAvailable && !!recordingFileName && state.status !== 'running';
+    recordSession && props.sessionRecordingAvailable && !!recordingFileName && localState.status !== 'running';
 
   return (
     <div className="rcp-step rcp-step--run">
@@ -92,9 +92,9 @@ export function StepRun(props: Props) {
           <span className="rcp-ok">{ok} ok</span> ·{' '}
           <span className="rcp-err">{err} err</span> ·{' '}
           <span className="rcp-pend">{Math.max(0, pending)} pending</span>
-          <span> · status: {state.status}</span>
+          <span> · status: {localState.status}</span>
         </div>
-        {state.status === 'running' ? (
+        {localState.status === 'running' ? (
           <Button onClick={handleCancel}>
             cancel run
           </Button>
@@ -102,7 +102,7 @@ export function StepRun(props: Props) {
       </header>
 
       <ul className="rcp-run__hosts">
-        {state.rows.map((row, i) => (
+        {localState.rows.map((row, i) => (
           <li
             key={`${row.Name}-${i}`}
             className={'rcp-run__host ' + (row.Success ? 'ok' : 'err')}
@@ -120,7 +120,7 @@ export function StepRun(props: Props) {
         ))}
       </ul>
 
-      {state.status !== 'running' ? (
+      {localState.status !== 'running' ? (
         <footer className="rcp-step__footer">
           {canViewRecording ? (
             <Button

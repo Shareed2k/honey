@@ -13,14 +13,13 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/shareed2k/honey/internal/engine"
+
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/shareed2k/honey/internal/alerts"
 	"github.com/shareed2k/honey/internal/anomaly"
@@ -30,6 +29,9 @@ import (
 	"github.com/shareed2k/honey/internal/jsonutil"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 	"github.com/shareed2k/honey/internal/recipenotify"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type feedbackWriter struct {
@@ -120,7 +122,7 @@ type LogOptions struct {
 }
 
 // StreamLogs streams logs for records to out with stable per-record prefixes.
-func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts LogOptions, cache *ClientCache, out io.Writer) error {
+func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts LogOptions, cache *engine.ClientCache, out io.Writer) error {
 	if out == nil {
 		out = io.Discard
 	}
@@ -169,7 +171,8 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 			zap.L().Debug("anomaly detector disabled", zap.Error(err))
 			_, _ = fmt.Fprintf(os.Stderr, "warning: anomaly detector disabled: %v\n", err)
 		} else {
-			zap.L().Debug("anomaly detector initialized",
+			zap.L().Debug(
+				"anomaly detector initialized",
 				zap.String("model", opts.AnomalyModel),
 				zap.Float64("threshold", opts.AnomalyThresh),
 				zap.Int("freqWindow", opts.AnomalyFreqWindow),
@@ -208,7 +211,8 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 		defer disp.Close()
 	}
 
-	zap.L().Debug("StreamLogs start",
+	zap.L().Debug(
+		"StreamLogs start",
 		zap.Int("records", len(records)),
 		zap.Bool("follow", opts.Follow),
 		zap.Int64("tail", opts.Tail),
@@ -219,7 +223,7 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 	g, ctx := errgroup.WithContext(ctx)
 	sem := make(chan struct{}, opts.MaxConcurrency)
 	var writeMu sync.Mutex
-	run := logRun{user: user, opts: opts, cache: cache, reg: cache.reg}
+	run := logRun{user: user, opts: opts, cache: cache, reg: cache.Registry()}
 	baseSink := logSink{
 		out:         out,
 		mu:          &writeMu,
@@ -249,7 +253,7 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 type logRun struct {
 	user  string
 	opts  LogOptions
-	cache *ClientCache
+	cache *engine.ClientCache
 	reg   hostexec.Registry
 }
 
@@ -268,7 +272,8 @@ type logSink struct {
 }
 
 func streamOneLog(ctx context.Context, run logRun, rec hosts.Record, sink logSink) error {
-	zap.L().Debug("streamOneLog",
+	zap.L().Debug(
+		"streamOneLog",
 		zap.String("record", rec.Name),
 		zap.String("provider", rec.Provider),
 		zap.String("kind", rec.Meta["kind"]),
@@ -295,7 +300,8 @@ func streamK8sPodLogs(ctx context.Context, run logRun, rec hosts.Record, sink lo
 	if namespace == "" || podName == "" {
 		return fmt.Errorf("%s missing k8s namespace or pod_name", rec.Name)
 	}
-	zap.L().Debug("k8s pod logs",
+	zap.L().Debug(
+		"k8s pod logs",
 		zap.String("namespace", namespace),
 		zap.String("pod", podName),
 		zap.String("container", opts.Container),
@@ -348,7 +354,8 @@ func streamDockerLogs(ctx context.Context, run logRun, rec hosts.Record, sink lo
 	if err != nil {
 		return err
 	}
-	zap.L().Debug("docker container logs",
+	zap.L().Debug(
+		"docker container logs",
 		zap.String("record", rec.Name),
 		zap.String("containerID", containerID),
 	)
@@ -357,7 +364,7 @@ func streamDockerLogs(ctx context.Context, run logRun, rec hosts.Record, sink lo
 		return err
 	}
 	defer dc.Close()
-	native, ok := dc.(*dockerNativeClient)
+	native, ok := dc.(*engine.DockerNativeClient)
 	if !ok {
 		return fmt.Errorf("unexpected docker client type %T", dc)
 	}
@@ -393,7 +400,8 @@ func streamExecutorLogs(ctx context.Context, run logRun, rec hosts.Record, sink 
 	if err != nil {
 		return err
 	}
-	zap.L().Debug("executor logs",
+	zap.L().Debug(
+		"executor logs",
 		zap.String("record", rec.Name),
 		zap.String("command", cmd),
 		zap.String("runAs", run.opts.RunAs),
@@ -437,13 +445,13 @@ func logCommand(opts LogOptions) string {
 	if unit == "" {
 		unit = strings.TrimSpace(opts.Target)
 	}
-	args := []string{"journalctl", "-u", shellSingleQuoted(unit), "-n", strconv.FormatInt(opts.Tail, 10), "--no-pager"}
+	args := []string{"journalctl", "-u", engine.ShellSingleQuoted(unit), "-n", strconv.FormatInt(opts.Tail, 10), "--no-pager"}
 	if opts.Follow {
 		args = append(args, "-f")
 	}
 	if opts.Since > 0 {
 		since := time.Now().Add(-opts.Since).Format("2006-01-02 15:04:05")
-		args = append(args, "--since", shellSingleQuoted(since))
+		args = append(args, "--since", engine.ShellSingleQuoted(since))
 	}
 	if !opts.Timestamps {
 		args = append(args, "-o", "cat")
@@ -464,7 +472,7 @@ func remoteLogSourceArg(source string) string {
 	if strings.ContainsAny(source, "*?[") {
 		return source
 	}
-	return shellSingleQuoted(source)
+	return engine.ShellSingleQuoted(source)
 }
 
 func dockerSince(d time.Duration) string {
@@ -555,7 +563,8 @@ func writePrefixedLine(ctx context.Context, sink logSink, line string) {
 				return
 			}
 			if res.Anomaly {
-				zap.L().Debug("anomaly detected",
+				zap.L().Debug(
+					"anomaly detected",
 					zap.String("prefix", strings.TrimSpace(sink.prefix)),
 					zap.Float64("score", res.Score),
 					zap.String("reason", res.Reason),

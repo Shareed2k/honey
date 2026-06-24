@@ -60,7 +60,8 @@ func PurgeExpired(recordDir string, maxAge time.Duration) (PurgeResult, error) {
 		res.Deleted++
 	}
 	if res.Deleted > 0 {
-		zap.L().Info("recording retention sweep",
+		zap.L().Info(
+			"recording retention sweep",
 			zap.Int("deleted", res.Deleted),
 			zap.Duration("max_age", maxAge),
 			zap.String("dir", recordDir),

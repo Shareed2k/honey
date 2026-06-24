@@ -18,6 +18,9 @@ func (s *Server) applyInMemoryConfig(cfgPath string, cfg *config.File) {
 	if s.opts.ExecRegistry != nil {
 		s.opts.ExecRegistry.Reconfigure(cfg)
 	}
+	if s.plugins != nil {
+		s.plugins.Reload(cfg)
+	}
 }
 
 // handleConfigSchema returns JSON Schema and UI schema for the config editor.

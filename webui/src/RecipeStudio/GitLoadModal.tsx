@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Form, Input, Button, message } from 'antd';
-import { apiGet } from '../api';
+import { apiGet } from '../api/core';
 
 type Props = {
   visible: boolean;
@@ -67,8 +67,7 @@ export default function GitLoadModal({ visible, onCancel, onLoad }: Props) {
   };
 
   return (
-    <Modal
-      title="Load Recipe from Git"
+    <Modal maskClosable={false}       title="Load Recipe from Git"
       open={visible}
       onCancel={onCancel}
       footer={null}

@@ -5,7 +5,7 @@ title: honey web
 
 ## honey web
 
-Start embedded web UI (loopback + token) for backends, search, config, SSH terminal, and uploads
+Start embedded web UI (token-protected) for backends, search, config, SSH terminal, and uploads
 
 ```
 honey web [flags]
@@ -20,8 +20,9 @@ honey web [flags]
       --browser                        Open the web UI in the default browser on start (default true)
       --files-root string              Local filesystem root for the web file browser (default: $HONEY_FILES_ROOT or $HOME)
   -h, --help                           help for web
-      --listen string                  Listen address (host:port); must be loopback for safe default (default "localhost:8765")
-      --metrics-listen string          Optional loopback host:port for Prometheus /metrics (e.g. 127.0.0.1:9091)
+      --listen string                  Listen address (host:port) (default "localhost:8765")
+      --metrics-listen string          Optional host:port for Prometheus /metrics (e.g. 127.0.0.1:9091)
+      --no-auth                        Disable web UI token authentication (only for trusted networks / behind an authenticating proxy; also via HONEY_WEB_NO_AUTH)
 ```
 
 ### Options inherited from parent commands

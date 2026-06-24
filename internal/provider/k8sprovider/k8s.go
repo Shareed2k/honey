@@ -93,7 +93,7 @@ func (k *K8s) searchNodes(ctx context.Context, clientset kubernetes.Interface, q
 	}
 	out := make([]hosts.Record, 0, len(list.Items))
 	for _, n := range list.Items {
-		ok, err := hosts.NameMatches(n.Name, q)
+		ok, err := q.MatchesName(n.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +166,7 @@ func (k *K8s) searchPods(ctx context.Context, clientset kubernetes.Interface, q 
 	nodeIndex := nodeAddressIndex(ctx, clientset)
 	out := make([]hosts.Record, 0, len(list.Items))
 	for _, p := range list.Items {
-		ok, err := hosts.NameMatches(p.Name, q)
+		ok, err := q.MatchesName(p.Name)
 		if err != nil {
 			return nil, err
 		}

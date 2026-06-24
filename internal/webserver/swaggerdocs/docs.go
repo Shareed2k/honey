@@ -497,7 +497,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "JSON body; NDJSON stream of ui.HostExecResult when stream=1",
+                        "description": "JSON body; NDJSON stream of engine.HostExecResult when stream=1",
                         "schema": {
                             "$ref": "#/definitions/webserver.ExecResponse"
                         }
@@ -2626,7 +2626,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ui.AgentCloudBackend": {
+        "engine.AgentCloudBackend": {
             "type": "object",
             "properties": {
                 "bucket": {
@@ -2649,7 +2649,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ui.AgentTransferEvent": {
+        "engine.AgentTransferEvent": {
             "type": "object",
             "properties": {
                 "attempt": {
@@ -2675,7 +2675,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ui.CloudBackendRef": {
+        "engine.CloudBackendRef": {
             "type": "object",
             "properties": {
                 "index": {
@@ -2689,7 +2689,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ui.HostExecResult": {
+        "engine.HostExecResult": {
             "type": "object",
             "properties": {
                 "errMsg": {
@@ -2751,7 +2751,7 @@ const docTemplate = `{
                 }
             }
         },
-        "ui.RemoteFileEntry": {
+        "engine.RemoteFileEntry": {
             "type": "object",
             "properties": {
                 "is_dir": {
@@ -2825,7 +2825,7 @@ const docTemplate = `{
                 "results": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ui.HostExecResult"
+                        "$ref": "#/definitions/engine.HostExecResult"
                     }
                 }
             }
@@ -2913,7 +2913,7 @@ const docTemplate = `{
                 "results": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ui.HostExecResult"
+                        "$ref": "#/definitions/engine.HostExecResult"
                     }
                 }
             }
@@ -2928,10 +2928,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "cloud": {
-                    "$ref": "#/definitions/ui.AgentCloudBackend"
+                    "$ref": "#/definitions/engine.AgentCloudBackend"
                 },
                 "cloud_backend_ref": {
-                    "$ref": "#/definitions/ui.CloudBackendRef"
+                    "$ref": "#/definitions/engine.CloudBackendRef"
                 },
                 "credentials": {
                     "type": "object",
@@ -2968,7 +2968,7 @@ const docTemplate = `{
                 "events": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ui.AgentTransferEvent"
+                        "$ref": "#/definitions/engine.AgentTransferEvent"
                     }
                 }
             }
@@ -3052,7 +3052,7 @@ const docTemplate = `{
                 "entries": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ui.RemoteFileEntry"
+                        "$ref": "#/definitions/engine.RemoteFileEntry"
                     }
                 },
                 "path": {
@@ -3585,7 +3585,7 @@ const docTemplate = `{
                 "results": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ui.HostExecResult"
+                        "$ref": "#/definitions/engine.HostExecResult"
                     }
                 }
             }

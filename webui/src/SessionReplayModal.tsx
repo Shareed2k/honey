@@ -3,13 +3,10 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import stripAnsi from 'strip-ansi';
 import { Alert, Button, Modal, Select, Space, Spin, Typography } from 'antd';
-import { deleteRecording, fetchRecordingEvents, fetchTerminalAssistModels, summarizeRecording } from './api';
-import type {
-  HostExecResultRow,
-  RecordingEvent,
-  RecordingListEntry,
-  RecordingsRetentionInfo,
-} from './api';
+import { deleteRecording, fetchRecordingEvents, summarizeRecording } from './api/recordings';
+import { fetchTerminalAssistModels } from './api/assist';
+import type { HostExecResultRow } from './api/types/exec';
+import type { RecordingEvent, RecordingListEntry, RecordingsRetentionInfo } from './api/types/recordings';
 
 const AiMarkdown = lazy(async () => import('./AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
@@ -388,8 +385,7 @@ export function SessionReplayModal({
   const duration = useMemo(() => (events.length ? events[events.length - 1].time_ms || 0 : 0), [events]);
 
   return (
-    <Modal
-      open
+    <Modal maskClosable={false}       open
       title={`Replay${
         record.primary_ip?.trim()
           ? ` — ${record.name} (${record.primary_ip})`

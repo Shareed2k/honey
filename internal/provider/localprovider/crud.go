@@ -6,27 +6,24 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-func init() {
-	searchrun.RegisterCRUD(localCRUD{})
+type localCRUD struct {
+	cfg ConfigProvider
 }
 
-type localCRUD struct{}
+func (c localCRUD) ID() string   { return "local" }
+func (c localCRUD) Name() string { return "Local" }
 
-func (localCRUD) ID() string   { return "local" }
-func (localCRUD) Name() string { return "Local" }
-
-func (localCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
-	opts := make([]huh.Option[string], 0, len(cfg.Backends.Local))
-	for i, b := range cfg.Backends.Local {
+func (c localCRUD) ListOptions() []huh.Option[string] {
+	opts := make([]huh.Option[string], 0, len(c.cfg.LocalBackends()))
+	for i, b := range c.cfg.LocalBackends() {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("Local: %s (%d hosts)", b.Name, len(b.Hosts)), fmt.Sprintf("local:%d", i)))
 	}
 	return opts
 }
 
-func (localCRUD) Add(cfg *config.File) error {
+func (c localCRUD) Add() error {
 	var name string
 	if err := huh.NewForm(
 		huh.NewGroup(
@@ -60,18 +57,18 @@ func (localCRUD) Add(cfg *config.File) error {
 		}
 	}
 
-	cfg.Backends.Local = append(cfg.Backends.Local, config.LocalBackend{
+	c.cfg.SetLocalBackends(append(c.cfg.LocalBackends(), config.LocalBackend{
 		Name:  name,
 		Hosts: hosts,
-	})
+	}))
 	return nil
 }
 
-func (localCRUD) Edit(cfg *config.File, idx int) error {
-	if idx < 0 || idx >= len(cfg.Backends.Local) {
+func (c localCRUD) Edit(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.LocalBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	b := cfg.Backends.Local[idx]
+	b := c.cfg.LocalBackends()[idx]
 
 	if err := huh.NewForm(
 		huh.NewGroup(
@@ -125,14 +122,17 @@ func (localCRUD) Edit(cfg *config.File, idx int) error {
 		addMore = again
 	}
 
-	cfg.Backends.Local[idx] = b
+	backends := c.cfg.LocalBackends()
+	backends[idx] = b
+	c.cfg.SetLocalBackends(backends)
 	return nil
 }
 
-func (localCRUD) Delete(cfg *config.File, idx int) error {
-	if idx < 0 || idx >= len(cfg.Backends.Local) {
+func (c localCRUD) Delete(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.LocalBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	cfg.Backends.Local = append(cfg.Backends.Local[:idx], cfg.Backends.Local[idx+1:]...)
+	backends := c.cfg.LocalBackends()
+	c.cfg.SetLocalBackends(append(backends[:idx], backends[idx+1:]...))
 	return nil
 }

@@ -108,7 +108,7 @@ func searchAppliance(ctx context.Context, client *Client, t *TrueNAS, mgmtHost s
 	if name == "" {
 		name = mgmtHost
 	}
-	ok, err := hosts.NameMatches(name, q)
+	ok, err := q.MatchesName(name)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func searchVMs(ctx context.Context, client *Client, q hosts.Query, virtByName ma
 		if state != "" && state != "RUNNING" {
 			continue
 		}
-		ok, err := hosts.NameMatches(name, q)
+		ok, err := q.MatchesName(name)
 		if err != nil {
 			return nil, err
 		}
@@ -239,7 +239,7 @@ func searchVirtInstances(ctx context.Context, client *Client, q hosts.Query) ([]
 		if status != "" && status != "RUNNING" {
 			continue
 		}
-		ok, err := hosts.NameMatches(name, q)
+		ok, err := q.MatchesName(name)
 		if err != nil {
 			return nil, err
 		}

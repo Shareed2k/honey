@@ -16,15 +16,16 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/shareed2k/honey/internal/engine"
+
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/prometheus/alertmanager/notify/webhook"
-	amtemplate "github.com/prometheus/alertmanager/template"
-	"go.uber.org/zap"
 
+	amtemplate "github.com/prometheus/alertmanager/template"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/ui"
+	"go.uber.org/zap"
 )
 
 const (
@@ -193,7 +194,7 @@ func (s *Server) investigate(ctx context.Context, alert amtemplate.Alert) {
 		recordDir = strings.TrimSpace(s.fileCfg.Defaults.RecordDir)
 	}
 
-	results, _ := ui.ExecuteSSHParallel("", records.Records, func(_ hosts.Record) string { return cmd }, 8, nil)
+	results, _ := engine.ExecuteSSHParallel("", records.Records, func(_ hosts.Record) string { return cmd }, 8, nil)
 	// Build notification body.
 	var sb strings.Builder
 	_, _ = fmt.Fprintf(&sb, "Alert: %s\nHost query: %s\n\n", alert.Labels["alertname"], hostQuery)
@@ -321,6 +322,8 @@ func sendTelegram(ctx context.Context, cfg *config.AlertNotifyTelegram, subject,
 			zap.L().Error("alert notify Telegram: request failed", zap.Error(err))
 			continue
 		}
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			zap.L().Debug("alert webhook: close response body error", zap.Error(err))
+		}
 	}
 }

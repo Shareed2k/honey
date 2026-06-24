@@ -70,7 +70,7 @@ func (c *Consul) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, err
 	out := make([]hosts.Record, 0, len(nodes))
 	for _, n := range nodes {
 		name := n.Node
-		ok, err := hosts.NameMatches(name, q)
+		ok, err := q.MatchesName(name)
 		if err != nil {
 			return nil, err
 		}

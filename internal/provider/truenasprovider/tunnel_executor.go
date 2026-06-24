@@ -48,8 +48,8 @@ func (f UpstreamDialerFunc) DialUpstream(ctx context.Context, user string, r hos
 // TCP dial bridge (guests without SSH primary_ip). Appliance and rows with IP use SSH.
 func TruenasTunnelUsesAPIShell(r hosts.Record) bool {
 	return r.Provider == "truenas" &&
-		hosts.IsTrueNASAPIShellRecord(r) &&
-		hosts.PrimaryIPTrimmed(r) == ""
+		r.IsTrueNASAPIShell() &&
+		r.PrimaryIPTrimmed() == ""
 }
 
 type truenasExecutor struct {

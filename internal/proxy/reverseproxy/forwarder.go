@@ -30,7 +30,8 @@ func New(target *url.URL, opts ...Option) *Forwarder {
 	f.Director = nil
 
 	f.Rewrite = func(req *httputil.ProxyRequest) {
-		zap.L().Debug("Proxying incoming request",
+		zap.L().Debug(
+			"Proxying incoming request",
 			zap.String("method", req.In.Method),
 			zap.String("url", req.In.URL.String()),
 			zap.String("host", req.In.Host),
@@ -62,7 +63,8 @@ func New(target *url.URL, opts ...Option) *Forwarder {
 			req.Out.Host = target.Host
 		}
 
-		zap.L().Debug("Outbound proxy request prepared",
+		zap.L().Debug(
+			"Outbound proxy request prepared",
 			zap.String("url", req.Out.URL.String()),
 			zap.String("host", req.Out.Host),
 		)
@@ -88,7 +90,8 @@ func New(target *url.URL, opts ...Option) *Forwarder {
 					}
 					u.Host = origHost
 					res.Header.Set("Location", u.String())
-					zap.L().Debug("Rewrote absolute redirect Location header",
+					zap.L().Debug(
+						"Rewrote absolute redirect Location header",
 						zap.String("original", loc),
 						zap.String("rewritten", u.String()),
 					)

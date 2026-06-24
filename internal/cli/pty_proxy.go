@@ -6,14 +6,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
-
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
-	"github.com/shareed2k/honey/internal/ui"
 	"github.com/shareed2k/honey/internal/webserver"
+	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var ptyProxyConfig string
@@ -45,7 +44,8 @@ var ptyProxyCmd = &cobra.Command{
 			return nil
 		}
 
-		zap.L().Debug("honey pty-proxy starting",
+		zap.L().Debug(
+			"honey pty-proxy starting",
 			zap.String("session", hello.SessionID),
 			zap.String("host", hello.Record.Name),
 			zap.String("console", hello.Console),
@@ -61,7 +61,7 @@ var ptyProxyCmd = &cobra.Command{
 
 		// Run Terminal Interactive handles pure SSH, Proxmox Serial, and Kubernetes pods natively
 		// using os.Stdin/Stdout/Stderr and registers for SIGWINCH to handle resizes forwarded by tmux/zellij!
-		err = ui.RunTerminalInteractive(hello.SSHUser, hello.Record, hello.Console, buildHostExecRegistry())
+		err = engine.RunTerminalInteractive(hello.SSHUser, hello.Record, hello.Console, buildHostExecRegistry())
 		if err != nil {
 			ptyProxyPauseOnError(err)
 		}
@@ -91,13 +91,12 @@ func loadHostexecFromHoneyConfig(explicit string) error {
 		return err
 	}
 	if cfgPath == "" {
-		getSearchRegistry().ReconfigureFromConfig(nil)
+		getSearchRegistry().ReconfigureFromConfig()
 		return nil
 	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
+	if _, err := config.Load(cfgPath); err != nil {
 		return err
 	}
-	getSearchRegistry().ReconfigureFromConfig(cfg)
+	getSearchRegistry().ReconfigureFromConfig()
 	return nil
 }

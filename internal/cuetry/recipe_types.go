@@ -2,24 +2,65 @@
 package cuetry
 
 import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
+
+	"github.com/shareed2k/honey/internal/cuetry/secrets"
 )
 
 // Recipe is the decoded "recipe" block from a CUE document.
 type Recipe struct {
-	Name     string          `json:"name"`
-	Type     string          `json:"type,omitempty"`
-	Defaults *RecipeDefaults `json:"defaults,omitempty"`
-	Steps    []StepWrapper   `json:"steps"`
-	Handlers []StepWrapper   `json:"handlers,omitempty"`
+	Name             string                    `json:"name"`
+	Type             string                    `json:"type,omitempty"`
+	Webhooks         map[string]RecipeWebhook  `json:"webhooks,omitempty"`
+	Schedules        map[string]RecipeSchedule `json:"schedules,omitempty"`
+	Defaults         *RecipeDefaults           `json:"defaults,omitempty"`
+	Steps            []StepWrapper             `json:"steps"`
+	Handlers         []StepWrapper             `json:"handlers,omitempty"`
+	MatrixExpansions map[string][]string       `json:"-"` // internal tracking, not unmarshaled
+}
+
+// RecipeSchedule defines a cron-based trigger for a recipe.
+type RecipeSchedule struct {
+	Cron     string            `json:"cron"`               // 5-field cron expression, e.g. "0 2 * * *"
+	TimeZone string            `json:"timezone,omitempty"` // IANA tz name, e.g. "America/New_York"; defaults to UTC
+	Env      map[string]string `json:"env,omitempty"`      // static env vars injected at execution time
+}
+
+// RecipeSubRecipe configures a step that invokes another recipe.
+type RecipeSubRecipe struct {
+	Path    string            `json:"path"`
+	Prompts map[string]string `json:"prompts,omitempty"`
+}
+
+// RecipeWebhook defines a webhook trigger for a recipe.
+type RecipeWebhook struct {
+	AuthSecret string `json:"auth_secret,omitempty"`
+	// Actor is a gjson path into the webhook payload whose value becomes the OPA
+	// actor (e.g. "sender.login"). Lower priority than a trusted header / JWT.
+	Actor          string            `json:"actor,omitempty"`
+	Extract        map[string]string `json:"extract,omitempty"`
+	Async          *bool             `json:"async,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
+	IdempotencyTTL string            `json:"idempotency_ttl,omitempty"`
 }
 
 // RecipePrompt defines metadata for UI form generation.
 type RecipePrompt struct {
-	Description string `json:"description,omitempty"`
-	Type        string `json:"type,omitempty"`
-	Required    bool   `json:"required,omitempty"`
+	Description     string   `json:"description,omitempty"`
+	Type            string   `json:"type,omitempty"`
+	Required        bool     `json:"required,omitempty"`
+	Choices         []string `json:"choices,omitempty"`
+	ChoicesURL      string   `json:"choices_url,omitempty"`
+	ChoicesJSONPath string   `json:"choices_json_path,omitempty"`
+	Default         string   `json:"default,omitempty"`
+	Multi           bool     `json:"multi,omitempty"`
+	Regex           string   `json:"regex,omitempty"`
 }
 
 // RecipeDefaults holds recipe-level defaults (optional fields).
@@ -76,6 +117,18 @@ type RecipeAI struct {
 	MaxInputChars   int    `json:"max_input_chars,omitempty"`
 }
 
+// ResolveSystemPrompt returns the system message for a recipe ai step.
+// Precedence: non-empty ai.system_prompt in CUE, then config defaults.ai_system_prompt, then built-in default.
+func (ai *RecipeAI) ResolveSystemPrompt(configDefault string) string {
+	if ai != nil && strings.TrimSpace(ai.SystemPrompt) != "" {
+		return strings.TrimSpace(ai.SystemPrompt)
+	}
+	if strings.TrimSpace(configDefault) != "" {
+		return strings.TrimSpace(configDefault)
+	}
+	return DefaultRecipeAISystemPrompt
+}
+
 // RecipeNotifyHTTP marks HTTP default JSON POST URLs (HONEY_NOTIFY_HTTP_URL) as selected in notify.services.
 type RecipeNotifyHTTP struct{}
 
@@ -124,6 +177,15 @@ type RecipePluginHook struct {
 	ID     string          `json:"id"`
 	Action string          `json:"action"`
 	Config json.RawMessage `json:"config,omitempty"`
+}
+
+// Assertion defines validation rules for a step's output and exit code.
+type Assertion struct {
+	Regex         string `json:"regex,omitempty"`
+	NotRegex      string `json:"not_regex,omitempty"`
+	JSONPath      string `json:"json_path,omitempty"`
+	ExpectedValue string `json:"expected_value,omitempty"`
+	ExitCode      *int   `json:"exit_code,omitempty"`
 }
 
 // RecipeStepHook runs once per target host after that host's main step result is known.
@@ -250,6 +312,7 @@ type K8sCreateJob struct {
 
 // RecipeStepDocker configures a Docker engine API step.
 type RecipeStepDocker struct {
+	Socket string       `json:"socket,omitempty"`
 	Action string       `json:"action"`
 	Output string       `json:"output,omitempty"`
 	Build  *DockerBuild `json:"build,omitempty"`
@@ -287,6 +350,7 @@ type DockerRun struct {
 	Volumes []string          `json:"volumes,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Detach  bool              `json:"detach,omitempty"`
+	Rm      bool              `json:"rm,omitempty"`
 }
 
 // DockerExec configures executing a command inside a running container.
@@ -298,6 +362,7 @@ type DockerExec struct {
 // DockerStop configures stopping a running container.
 type DockerStop struct {
 	Container string `json:"container"`
+	Rm        bool   `json:"rm,omitempty"`
 }
 
 // RecipeStepOpensearch configures an OpenSearch engine API step.
@@ -331,4 +396,54 @@ type RecipeStepPostgres struct {
 	MigrationsDir string            `json:"migrations_dir,omitempty"`
 	Files         []string          `json:"files,omitempty"`
 	Output        string            `json:"output,omitempty"`
+}
+
+// CanonicalJSON returns deterministic JSON (sorted keys, no extra
+// whitespace) for the given Recipe. Two Recipes that resolve to the same plan
+// produce the same bytes here.
+func (r Recipe) CanonicalJSON() ([]byte, error) {
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("recipe canonical json: marshal: %w", err)
+	}
+	var generic any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		return nil, fmt.Errorf("recipe canonical json: reparse: %w", err)
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(generic); err != nil {
+		return nil, fmt.Errorf("recipe canonical json: re-encode: %w", err)
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// HashJSON returns "sha256:" + hex(sha256(r.CanonicalJSON())).
+// Used to compare a recording's recipe to a disk recipe and decide "edited?".
+func (r Recipe) HashJSON() (string, error) {
+	b, err := r.CanonicalJSON()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// RecipeFromJSON deserializes a canonical (or near-canonical) JSON payload back
+// into a Recipe value. Run cuetry.ValidateRemoteRecipe (or the equivalent
+// per-step validators) after this to ensure the result is well-formed.
+func RecipeFromJSON(raw []byte) (Recipe, error) {
+	var r Recipe
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		return Recipe{}, fmt.Errorf("recipe from json: %w", err)
+	}
+	return r, nil
+}
+
+// WithRecipeDir attaches the absolute recipe directory to ctx (for age-file and similar).
+func WithRecipeDir(ctx context.Context, absDir string) context.Context {
+	return secrets.WithRecipeDir(ctx, absDir)
 }

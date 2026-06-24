@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/invopop/jsonschema"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -46,6 +47,8 @@ const (
 	KindDocker        = "docker"
 	KindOpensearch    = "opensearch"
 	KindPostgres      = "postgres"
+	KindRecipe        = "recipe"
+	KindOPA           = "opa"
 )
 
 // StepValidateCtx carries everything the per-step validators need. It replaces the
@@ -62,27 +65,29 @@ type StepValidateCtx struct {
 // StepBase holds the cross-cutting fields shared by every step kind. It is embedded
 // (anonymously) by each concrete step, so these fields flatten into the step's JSON.
 type StepBase struct {
-	ID            string            `json:"id,omitempty"`
-	Depends       []string          `json:"depends,omitempty"`
-	Host          string            `json:"host" jsonschema:"default=*"`
-	Env           map[string]string `json:"env,omitempty"`
-	Secrets       map[string]string `json:"secrets,omitempty"`
-	EnvFrom       []EnvFromRef      `json:"env_from,omitempty"`
-	RunAs         string            `json:"run_as,omitempty"`
-	When          string            `json:"when,omitempty"`
-	ChangedWhen   string            `json:"changed_when,omitempty"`
-	FailedWhen    string            `json:"failed_when,omitempty"`
-	Retry         *RecipeStepRetry  `json:"retry,omitempty"`
-	Timeout       string            `json:"timeout,omitempty"`
-	IgnoreErrors  bool              `json:"ignore_errors,omitempty" jsonschema:"default=false"`
-	CheckCmd      string            `json:"check_cmd,omitempty"`
-	Output        string            `json:"output,omitempty"`
-	Loop          string            `json:"loop,omitempty"`
-	LoopFrom      *RecipeLoop       `json:"loop_from,omitempty"`
-	Notify        *RecipeNotify     `json:"notify,omitempty"`
-	Hooks         *RecipeStepHooks  `json:"hooks,omitempty"`
-	NotifyHandler []string          `json:"notify_handler,omitempty"`
-	KVTunnel      *bool             `json:"kv_tunnel,omitempty" jsonschema:"default=false"`
+	ID            string              `json:"id,omitempty"`
+	Depends       []string            `json:"depends,omitempty"`
+	Host          string              `json:"host" jsonschema:"default=*"`
+	Env           map[string]string   `json:"env,omitempty"`
+	Secrets       map[string]string   `json:"secrets,omitempty"`
+	EnvFrom       []EnvFromRef        `json:"env_from,omitempty"`
+	RunAs         string              `json:"run_as,omitempty"`
+	When          string              `json:"when,omitempty"`
+	ChangedWhen   string              `json:"changed_when,omitempty"`
+	FailedWhen    string              `json:"failed_when,omitempty"`
+	Retry         *RecipeStepRetry    `json:"retry,omitempty"`
+	Timeout       string              `json:"timeout,omitempty"`
+	IgnoreErrors  bool                `json:"ignore_errors,omitempty" jsonschema:"default=false"`
+	CheckCmd      string              `json:"check_cmd,omitempty"`
+	Output        string              `json:"output,omitempty"`
+	Loop          string              `json:"loop,omitempty"`
+	LoopFrom      *RecipeLoop         `json:"loop_from,omitempty"`
+	Notify        *RecipeNotify       `json:"notify,omitempty"`
+	Hooks         *RecipeStepHooks    `json:"hooks,omitempty"`
+	NotifyHandler []string            `json:"notify_handler,omitempty"`
+	KVTunnel      *bool               `json:"kv_tunnel,omitempty" jsonschema:"default=false"`
+	Matrix        map[string][]string `json:"matrix,omitempty"`
+	Assert        []Assertion         `json:"assert,omitempty"`
 }
 
 // Base lets a *StepBase (and thus every embedding step) satisfy the shared part of Step.
@@ -100,9 +105,20 @@ func (b StepBase) cloned() StepBase {
 	cp.Secrets = maps.Clone(b.Secrets)
 	cp.EnvFrom = slices.Clone(b.EnvFrom)
 	cp.NotifyHandler = slices.Clone(b.NotifyHandler)
+	if len(b.Matrix) > 0 {
+		cp.Matrix = make(map[string][]string, len(b.Matrix))
+		for k, v := range b.Matrix {
+			cp.Matrix[k] = slices.Clone(v)
+		}
+	}
 	// Retry/LoopFrom/Notify/Hooks are pointers but loop fan-out never mutates them.
 	return cp
 }
+
+const (
+	minRecipeMaxParallel = 1
+	maxRecipeMaxParallel = 128
+)
 
 // RemoteExec holds SSH / fan-out options for steps that target remote hosts.
 type RemoteExec struct {
@@ -110,6 +126,28 @@ type RemoteExec struct {
 	SSHPrivateKey string `json:"ssh_private_key,omitempty"`
 	MaxParallel   int    `json:"max_parallel,omitempty" jsonschema:"default=0"`
 	Serial        int    `json:"serial,omitempty"`
+}
+
+// EffectiveMaxParallel returns host-level parallelism for a step (SSH/SFTP batch).
+// Step max_parallel overrides defaults; zero means caller should use its package default (32).
+func (r *RemoteExec) EffectiveMaxParallel(defaults *RecipeDefaults) int {
+	if r != nil && r.MaxParallel > 0 {
+		return r.MaxParallel
+	}
+	if defaults != nil && defaults.MaxParallel > 0 {
+		return defaults.MaxParallel
+	}
+	return 0
+}
+
+func validateMaxParallelField(where string, n int) error {
+	if n == 0 {
+		return nil
+	}
+	if n < minRecipeMaxParallel || n > maxRecipeMaxParallel {
+		return fmt.Errorf("cuetry: %s.max_parallel must be between %d and %d", where, minRecipeMaxParallel, maxRecipeMaxParallel)
+	}
+	return nil
 }
 
 // Remote lets a *RemoteExec (and thus every embedding remote step) satisfy RemoteStep.
@@ -204,14 +242,14 @@ func (w *StepWrapper) UnmarshalJSON(data []byte) error {
 				}
 			}
 			if matchedKind != "" && matchedKind != e.kind {
-				return fmt.Errorf("only one of command, render, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, or postgres allowed")
+				return fmt.Errorf("only one of command, render, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, postgres, recipe, or opa allowed")
 			}
 			matchedKind = e.kind
 			ctor = e.ctor
 		}
 	}
 	if ctor == nil {
-		return fmt.Errorf("need exactly one of command, render, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, or postgres")
+		return fmt.Errorf("need exactly one of command, render, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, postgres, recipe, or opa")
 	}
 
 	step := ctor()
@@ -220,4 +258,34 @@ func (w *StepWrapper) UnmarshalJSON(data []byte) error {
 	}
 	w.Step = step
 	return nil
+}
+
+// BuildStepJSONSchema reflects each registered concrete step kind into its own
+// definition, so every kind exposes exactly its own fields (e.g. template/ai have no
+// ssh_port / max_parallel). The result is consumed by the RecipeStudio frontend.
+func BuildStepJSONSchema() map[string]any {
+	reflector := jsonschema.Reflector{ExpandedStruct: true}
+	definitions := make(map[string]any)
+
+	for _, inst := range reflectStepInstances() {
+		definitions[inst.Kind] = reflectToMap(&reflector, inst.Step)
+	}
+	definitions["defaults"] = reflectToMap(&reflector, &RecipeDefaults{})
+
+	return map[string]any{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"type":        "object",
+		"definitions": definitions,
+	}
+}
+
+// reflectToMap reflects v into a JSON Schema and decodes it into a generic map.
+// The schema is self-contained: nested types live under $defs and are referenced
+// via $ref, which the frontend (recipeStudioUtils) resolves per kind.
+func reflectToMap(reflector *jsonschema.Reflector, v any) map[string]any {
+	schema := reflector.Reflect(v)
+	b, _ := json.Marshal(schema)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
 }

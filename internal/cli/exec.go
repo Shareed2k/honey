@@ -9,11 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 const timeoutMissingMarker = "__HONEY_TIMEOUT_MISSING__"
@@ -26,6 +25,8 @@ var (
 	flagExecShell    string
 	flagExecQuiet    bool
 	flagExecOutput   string
+	flagExecCheck    bool
+	flagExecShellchk bool
 )
 
 var execCmd = &cobra.Command{
@@ -59,6 +60,8 @@ func init() {
 	execCmd.Flags().StringVar(&flagExecShell, "shell", "auto", "Command shell: auto, sh, bash, raw, powershell")
 	execCmd.Flags().BoolVar(&flagExecQuiet, "quiet", false, "Show status lines only (no stdout blocks)")
 	execCmd.Flags().StringVarP(&flagExecOutput, "output", "o", "text", "Output format: text or json")
+	execCmd.Flags().BoolVar(&flagExecCheck, "check", false, "Analyze command risk and print the decision without executing")
+	execCmd.Flags().BoolVar(&flagExecShellchk, "shellcheck", false, "With --check, also run shellcheck if installed")
 }
 
 func validateExecFlags() error {
@@ -80,7 +83,7 @@ func validateExecFlags() error {
 	return nil
 }
 
-func printExecResult(res ui.HostExecResult) {
+func printExecResult(res engine.HostExecResult) {
 	prefix := fmt.Sprintf("[%s/%s/%s]", res.Provider, res.Name, strings.TrimSpace(res.IP))
 	output := strings.TrimSpace(res.Output)
 	if res.Success {
@@ -121,7 +124,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	reg := buildHostExecRegistry()
 	cfg := resolvedCfg
 	reg.Reconfigure(cfg)
-	clientCache := ui.NewClientCache()
+	clientCache := engine.NewClientCache()
 	clientCache.SetRegistry(reg)
 	defer clientCache.CloseAll()
 
@@ -132,10 +135,16 @@ func runExec(cmd *cobra.Command, args []string) error {
 
 	jobs := make([]hosts.Record, 0, len(records))
 	for _, r := range records {
-		if hosts.IsConnectableRecord(r) {
+		if r.IsConnectable() {
 			jobs = append(jobs, r)
 		}
 	}
+	if flagExecCheck {
+		// Risk analysis only — no execution; tolerate an empty host set (per-target
+		// policy simply has nothing to evaluate).
+		return runExecCheck(cmd.Context(), remoteCmd, jobs)
+	}
+
 	if len(jobs) == 0 {
 		return fmt.Errorf("no connectable records match %q", target)
 	}
@@ -150,12 +159,13 @@ func runExec(cmd *cobra.Command, args []string) error {
 		retryCfg = cuetry.RecipeStepRetry{Attempts: flagExecRetry, DelayMS: 1000, MaxDelayMS: 30000, Backoff: "fixed"}
 	}
 
-	out := make(chan ui.HostExecResult, len(jobs))
+	out := make(chan engine.HostExecResult, len(jobs))
 	go func() {
 		defer close(out)
-		_ = ui.StreamSSHParallel(context.Background(), sshUser, jobs, false,
+		_ = engine.StreamSSHParallel(
+			context.Background(), sshUser, jobs, false,
 			func(_ hosts.Record, _ map[string]string) string { return finalCmd },
-			out, ui.BatchOptions{
+			out, engine.BatchOptions{
 				MaxConc:    flagExecParallel,
 				Cache:      clientCache,
 				RetryCfg:   retryCfg,
@@ -165,7 +175,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		)
 	}()
 
-	results := make([]ui.HostExecResult, 0, len(jobs))
+	results := make([]engine.HostExecResult, 0, len(jobs))
 	total := 0
 	failures := 0
 	for res := range out {

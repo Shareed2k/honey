@@ -41,7 +41,7 @@ func TestRecentRuns_ordersByMostRecent(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/recent-runs?limit=10", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesRecentRuns)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}
@@ -74,7 +74,7 @@ func TestRecentRuns_limitHonored(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/recent-runs?limit=3", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesRecentRuns)(w, req)
+	s.router.ServeHTTP(w, req)
 	var got struct {
 		Runs []json.RawMessage `json:"runs"`
 	}
@@ -100,7 +100,7 @@ func TestRecentRuns_skipsDryRuns(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/recent-runs", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesRecentRuns)(w, req)
+	s.router.ServeHTTP(w, req)
 	var got struct {
 		Runs []struct {
 			RecipeName string `json:"recipe_name"`
@@ -125,7 +125,7 @@ func TestRecentRuns_includesHostsFromMeta(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/recent-runs", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesRecentRuns)(w, req)
+	s.router.ServeHTTP(w, req)
 	var got struct {
 		Runs []struct {
 			Hosts []struct {
@@ -148,7 +148,7 @@ func TestRecentRuns_emptyDirOK(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/recent-runs", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	s.withAuth(s.handleRecipesRecentRuns)(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
 	}

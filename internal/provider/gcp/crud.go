@@ -5,27 +5,24 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/searchrun"
 )
 
-func init() {
-	searchrun.RegisterCRUD(gcpCRUD{})
+type gcpCRUD struct {
+	cfg ConfigProvider
 }
 
-type gcpCRUD struct{}
+func (c gcpCRUD) ID() string   { return "gcp" }
+func (c gcpCRUD) Name() string { return "GCP" }
 
-func (gcpCRUD) ID() string   { return "gcp" }
-func (gcpCRUD) Name() string { return "GCP" }
-
-func (gcpCRUD) ListOptions(cfg *config.File) []huh.Option[string] {
-	opts := make([]huh.Option[string], 0, len(cfg.Backends.GCP))
-	for i, b := range cfg.Backends.GCP {
+func (c gcpCRUD) ListOptions() []huh.Option[string] {
+	opts := make([]huh.Option[string], 0, len(c.cfg.GCPBackends()))
+	for i, b := range c.cfg.GCPBackends() {
 		opts = append(opts, huh.NewOption(fmt.Sprintf("GCP: %s (%s)", b.Name, b.Project), fmt.Sprintf("gcp:%d", i)))
 	}
 	return opts
 }
 
-func (gcpCRUD) Add(cfg *config.File) error {
+func (c gcpCRUD) Add() error {
 	var name, project, zone string
 	err := huh.NewForm(
 		huh.NewGroup(
@@ -35,20 +32,20 @@ func (gcpCRUD) Add(cfg *config.File) error {
 		),
 	).Run()
 	if err == nil {
-		cfg.Backends.GCP = append(cfg.Backends.GCP, config.GCPBackend{
+		c.cfg.SetGCPBackends(append(c.cfg.GCPBackends(), config.GCPBackend{
 			Name:    name,
 			Project: project,
 			Zone:    zone,
-		})
+		}))
 	}
 	return err
 }
 
-func (gcpCRUD) Edit(cfg *config.File, idx int) error {
-	if idx < 0 || idx >= len(cfg.Backends.GCP) {
+func (c gcpCRUD) Edit(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.GCPBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	b := cfg.Backends.GCP[idx]
+	b := c.cfg.GCPBackends()[idx]
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Name").Value(&b.Name),
@@ -57,15 +54,18 @@ func (gcpCRUD) Edit(cfg *config.File, idx int) error {
 		),
 	).Run()
 	if err == nil {
-		cfg.Backends.GCP[idx] = b
+		backends := c.cfg.GCPBackends()
+		backends[idx] = b
+		c.cfg.SetGCPBackends(backends)
 	}
 	return err
 }
 
-func (gcpCRUD) Delete(cfg *config.File, idx int) error {
-	if idx < 0 || idx >= len(cfg.Backends.GCP) {
+func (c gcpCRUD) Delete(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.GCPBackends()) {
 		return fmt.Errorf("index out of bounds")
 	}
-	cfg.Backends.GCP = append(cfg.Backends.GCP[:idx], cfg.Backends.GCP[idx+1:]...)
+	backends := c.cfg.GCPBackends()
+	c.cfg.SetGCPBackends(append(backends[:idx], backends[idx+1:]...))
 	return nil
 }

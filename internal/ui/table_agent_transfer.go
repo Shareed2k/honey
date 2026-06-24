@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
+	"github.com/shareed2k/honey/internal/engine"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-
 	"github.com/shareed2k/honey/internal/cloudtransfer"
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -49,7 +50,7 @@ func (m *model) recordAtCursor() (hosts.Record, bool) {
 
 func (m *model) agentPickEnter() (tea.Model, tea.Cmd) {
 	rec, ok := m.recordAtCursor()
-	if !ok || !HostConnectableForTransfer(rec) {
+	if !ok || !engine.HostConnectableForTransfer(rec) {
 		return m, nil
 	}
 	switch m.agentPick {
@@ -288,14 +289,14 @@ func (m *model) submitAgentTransferCmd() tea.Cmd {
 				maxR = n
 			}
 		}
-		cloud := AgentCloudBackend{
+		cloud := engine.AgentCloudBackend{
 			Provider: m.agentFormValues[2],
 			Bucket:   m.agentFormValues[3],
 			Prefix:   m.agentFormValues[4],
 			Region:   m.agentFormValues[5],
 			Endpoint: m.agentFormValues[6],
 		}
-		events, err := RunAgentTransferWithFallback(
+		events, err := engine.RunAgentTransferWithFallback(
 			ctx,
 			m.fileClientCache,
 			m.sshUser,
@@ -311,7 +312,7 @@ func (m *model) submitAgentTransferCmd() tea.Cmd {
 			m.agentKeepObject,
 			maxR,
 			cloudtransfer.SigningHints{},
-			transferConfigFromSessionHoney(m.configPath, m.honey),
+			engine.TransferConfigFromSessionHoney(m.configPath, m.honey),
 			nil,
 		)
 		if err != nil {
@@ -321,7 +322,7 @@ func (m *model) submitAgentTransferCmd() tea.Cmd {
 	}
 }
 
-func formatAgentTransferEvents(events []AgentTransferEvent) string {
+func formatAgentTransferEvents(events []engine.AgentTransferEvent) string {
 	var b strings.Builder
 	for _, e := range events {
 		host := e.Host

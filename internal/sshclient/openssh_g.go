@@ -264,7 +264,8 @@ func lookupHostSSHConfig(alias, userOverride string) (*hostSSHConfig, error) {
 	dest := sshGDestination(userOverride, alias)
 	out, err := runSSHGSingleflight(dest)
 	if err != nil {
-		zap.L().Debug("ssh -G failed; using builtin ssh_config parser",
+		zap.L().Debug(
+			"ssh -G failed; using builtin ssh_config parser",
 			zap.String("dest", dest),
 			zap.Error(err),
 		)

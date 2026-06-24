@@ -37,7 +37,7 @@ func TestRecipeJSON_roundTripAgainstExamples(t *testing.T) {
 			if lerr != nil {
 				t.Skipf("disk recipe does not load: %v", lerr)
 			}
-			b, herr := CanonicalRecipeJSON(loaded)
+			b, herr := loaded.CanonicalJSON()
 			if herr != nil {
 				t.Fatalf("canonical json: %v", herr)
 			}
@@ -45,7 +45,7 @@ func TestRecipeJSON_roundTripAgainstExamples(t *testing.T) {
 			if perr != nil {
 				t.Fatalf("round-trip parse: %v", perr)
 			}
-			b2, herr := CanonicalRecipeJSON(back)
+			b2, herr := back.CanonicalJSON()
 			if herr != nil {
 				t.Fatalf("canonical json (round 2): %v", herr)
 			}
@@ -82,14 +82,14 @@ func TestHashRecipeJSON_stable(t *testing.T) {
 	if err != nil {
 		t.Skipf("baseline recipe not present: %v", err)
 	}
-	h1, err := HashRecipeJSON(r1)
+	h1, err := r1.HashJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(h1, "sha256:") || len(h1) != len("sha256:")+64 {
 		t.Fatalf("hash format: %q", h1)
 	}
-	h2, err := HashRecipeJSON(r1)
+	h2, err := r1.HashJSON()
 	if err != nil {
 		t.Fatal(err)
 	}

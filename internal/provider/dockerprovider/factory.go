@@ -12,28 +12,39 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 )
 
+// ConfigProvider defines the configuration dependency required by this provider.
+type ConfigProvider interface {
+	DockerBackends() []config.DockerBackend
+	DockerBackendSlicePtr() *[]config.DockerBackend
+	SetDockerBackends([]config.DockerBackend)
+	LocalBackends() []config.LocalBackend
+}
+
 const overrideKey = "docker"
 
 func dockerOverride(overrides searchrun.ProviderOverrides) (o config.DockerBackend) {
-	json.Unmarshal(overrides[overrideKey], &o) //nolint:errcheck
+	if len(overrides[overrideKey]) > 0 {
+		_ = json.Unmarshal(overrides[overrideKey], &o) // overrides are optional
+	}
 	return o
 }
 
 // NewFactory returns a new factory for this provider. interactive (implemented in
 // the ui package) is injected so resolver-created executors can run TTY sessions.
-func NewFactory(interactive InteractiveRunner) searchrun.ProviderFactory {
+func NewFactory(interactive InteractiveRunner, cfg ConfigProvider) searchrun.ProviderFactory {
 	searchrun.RegisterDockerDiscover(DiscoverOnVMs)
-	return dockerFactory{interactive: interactive}
+	return dockerFactory{interactive: interactive, cfg: cfg}
 }
 
 type dockerFactory struct {
 	interactive InteractiveRunner
+	cfg         ConfigProvider
 }
 
-func (dockerFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOverrides) []hosts.Backend {
-	locals := cfg.Backends.Local
-	out := make([]hosts.Backend, 0, len(cfg.Backends.Docker))
-	for _, e := range cfg.Backends.Docker {
+func (f dockerFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
+	locals := f.cfg.LocalBackends()
+	out := make([]hosts.Backend, 0, len(f.cfg.DockerBackends()))
+	for _, e := range f.cfg.DockerBackends() {
 		bc := BackendConfigFromYAML(e, locals, "")
 		applyDockerFlags(&bc, overrides)
 		out = append(out, &Docker{Config: bc})
@@ -41,7 +52,7 @@ func (dockerFactory) FromConfig(cfg *config.File, overrides searchrun.ProviderOv
 	return out
 }
 
-func (dockerFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
+func (f dockerFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backend {
 	o := dockerOverride(overrides)
 	host := strings.TrimSpace(searchrun.FirstNonEmpty(o.Host, cliFlags.host))
 	viaLocal := strings.TrimSpace(searchrun.FirstNonEmpty(o.ViaLocal, cliFlags.viaLocal))
@@ -64,9 +75,9 @@ func (dockerFactory) Default(overrides searchrun.ProviderOverrides) hosts.Backen
 	return &Docker{Config: bc}
 }
 
-func (dockerFactory) BackendRows(cfg *config.File) []config.BackendRow {
-	rows := make([]config.BackendRow, 0, len(cfg.Backends.Docker))
-	for _, e := range cfg.Backends.Docker {
+func (f dockerFactory) BackendRows() []config.BackendRow {
+	rows := make([]config.BackendRow, 0, len(f.cfg.DockerBackends()))
+	for _, e := range f.cfg.DockerBackends() {
 		hint := strings.TrimSpace(e.Host)
 		if hint == "" && strings.TrimSpace(e.ViaLocal) != "" {
 			hint = "via_local:" + strings.TrimSpace(e.ViaLocal)
@@ -76,13 +87,15 @@ func (dockerFactory) BackendRows(cfg *config.File) []config.BackendRow {
 	return rows
 }
 
-func (dockerFactory) BackendKind() string { return "docker" }
+func (f dockerFactory) BackendKind() string { return "docker" }
 
-func (dockerFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.Docker }
+func (f dockerFactory) BackendSlicePtr() any {
+	return f.cfg.DockerBackendSlicePtr()
+}
 
-func (dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
+func (f dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
-func (dockerFactory) ProviderName() string { return "docker" }
+func (f dockerFactory) ProviderName() string { return "docker" }
 
 func (f dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor {
 	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
@@ -92,7 +105,9 @@ func (f dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostex
 	return nil
 }
 
-func (dockerFactory) ReconfigureFromConfig(cfg *config.File) { reconfigureDocker(cfg) }
+func (f dockerFactory) ReconfigureFromConfig() {
+	reconfigureDocker()
+}
 
 func applyDockerFlags(bc *BackendConfig, overrides searchrun.ProviderOverrides) {
 	o := dockerOverride(overrides)

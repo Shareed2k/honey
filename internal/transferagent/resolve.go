@@ -125,7 +125,8 @@ func buildTransferAgentBinary(root, binPath, targetOS, targetArch string) error 
 	// #nosec G204 -- fixed "go build" argv; -o points at cache under repo root from repoRootFromSource.
 	cmd := exec.Command("go", args...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"GOOS="+targetOS,
 		"GOARCH="+targetArch,
 		"CGO_ENABLED=0",
@@ -207,7 +208,8 @@ func resolveBinaryLocked(cacheDir, targetOS, targetArch, cloudProvider string) (
 	if stampOK {
 		if p := strings.TrimSpace(resolvedByKey[cacheKey]); p != "" {
 			if err := ensureExecutable(p); err == nil && isAgentBinaryFresh(p, sourceStamp) {
-				zap.L().Debug("transfer agent binary cache hit",
+				zap.L().Debug(
+					"transfer agent binary cache hit",
 					zap.String("target", targetOS+"/"+targetArch),
 					zap.String("provider_flavor", flavor),
 					zap.String("path", p),
@@ -233,7 +235,8 @@ func resolveBinaryLocked(cacheDir, targetOS, targetArch, cloudProvider string) (
 
 	if stampOK {
 		if err := ensureExecutable(binPath); err == nil && isAgentBinaryFresh(binPath, sourceStamp) {
-			zap.L().Debug("transfer agent binary cache file hit",
+			zap.L().Debug(
+				"transfer agent binary cache file hit",
 				zap.String("target", targetOS+"/"+targetArch),
 				zap.String("provider_flavor", flavor),
 				zap.String("path", binPath),
@@ -262,7 +265,8 @@ func resolveBinaryLocked(cacheDir, targetOS, targetArch, cloudProvider string) (
 			dest := dlBinPath
 			dlErr := fetchAgentBinary(u, dest)
 			if dlErr == nil && ensureExecutable(dest) == nil {
-				zap.L().Debug("transfer agent binary downloaded",
+				zap.L().Debug(
+					"transfer agent binary downloaded",
 					zap.String("target", targetOS+"/"+targetArch),
 					zap.String("provider_flavor", flavor),
 					zap.String("url", u),

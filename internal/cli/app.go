@@ -10,14 +10,13 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
-
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/appsecret"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/proxy"
-	"github.com/shareed2k/honey/internal/ui"
+	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var (
@@ -73,7 +72,7 @@ func init() {
 	getSearchRegistry().RegisterAllProviderFlags(appOpenCmd)
 }
 
-func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, cache *ui.ClientCache) (proxy.Dialer, io.Closer, error) {
+func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, cache *engine.ClientCache) (proxy.Dialer, io.Closer, error) {
 	searchBackends := flagBackends
 	if app.Backend != "" {
 		searchBackends = app.Backend
@@ -115,14 +114,14 @@ func resolveAppTarget(ctx context.Context, app apps.AppConfig, cfgPath string, c
 
 	rec := out.Records[0]
 	if !flagAppPrintURL {
-		if ui.TransportForAppDialer(rec) == ui.AppDialerTransportSSH {
+		if engine.TransportForAppDialer(rec) == engine.AppDialerTransportSSH {
 			fmt.Printf("Opening SSH tunnel via %s\n", rec.Name)
 		} else {
 			fmt.Printf("Opening in-memory tunnel via %s\n", rec.Name)
 		}
 	}
 
-	return ui.ResolveAppDialerWithCache(flagSSHUser, rec, cache)
+	return engine.ResolveAppDialerWithCache(flagSSHUser, rec, cache)
 }
 
 func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error {
@@ -152,7 +151,7 @@ func runProxyApp(cmd *cobra.Command, name string, forceType apps.AppType) error 
 
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
-	appProxyCache := ui.NewClientCache()
+	appProxyCache := engine.NewClientCache()
 	reg := buildHostExecRegistry()
 	reg.Reconfigure(cfg)
 	appProxyCache.SetRegistry(reg)

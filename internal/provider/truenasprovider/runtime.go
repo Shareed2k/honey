@@ -21,7 +21,8 @@ var (
 	truenasBack []TrueNASBackendRuntime
 )
 
-func reconfigureTrueNAS(cfg *config.File) {
+func reconfigureTrueNAS() {
+	cfg := config.Get()
 	rtMu.Lock()
 	defer rtMu.Unlock()
 	truenasBack = truenasBack[:0]

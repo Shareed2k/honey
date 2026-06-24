@@ -43,6 +43,9 @@ function manualChunks(id: string): string | undefined {
   if (id.includes('swagger-ui') || id.includes('swagger-client')) {
     return 'vendor-swagger-ui';
   }
+  if (id.includes('@ag-ui')) {
+    return 'vendor-ag-ui';
+  }
   // Remaining deps stay in the chunk that imports them (avoids circular vendor <-> feature splits).
   return undefined;
 }

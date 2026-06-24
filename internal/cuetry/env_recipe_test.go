@@ -16,7 +16,7 @@ func TestValidateRecipeEnvMap_badKey(t *testing.T) {
 }
 
 func TestValidateRecipeEnvMap_badValue(t *testing.T) {
-	if err := ValidateRecipeEnvMap(map[string]string{"OK": "a\nb"}); err == nil {
+	if err := ValidateRecipeEnvMap(map[string]string{"OK": "a\x00b"}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -69,6 +69,11 @@ func TestEffectiveEnvForRun_withHostRecord(t *testing.T) {
 		Provider:  "aws",
 		Zone:      "us-east-1a",
 		Region:    "us-east-1",
+		Vars: map[string]hosts.InventoryValue{
+			"service":         hosts.MustInventoryValue("nginx"),
+			"allow_restart":   hosts.MustInventoryValue(true),
+			"restart_timeout": hosts.MustInventoryValue(30),
+		},
 		Meta: map[string]string{
 			"kind":     "instance",
 			"bad-key@": "ignored",
@@ -81,13 +86,16 @@ func TestEffectiveEnvForRun_withHostRecord(t *testing.T) {
 	}
 
 	expectedVars := map[string]string{
-		"USER_VAR":              "custom",
-		"HONEY_HOST_NAME":       "web-01",
-		"HONEY_HOST_PRIMARY_IP": "10.0.0.5",
-		"HONEY_HOST_PROVIDER":   "aws",
-		"HONEY_HOST_ZONE":       "us-east-1a",
-		"HONEY_HOST_REGION":     "us-east-1",
-		"HONEY_HOST_META_KIND":  "instance",
+		"USER_VAR":                  "custom",
+		"HONEY_HOST_NAME":           "web-01",
+		"HONEY_HOST_PRIMARY_IP":     "10.0.0.5",
+		"HONEY_HOST_PROVIDER":       "aws",
+		"HONEY_HOST_ZONE":           "us-east-1a",
+		"HONEY_HOST_REGION":         "us-east-1",
+		"HONEY_HOST_META_KIND":      "instance",
+		"HONEY_VAR_SERVICE":         "nginx",
+		"HONEY_VAR_ALLOW_RESTART":   "true",
+		"HONEY_VAR_RESTART_TIMEOUT": "30",
 	}
 
 	for k, v := range expectedVars {
@@ -146,8 +154,9 @@ recipe: {
 	]
 }
 `
-	if err := ValidateRemoteRecipe([]byte(src)); err == nil {
-		t.Fatal("expected error")
+	// We removed this rejection rule, so parsing should now succeed
+	if err := ValidateRemoteRecipe([]byte(src)); err != nil {
+		t.Fatalf("expected parsing to succeed, got: %v", err)
 	}
 }
 

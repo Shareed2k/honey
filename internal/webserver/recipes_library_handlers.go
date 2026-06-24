@@ -74,15 +74,15 @@ func parseRecipeMeta(content []byte, filename string) (title, desc, cat string) 
 	return title, desc, cat
 }
 
-func (s *Server) handleRecipesLibrary(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesLibrary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
 	dir := "examples/recipe"
-	if s.opts.ConfigPath != "" {
-		if abs, err := filepath.Abs(filepath.Join(filepath.Dir(s.opts.ConfigPath), "examples", "recipe")); err == nil {
+	if api.opts.ConfigPath != "" {
+		if abs, err := filepath.Abs(filepath.Join(filepath.Dir(api.opts.ConfigPath), "examples", "recipe")); err == nil {
 			dir = abs
 		}
 	}

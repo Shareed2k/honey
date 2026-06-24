@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { ConfigProvider, theme } from 'antd';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GitLoadModal from './GitLoadModal';
-import { apiGet } from '../api';
+import { apiGet } from '../api/core';
 
 vi.mock('../api', () => ({
   apiGet: vi.fn(),

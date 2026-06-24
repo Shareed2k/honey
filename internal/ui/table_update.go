@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
-	tea "charm.land/bubbletea/v2"
+	"github.com/shareed2k/honey/internal/engine"
 
-	"github.com/shareed2k/honey/internal/cuetry"
+	tea "charm.land/bubbletea/v2"
 	"github.com/shareed2k/honey/internal/recordings"
 )
 
@@ -21,11 +21,11 @@ func (m *model) handleStreamStartMsg(msg streamStartMsg) (tea.Model, tea.Cmd) {
 		if msg.isCue {
 			trigger = "tui-cue-exec"
 		}
-		if rec, err := NewBatchSessionRecorder(m.recordDir, trigger, m.sshUser, msg.totalJobs); err == nil {
+		if rec, err := engine.NewBatchSessionRecorder(m.recordDir, trigger, m.sshUser, msg.totalJobs); err == nil {
 			m.batchRecorder = rec
 			if msg.isCue && rec != nil && msg.recipe != nil {
-				hash, _ := cuetry.HashRecipeJSON(*msg.recipe)
-				rec.RecordRecipeMeta(RecipeMeta{
+				hash, _ := msg.recipe.HashJSON()
+				rec.RecordRecipeMeta(engine.RecipeMeta{
 					RecipePath:        msg.recipePath,
 					HostCount:         msg.totalJobs,
 					RecipeContentHash: hash,
@@ -83,14 +83,14 @@ func (m *model) handleStreamDoneMsg(_ streamDoneMsg) (tea.Model, tea.Cmd) {
 		m.batchRecorder = nil
 	}
 	m.execDone = true
-	m.execResults = SortHostExecForUI(m.execResults)
+	m.execResults = engine.SortHostExecForUI(m.execResults)
 	m.clampExecScroll()
 	return m, nil
 }
 
 func (m *model) handleParallelExecDoneMsg(msg parallelExecDoneMsg) (tea.Model, tea.Cmd) {
 	if m.recordEnabled && m.recordDir != "" {
-		if rec, err := NewBatchSessionRecorder(m.recordDir, "tui-exec", m.sshUser, len(msg.results)); err == nil {
+		if rec, err := engine.NewBatchSessionRecorder(m.recordDir, "tui-exec", m.sshUser, len(msg.results)); err == nil {
 			for i := range msg.results {
 				rec.RecordHostExecResult(msg.results[i])
 			}
@@ -99,7 +99,7 @@ func (m *model) handleParallelExecDoneMsg(msg parallelExecDoneMsg) (tea.Model, t
 	}
 	m.cueResultBody = ""
 	m.cueResultTitle = "Parallel SSH results"
-	m.execResults = SortHostExecForUI(msg.results)
+	m.execResults = engine.SortHostExecForUI(msg.results)
 	m.execCmdLine = msg.cmdLine
 	m.execTargetNote = msg.targetNote
 	m.execScroll = 0
@@ -161,9 +161,6 @@ func (m *model) dispatchKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.mode == "execresults" {
 		return m.updateExecResultsKeys(msg)
-	}
-	if m.mode == "tunnel" {
-		return m.updateTunnelInputs(msg)
 	}
 	if m.mode == "agenttransferform" {
 		return m.updateAgentTransferFormKeys(msg)
@@ -245,13 +242,15 @@ func (m *model) handleTableKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.agentPick = "source"
 		return m, nil
 	case "t":
-		m.mode = "tunnel"
-		m.tunnelLocalPort.Reset()
-		m.tunnelRemoteHost.SetValue("localhost")
-		m.tunnelRemotePort.Reset()
-		m.tunnelFocusIndex = 0
-		m.tunnelLocalPort.Focus()
-		return m, textinput.Blink
+		if m.mode == "table" || m.mode == "filter" {
+			if r, ok := m.cursorRecord(); ok {
+				m.mode = "tunnel"
+				m.activeModel = NewTunnelModel(r, r.Provider == "k8s", m.winW, m.winH)
+				m.tbl.Blur()
+				return m, textinput.Blink
+			}
+		}
+		return m, nil
 	case "e":
 		m.mode = "execinput"
 		m.ti.Placeholder = "remote shell command (* rows only, or all executable if none marked)"

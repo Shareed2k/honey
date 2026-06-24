@@ -1,7 +1,6 @@
 package webserver
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,11 +12,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/shareed2k/honey/internal/engine"
+
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -88,7 +88,7 @@ func clipRunesForRecipeAssist(s string, maxRunes int) string {
 // @Failure 503 {object} map[string]string
 // @Router /api/v1/recipes/assist [post]
 // @Security BearerAuth
-func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
@@ -110,7 +110,7 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	allowed := allowedRecipePathSet()
+	allowed := api.allowedRecipePathSet()
 	if _, ok := allowed[cp]; !ok {
 		httpError(w, fmt.Errorf("recipe_path not allowed"), http.StatusBadRequest)
 		return
@@ -131,14 +131,14 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resolveCtx, resolveCancel := context.WithTimeout(r.Context(), 25*time.Second)
-	chatModel, err := s.resolveAssistChatModel(resolveCtx, body.Model)
+	chatModel, err := api.ai.resolveAssistChatModel(resolveCtx, body.Model)
 	resolveCancel()
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
 
-	if !s.assistRL.allow(clientIP(r), assistRPM()) {
+	if !api.ai.allowAssistRequest(clientIP(r), assistRPM()) {
 		httpError(w, errors.New("rate limit exceeded; try again in a minute"), http.StatusTooManyRequests)
 		return
 	}
@@ -152,12 +152,8 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	if len(jobs) > 0 {
 		parseSlice = jobs
 	}
-	pluginMgr, plugErr := plugins.Open(r.Context(), s.opts.Config)
-	if plugErr != nil {
-		httpError(w, plugErr, http.StatusInternalServerError)
-		return
-	}
-	defer func() { _ = pluginMgr.Close() }()
+	pluginMgr, releasePlugins := api.plugins.Borrow()
+	defer releasePlugins()
 	recipe, perr := cuetry.ParseRemoteRecipeOpts(raw, parseSlice, cuetry.ParseOptions{PluginManager: pluginMgr})
 	if perr != nil {
 		parseNote = perr.Error()
@@ -169,36 +165,21 @@ func (s *Server) handleRecipesAssist(w http.ResponseWriter, r *http.Request) {
 	} else {
 		if len(jobs) > 0 {
 			mergeK8sDebugImageFromRecipe(recipe, jobs)
-			user := s.sshUser(body.SSHUser)
-			recipeDir := filepath.Dir(cp)
-			var buf bytes.Buffer
-			aiPrompt := ui.LoadAISystemPromptFromConfigPath(s.opts.ConfigPath)
-			secRes, resErr := cuetry.NewSecretResolverWithPlugins(cuetry.SecretResolverOptionsFromHoney(s.opts.Config), pluginMgr)
-			if resErr != nil {
-				planNote = "secret resolver: " + resErr.Error()
+			plan, runErr := api.runner.DryRun(r.Context(), engine.RunRequest{
+				Recipe:           recipe,
+				RecipeSourcePath: cp,
+				RecipeDir:        filepath.Dir(cp),
+				Records:          jobs,
+				SSHUser:          api.sshUser(body.SSHUser),
+				ActorID:          actorFromCtx(r.Context()),
+				AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath),
+			})
+			if runErr != nil {
+				planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
 			} else {
-				runErr := ui.RunCueRecipeSteps(r.Context(), &buf, ui.CueRecipeRunParams{
-					Recipe:         recipe,
-					RecipeDir:      recipeDir,
-					Records:        jobs,
-					SSHUser:        user,
-					ConfigPath:     s.opts.ConfigPath,
-					AISystemPrompt: aiPrompt,
-					SecretResolver: secRes,
-					PluginMgr:      pluginMgr,
-					Execute:        false,
-					Obs:            s.metrics,
-					Reg:            s.opts.ExecRegistry,
-					Pools:          s.pgPools,
-				}, nil)
-				plan := buf.String()
-				if runErr != nil {
-					planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))
-				} else {
-					planNote = clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes)
-					if strings.TrimSpace(planNote) == "" {
-						planNote = "(dry-run produced empty plan)"
-					}
+				planNote = clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes)
+				if strings.TrimSpace(planNote) == "" {
+					planNote = "(dry-run produced empty plan)"
 				}
 			}
 		} else {
@@ -260,7 +241,7 @@ type RecipesAIGraphResponse struct {
 	Explanation string                 `json:"explanation,omitempty"`
 }
 
-func (s *Server) handleRecipesAssistFix(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesAssistFix(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
@@ -281,7 +262,7 @@ func (s *Server) handleRecipesAssistFix(w http.ResponseWriter, r *http.Request) 
 	}
 	prompt += "\nPlease fix it. Return a JSON object with two keys: `recipe` containing the fixed recipe JSON, and `explanation` containing a short string explaining the fix."
 
-	reply, err := s.callDirectLLM(r.Context(), "", req.Model, prompt)
+	reply, err := api.ai.callDirectLLM(r.Context(), "", req.Model, prompt)
 	if err != nil {
 		httpError(w, err, http.StatusBadGateway)
 		return
@@ -296,7 +277,7 @@ func (s *Server) handleRecipesAssistFix(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(parsed)
 }
 
-func (s *Server) handleRecipesGenerate(w http.ResponseWriter, r *http.Request) {
+func (api *RecipesAPI) handleRecipesGenerate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
@@ -313,7 +294,7 @@ func (s *Server) handleRecipesGenerate(w http.ResponseWriter, r *http.Request) {
 
 	prompt := recipeAssistSystemPrompt + "\n\n" + fmt.Sprintf("Generate a Honey CUE graph recipe for the following intent: %s\n\nReturn a JSON object with two keys: `recipe` containing the recipe JSON, and `explanation` containing a short explanation of how it works.", req.Intent)
 
-	reply, err := s.callDirectLLM(r.Context(), "", req.Model, prompt)
+	reply, err := api.ai.callDirectLLM(r.Context(), "", req.Model, prompt)
 	if err != nil {
 		httpError(w, err, http.StatusBadGateway)
 		return

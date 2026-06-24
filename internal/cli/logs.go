@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/shareed2k/honey/internal/anomaly"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -158,7 +158,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return runAnomalySelftest(cmd.Context(), opts)
 	}
 
-	clientCache := ui.NewClientCache()
+	clientCache := engine.NewClientCache()
 	defer clientCache.CloseAll()
 
 	records, sshUser, cfg, _, err := runSearchCore(cmd, []string{target})

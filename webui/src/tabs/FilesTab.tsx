@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Form, InputNumber, Select, Space, Typography, Input } from 'antd';
-import {
-  startAgentTransferStream,
-  type AgentTransferBackendRef,
-  type AgentTransferCloud,
-  type AgentTransferEvent,
-} from '../api';
+import { startAgentTransferStream } from '../api/files';
+import { type AgentTransferBackendRef, type AgentTransferCloud, type AgentTransferEvent } from '../api/types/files';
 import { recordKey } from '../HostPicker';
 import type { HostRecord } from '../HostPicker';
 

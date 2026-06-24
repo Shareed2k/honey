@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/shareed2k/honey/internal/anomaly"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -180,7 +181,7 @@ func TestStreamLogsAnomalyStrictInitFailure(t *testing.T) {
 		Anomaly:       true,
 		AnomalyModel:  "/path/does/not/exist/model.onnx",
 		AnomalyStrict: true,
-	}, NewClientCache(), &bytes.Buffer{})
+	}, engine.NewClientCache(), &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected strict anomaly init failure")
 	}

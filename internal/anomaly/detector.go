@@ -314,3 +314,59 @@ func severityScore(lower string) float64 {
 		return 0.05
 	}
 }
+
+type ensembleDetector struct {
+	a, b      Detector
+	threshold float64
+}
+
+type scoreOutcome struct {
+	r   Result
+	err error
+}
+
+func (e *ensembleDetector) Score(ctx context.Context, line string) (Result, error) {
+	chA := make(chan scoreOutcome, 1)
+	chB := make(chan scoreOutcome, 1)
+	go func() { r, err := e.a.Score(ctx, line); chA <- scoreOutcome{r, err} }()
+	go func() { r, err := e.b.Score(ctx, line); chB <- scoreOutcome{r, err} }()
+
+	oA := <-chA
+	oB := <-chB
+	if oA.err != nil {
+		return Result{}, oA.err
+	}
+	if oB.err != nil {
+		return Result{}, oB.err
+	}
+
+	score := clamp01((oA.r.Score + oB.r.Score) / 2)
+	return Result{
+		Score:    score,
+		Anomaly:  score >= e.threshold,
+		Reason:   oA.r.Reason + "+" + oB.r.Reason,
+		Original: line,
+	}, nil
+}
+
+// filteredLLMDetector implements the CoLA two-tier detection pattern:
+// the fast detector (heuristic or ONNX) runs first, and the LLM is only
+// invoked when the fast score is at or above filterThreshold. Lines that the
+// fast model classifies with high confidence as normal bypass the LLM entirely,
+// giving a significant throughput improvement on high-volume log streams.
+type filteredLLMDetector struct {
+	fast            Detector
+	llm             *llmDetector
+	filterThreshold float64
+}
+
+func (d *filteredLLMDetector) Score(ctx context.Context, line string) (Result, error) {
+	fast, err := d.fast.Score(ctx, line)
+	if err != nil {
+		return Result{}, err
+	}
+	if fast.Score < d.filterThreshold {
+		return fast, nil
+	}
+	return d.llm.Score(ctx, line)
+}

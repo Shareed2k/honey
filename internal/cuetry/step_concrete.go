@@ -18,7 +18,8 @@ import (
 type CommandStep struct {
 	StepBase
 	RemoteExec
-	Command string `json:"command,omitempty"`
+	Command     string `json:"command,omitempty"`
+	Interpreter string `json:"interpreter,omitempty"`
 }
 
 // Kind returns the step kind identifier.
@@ -40,7 +41,8 @@ var _ RemoteStep = (*CommandStep)(nil)
 type ScriptStep struct {
 	StepBase
 	RemoteExec
-	Script *RecipeFileTransfer `json:"script,omitempty"`
+	Script      *RecipeFileTransfer `json:"script,omitempty"`
+	Interpreter string              `json:"interpreter,omitempty"`
 }
 
 // Kind returns the step kind identifier.
@@ -309,6 +311,49 @@ func (s *PostgresStep) Validate(_ StepValidateCtx) error {
 var _ RemoteStep = (*PostgresStep)(nil)
 
 // ---------------------------------------------------------------------------
+// recipe
+// ---------------------------------------------------------------------------
+
+// RecipeStep executes another recipe as a sub-recipe.
+type RecipeStep struct {
+	StepBase
+	Recipe *RecipeSubRecipe `json:"recipe,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *RecipeStep) Kind() string { return KindRecipe }
+
+// Clone returns a deep copy of the step (safe for loop fan-out mutation).
+func (s *RecipeStep) Clone() Step {
+	cp := *s
+	cp.StepBase = s.cloned()
+	if s.Recipe != nil {
+		rCp := *s.Recipe
+		if rCp.Prompts != nil {
+			rCp.Prompts = make(map[string]string, len(s.Recipe.Prompts))
+			for k, v := range s.Recipe.Prompts {
+				rCp.Prompts[k] = v
+			}
+		}
+		cp.Recipe = &rCp
+	}
+	return &cp
+}
+
+// Validate checks this step's kind-specific fields; shared rules run separately.
+func (s *RecipeStep) Validate(_ StepValidateCtx) error {
+	if s.Recipe == nil {
+		return fmt.Errorf("recipe step requires a recipe block")
+	}
+	if strings.TrimSpace(s.Recipe.Path) == "" {
+		return fmt.Errorf("recipe.path is required")
+	}
+	return nil
+}
+
+var _ Step = (*RecipeStep)(nil)
+
+// ---------------------------------------------------------------------------
 // agent_transfer
 // ---------------------------------------------------------------------------
 
@@ -462,6 +507,52 @@ func (s *AIStep) Validate(vc StepValidateCtx) error {
 var _ Step = (*AIStep)(nil)
 
 // ---------------------------------------------------------------------------
+// opa (local) — no RemoteExec
+// ---------------------------------------------------------------------------
+
+// OPAStep evaluates an OPA/rego policy inline during recipe execution. It runs
+// locally (host must be "_") and fails when the policy denies, so authors can
+// gate later steps via depends / when on this step's success.
+type OPAStep struct {
+	StepBase
+	OPA *RecipeOPA `json:"opa,omitempty"`
+}
+
+// RecipeOPA is the opa step's action block: which policy to load and what extra
+// input to pass alongside the actor identity.
+type RecipeOPA struct {
+	// Policy is a path to a .rego file (package honey), relative to the recipe
+	// directory unless absolute.
+	Policy string `json:"policy"`
+	// Input is an arbitrary object merged into the OPA input document under the
+	// caller-supplied keys, alongside the built-in actor and recipe fields.
+	Input map[string]any `json:"input,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *OPAStep) Kind() string { return KindOPA }
+
+// Clone returns a deep copy of the step (safe for loop fan-out mutation).
+func (s *OPAStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields; shared rules run separately.
+func (s *OPAStep) Validate(vc StepValidateCtx) error {
+	i := vc.Index
+	if s.OPA == nil {
+		return fmt.Errorf("cuetry: steps[%d]: internal opa step", i)
+	}
+	if strings.TrimSpace(s.OPA.Policy) == "" {
+		return fmt.Errorf("cuetry: steps[%d].opa.policy is required", i)
+	}
+	if strings.TrimSpace(s.Host) != MatchLocalAIHost {
+		return fmt.Errorf("cuetry: steps[%d]: opa step host must be %q", i, MatchLocalAIHost)
+	}
+	return nil
+}
+
+var _ Step = (*OPAStep)(nil)
+
+// ---------------------------------------------------------------------------
 // registration
 // ---------------------------------------------------------------------------
 
@@ -477,6 +568,8 @@ func init() {
 	RegisterStep(KindDocker, []string{"docker"}, func() Step { return &DockerStep{} })
 	RegisterStep(KindOpensearch, []string{"opensearch"}, func() Step { return &OpensearchStep{} })
 	RegisterStep(KindPostgres, []string{"postgres"}, func() Step { return &PostgresStep{} })
+	RegisterStep(KindRecipe, []string{"recipe"}, func() Step { return &RecipeStep{} })
 	RegisterStep(KindAgentTransfer, []string{"agent_transfer"}, func() Step { return &AgentTransferStep{} })
 	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })
+	RegisterStep(KindOPA, []string{"opa"}, func() Step { return &OPAStep{} })
 }

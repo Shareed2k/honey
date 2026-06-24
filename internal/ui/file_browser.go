@@ -8,11 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
-// LocalFileEntry mirrors RemoteFileEntry for local directories.
+// LocalFileEntry mirrors engine.RemoteFileEntry for local directories.
 type LocalFileEntry struct {
 	Name       string    `json:"name"`
 	Path       string    `json:"path"`
@@ -34,8 +35,8 @@ func DefaultLocalFilesRoot() string {
 	return "."
 }
 
-// ResolveLocalPathUnderRoot resolves requested against root and ensures the result stays under root.
-func ResolveLocalPathUnderRoot(root, requested string) (string, error) {
+// ResolveLocalAbsUnderRoot resolves requested against root and ensures the result stays under root.
+func ResolveLocalAbsUnderRoot(root, requested string) (string, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		root = DefaultLocalFilesRoot()
@@ -66,7 +67,7 @@ func ResolveLocalPathUnderRoot(root, requested string) (string, error) {
 
 // ListLocalDirUnderRoot lists a directory under the resolved root path.
 func ListLocalDirUnderRoot(root, requested string) (string, []LocalFileEntry, error) {
-	resolvedPath, err := ResolveLocalPathUnderRoot(root, requested)
+	resolvedPath, err := ResolveLocalAbsUnderRoot(root, requested)
 	if err != nil {
 		return "", nil, err
 	}
@@ -102,8 +103,8 @@ func ListLocalDirUnderRoot(root, requested string) (string, []LocalFileEntry, er
 }
 
 // RemoteListDir lists a directory on the remote host using a cached SSH/k8s client.
-func RemoteListDir(user string, record hosts.Record, remotePath string, cache *ClientCache) ([]RemoteFileEntry, error) {
-	if !hosts.IsConnectableRecord(record) {
+func RemoteListDir(user string, record hosts.Record, remotePath string, cache *engine.ClientCache) ([]engine.RemoteFileEntry, error) {
+	if !record.IsConnectable() {
 		return nil, fmt.Errorf("record is not connectable")
 	}
 	client, err := cache.GetOrDial(user, record)
@@ -117,7 +118,7 @@ func RemoteListDir(user string, record hosts.Record, remotePath string, cache *C
 }
 
 // RemoteCopyLocalToRemote uploads a local file to the remote path.
-func RemoteCopyLocalToRemote(user string, record hosts.Record, localPath, remotePath string, cache *ClientCache) error {
+func RemoteCopyLocalToRemote(user string, record hosts.Record, localPath, remotePath string, cache *engine.ClientCache) error {
 	client, err := cache.GetOrDial(user, record)
 	if err != nil {
 		return err
@@ -129,7 +130,7 @@ func RemoteCopyLocalToRemote(user string, record hosts.Record, localPath, remote
 }
 
 // RemoteCopyRemoteToLocal downloads a remote file to a local path.
-func RemoteCopyRemoteToLocal(user string, record hosts.Record, remotePath, localPath string, cache *ClientCache) error {
+func RemoteCopyRemoteToLocal(user string, record hosts.Record, remotePath, localPath string, cache *engine.ClientCache) error {
 	client, err := cache.GetOrDial(user, record)
 	if err != nil {
 		return err

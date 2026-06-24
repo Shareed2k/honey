@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -106,7 +108,7 @@ func (s *Server) updateConfigBackend(w http.ResponseWriter, updateFn func(cfg *c
 // @Router /api/v1/config/backends/{kind} [post]
 // @Security BearerAuth
 func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request) {
-	kind := strings.ToLower(strings.TrimSpace(r.PathValue("kind")))
+	kind := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "kind")))
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -132,8 +134,8 @@ func (s *Server) handleConfigBackendsPost(w http.ResponseWriter, r *http.Request
 // @Router /api/v1/config/backends/{kind}/{index} [put]
 // @Security BearerAuth
 func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request) {
-	kind := strings.ToLower(strings.TrimSpace(r.PathValue("kind")))
-	idxStr := strings.TrimSpace(r.PathValue("index"))
+	kind := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "kind")))
+	idxStr := strings.TrimSpace(chi.URLParam(r, "index"))
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 0 {
 		httpError(w, fmt.Errorf("invalid index %q", idxStr), http.StatusBadRequest)
@@ -162,8 +164,8 @@ func (s *Server) handleConfigBackendsPut(w http.ResponseWriter, r *http.Request)
 // @Router /api/v1/config/backends/{kind}/{index} [delete]
 // @Security BearerAuth
 func (s *Server) handleConfigBackendsDelete(w http.ResponseWriter, r *http.Request) {
-	kind := strings.ToLower(strings.TrimSpace(r.PathValue("kind")))
-	idxStr := strings.TrimSpace(r.PathValue("index"))
+	kind := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "kind")))
+	idxStr := strings.TrimSpace(chi.URLParam(r, "index"))
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 0 {
 		httpError(w, fmt.Errorf("invalid index %q", idxStr), http.StatusBadRequest)
@@ -175,8 +177,8 @@ func (s *Server) handleConfigBackendsDelete(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func appendBackendByKind(cfg *config.File, kind string, body []byte, searchReg *searchrun.Registry) error {
-	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
+func appendBackendByKind(_ *config.File, kind string, body []byte, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(kind)
 	if err != nil {
 		return err
 	}
@@ -188,8 +190,8 @@ func appendBackendByKind(cfg *config.File, kind string, body []byte, searchReg *
 	return nil
 }
 
-func replaceBackendByKind(cfg *config.File, kind string, idx int, body []byte, searchReg *searchrun.Registry) error {
-	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
+func replaceBackendByKind(_ *config.File, kind string, idx int, body []byte, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(kind)
 	if err != nil {
 		return err
 	}
@@ -204,8 +206,8 @@ func replaceBackendByKind(cfg *config.File, kind string, idx int, body []byte, s
 	return nil
 }
 
-func deleteBackendByKind(cfg *config.File, kind string, idx int, searchReg *searchrun.Registry) error {
-	slice, err := searchReg.GetBackendSliceByKind(cfg, kind)
+func deleteBackendByKind(_ *config.File, kind string, idx int, searchReg *searchrun.Registry) error {
+	slice, err := searchReg.GetBackendSliceByKind(kind)
 	if err != nil {
 		return err
 	}

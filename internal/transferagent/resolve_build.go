@@ -21,7 +21,8 @@ func buildAgentMaybeUPX(
 	if err := ensureExecutable(binPath); err != nil {
 		return "", cacheKey, err
 	}
-	zap.L().Debug("transfer agent binary built",
+	zap.L().Debug(
+		"transfer agent binary built",
 		zap.String("target", targetOS+"/"+targetArch),
 		zap.String("provider_flavor", flavor),
 		zap.String("path", binPath),
@@ -30,7 +31,8 @@ func buildAgentMaybeUPX(
 		return binPath, cacheKey, nil
 	}
 	if err := packBinaryWithUPX(binPath, targetOS); err != nil {
-		zap.L().Warn("transfer agent upx packing failed, using uncompressed binary",
+		zap.L().Warn(
+			"transfer agent upx packing failed, using uncompressed binary",
 			zap.String("path", binPath),
 			zap.String("provider_flavor", flavor),
 			zap.Error(err),
@@ -46,7 +48,8 @@ func buildAgentMaybeUPX(
 		}
 		return np, nk, nil
 	}
-	zap.L().Debug("transfer agent binary packed with upx",
+	zap.L().Debug(
+		"transfer agent binary packed with upx",
 		zap.String("target", targetOS+"/"+targetArch),
 		zap.String("provider_flavor", flavor),
 		zap.String("path", binPath),
