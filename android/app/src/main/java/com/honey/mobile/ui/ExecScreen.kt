@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.honey.mobile.api.ExecRequest
 import com.honey.mobile.api.ExecResult
 import com.honey.mobile.api.HoneyApi
+import com.honey.mobile.data.SecretsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,7 +22,10 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class ExecViewModel @Inject constructor(private val api: HoneyApi) : ViewModel() {
+class ExecViewModel @Inject constructor(
+    private val api: HoneyApi,
+    private val secrets: SecretsStore
+) : ViewModel() {
     private val _results = MutableStateFlow<List<ExecResult>>(emptyList())
     val results = _results.asStateFlow()
     private val _running = MutableStateFlow(false)
@@ -31,8 +35,9 @@ class ExecViewModel @Inject constructor(private val api: HoneyApi) : ViewModel()
         viewModelScope.launch {
             _running.value = true
             _results.value = emptyList()
+            val resolved = secrets.resolve(command)
             runCatching {
-                _results.value = api.exec(ExecRequest(backends = backends, command = command))
+                _results.value = api.exec(ExecRequest(backends = backends, command = resolved))
             }.onFailure { e ->
                 _results.value = listOf(ExecResult(host = "error", output = e.message ?: "failed", exit_code = -1))
             }

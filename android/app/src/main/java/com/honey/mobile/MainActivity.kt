@@ -53,7 +53,7 @@ fun HoneyNavApp() {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val items = listOf("dashboard", "backends", "exec", "recipes")
+    val items = listOf("dashboard", "backends", "exec", "recipes", "secrets")
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -91,6 +91,7 @@ fun HoneyNavApp() {
                 composable("backends") { BackendsScreen() }
                 composable("exec") { ExecScreen() }
                 composable("recipes") { RecipesScreen() }
+                composable("secrets") { SecretsScreen() }
             }
         }
     }

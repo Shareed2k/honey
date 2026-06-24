@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     kapt(libs.room.compiler)
+    implementation(libs.security.crypto)
 }
 
 tasks.register<Exec>("buildHoneyAar") {
