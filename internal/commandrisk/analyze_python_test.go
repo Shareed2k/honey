@@ -56,7 +56,13 @@ func TestAnalyzePython(t *testing.T) {
 		{
 			name:       "parse error",
 			src:        "def (:",
-			wantSignal: "PYTHON_PARSE_ERROR",
+			wantSignal: "PYTHON_PARSE_INCOMPLETE",
+		},
+		{
+			// gpython has no f-string support; this must NOT raise a medium signal.
+			name:       "fstring degrades to low",
+			src:        "for i in range(3):\n\tprint(f\"x {i}\")\n",
+			wantSignal: "PYTHON_PARSE_INCOMPLETE",
 		},
 	}
 

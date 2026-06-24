@@ -2,12 +2,12 @@ package engine
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/policy"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // StepRisk is the risk assessment of one command/script step, for dry-run review.
@@ -92,10 +92,16 @@ func commandTextForRisk(step cuetry.Step, recipeDir string) (command, interprete
 		}
 		path := s.Script.Local
 		if !filepath.IsAbs(path) && recipeDir != "" {
-			path = filepath.Join(recipeDir, path)
+			// Constrain a relative script path to the recipe dir (reject "../" escapes).
+			joined, err := safepath.JoinUnder(recipeDir, path)
+			if err != nil {
+				return "", s.Interpreter, true
+			}
+			path = joined
 		}
-		// #nosec G304 -- recipe-author script path within the recipe dir.
-		b, err := os.ReadFile(path)
+		// safepath.ReadFile reads via os.Root on the parent dir, so the basename
+		// cannot traverse — no G304 suppression needed.
+		b, err := safepath.ReadFile(path)
 		if err != nil {
 			return "", s.Interpreter, true
 		}

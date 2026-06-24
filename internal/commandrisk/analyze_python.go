@@ -14,8 +14,14 @@ var blockDevicePrefixes = []string{"/dev/sd", "/dev/nvme", "/dev/vd"}
 // analyzePython parses Python source with gpython (no execution) and emits risk
 // signals from a deterministic AST walk. Shell strings handed to os.system /
 // subprocess.* recurse into the shell analyzer so a python wrapper around
-// "rm -rf /" still yields the shell critical. A parse failure is a medium
-// signal, mirroring the shell analyzer's tolerance for unparseable input.
+// "rm -rf /" still yields the shell critical.
+//
+// gpython implements a pre-3.6 grammar, so modern syntax (f-strings, walrus,
+// match) fails to parse. Unlike the robust mvdan/sh shell parser — where an
+// unparseable command is genuinely suspicious — a python parse failure is an
+// expected tooling limit, not evidence of risk. It is therefore a LOW
+// informational signal (analysis skipped), never a medium/critical, and the
+// step's risk is left to the OPA policy (which still receives the interpreter).
 func analyzePython(src string) Analysis {
 	var a Analysis
 	if strings.TrimSpace(src) == "" {
@@ -25,7 +31,7 @@ func analyzePython(src string) Analysis {
 	mod, err := parser.ParseString(src, py.ExecMode)
 	if err != nil {
 		a.ParseError = err.Error()
-		a.add(RiskSignal{ID: "PYTHON_PARSE_ERROR", Severity: SeverityMedium, Reason: "python source could not be parsed"})
+		a.add(RiskSignal{ID: "PYTHON_PARSE_INCOMPLETE", Severity: SeverityLow, Reason: "python source not fully parseable (unsupported syntax, e.g. f-strings); risk analysis skipped"})
 		return a
 	}
 
