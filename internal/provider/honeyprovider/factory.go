@@ -94,7 +94,7 @@ func (f honeyFactory) BackendRows() []config.BackendRow {
 		go func() {
 			defer wg.Done()
 
-			fetchURL := strings.TrimRight(b.URL, "/") + "/api/v1/config/backends"
+			fetchURL := strings.TrimRight(b.URL, "/") + "/api/v1/backends"
 			req, err := http.NewRequest(http.MethodGet, fetchURL, nil)
 			if err != nil {
 				return

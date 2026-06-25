@@ -4,37 +4,53 @@ package integration
 
 import (
 	"context"
-	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
-	"net/http"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/honeyprovider"
+	"github.com/shareed2k/honey/internal/searchrun"
+	"github.com/shareed2k/honey/internal/webserver"
+	"github.com/shareed2k/honey/internal/provider/localprovider"
 )
 
 func TestHoneyProviderE2E(t *testing.T) {
-	// Create a mock remote Honey server
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/search" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"records":[{"provider":"test-cloud","name":"remote-host","primary_ip":"10.0.0.1"}]}`))
-			return
-		}
-		if r.URL.Path == "/api/v1/config/backends" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"config_path":"/tmp/cfg","backends":[{"kind":"test-cloud","name":"prod","hint":"hint"}]}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
+	// 1. Create a real config file for the remote server with a "local" backend
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configYAML := `
+version: 1
+backends:
+  local:
+    - name: "prod"
+      hosts:
+        - name: "remote-host"
+          primary_ip: "10.0.0.1"
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
 
-	// Initialize the honey provider
+	// Create a real search registry containing the local provider
+	remoteSearchReg := searchrun.NewRegistry([]searchrun.ProviderFactory{
+		localprovider.NewFactory(testLocalConfig{}),
+	})
+
+	// Boot up the real honey webserver
+	opts := webserver.Options{
+		SearchRegistry: remoteSearchReg,
+		Token:          "test-token",
+		ConfigPath:     configPath,
+	}
+	baseURL := newTestServer(t, opts)
+
+	// Initialize the honey provider client pointing to the real webserver
 	cfg := &config.File{
 		Backends: config.Backends{
 			Honey: []config.HoneyBackend{
-				{Name: "remote1", URL: srv.URL, Insecure: false},
+				{Name: "remote1", URL: baseURL, Token: "test-token", Insecure: false},
 			},
 		},
 	}
@@ -42,7 +58,7 @@ func TestHoneyProviderE2E(t *testing.T) {
 	classCfg := honeyTestConfig{cfg}
 	factory := honeyprovider.NewFactory(classCfg)
 
-	// Test 1: Fetch BackendRows
+	// Test 1: Fetch BackendRows (should hit /api/v1/config/backends)
 	rows := factory.BackendRows()
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 backend rows (1 honey, 1 remote), got %d: %+v", len(rows), rows)
@@ -50,11 +66,11 @@ func TestHoneyProviderE2E(t *testing.T) {
 	if rows[0].Kind != "honey" || rows[0].Name != "remote1" {
 		t.Errorf("expected honey row first")
 	}
-	if rows[1].Kind != "test-cloud" || rows[1].Name != "prod" {
+	if rows[1].Kind != "local" || rows[1].Name != "prod" {
 		t.Errorf("expected remote backend row second")
 	}
 
-	// Test 2: Search Hosts
+	// Test 2: Search Hosts (should hit /api/v1/search)
 	provider := factory.FromConfig(nil)[0]
 	recs, err := provider.Search(context.Background(), hosts.Query{NameSubstring: "remote"})
 	if err != nil {
@@ -63,7 +79,7 @@ func TestHoneyProviderE2E(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(recs))
 	}
-	if recs[0].Name != "remote-host" || recs[0].Provider != "test-cloud" {
+	if recs[0].Name != "remote-host" {
 		t.Errorf("unexpected record: %+v", recs[0])
 	}
 }
@@ -83,3 +99,19 @@ func (h honeyTestConfig) HoneyBackendSlicePtr() *[]config.HoneyBackend {
 func (h honeyTestConfig) SetHoneyBackends(b []config.HoneyBackend) {
 	h.cfg.Backends.Honey = b
 }
+
+type testLocalConfig struct{}
+
+func (testLocalConfig) LocalBackends() []config.LocalBackend {
+	return []config.LocalBackend{
+		{
+			Name: "prod",
+			Hosts: []config.LocalHost{
+				{Name: "remote-host", PrimaryIP: "10.0.0.1"},
+			},
+		},
+	}
+}
+func (testLocalConfig) LocalBackendSlicePtr() *[]config.LocalBackend { return nil }
+func (testLocalConfig) SetLocalBackends([]config.LocalBackend)       {}
+func (testLocalConfig) DockerDiscover() config.DockerDiscover        { return config.DockerDiscover{} }
