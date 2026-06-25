@@ -1,49 +1,49 @@
-## Task 2 Report: Implement honeyprovider in Go
+# Task 2 Report: Allow Honey Providers to Bypass Local Filtering
 
-### What was implemented
-- Created `internal/provider/honeyprovider/honey.go` implementing the `hosts.Backend` interface to query remote honey servers using `SearchHostsInput`-compatible payloads.
-- Created `internal/provider/honeyprovider/factory.go` implementing `searchrun.ProviderFactory` and `searchrun.BackendConfigRegistry` to correctly instantiate the backend from the config file.
-- Created `internal/provider/honeyprovider/crud.go` implementing the interactive config forms using `charm.land/huh/v2` for managing the `HoneyBackend` array.
-- Updated `internal/provider/all/all.go` to add `HoneyBackends()` and `HoneyBackendSlicePtr()` methods and registered `honeyprovider.NewFactory(adapter)` alongside other built-in providers.
-- Created `internal/provider/honeyprovider/honey_test.go` to mock an HTTP server and verify the functionality of `Honey.Search()`.
+## What was implemented
+Modified `backendMatchesFilter` in `internal/hosts/backend_names.go` to explicitly check if the provider ID is "honey". If it is, the function returns `true` unconditionally, allowing honey proxy providers to bypass local filtering logic so that they can apply the filters remotely.
 
-### Tests and Evidence
-- Ran `go test ./internal/provider/honeyprovider/...` (1/1 passing).
-- Fixed a nil pointer issue that caused a failure in `TestProvidersEndpoint` inside `internal/webserver` by properly returning an empty `&Honey{}` struct instead of `nil` in `factory.Default()`.
+## What was tested
+- Added `TestFilterBackendsByNamesHoneyBypass` in `internal/hosts/backend_names_test.go` to verify that `FilterBackendsByNames` includes "honey" backend records regardless of the filter applied.
+- The test ensures that the "honey" provider is bypassed while other backends are still appropriately filtered (or excluded).
+- Ran all package tests and verified everything passes.
 
-**TDD Evidence**:
-- RED (implicitly caught during integration tests after initial implementation): `panic: runtime error: invalid memory address or nil pointer dereference` when webserver test called `factory.Default().ID()` because my `Default()` returned `nil`.
-- GREEN: Changed `Default()` to return `&Honey{}`. Ran `go test -v ./internal/webserver/...` and all passed. `TestHoneySearch` also passing cleanly:
-  ```
-  === RUN   TestHoneySearch
-  --- PASS: TestHoneySearch (0.00s)
-  PASS
-  ok  	github.com/shareed2k/honey/internal/provider/honeyprovider	0.918s
-  ```
+## TDD Evidence
 
-### Files Changed
-- `A internal/provider/honeyprovider/honey.go`
-- `A internal/provider/honeyprovider/factory.go`
-- `A internal/provider/honeyprovider/crud.go`
-- `A internal/provider/honeyprovider/honey_test.go`
-- `M internal/provider/all/all.go`
+### RED
+**Command:** `go test ./internal/hosts -v -run TestFilterBackendsByNamesHoneyBypass`
+**Output:**
+```text
+=== RUN   TestFilterBackendsByNamesHoneyBypass
+=== PAUSE TestFilterBackendsByNamesHoneyBypass
+=== CONT  TestFilterBackendsByNamesHoneyBypass
+    backend_names_test.go:103: expected honey proxy to bypass filter and be included, got len 1
+--- FAIL: TestFilterBackendsByNamesHoneyBypass (0.00s)
+FAIL
+```
+**Why the failure was expected:** We passed a filter `["prod"]` and expected two backends back (the `honey` proxy, and the `k8s:prod` backend). The proxy didn't bypass the filter because the explicit condition was not implemented yet, leaving only the matched `k8s` backend.
 
-### Self-Review Findings
-- The `Default` factory function must never return `nil`, which is a common pitfall that I hit and resolved during testing.
-- `revive` lint failed initially due to missing package comment, which was added to `honey.go`.
+### GREEN
+**Command:** `go test ./internal/hosts -v -run TestFilterBackendsByNamesHoneyBypass`
+**Output:**
+```text
+=== RUN   TestFilterBackendsByNamesHoneyBypass
+=== PAUSE TestFilterBackendsByNamesHoneyBypass
+=== CONT  TestFilterBackendsByNamesHoneyBypass
+--- PASS: TestFilterBackendsByNamesHoneyBypass (0.00s)
+PASS
+ok  	github.com/shareed2k/honey/internal/hosts	0.945s
+```
 
-### Issues or Concerns
-- No outstanding concerns. The implementation follows the established patterns for other providers.
+## Files changed
+- `internal/hosts/backend_names.go`
+- `internal/hosts/backend_names_test.go`
 
-### Fixes Applied from Review
-1.  **Important**: Fixed unsafe type assertion for `http.DefaultTransport` in `honey.go` by safely checking the type before cloning, falling back to a new `http.Transport` to avoid panics.
-2.  **Minor**: Limited the error response body reading to 4096 bytes in `honey.go` using `io.LimitReader` to prevent memory exhaustion on large error payloads.
-3.  **Minor**: Updated slice deletion in `crud.go` (`Delete` method) to allocate a new slice instead of modifying the shared backing array, ensuring safe updates.
-4.  **Important**: Fixed resource leak where `http.Client` and `http.Transport` were constructed on every `Search()` call, causing idle connection leaks. Initialized `http.Client` once per backend using `sync.Once`.
+## Self-review findings
+- **Completeness:** The explicit bypass for `honey` ID was implemented properly as described in the brief.
+- **Quality:** Clean implementation with standard formatting. Names are clear and we explicitly used "honey" as a bypass trigger per brief logic. 
+- **Testing:** The test explicitly verifies the behavior, and TDD process was followed perfectly.
+- **Discipline:** No extraneous code modifications.
 
-### Fixes Applied from Second Review
-1.  **Important**: Changed `require.NoError` to `assert.NoError` with an early return inside the `http.HandlerFunc` in `honey_test.go` to prevent abrupt termination of the goroutine via `runtime.Goexit()`.
-2.  **Minor**: Changed `Edit` method in `crud.go` to clone the config slice (`append([]config.HoneyBackend(nil), backends...)`) before mutating it, preventing accidental modification of the shared backing array.
-
-### Fixes Applied from Third Review
-1.  **Important**: Removed redefined `searchRequest` struct and updated `Search()` in `honey.go` to use `hostapi.SearchHostsInput` from `github.com/shareed2k/honey/internal/hostapi` to ensure the payload stays in sync with the API contract. Updated `honey_test.go` accordingly.
+## Issues or concerns
+None.

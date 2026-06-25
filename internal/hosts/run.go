@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"go.uber.org/zap"
@@ -98,8 +97,11 @@ func filterProviders(q Query, provs []Backend) []Backend {
 	}
 	var out []Backend
 	for _, p := range provs {
-		if slices.Contains(q.Providers, p.ID()) {
-			out = append(out, p)
+		for _, kind := range q.Providers {
+			if providerKindMatches(p, kind) {
+				out = append(out, p)
+				break
+			}
 		}
 	}
 	return out

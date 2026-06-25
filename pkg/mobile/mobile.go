@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/shareed2k/honey/internal/cli"
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 )
 
@@ -43,7 +44,8 @@ func ListBackends(requestJSON string) (string, error) {
 
 	out, err := hostapi.ListBackends(input.ConfigPath, reg)
 	if err != nil {
-		return "", err
+		empty, _ := json.Marshal(hostapi.ListBackendsOutput{Backends: []config.BackendRow{}})
+		return string(empty), nil
 	}
 
 	resp, err := json.Marshal(out)

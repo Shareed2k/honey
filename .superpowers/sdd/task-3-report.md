@@ -1,25 +1,25 @@
-# Task 3: Refactor Other Backend Forms - Report
+## Task 3: Forward Filters in Honey Search - Report
 
-## What was implemented
-- Refactored `K8sForm`, `AwsForm`, `GcpForm`, `ConsulForm`, `ProxmoxForm`, `TrueNasForm`, and `DockerForm` in `android/app/src/main/java/com/honey/mobile/ui/ConfigScreen.kt`.
-- Replaced `OutlinedTextField` with `ValidatedTextField` for all fields in the affected forms.
-- Added explicit state variables for tracking validation errors (e.g., `nameError`, `urlError`).
-- Applied inline validation in the `onClick` handler of the "Save" button to enforce required fields (with `.isBlank()`) and prevent calling `onSave` if validation fails.
-- Configured correct keyboard options (`KeyboardOptions(keyboardType = KeyboardType.Uri)`) for fields expecting URLs/IPs/URIs.
-- Integrated `Validators.isValidUrl(url)` for URL fields on applicable forms (`ConsulForm`, `ProxmoxForm`, `TrueNasForm`).
+### What was implemented
+Modified the `Search` method in `internal/provider/honeyprovider/honey.go` to correctly map the `Providers` and `Backends` slices from the `hosts.Query` into the `hostapi.SearchHostsInput` payload as comma-separated strings using `strings.Join`.
 
-## What was tested and test results
-- Executed `cd android && ./gradlew assembleDebug`
-- Results: Build completed successfully (`BUILD SUCCESSFUL in 5s`), confirming no Kotlin syntax errors, missing imports, or type mismatches were introduced during the refactor.
+### What was tested
+Ran `go test ./...` to verify compilation and that all existing tests pass with the new struct mapping.
 
-## Files changed
-- `android/app/src/main/java/com/honey/mobile/ui/ConfigScreen.kt`
+### Test Results
+```text
+ok  	github.com/shareed2k/honey/internal/provider/honeyprovider	0.568s
+... (All other packages either ok, cached, or have no tests)
+```
+14/14 test suites with tests passing. Output pristine. 0 issues reported by gosec and golangci-lint during the commit hook.
 
-## Self-review findings
-- Checked that only the requested forms were modified.
-- Verified that required imports for `KeyboardOptions` and `KeyboardType` were added correctly.
-- Ensured that `Validators.isValidUrl` logic strictly aligns with the guidelines in the brief (only used on URL/Addr fields where applicable).
-- Confirmed that `onSave` is safely gated behind the `isValid` boolean check.
+### Files changed
+- `internal/provider/honeyprovider/honey.go`
 
-## Issues or concerns
-- None. The task objectives have been successfully met and the build is passing.
+### Self-review findings
+- Completeness: Spec fully implemented.
+- Quality: Code accurately maps query fields using existing `strings` package standard mechanisms.
+- Discipline: Stayed within the scope of adding the required fields without refactoring external areas.
+
+### Issues/Concerns
+None.

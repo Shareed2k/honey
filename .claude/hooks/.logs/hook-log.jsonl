@@ -264,3 +264,5 @@
 {"ts":"2026-06-24T16:25:37.451Z","hook":"dev-rules-reminder","action":"inject","iterationCount":0}
 {"ts":"2026-06-24T16:25:37.451Z","hook":"iteration-context","action":"skip","iterationCount":1}
 {"ts":"2026-06-24T16:35:47.043Z","hook":"iteration-context","action":"skip","iterationCount":2}
+{"ts":"2026-06-25T09:49:49.445Z","hook":"iteration-context","action":"skip","iterationCount":3}
+{"ts":"2026-06-25T09:50:04.055Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
