@@ -93,7 +93,8 @@ func Stat(path string) (info os.FileInfo, err error) {
 	}
 	r, err := os.OpenRoot(dir)
 	if err != nil {
-		return nil, err
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		return os.Stat(filepath.Clean(abs))
 	}
 	defer func() {
 		if cerr := r.Close(); cerr != nil && err == nil {
@@ -118,7 +119,12 @@ func OpenReadWriteProbe(path string) (err error) {
 	}
 	r, err := os.OpenRoot(dir)
 	if err != nil {
-		return err
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		f, err := os.OpenFile(filepath.Clean(abs), os.O_RDWR, 0)
+		if err != nil {
+			return err
+		}
+		return f.Close()
 	}
 	defer func() {
 		if cerr := r.Close(); cerr != nil && err == nil {
@@ -151,7 +157,12 @@ func WriteFile(path string, data []byte, perm os.FileMode) (err error) {
 	}
 	r, err := os.OpenRoot(dir)
 	if err != nil {
-		return err
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		tmpAbs := filepath.Join(dir, file+".tmp")
+		if werr := os.WriteFile(tmpAbs, data, perm); werr != nil {
+			return werr
+		}
+		return os.Rename(tmpAbs, filepath.Clean(abs))
 	}
 	defer func() {
 		if cerr := r.Close(); cerr != nil && err == nil {

@@ -36,7 +36,7 @@ object ApiModule {
                 for (i in 0 until backendsArray.length()) {
                     val backendObj = backendsArray.getJSONObject(i)
                     val name = backendObj.optString("name", "")
-                    val provider = backendObj.optString("provider", "")
+                    val provider = backendObj.optString("kind", "")
                     val env = if (backendObj.has("env")) backendObj.getString("env") else null
                     parsedBackends.add(Backend(name = name, provider = provider, env = env))
                 }
