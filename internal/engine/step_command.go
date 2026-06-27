@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,13 +57,11 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 	kvTunnel := cuetry.KVTunnelEnabled(step, run.Params.Recipe.Defaults)
 
 	cmdFunc := func(r hosts.Record, kv map[string]string) string {
-		env, err := run.StepEnv(ctx, b, &r, true, false)
+		env, err := sc.EnvResolver.Resolve(ctx, b, &r, true, false)
 		if err != nil {
 			return fmt.Sprintf("echo 'env err: %s'", err.Error())
 		}
-		for k, v := range kv {
-			env[k] = v
-		}
+		maps.Copy(env, kv)
 		mainCmd := strings.TrimSpace(cs.Command)
 		if interp := strings.TrimSpace(cs.Interpreter); interp != "" {
 			mainCmd = fmt.Sprintf("%s -c %s", interp, ShellSingleQuoted(mainCmd))
@@ -215,7 +213,7 @@ func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
 
 // ExecuteStream streams the step execution.
 func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax, envResolver := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax, sc.EnvResolver
 	ss, ok := step.(*cuetry.ScriptStep)
 	if !ok || ss.Script == nil {
 		return fmt.Errorf("internal: script step missing script field")
@@ -262,13 +260,11 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 	}
 
 	cmdFunc := func(r hosts.Record, kv map[string]string) string {
-		env, err := run.StepEnv(ctx, b, &r, true, false)
+		env, err := envResolver.Resolve(ctx, b, &r, true, false)
 		if err != nil {
 			return fmt.Sprintf("echo 'env err: %s'", err.Error())
 		}
-		for k, v := range kv {
-			env[k] = v
-		}
+		maps.Copy(env, kv)
 		remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env, ss.Interpreter)
 		if err != nil {
 			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
@@ -306,7 +302,7 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, execute, cliEnv, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.Execute, sc.Run.Params.CLIEnv, sc.Index, sc.Step, sc.Targets
+	out, recipe, execute, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.Execute, sc.Index, sc.Step, sc.Targets
 	cs, _ := step.(*cuetry.CommandStep)
 	command := ""
 	if cs != nil {
@@ -323,7 +319,7 @@ func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
 		WriteCueStepHooksDryLines(out, i, step)
 		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 		for _, target := range targets {
-			env, err := cuetry.EffectiveEnvForRunEx(context.Background(), false, nil, step.Base(), recipe.Defaults, cliEnv, &target, CueEnvRunOpts(&recipe, nil, nil, nil, true))
+			env, err := sc.EnvResolver.Resolve(sc.Ctx, step.Base(), &target, false, true)
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
@@ -425,7 +421,7 @@ func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
 
 // ExecuteDryRun executes a dry run of the step.
 func (e *ScriptExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipeDir, recipe, execute, cliEnv, i, step, targets := sc.Out, sc.Run.Params.RecipeDir, sc.Run.Params.Recipe, sc.Run.Params.Execute, sc.Run.Params.CLIEnv, sc.Index, sc.Step, sc.Targets
+	out, recipeDir, recipe, execute, i, step, targets := sc.Out, sc.Run.Params.RecipeDir, sc.Run.Params.Recipe, sc.Run.Params.Execute, sc.Index, sc.Step, sc.Targets
 	ss, _ := step.(*cuetry.ScriptStep)
 	if ss == nil || ss.Script == nil {
 		return fmt.Errorf("step %d: internal: missing script", i)
@@ -447,7 +443,7 @@ func (e *ScriptExecutor) ExecuteDryRun(sc *StepContext) error {
 			_, _ = fmt.Fprintf(out, "step %d: kind=script (warning: local not readable: %v)\n", i, statErr)
 		}
 		for _, target := range targets {
-			env, err := cuetry.EffectiveEnvForRunEx(context.Background(), false, nil, step.Base(), recipe.Defaults, cliEnv, &target, CueEnvRunOpts(&recipe, nil, nil, nil, true))
+			env, err := sc.EnvResolver.Resolve(sc.Ctx, step.Base(), &target, false, true)
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}

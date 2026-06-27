@@ -16,17 +16,18 @@ import (
 // (recipe, records, env, secret resolver, plugin manager, …) via Run.Params;
 // the remaining fields are specific to this step and invocation.
 type StepContext struct {
-	Ctx        context.Context
-	Run        *CueRun
-	Out        io.Writer
-	Targets    []hosts.Record
-	Index      int
-	Step       cuetry.Step
-	Kind       string
-	RetryCfg   cuetry.RecipeStepRetry
-	AttemptMax *atomic.Int32
-	ResultCh   chan<- HostExecResult
-	History    [][]HostExecResult
+	Ctx         context.Context
+	Run         *CueRun
+	Out         io.Writer
+	Targets     []hosts.Record
+	Index       int
+	Step        cuetry.Step
+	Kind        string
+	RetryCfg    cuetry.RecipeStepRetry
+	AttemptMax  *atomic.Int32
+	ResultCh    chan<- HostExecResult
+	History     [][]HostExecResult
+	EnvResolver StepEnvResolver // resolves effective env per step/target; never nil after construction
 }
 
 // StepExecutor defines a deep module responsible for a specific recipe step kind.

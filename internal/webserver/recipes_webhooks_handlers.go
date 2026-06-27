@@ -301,7 +301,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Plugin manager: shared, owned by pluginCache — do NOT Close it here.
+	// Plugin manager: shared, owned by plugincache.Cache — do NOT Close it here.
 	t := time.Now()
 	pluginMgr, releasePlugins := api.plugins.Borrow()
 	defer releasePlugins()

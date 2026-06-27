@@ -15,15 +15,17 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/shareed2k/honey/internal/engine"
-
 	lru "github.com/hashicorp/golang-lru/v2"
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/approval"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
+	plugincache "github.com/shareed2k/honey/internal/plugins/cache"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/proxy"
@@ -32,7 +34,6 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
 	"github.com/shareed2k/honey/internal/webauthn"
-	"go.uber.org/zap"
 )
 
 // Options configures the embedded web server.
@@ -87,7 +88,7 @@ type Server struct {
 	pgPools  *postgres.PoolManager
 
 	webhookQueue    queue.Queue
-	plugins         *pluginCache
+	plugins         *plugincache.Cache
 	scheduleManager *scheduler.Manager
 
 	assistModelsMu  sync.Mutex
@@ -132,7 +133,7 @@ func NewServer(opts Options) (*Server, error) {
 	}
 
 	pgPools := postgres.NewPoolManager()
-	pc := newPluginCache(opts.Config)
+	pc := plugincache.New(opts.Config)
 	s := &Server{
 		opts:                  opts,
 		metrics:               opts.Metrics,

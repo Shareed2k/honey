@@ -76,6 +76,90 @@ decision := "require_approval"
 	}
 }
 
+func TestAssessTargets_criticalDeniesAllTargets(t *testing.T) {
+	inputs := []cmdgate.TargetInput{
+		{Name: "host-a", PolicyInput: map[string]any{"actor": "api"}},
+		{Name: "host-b", PolicyInput: map[string]any{"actor": "api"}},
+	}
+	_, decisions, err := cmdgate.AssessTargets(context.Background(), nil, "mkfs.ext4 /dev/sda", "", inputs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 2 {
+		t.Fatalf("want 2 decisions, got %d", len(decisions))
+	}
+	for _, d := range decisions {
+		if !d.Denied {
+			t.Errorf("host %q: critical command must be denied, reason=%q", d.Name, d.Reason)
+		}
+	}
+}
+
+func TestAssessTargets_summaryOnlyUsesFirstTarget(t *testing.T) {
+	inputs := []cmdgate.TargetInput{
+		{Name: "host-a", PolicyInput: map[string]any{"actor": "api"}},
+		{Name: "host-b", PolicyInput: map[string]any{"actor": "api"}},
+	}
+	_, decisions, err := cmdgate.AssessTargets(context.Background(), nil, "echo hi", "", inputs, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("summaryOnly=true must return 1 decision, got %d", len(decisions))
+	}
+	if decisions[0].Name != "host-a" {
+		t.Fatalf("summaryOnly=true must use first target, got %q", decisions[0].Name)
+	}
+}
+
+func TestAssessTargets_emptyTargets(t *testing.T) {
+	_, decisions, err := cmdgate.AssessTargets(context.Background(), nil, "echo hi", "", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 0 {
+		t.Fatalf("want 0 decisions for nil targets, got %d", len(decisions))
+	}
+}
+
+func TestAssessTargets_enforcerDenyPerTarget(t *testing.T) {
+	enf := mustEnforcer(t, `package honey
+import rego.v1
+default allow := false
+deny_reason := "blocked" if not allow
+`)
+	inputs := []cmdgate.TargetInput{
+		{Name: "host-a", PolicyInput: map[string]any{"actor": "api"}},
+		{Name: "host-b", PolicyInput: map[string]any{"actor": "api"}},
+	}
+	_, decisions, err := cmdgate.AssessTargets(context.Background(), enf, "echo hi", "", inputs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 2 {
+		t.Fatalf("want 2 decisions, got %d", len(decisions))
+	}
+	for _, d := range decisions {
+		if !d.Denied || !strings.Contains(d.Reason, "blocked") {
+			t.Errorf("host %q: denied=%v reason=%q", d.Name, d.Denied, d.Reason)
+		}
+	}
+}
+
+func TestAssessTargets_analysisReturnedOnce(t *testing.T) {
+	inputs := []cmdgate.TargetInput{
+		{Name: "host-a", PolicyInput: nil},
+		{Name: "host-b", PolicyInput: nil},
+	}
+	analysis, _, err := cmdgate.AssessTargets(context.Background(), nil, "mkfs.ext4 /dev/sda", "", inputs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.FirstCritical() == nil {
+		t.Fatal("analysis must capture critical signal for mkfs.ext4")
+	}
+}
+
 func TestDecide_enforcerAllow(t *testing.T) {
 	enf := mustEnforcer(t, `package honey
 import rego.v1

@@ -135,7 +135,7 @@ func (e *K8sExecutor) ExecuteDryRun(_ *StepContext) error {
 
 // ExecuteStream streams the step execution.
 func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax, envResolver := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax, sc.EnvResolver
 	if _, ok := step.(*cuetry.K8sStep); !ok {
 		return fmt.Errorf("internal: k8s step missing k8s field")
 	}
@@ -152,7 +152,7 @@ func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runK8sActionOnHost(ctx, run, stepIdx, step, target, retryCfg, attemptMax)
+			res := runK8sActionOnHost(ctx, run, stepIdx, step, target, retryCfg, attemptMax, envResolver)
 			ch <- res
 		}()
 	}
@@ -168,6 +168,7 @@ func runK8sActionOnHost(
 	target hosts.Record,
 	retryCfg cuetry.RecipeStepRetry,
 	attemptMax *atomic.Int32,
+	envResolver StepEnvResolver,
 ) HostExecResult {
 	res := HostExecResult{
 		Name:     target.Name,
@@ -189,7 +190,7 @@ func runK8sActionOnHost(
 	}
 
 	// Resolve env once for ${VAR} expansion in manifest and other action fields.
-	stepEnv, err := run.StepEnv(ctx, step.Base(), &target, run.Params.Execute, !run.Params.Execute)
+	stepEnv, err := envResolver.Resolve(ctx, step.Base(), &target, run.Params.Execute, !run.Params.Execute)
 	if err != nil {
 		res.ErrMsg = fmt.Errorf("k8s step env: %w", err).Error()
 		return res

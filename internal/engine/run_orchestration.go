@@ -189,13 +189,14 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 	}}
 
 	sc := &StepContext{
-		Ctx:     context.Background(),
-		Run:     run,
-		Out:     out,
-		Targets: targets,
-		Index:   i,
-		Step:    step,
-		Kind:    kind,
+		Ctx:         context.Background(),
+		Run:         run,
+		Out:         out,
+		Targets:     targets,
+		Index:       i,
+		Step:        step,
+		Kind:        kind,
+		EnvResolver: &runEnvResolver{run: run},
 	}
 
 	exec, err := GetStepExecutor(kind)

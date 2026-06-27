@@ -189,16 +189,17 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 	}
 
 	sc := &StepContext{
-		Ctx:        ctx,
-		Run:        run,
-		Targets:    targets,
-		Index:      i,
-		Step:       step,
-		Kind:       kind,
-		RetryCfg:   retryCfg,
-		AttemptMax: attemptMax,
-		ResultCh:   ch,
-		History:    history,
+		Ctx:         ctx,
+		Run:         run,
+		Targets:     targets,
+		Index:       i,
+		Step:        step,
+		Kind:        kind,
+		RetryCfg:    retryCfg,
+		AttemptMax:  attemptMax,
+		ResultCh:    ch,
+		History:     history,
+		EnvResolver: &runEnvResolver{run: run},
 	}
 
 	proxyCh := make(chan HostExecResult)
@@ -487,14 +488,15 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 	}
 	targets = CueApplyRecipeSSHDialOptions(run.Params.Recipe, RemoteOpts(step), targets)
 
-	// OPA host-list filtering: drop targets this actor may not run this step on.
-	targets, policySkipped, err := filterTargetsByPolicy(ctx, run, kind, targets)
+	// Apply pre-dispatch filters (policy gate → when clause) in sequence.
+	// Skips accumulate and are emitted uniformly below.
+	targets, allSkipped, err := newStepFilterPipelineForRun(run, kind, step).Apply(ctx, targets)
 	if err != nil {
 		return nil, fmt.Errorf("step %d: %w", i, err)
 	}
 
 	if strings.TrimSpace(step.Base().Loop) != "" || step.Base().LoopFrom != nil {
-		for _, sk := range policySkipped {
+		for _, sk := range allSkipped {
 			res := sk
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 			out <- res
@@ -502,16 +504,7 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 		return StreamCueLoopStep(ctx, run, i, step, targets, history, out)
 	}
 
-	kv := KvReaderFromCoordinator(run.RecipeKV)
-	var whenSkipped []HostExecResult
-	if strings.TrimSpace(step.Base().When) != "" {
-		targets, whenSkipped, err = FilterTargetsByWhen(ctx, run.Params.Recipe, step, targets, run.OutputStore, run.Params.SecretResolver, kv, run.Params.CLIEnv, run.Params.Execute)
-		if err != nil {
-			return nil, fmt.Errorf("step %d: %w", i, err)
-		}
-	}
-	// Policy-denied hosts flow through the same skip-emit path as when-skips.
-	whenSkipped = append(policySkipped, whenSkipped...)
+	whenSkipped := allSkipped
 
 	ch := make(chan HostExecResult, len(targets))
 	done := make(chan struct{})

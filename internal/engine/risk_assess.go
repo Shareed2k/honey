@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
+	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/policy"
@@ -45,7 +46,7 @@ func (r *RecipeRunner) AssessCommandRisk(ctx context.Context, req RunRequest) []
 			Interpreter: interpreter,
 			Analysis:    analysis,
 		}
-		if d := r.assessStepDecision(ctx, command, analysis, req); d != nil {
+		if d := r.assessStepDecision(ctx, command, interpreter, req); d != nil {
 			sr.Decision = d
 		}
 		out = append(out, sr)
@@ -53,30 +54,37 @@ func (r *RecipeRunner) AssessCommandRisk(ctx context.Context, req RunRequest) []
 	return out
 }
 
-// assessStepDecision evaluates the command_exec policy for a dry-run review,
-// using the first record as representative context. Returns nil when no enforcer.
-func (r *RecipeRunner) assessStepDecision(ctx context.Context, command string, a commandrisk.Analysis, req RunRequest) *policy.Decision {
-	if r.opts.Enforcer == nil {
-		return nil
-	}
-	target := map[string]any{}
+// assessStepDecision evaluates the command_exec gate for a dry-run review via
+// cmdgate.AssessTargets (summaryOnly=true, first record as representative).
+// This ensures critical-signal hard-denies are applied even in preview mode,
+// giving the same verdict that the runtime gate would produce.
+func (r *RecipeRunner) assessStepDecision(ctx context.Context, command, interpreter string, req RunRequest) *policy.Decision {
+	var inputs []cmdgate.TargetInput
 	if len(req.Records) > 0 {
 		t := req.Records[0]
-		target = map[string]any{"name": t.Name, "provider": t.Provider, "env": t.Meta["env"], "groups": t.Groups}
+		inputs = []cmdgate.TargetInput{{
+			Name: t.Name,
+			PolicyInput: map[string]any{
+				"action": "command_exec",
+				"actor":  actorOrAPI(req.ActorID),
+				"command": map[string]any{
+					"raw": command, "interpreter": interpreter,
+				},
+				"target":    map[string]any{"name": t.Name, "provider": t.Provider, "env": t.Meta["env"], "groups": t.Groups},
+				"execution": map[string]any{"recipe": req.Recipe.Name, "dry_run": true},
+			},
+		}}
 	}
-	d, err := r.opts.Enforcer.Evaluate(ctx, map[string]any{
-		"action": "command_exec",
-		"actor":  actorOrAPI(req.ActorID),
-		"command": map[string]any{
-			"raw": command, "riskSignals": a.Signals, "detected": a.Detected, "max_severity": string(a.MaxSeverity), "interpreter": a.Interpreter,
-		},
-		"target":    target,
-		"execution": map[string]any{"recipe": req.Recipe.Name, "dry_run": true},
-	})
-	if err != nil {
+	_, decisions, err := cmdgate.AssessTargets(ctx, r.opts.Enforcer, command, interpreter, inputs, true)
+	if err != nil || len(decisions) == 0 {
 		return nil
 	}
-	return &d
+	d := decisions[0]
+	if !d.Denied {
+		return nil
+	}
+	dec := policy.Decision{Allow: false, DenyReason: d.Reason, Decision: "deny"}
+	return &dec
 }
 
 // commandTextForRisk returns the text to analyze for a step, its interpreter,

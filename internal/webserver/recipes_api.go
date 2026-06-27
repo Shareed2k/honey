@@ -15,6 +15,7 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/metrics"
+	plugincache "github.com/shareed2k/honey/internal/plugins/cache"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/queue"
 )
@@ -33,7 +34,7 @@ type RecipesAPI struct {
 	webhookQueue          queue.Queue
 	pgPools               *postgres.PoolManager
 	ai                    AIAssistant
-	plugins               *pluginCache
+	plugins               *plugincache.Cache
 	sshCache              *engine.ClientCache
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
@@ -43,8 +44,8 @@ type RecipesAPI struct {
 	webhookDedupMu    sync.Mutex
 }
 
-// *pluginCache must satisfy engine.PluginProvider so the runner can borrow it.
-var _ engine.PluginProvider = (*pluginCache)(nil)
+// *plugincache.Cache must satisfy engine.PluginProvider so the runner can borrow it.
+var _ engine.PluginProvider = (*plugincache.Cache)(nil)
 
 // NewRecipesAPI creates a new isolated router and handler set for Recipes.
 func NewRecipesAPI(
@@ -53,7 +54,7 @@ func NewRecipesAPI(
 	webhookQueue queue.Queue,
 	pgPools *postgres.PoolManager,
 	ai AIAssistant,
-	plugins *pluginCache,
+	plugins *plugincache.Cache,
 	sshCache *engine.ClientCache,
 	valCache *lru.Cache[string, *ValidateContentResponse],
 	graphCache *lru.Cache[string, *cuetry.RecipeGraphPlan],
