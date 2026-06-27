@@ -60,6 +60,7 @@ Honey ships pre-built releases for the following plugins. Install any of them fr
 | `postgres` | `custom_step` | Run SQL against Postgres instances |
 | `sqlite` | `custom_step` | Run embedded SQLite queries inside WASM against mounted DB files |
 | `rclone` | `custom_step` | Transfer files via rclone |
+| `cve-scanner` | `custom_step` | Scan hosts for CVEs (grype/trivy) and apply security patches — see [Vulnerability & patch management](./vulnerability-management.md) |
 
 ## List installed plugins
 
