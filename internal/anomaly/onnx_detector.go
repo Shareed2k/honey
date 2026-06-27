@@ -37,7 +37,7 @@ type onnxDetector struct {
 	outputScoreName string
 }
 
-func newONNXDetector(modelPath, tokenizerPath string, threshold float64, _ int) (Detector, error) {
+func newONNXDetector(modelPath, tokenizerPath string, threshold float64, _ int) (*onnxDetector, error) {
 	if strings.TrimSpace(tokenizerPath) == "" {
 		tokenizerPath = filepath.Join(filepath.Dir(modelPath), "vocab.txt")
 	}
