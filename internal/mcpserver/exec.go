@@ -4,12 +4,28 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shareed2k/honey/internal/cmdgate"
+	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 )
+
+// execSSH runs the command over SSH. It is a package variable so tests can
+// substitute a fake that records calls without touching real hosts.
+var execSSH = engine.ExecuteSSHParallel
+
+// riskDisableEnv bypasses the command-risk gate (including built-in critical
+// denies) for trusted automation. Mirrors the engine's escape hatch.
+const riskDisableEnv = "HONEY_RISK_DISABLE"
+
+func riskGateDisabled() bool {
+	v := strings.TrimSpace(os.Getenv(riskDisableEnv))
+	return v != "" && v != "0" && !strings.EqualFold(v, "false")
+}
 
 type execOnHostInput struct {
 	// Host is the IP address or hostname to connect to directly via SSH.
@@ -47,13 +63,25 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 	}
 	record := hosts.Record{Name: name, PrimaryIP: in.Host}
 
+	// Gate the AI exec path the same way the CLI/web/recipe paths do: built-in
+	// critical signals always deny; an OPA enforcer (if configured) makes the
+	// contextual call via the "mcp_exec" action. deny / require_approval /
+	// require_biometric verdicts block here (no interactive approval over MCP).
+	if !riskGateDisabled() {
+		if reason, denied, gerr := gateMCPExec(ctx, in.Command, in.Shell, record); gerr != nil {
+			return nil, execOnHostOutput{}, gerr
+		} else if denied {
+			return nil, execOnHostOutput{}, fmt.Errorf("blocked: %s", reason)
+		}
+	}
+
 	cmd := buildShellCmd(in.Command, in.Shell)
 	recordDir := ""
 	if serverCfg != nil {
 		recordDir = serverCfg.Defaults.RecordDir
 	}
 
-	rawResults, err := engine.ExecuteSSHParallel("", []hosts.Record{record}, func(_ hosts.Record) string { return cmd }, 8, nil)
+	rawResults, err := execSSH("", []hosts.Record{record}, func(_ hosts.Record) string { return cmd }, 8, nil)
 	if err != nil {
 		return nil, execOnHostOutput{}, fmt.Errorf("ssh exec: %w", err)
 	}
@@ -77,6 +105,31 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 		}
 	}
 	return nil, out, nil
+}
+
+// gateMCPExec analyzes the raw command and decides whether it may run, building
+// the policy input for the "mcp_exec" action. Returns (reason, denied, err).
+func gateMCPExec(ctx context.Context, rawCommand, interpreter string, t hosts.Record) (string, bool, error) {
+	if strings.TrimSpace(rawCommand) == "" {
+		return "", false, nil
+	}
+	analysis := commandrisk.AnalyzeStep(rawCommand, interpreter)
+	input := map[string]any{
+		"action": "mcp_exec",
+		"actor":  mcpActor,
+		"command": map[string]any{
+			"raw":          rawCommand,
+			"riskSignals":  analysis.Signals,
+			"detected":     analysis.Detected,
+			"max_severity": string(analysis.MaxSeverity),
+			"interpreter":  analysis.Interpreter,
+		},
+		"target": map[string]any{
+			"name":     t.Name,
+			"provider": t.Provider,
+		},
+	}
+	return cmdgate.Decide(ctx, policyEnforcer, analysis, input)
 }
 
 // buildShellCmd wraps the command with an explicit interpreter when shell is set.

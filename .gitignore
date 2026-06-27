@@ -23,3 +23,13 @@ runtime
 .claude/*
 
 */*.aar
+android/app/libs/*.aar
+android/.kotlin
+android/.claude
+android/.idea
+android/.gradle
+
+.idea
+.claude
+android/app/src/main/assets/honey-arm64
+android/app/src/main/assets/honey-amd64

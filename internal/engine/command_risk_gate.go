@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
@@ -62,15 +63,11 @@ func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpr
 }
 
 // commandRiskDecision returns (reason, denied, err) for one target. Built-in
-// critical signals deny first; otherwise the OPA enforcer (if any) decides.
+// critical signals deny first; otherwise the OPA enforcer (if any) decides. The
+// shared decision logic lives in cmdgate.Decide so the engine, web API, and MCP
+// server all gate exec identically; this function only builds the recipe-context
+// policy input.
 func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, kind, rawCommand string, analysis commandrisk.Analysis, run *CueRun, t hosts.Record) (string, bool, error) {
-	if crit := analysis.FirstCritical(); crit != nil {
-		return "command risk: " + crit.Reason, true, nil
-	}
-	if enforcer == nil {
-		return "", false, nil
-	}
-
 	input := map[string]any{
 		"action": "command_exec",
 		"actor":  actor,
@@ -95,19 +92,9 @@ func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, 
 		},
 	}
 
-	d, err := enforcer.Evaluate(ctx, input)
+	reason, denied, err := cmdgate.Decide(ctx, enforcer, analysis, input)
 	if err != nil {
 		return "", false, fmt.Errorf("command risk policy: %w", err)
 	}
-	if d.Allow && d.Decision != "require_approval" && d.Decision != "require_biometric" && d.Decision != "deny" {
-		return "", false, nil
-	}
-	reason := d.DenyReason
-	if reason == "" {
-		reason = "denied by policy"
-	}
-	if len(d.Requires) > 0 {
-		reason += " (requires: " + strings.Join(d.Requires, ", ") + ")"
-	}
-	return reason, true, nil
+	return reason, denied, nil
 }

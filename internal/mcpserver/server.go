@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"os"
 
 	"github.com/go-playground/mold/v4/modifiers"
 	"github.com/go-playground/validator/v10"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/policy"
 )
 
 const serverVersion = "0.1.1"
@@ -22,28 +24,66 @@ var (
 // set once in Run() before any tool handlers are invoked.
 var (
 	serverCfg *config.File
+	// policyEnforcer gates exec_on_host. nil means no OPA policy is configured;
+	// built-in critical command-risk denies still apply (secure-by-default).
+	policyEnforcer *policy.Enforcer
 )
 
-// Run starts the MCP server on stdio until the client disconnects.
-// cfg and cfgPath are the honey config already loaded by the CLI root PersistentPreRunE.
-func Run(ctx context.Context, cfg *config.File, cfgPath string) error {
+// mcpActor is the actor id used in policy input for MCP-driven exec. Stdio MCP
+// has no per-call identity, so all MCP exec is attributed to "mcp".
+const mcpActor = "mcp"
+
+// policyDirEnv points at a directory of .rego files; empty uses no enforcer.
+const policyDirEnv = "HONEY_POLICY_DIR"
+
+// NewServer builds the honey MCP server with its tools registered and the given
+// config and (optional) policy enforcer wired in. Transport is the caller's
+// choice — Run uses stdio; tests use an in-memory transport. A nil enforcer
+// leaves OPA opt-in; built-in critical command-risk denies always apply.
+func NewServer(cfg *config.File, enf *policy.Enforcer) *mcp.Server {
 	serverCfg = cfg
-	_ = cfgPath
+	policyEnforcer = enf
+
 	s := mcp.NewServer(&mcp.Implementation{Name: "honey", Version: serverVersion}, nil)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_hosts",
 		Description: "Search hosts across GCP, AWS, Kubernetes, and Consul in parallel (same behavior as honey search). Returns JSON array of records.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, handleSearchHosts)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_backends",
 		Description: "List named backends from the honey config file (requires backends with optional name field in YAML).",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, handleListBackends)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "exec_on_host",
-		Description: "Run a shell command on a host via SSH using its IP or hostname directly (use primary_ip from search_hosts). Records output to session recordings if record_dir is configured.",
+		Description: "Run a shell command on a host via SSH using its IP or hostname directly (use primary_ip from search_hosts). Commands are gated by honey's command-risk engine and OPA policy; critical or policy-denied commands are refused. Records output to session recordings if record_dir is configured.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPtr(true)},
 	}, handleExecOnHost)
-	return s.Run(ctx, &mcp.StdioTransport{})
+	return s
 }
+
+// Run starts the MCP server on stdio until the client disconnects.
+// cfg and cfgPath are the honey config already loaded by the CLI root PersistentPreRunE.
+func Run(ctx context.Context, cfg *config.File, cfgPath string) error {
+	_ = cfgPath
+
+	// Build the OPA enforcer when a policy dir is configured. With none set,
+	// the enforcer stays nil (opt-in) and only built-in critical command-risk
+	// denies apply to exec_on_host.
+	var enf *policy.Enforcer
+	if dir := os.Getenv(policyDirEnv); dir != "" {
+		e, err := policy.New(ctx, dir, nil)
+		if err != nil {
+			return err
+		}
+		enf = e
+	}
+
+	return NewServer(cfg, enf).Run(ctx, &mcp.StdioTransport{})
+}
+
+func boolPtr(b bool) *bool { return &b }
 
 // --- search_hosts ---
 

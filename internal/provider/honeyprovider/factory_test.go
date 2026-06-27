@@ -34,7 +34,7 @@ func TestBackendRows(t *testing.T) {
 
 	// Mock server
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/config/backends", r.URL.Path)
+		assert.Equal(t, "/api/v1/backends", r.URL.Path)
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "Bearer test-token" {
