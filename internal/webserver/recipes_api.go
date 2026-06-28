@@ -16,7 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/metrics"
-	plugincache "github.com/shareed2k/honey/internal/plugins/cache"
+	plugincache "github.com/shareed2k/honey/internal/plugincache"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/queue"
 )
