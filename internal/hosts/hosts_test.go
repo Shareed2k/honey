@@ -150,6 +150,21 @@ func TestRecord_Capabilities(t *testing.T) {
 			Record{Provider: "aws"},
 			[]string{},
 		},
+		{
+			"k8s pod connectable ssh only",
+			Record{Provider: "k8s", Meta: map[string]string{"kind": "pod"}},
+			[]string{"ssh"},
+		},
+		{
+			"docker kind container no container_id not connectable",
+			Record{Provider: "docker", Meta: map[string]string{"kind": "container"}},
+			[]string{"docker_exec"},
+		},
+		{
+			"truenas virt instance no ip",
+			Record{Provider: "truenas", Meta: map[string]string{"kind": "virt_instance", "id": "v1"}},
+			[]string{"ssh", "truenas_api"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
