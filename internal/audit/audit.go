@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -56,7 +57,7 @@ type FileSink struct {
 // NewFileSink opens (or creates) path for append-only writing and returns a
 // FileSink. The caller must call Close when done.
 func NewFileSink(path string) (*FileSink, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 — path is config-controlled
+	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
