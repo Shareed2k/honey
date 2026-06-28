@@ -92,6 +92,8 @@ decision := "require_approval"
 
 func TestE2E_benignCommandExecutes(t *testing.T) {
 	called := withFakeExec(t)
+	// No OPA enforcer; opt-in via env var so the benign command is allowed.
+	t.Setenv(execAllowUnverifiedEnv, "1")
 	cs := newE2ESession(t, nil)
 
 	res := callExec(t, cs, "whoami")

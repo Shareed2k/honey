@@ -7,7 +7,9 @@ import (
 	"github.com/go-playground/mold/v4/modifiers"
 	"github.com/go-playground/validator/v10"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.uber.org/zap"
 
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/policy"
@@ -27,6 +29,9 @@ var (
 	// policyEnforcer gates exec_on_host. nil means no OPA policy is configured;
 	// built-in critical command-risk denies still apply (secure-by-default).
 	policyEnforcer *policy.Enforcer
+	// auditSink receives one event per exec_on_host gate decision.
+	// Defaults to a no-op sink when audit is disabled in config.
+	auditSink audit.Sink = audit.NewNoopSink()
 )
 
 // mcpActor is the actor id used in policy input for MCP-driven exec. Stdio MCP
@@ -43,6 +48,17 @@ const policyDirEnv = "HONEY_POLICY_DIR"
 func NewServer(cfg *config.File, enf *policy.Enforcer) *mcp.Server {
 	serverCfg = cfg
 	policyEnforcer = enf
+
+	// Open audit sink from config if enabled; fall back to no-op.
+	auditSink = audit.NewNoopSink()
+	if cfg != nil && cfg.Audit.Enabled {
+		path := cfg.Audit.EffectivePath()
+		if s, err := audit.NewFileSink(path); err != nil {
+			zap.L().Warn("audit: failed to open log file", zap.String("path", path), zap.Error(err))
+		} else {
+			auditSink = s
+		}
+	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "honey", Version: serverVersion}, nil)
 	mcp.AddTool(s, &mcp.Tool{

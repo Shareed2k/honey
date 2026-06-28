@@ -32,6 +32,7 @@ type File struct {
 	Apps          apps.Config        `yaml:"apps,omitempty" json:"apps,omitempty"`
 	AlertMappings []AlertMapping     `yaml:"alert_mappings,omitempty" json:"alert_mappings,omitempty"`
 	AlertWebhook  AlertWebhookConfig `yaml:"alert_webhook,omitempty" json:"alert_webhook,omitempty"`
+	Audit         Audit              `yaml:"audit,omitempty" json:"audit,omitempty"`
 }
 
 // AlertNotifySlack configures Slack notifications for alert findings.

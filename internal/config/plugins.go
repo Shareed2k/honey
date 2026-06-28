@@ -41,6 +41,7 @@ func (p Plugins) WithDefaults() PluginsEffective {
 		Enabled:     false,
 		MaxMemoryMB: defaultPluginsMaxMemoryMB,
 		TimeoutMS:   defaultPluginsTimeoutMS,
+		NetworkDeny: true, // secure-by-default: plugins cannot make arbitrary network calls
 	}
 	if p.Enabled != nil {
 		e.Enabled = *p.Enabled

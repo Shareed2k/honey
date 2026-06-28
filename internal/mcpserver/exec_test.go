@@ -75,14 +75,58 @@ decision := "require_approval"
 	}
 }
 
-func TestHandleExecOnHost_allowExecutes(t *testing.T) {
+func TestHandleExecOnHost_nilEnforcerDeniedByDefault(t *testing.T) {
+	// Without an OPA enforcer and without HONEY_EXEC_ALLOW_UNVERIFIED, non-critical
+	// commands must be denied (secure-by-default on the AI exec path).
 	called := withFakeExec(t)
-	withEnforcer(t, nil) // nil enforcer allows non-critical commands
+	withEnforcer(t, nil)
+	t.Setenv(execAllowUnverifiedEnv, "")
+
+	in := execOnHostInput{Host: "10.0.0.1", Name: "web1", Command: "whoami"}
+	_, _, err := handleExecOnHost(context.Background(), nil, in)
+	if err == nil {
+		t.Fatal("nil enforcer + no env var must deny exec")
+	}
+	if *called {
+		t.Fatal("SSH must NOT be called when exec is denied by default")
+	}
+}
+
+func TestHandleExecOnHost_allowUnverifiedEnvUnlocksExec(t *testing.T) {
+	// HONEY_EXEC_ALLOW_UNVERIFIED=1 lets benign commands run without an OPA enforcer.
+	called := withFakeExec(t)
+	withEnforcer(t, nil)
+	t.Setenv(execAllowUnverifiedEnv, "1")
 
 	in := execOnHostInput{Host: "10.0.0.1", Name: "web1", Command: "whoami"}
 	_, out, err := handleExecOnHost(context.Background(), nil, in)
 	if err != nil {
-		t.Fatalf("benign command should run: %v", err)
+		t.Fatalf("benign command with env var should run: %v", err)
+	}
+	if !*called {
+		t.Fatal("SSH should be called when env var unlocks exec")
+	}
+	if len(out.Results) != 1 || out.Results[0].Output != "ok" {
+		t.Fatalf("out=%+v", out)
+	}
+}
+
+func TestHandleExecOnHost_enforcerAllowsExec(t *testing.T) {
+	// A real OPA enforcer (allow policy) must reach execSSH.
+	called := withFakeExec(t)
+	enf, err := policy.NewFromSource(context.Background(), "p.rego", `package honey
+import rego.v1
+default allow := true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withEnforcer(t, enf)
+
+	in := execOnHostInput{Host: "10.0.0.1", Name: "web1", Command: "whoami"}
+	_, out, err := handleExecOnHost(context.Background(), nil, in)
+	if err != nil {
+		t.Fatalf("enforcer-allowed command should run: %v", err)
 	}
 	if !*called {
 		t.Fatal("SSH should be called for an allowed command")

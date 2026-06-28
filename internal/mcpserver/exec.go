@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/engine"
@@ -24,6 +25,18 @@ const riskDisableEnv = "HONEY_RISK_DISABLE"
 
 func riskGateDisabled() bool {
 	v := strings.TrimSpace(os.Getenv(riskDisableEnv))
+	return v != "" && v != "0" && !strings.EqualFold(v, "false")
+}
+
+// execAllowUnverifiedEnv opts the MCP exec path into "allow non-critical
+// commands without an OPA enforcer". Without this env var, exec_on_host
+// requires either a configured OPA enforcer (HONEY_POLICY_DIR) or an explicit
+// opt-in here. Built-in critical-signal hard-denies are unconditional and
+// cannot be bypassed by this env var.
+const execAllowUnverifiedEnv = "HONEY_EXEC_ALLOW_UNVERIFIED"
+
+func execUnverifiedAllowed() bool {
+	v := strings.TrimSpace(os.Getenv(execAllowUnverifiedEnv))
 	return v != "" && v != "0" && !strings.EqualFold(v, "false")
 }
 
@@ -63,16 +76,29 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 	}
 	record := hosts.Record{Name: name, PrimaryIP: in.Host}
 
-	// Gate the AI exec path the same way the CLI/web/recipe paths do: built-in
-	// critical signals always deny; an OPA enforcer (if configured) makes the
-	// contextual call via the "mcp_exec" action. deny / require_approval /
-	// require_biometric verdicts block here (no interactive approval over MCP).
+	// Gate via command-risk engine + deny-by-default + OPA enforcer.
+	// Built-in critical signals always deny; non-critical exec requires either a
+	// configured OPA enforcer or HONEY_EXEC_ALLOW_UNVERIFIED=1.
 	if !riskGateDisabled() {
-		if reason, denied, gerr := gateMCPExec(ctx, in.Command, in.Shell, record); gerr != nil {
+		reason, denied, gerr := gateMCPExec(ctx, in.Command, in.Shell, record)
+		if gerr != nil {
 			return nil, execOnHostOutput{}, gerr
-		} else if denied {
+		}
+		evt := audit.Event{
+			Actor:   mcpActor,
+			Source:  "mcp",
+			Action:  "exec",
+			Target:  record.Name,
+			Command: in.Command,
+		}
+		if denied {
+			evt.Decision = "deny"
+			evt.DenyReason = reason
+			_ = auditSink.Log(ctx, evt)
 			return nil, execOnHostOutput{}, fmt.Errorf("blocked: %s", reason)
 		}
+		evt.Decision = "allow"
+		_ = auditSink.Log(ctx, evt)
 	}
 
 	cmd := buildShellCmd(in.Command, in.Shell)
@@ -109,11 +135,29 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 
 // gateMCPExec analyzes the raw command and decides whether it may run, building
 // the policy input for the "mcp_exec" action. Returns (reason, denied, err).
+//
+// Decision order:
+//  1. Built-in critical signals (mkfs/dd/curl|sh/…) → always deny, bypass-proof.
+//  2. Deny-by-default: no OPA enforcer + no HONEY_EXEC_ALLOW_UNVERIFIED → deny.
+//  3. OPA enforcer evaluation (if configured).
 func gateMCPExec(ctx context.Context, rawCommand, interpreter string, t hosts.Record) (string, bool, error) {
 	if strings.TrimSpace(rawCommand) == "" {
 		return "", false, nil
 	}
 	analysis := commandrisk.AnalyzeStep(rawCommand, interpreter)
+
+	// Step 1: built-in critical hard-deny.
+	if crit := analysis.FirstCritical(); crit != nil {
+		return "command risk: " + crit.Reason, true, nil
+	}
+
+	// Step 2: deny-by-default when no OPA enforcer is wired in.
+	if policyEnforcer == nil && !execUnverifiedAllowed() {
+		return "exec_on_host requires a policy enforcer (set HONEY_POLICY_DIR) " +
+			"or set HONEY_EXEC_ALLOW_UNVERIFIED=1 to allow execution without a policy", true, nil
+	}
+
+	// Step 3: OPA contextual evaluation.
 	input := map[string]any{
 		"action": "mcp_exec",
 		"actor":  mcpActor,
