@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/webserver/recipestore"
@@ -146,6 +147,12 @@ func (api *RecipesAPI) handleRecipesStoreSave(w http.ResponseWriter, r *http.Req
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
+	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
+		Source: "web",
+		Actor:  actorFromCtx(r.Context()),
+		Action: "recipe_save",
+		Target: name,
+	})
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"success":true}`))
 }
@@ -161,6 +168,12 @@ func (api *RecipesAPI) handleRecipesStoreDelete(w http.ResponseWriter, r *http.R
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
+	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
+		Source: "web",
+		Actor:  actorFromCtx(r.Context()),
+		Action: "recipe_delete",
+		Target: name,
+	})
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"success":true}`))
 }

@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/apps"
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
@@ -381,6 +382,13 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 
 	actor := api.resolveWebhookActor(r, webhook, body, appName)
+	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
+		Source:   "webhook",
+		Actor:    actor,
+		Action:   "recipe_run",
+		Target:   recipe.Name,
+		Decision: "allow",
+	})
 
 	isAsync := webhook.Async != nil && *webhook.Async
 

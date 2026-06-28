@@ -6,15 +6,21 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/shareed2k/honey/internal/approval"
+	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/audit"
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/queue"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 // Ensure context is used (for captureSink.Log signature and noop test).
@@ -261,3 +267,179 @@ var _ recipeRunnerIface = (*fakeRunner)(nil)
 
 // Ensure cuetry is used (Recipe is referenced in handler).
 var _ = cuetry.Recipe{}
+
+// newWebhookTestServer creates a server with a temp recipe file, a dummy search
+// registry, and the given AuditSink, then replaces the runner with fakeRunner.
+func newWebhookTestServer(t *testing.T, recipeCUE, appTarget string, sink *captureSink, fr *fakeRunner) *Server {
+	t.Helper()
+	dir := t.TempDir()
+	recipePath := filepath.Join(dir, "recipe.cue")
+	if err := os.WriteFile(recipePath, []byte(recipeCUE), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "honey.yaml")
+	if err := os.WriteFile(configPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.File{
+		Apps: map[string]apps.AppConfig{
+			"myapp": {
+				Type:         apps.AppTypeRecipe,
+				TargetRecipe: recipePath,
+				Target:       appTarget,
+			},
+		},
+	}
+	q, _ := queue.NewAntsQueue(5)
+	s := newTestServer(t, Options{
+		ConfigPath:     configPath,
+		Config:         cfg,
+		AuditSink:      sink,
+		SearchRegistry: searchrun.NewRegistry([]searchrun.ProviderFactory{dummyFactory{}}),
+	})
+	s.webhookQueue = q
+	s.recipesAPI.runner = fr
+	return s
+}
+
+const webhookSyncCUE = `
+recipe: {
+	name: "hook-recipe"
+	webhooks: {
+		"deploy": {async: false}
+	}
+	steps: [{host: "*", command: "echo hi"}]
+}
+`
+
+const webhookAsyncCUE = `
+recipe: {
+	name: "hook-recipe"
+	webhooks: {
+		"deploy": {async: true}
+	}
+	steps: [{host: "*", command: "echo hi"}]
+}
+`
+
+func TestHandleRecipeWebhook_emitsAuditEvent_sync(t *testing.T) {
+	sink := &captureSink{}
+	s := newWebhookTestServer(t, webhookSyncCUE, "dynamic:localhost", sink, &fakeRunner{ch: closedResultChan()})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/myapp/deploy", strings.NewReader("{}"))
+	w := httptest.NewRecorder()
+	s.router.ServeHTTP(w, req)
+
+	events := sink.all()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d (status=%d body=%s)", len(events), w.Code, w.Body)
+	}
+	e := events[0]
+	if e.Action != "recipe_run" {
+		t.Errorf("Action = %q, want %q", e.Action, "recipe_run")
+	}
+	if e.Source != "webhook" {
+		t.Errorf("Source = %q, want %q", e.Source, "webhook")
+	}
+	if e.Target != "hook-recipe" {
+		t.Errorf("Target = %q, want %q", e.Target, "hook-recipe")
+	}
+	if e.Decision != "allow" {
+		t.Errorf("Decision = %q, want %q", e.Decision, "allow")
+	}
+}
+
+func TestHandleRecipeWebhook_emitsAuditEvent_async(t *testing.T) {
+	sink := &captureSink{}
+	s := newWebhookTestServer(t, webhookAsyncCUE, "dynamic:localhost", sink, &fakeRunner{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/myapp/deploy", strings.NewReader("{}"))
+	w := httptest.NewRecorder()
+	s.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", w.Code, w.Body)
+	}
+	events := sink.all()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	e := events[0]
+	if e.Action != "recipe_run" {
+		t.Errorf("Action = %q, want %q", e.Action, "recipe_run")
+	}
+	if e.Source != "webhook" {
+		t.Errorf("Source = %q, want %q", e.Source, "webhook")
+	}
+	if e.Target != "hook-recipe" {
+		t.Errorf("Target = %q, want %q", e.Target, "hook-recipe")
+	}
+}
+
+func TestHandleRecipesStoreSave_emitsAuditEvent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sink := &captureSink{}
+	cfg := &config.File{}
+	cfg.Defaults.Studio.RecipesPath = dir
+
+	s := newTestServer(t, Options{AuditSink: sink, Config: cfg})
+
+	body := `{"content": "package honey\n"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/recipes/store/myrecipe.cue", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body)
+	}
+	events := sink.all()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	e := events[0]
+	if e.Action != "recipe_save" {
+		t.Errorf("Action = %q, want %q", e.Action, "recipe_save")
+	}
+	if e.Target != "myrecipe.cue" {
+		t.Errorf("Target = %q, want %q", e.Target, "myrecipe.cue")
+	}
+	if e.Source != "web" {
+		t.Errorf("Source = %q, want %q", e.Source, "web")
+	}
+}
+
+func TestHandleRecipesStoreDelete_emitsAuditEvent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sink := &captureSink{}
+	cfg := &config.File{}
+	cfg.Defaults.Studio.RecipesPath = dir
+
+	// Pre-create the file so Delete succeeds.
+	if err := os.WriteFile(filepath.Join(dir, "myrecipe.cue"), []byte("package honey\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestServer(t, Options{AuditSink: sink, Config: cfg})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/recipes/store/myrecipe.cue", nil)
+	w := httptest.NewRecorder()
+	s.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body)
+	}
+	events := sink.all()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	e := events[0]
+	if e.Action != "recipe_delete" {
+		t.Errorf("Action = %q, want %q", e.Action, "recipe_delete")
+	}
+	if e.Target != "myrecipe.cue" {
+		t.Errorf("Target = %q, want %q", e.Target, "myrecipe.cue")
+	}
+}
