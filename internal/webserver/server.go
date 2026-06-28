@@ -80,6 +80,11 @@ type Options struct {
 	// WebAuthn, when non-nil, enables passkey biometric step-up for
 	// require_biometric verdicts and the /api/v1/webauthn/* endpoints.
 	WebAuthn *webauthn.Manager
+
+	// WebhookRatePerSecond and WebhookBurst control the per-app-name rate limit on
+	// unauthenticated webhook endpoints. Defaults: 10 req/s, burst 20.
+	WebhookRatePerSecond float64
+	WebhookBurst         int
 }
 
 // Server is the honey web UI HTTP server.

@@ -239,3 +239,24 @@ recipe: {
 		t.Fatalf("expected status")
 	}
 }
+
+func TestWebhookRateLimit(t *testing.T) {
+	t.Parallel()
+	// burst=1: first request consumes the single token, second must be 429.
+	s := newTestServer(t, Options{WebhookRatePerSecond: 1, WebhookBurst: 1})
+
+	send := func() int {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/myapp/myhook",
+			bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	_ = send() // consume the single token; result doesn't matter (no recipe configured)
+	code := send()
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after burst exhausted, got %d", code)
+	}
+}

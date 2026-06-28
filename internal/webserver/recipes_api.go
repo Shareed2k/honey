@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jellydator/ttlcache/v3"
+	wrate "github.com/webriots/rate"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -51,6 +52,8 @@ type RecipesAPI struct {
 
 	webhookDedupCache *ttlcache.Cache[string, string]
 	webhookDedupMu    sync.Mutex
+
+	webhookRL *wrate.TokenBucketLimiter
 }
 
 // *plugincache.Cache must satisfy engine.PluginProvider so the runner can borrow it.
@@ -86,6 +89,19 @@ func NewRecipesAPI(
 		recipeGraphCache:      graphCache,
 		webhookDedupCache:     dedupCache,
 	}
+	rps := opts.WebhookRatePerSecond
+	if rps <= 0 {
+		rps = 10
+	}
+	burst := opts.WebhookBurst
+	if burst <= 0 {
+		burst = 20
+	}
+	rl, err := wrate.NewTokenBucketLimiter(1024, uint8(burst), rps, time.Second)
+	if err != nil {
+		panic("webhook rate limiter: " + err.Error())
+	}
+	api.webhookRL = rl
 	var biometric engine.BiometricVerifier
 	if opts.WebAuthn != nil {
 		biometric = opts.WebAuthn
@@ -160,6 +176,10 @@ func (api *RecipesAPI) sshUser(requested string) string {
 		}
 	}
 	return user
+}
+
+func (api *RecipesAPI) webhookAllow(appName string) bool {
+	return api.webhookRL.TakeToken([]byte(appName))
 }
 
 func (api *RecipesAPI) allowedRecipePathSet() map[string]struct{} {

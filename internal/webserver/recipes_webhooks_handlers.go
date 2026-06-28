@@ -279,6 +279,11 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	appName := chi.URLParam(r, "app_name")
 	webhookName := chi.URLParam(r, "webhook_name")
 
+	if !api.webhookAllow(appName) {
+		http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+		return
+	}
+
 	if api.opts.Config == nil || api.opts.Config.Apps == nil {
 		httpError(w, fmt.Errorf("no apps configured"), http.StatusNotFound)
 		return
