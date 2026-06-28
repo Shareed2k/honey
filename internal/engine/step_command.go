@@ -40,12 +40,13 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 		return fmt.Errorf("internal: command step has wrong type %T", step)
 	}
 
-	targets, riskSkipped, err := gateCommandRisk(ctx, run, kind, cs.Command, cs.Interpreter, targets)
+	var riskSkipped []HostExecResult
+	var err error
+	targets, riskSkipped, err = NewRiskStepFilter(run, kind, cs.Command, cs.Interpreter).Filter(ctx, targets)
 	if err != nil {
 		return err
 	}
 	for _, sk := range riskSkipped {
-		AnnotateCueStepResult(&sk, stepIdx, step, kind)
 		ch <- sk
 	}
 	if len(targets) == 0 {
@@ -246,12 +247,11 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 	// safepath.ReadFile reads via os.Root on the parent dir, so the basename
 	if scriptSrc, rerr := safepath.ReadFile(localAbs); rerr == nil {
 		var riskSkipped []HostExecResult
-		targets, riskSkipped, err = gateCommandRisk(ctx, run, kind, string(scriptSrc), ss.Interpreter, targets)
+		targets, riskSkipped, err = NewRiskStepFilter(run, kind, string(scriptSrc), ss.Interpreter).Filter(ctx, targets)
 		if err != nil {
 			return err
 		}
 		for _, sk := range riskSkipped {
-			AnnotateCueStepResult(&sk, stepIdx, step, kind)
 			ch <- sk
 		}
 		if len(targets) == 0 {

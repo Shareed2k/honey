@@ -145,3 +145,42 @@ func (f *conditionalSkipFilter) Filter(_ context.Context, targets []hosts.Record
 	}
 	return allowed, skipped, nil
 }
+
+// Verify riskStepFilter implements StepFilter at compile time.
+var _ StepFilter = (*riskStepFilter)(nil)
+
+func TestRiskStepFilter_safeCommand_allowsAll(t *testing.T) {
+	t.Parallel()
+	run := &CueRun{Params: CueRecipeRunParams{ActorID: "test"}}
+	targets := []hosts.Record{{Name: "h1"}, {Name: "h2"}}
+	f := NewRiskStepFilter(run, "command", "echo hello", "")
+	allowed, skipped, err := f.Filter(context.Background(), targets)
+	require.NoError(t, err)
+	assert.Equal(t, targets, allowed)
+	assert.Empty(t, skipped)
+}
+
+func TestRiskStepFilter_criticalCommand_skipsAll(t *testing.T) {
+	t.Parallel()
+	run := &CueRun{Params: CueRecipeRunParams{ActorID: "test"}}
+	targets := []hosts.Record{{Name: "h1"}, {Name: "h2"}}
+	f := NewRiskStepFilter(run, "command", "rm -rf /", "")
+	allowed, skipped, err := f.Filter(context.Background(), targets)
+	require.NoError(t, err)
+	assert.Empty(t, allowed)
+	assert.Len(t, skipped, 2)
+	for _, sk := range skipped {
+		assert.Contains(t, sk.Output, "(blocked:")
+	}
+}
+
+func TestRiskStepFilter_emptyCommand_passthrough(t *testing.T) {
+	t.Parallel()
+	run := &CueRun{Params: CueRecipeRunParams{ActorID: "test"}}
+	targets := []hosts.Record{{Name: "h1"}}
+	f := NewRiskStepFilter(run, "command", "", "")
+	allowed, skipped, err := f.Filter(context.Background(), targets)
+	require.NoError(t, err)
+	assert.Equal(t, targets, allowed)
+	assert.Empty(t, skipped)
+}

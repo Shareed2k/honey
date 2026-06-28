@@ -62,6 +62,27 @@ func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpr
 	return allowed, skipped, nil
 }
 
+// riskStepFilter wraps gateCommandRisk as a StepFilter so the risk gate
+// participates in the same pipeline interface as policyStepFilter and whenStepFilter.
+type riskStepFilter struct {
+	run         *CueRun
+	kind        string
+	rawCommand  string
+	interpreter string
+}
+
+// NewRiskStepFilter returns a StepFilter that gates targets via the command
+// risk analysis (built-in critical signals + OPA command_exec decision).
+func NewRiskStepFilter(run *CueRun, kind, rawCommand, interpreter string) StepFilter {
+	return &riskStepFilter{run: run, kind: kind, rawCommand: rawCommand, interpreter: interpreter}
+}
+
+func (f *riskStepFilter) Filter(ctx context.Context, targets []hosts.Record) ([]hosts.Record, []HostExecResult, error) {
+	return gateCommandRisk(ctx, f.run, f.kind, f.rawCommand, f.interpreter, targets)
+}
+
+var _ StepFilter = (*riskStepFilter)(nil)
+
 // commandRiskDecision returns (reason, denied, err) for one target. Built-in
 // critical signals deny first; otherwise the OPA enforcer (if any) decides. The
 // shared decision logic lives in cmdgate.Decide so the engine, web API, and MCP
