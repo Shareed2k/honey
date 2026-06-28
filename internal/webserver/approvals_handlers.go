@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -91,6 +92,20 @@ func (s *Server) handleDecideApproval(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusConflict)
 		return
 	}
+
+	decision := "deny"
+	if approve {
+		decision = "allow"
+	}
+	_ = s.opts.AuditSink.Log(r.Context(), audit.Event{
+		Source:     "web",
+		Actor:      approver,
+		Action:     "approval_decided",
+		Target:     decided.Recipe,
+		Decision:   decision,
+		ApprovalID: id,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(decided)
 }

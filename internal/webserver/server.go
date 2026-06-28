@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/approval"
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
@@ -59,6 +60,10 @@ type Options struct {
 	Refresh            bool
 	AllowLogsCommand   bool
 	OnReady            func() // called after the listener is bound, before serving
+
+	// AuditSink receives one event per security-relevant action (approval decisions,
+	// recipe runs). nil is replaced with a no-op sink in NewServer.
+	AuditSink audit.Sink
 
 	// JWTPubKey, when non-nil, enables Ed25519 JWT identity resolution: a valid
 	// bearer JWT's subject claim becomes the request actor. nil disables JWT.
@@ -119,6 +124,19 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	if opts.Approvals == nil {
 		opts.Approvals = approval.NewStore(24 * time.Hour)
+	}
+	if opts.AuditSink == nil {
+		if opts.Config != nil && opts.Config.Audit.Enabled {
+			path := opts.Config.Audit.EffectivePath()
+			if s, err := audit.NewFileSink(path); err != nil {
+				zap.L().Warn("audit: failed to open log file", zap.String("path", path), zap.Error(err))
+				opts.AuditSink = audit.NewNoopSink()
+			} else {
+				opts.AuditSink = s
+			}
+		} else {
+			opts.AuditSink = audit.NewNoopSink()
+		}
 	}
 	if opts.ExecRegistry != nil {
 		opts.ExecRegistry.Reconfigure(opts.Config)
