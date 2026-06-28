@@ -65,20 +65,6 @@ func handleGetHostDetails(ctx context.Context, _ *mcp.CallToolRequest, in getHos
 
 	return nil, getHostDetailsOutput{
 		Record:       *rec,
-		Capabilities: deriveCapabilities(*rec),
+		Capabilities: rec.Capabilities(),
 	}, nil
-}
-
-func deriveCapabilities(r hosts.Record) []string {
-	var caps []string
-	if r.IsConnectable() {
-		caps = append(caps, "ssh")
-	}
-	if r.IsDocker() {
-		caps = append(caps, "docker_exec")
-	}
-	if len(caps) == 0 {
-		caps = []string{}
-	}
-	return caps
 }

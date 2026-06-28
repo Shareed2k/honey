@@ -142,6 +142,22 @@ func (r Record) IsConnectable() bool {
 	return r.Provider == "k8s" && strings.EqualFold(strings.TrimSpace(r.Meta["kind"]), "pod")
 }
 
+// Capabilities returns connection protocols available for this host,
+// derived from provider and meta. Order is stable: ssh, docker_exec, truenas_api.
+func (r Record) Capabilities() []string {
+	caps := []string{}
+	if r.IsConnectable() {
+		caps = append(caps, "ssh")
+	}
+	if r.IsDocker() {
+		caps = append(caps, "docker_exec")
+	}
+	if r.IsTrueNASAPIShell() {
+		caps = append(caps, "truenas_api")
+	}
+	return caps
+}
+
 // ExternalIP returns the VM's public/out-of-VPC address when present.
 // GCP and AWS store it in ExtraIPs while PrimaryIP is the private address used for SSH.
 func (r Record) ExternalIP() string {

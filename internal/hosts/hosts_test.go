@@ -122,3 +122,47 @@ func TestDedupeKey(t *testing.T) {
 		t.Fatal("empty key")
 	}
 }
+
+func TestRecord_Capabilities(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		r    Record
+		want []string
+	}{
+		{
+			"gcp vm with ip",
+			Record{Provider: "gcp", PrimaryIP: "10.0.0.1"},
+			[]string{"ssh"},
+		},
+		{
+			"docker container",
+			Record{Provider: "docker", PrimaryIP: "172.17.0.2", Meta: map[string]string{"kind": "container", "container_id": "abc"}},
+			[]string{"ssh", "docker_exec"},
+		},
+		{
+			"truenas appliance",
+			Record{Provider: "truenas", PrimaryIP: "10.0.0.5", Meta: map[string]string{"kind": "appliance"}},
+			[]string{"ssh", "truenas_api"},
+		},
+		{
+			"unconnectable no ip",
+			Record{Provider: "aws"},
+			[]string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.r.Capabilities()
+			if len(got) != len(tt.want) {
+				t.Fatalf("Capabilities() = %v, want %v", got, tt.want)
+			}
+			for i, cap := range tt.want {
+				if got[i] != cap {
+					t.Errorf("Capabilities()[%d] = %q, want %q", i, got[i], cap)
+				}
+			}
+		})
+	}
+}
