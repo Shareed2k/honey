@@ -23,7 +23,11 @@ var blockDevicePrefixes = []string{"/dev/sd", "/dev/nvme", "/dev/vd"}
 // informational signal (analysis skipped), never a medium/critical, and the
 // step's risk is left to the OPA policy (which still receives the interpreter).
 func analyzePython(src string) Analysis {
-	var a Analysis
+	a := Analysis{
+		seenCommands: make(map[string]struct{}),
+		seenFlags:    make(map[string]struct{}),
+		seenPaths:    make(map[string]struct{}),
+	}
 	if strings.TrimSpace(src) == "" {
 		return a
 	}
@@ -50,7 +54,7 @@ func (a *Analysis) inspectPyCall(c *ast.Call) {
 	if name == "" {
 		return
 	}
-	a.Detected.Commands = appendUnique(a.Detected.Commands, name)
+	a.addDetectedCommand(name)
 
 	switch name {
 	case "os.system", "os.popen",
@@ -83,9 +87,15 @@ func (a *Analysis) detectPyShellExec(name string, c *ast.Call) {
 	for _, s := range sub.Signals {
 		a.add(s)
 	}
-	a.Detected.Commands = appendUniqueAll(a.Detected.Commands, sub.Detected.Commands)
-	a.Detected.Flags = appendUniqueAll(a.Detected.Flags, sub.Detected.Flags)
-	a.Detected.Paths = appendUniqueAll(a.Detected.Paths, sub.Detected.Paths)
+	for _, v := range sub.Detected.Commands {
+		a.addDetectedCommand(v)
+	}
+	for _, v := range sub.Detected.Flags {
+		a.addDetectedFlag(v)
+	}
+	for _, v := range sub.Detected.Paths {
+		a.addDetectedPath(v)
+	}
 }
 
 // detectPyRmtree flags shutil.rmtree: critical on a literal system path, high

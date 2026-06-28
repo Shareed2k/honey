@@ -63,6 +63,10 @@ type Analysis struct {
 	// Interpreter is the step's declared interpreter (e.g. "python3", "bash"), or
 	// empty for the default shell. It selects the parser and is passed to policy.
 	Interpreter string `json:"interpreter,omitempty"`
+
+	seenCommands map[string]struct{}
+	seenFlags    map[string]struct{}
+	seenPaths    map[string]struct{}
 }
 
 // add records a signal and updates MaxSeverity / Critical.

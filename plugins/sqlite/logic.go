@@ -16,6 +16,20 @@ import (
 
 const defaultSQLiteTimeoutMS = 30000
 
+var dbCache = make(map[string]*sql.DB)
+
+func getDB(dsn string) (*sql.DB, error) {
+	if db, ok := dbCache[dsn]; ok {
+		return db, nil
+	}
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, err
+	}
+	dbCache[dsn] = db
+	return db, nil
+}
+
 func runSQLiteStep(in executeStepInput) executeStepOutput {
 	action := strings.ToLower(strings.TrimSpace(in.Action))
 	if !knownAction(action) {
@@ -80,11 +94,11 @@ func runSQLiteQuery(cfg sqliteConfig, host []byte) executeStepOutput {
 	ctx, cancel := sqliteContext(cfg.TimeoutMS)
 	defer cancel()
 
-	db, err := sql.Open("sqlite3", cfg.DSN)
+	db, err := getDB(cfg.DSN)
 	if err != nil {
 		return executeStepOutput{Success: false, Err: "open sqlite: " + err.Error()}
 	}
-	defer db.Close()
+	// Do not defer db.Close() since it's pooled
 
 	rows, err := db.QueryContext(ctx, cfg.SQL, cfg.Params...)
 	if err != nil {
@@ -113,11 +127,11 @@ func runSQLiteExec(cfg sqliteConfig, host []byte) executeStepOutput {
 	ctx, cancel := sqliteContext(cfg.TimeoutMS)
 	defer cancel()
 
-	db, err := sql.Open("sqlite3", cfg.DSN)
+	db, err := getDB(cfg.DSN)
 	if err != nil {
 		return executeStepOutput{Success: false, Err: "open sqlite: " + err.Error()}
 	}
-	defer db.Close()
+	// Do not defer db.Close() since it's pooled
 
 	res, err := db.ExecContext(ctx, cfg.SQL, cfg.Params...)
 	if err != nil {

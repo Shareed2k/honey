@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -226,39 +227,62 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 // ones (so they remain visible in the run output). A nil enforcer admits every
 // host unchanged.
 func filterTargetsByPolicy(ctx context.Context, run *CueRun, kind string, targets []hosts.Record) ([]hosts.Record, []HostExecResult, error) {
-	if run.Params.Enforcer == nil {
+	if run.Params.Enforcer == nil || len(targets) == 0 {
 		return targets, nil, nil
 	}
 	actor := actorOrAPI(run.Params.ActorID)
-	var (
-		kept    []hosts.Record
-		skipped []HostExecResult
-	)
-	for _, t := range targets {
-		d, err := run.Params.Enforcer.Evaluate(ctx, map[string]any{
-			"action":    "step_execute",
-			"actor":     actor,
-			"step_kind": kind,
-			"host":      t.Name,
-			"host_meta": t.Meta,
-			"host_vars": hostVarsForPolicy(t, run.Params.Inventory),
+
+	kept := make([]hosts.Record, len(targets))
+	skipped := make([]HostExecResult, len(targets))
+	keepFlags := make([]bool, len(targets))
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(16) // Concurrency limit for OPA evaluation to prevent overwhelming the engine
+
+	for i, t := range targets {
+		i, t := i, t
+		g.Go(func() error {
+			d, err := run.Params.Enforcer.Evaluate(gCtx, map[string]any{
+				"action":    "step_execute",
+				"actor":     actor,
+				"step_kind": kind,
+				"host":      t.Name,
+				"host_meta": t.Meta,
+				"host_vars": hostVarsForPolicy(t, run.Params.Inventory),
+			})
+			if err != nil {
+				return fmt.Errorf("policy evaluation for host %s: %w", t.Name, err)
+			}
+			if d.Allow {
+				kept[i] = t
+				keepFlags[i] = true
+			} else {
+				sk := WhenSkippedResult(t)
+				reason := d.DenyReason
+				if reason == "" {
+					reason = "policy"
+				}
+				sk.Output = "(skipped: " + reason + ")"
+				skipped[i] = sk
+			}
+			return nil
 		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("policy evaluation: %w", err)
-		}
-		if d.Allow {
-			kept = append(kept, t)
-			continue
-		}
-		sk := WhenSkippedResult(t)
-		reason := d.DenyReason
-		if reason == "" {
-			reason = "policy"
-		}
-		sk.Output = "(skipped: " + reason + ")"
-		skipped = append(skipped, sk)
 	}
-	return kept, skipped, nil
+
+	if err := g.Wait(); err != nil {
+		return nil, nil, err
+	}
+
+	var finalKept []hosts.Record
+	var finalSkipped []HostExecResult
+	for i := range targets {
+		if keepFlags[i] {
+			finalKept = append(finalKept, kept[i])
+		} else {
+			finalSkipped = append(finalSkipped, skipped[i])
+		}
+	}
+	return finalKept, finalSkipped, nil
 }
 
 // hostVarsForPolicy resolves a host's effective inventory vars (global + matching

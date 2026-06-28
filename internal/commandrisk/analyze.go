@@ -1,7 +1,6 @@
 package commandrisk
 
 import (
-	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -14,7 +13,11 @@ var systemPaths = []string{"/", "/*", "/bin", "/boot", "/dev", "/etc", "/lib", "
 // failure is reported as a medium signal, not an error — the gate treats
 // unparseable commands as suspicious but not hard-denied.
 func Analyze(command string) Analysis {
-	var a Analysis
+	a := Analysis{
+		seenCommands: make(map[string]struct{}),
+		seenFlags:    make(map[string]struct{}),
+		seenPaths:    make(map[string]struct{}),
+	}
 	if strings.TrimSpace(command) == "" {
 		return a
 	}
@@ -57,9 +60,13 @@ func (a *Analysis) inspectCall(c *syntax.CallExpr) {
 	flags, paths, rawArgs := splitArgs(c.Args[1:])
 	short := shortFlagChars(flags) // e.g. ["-rf"] → set{r,f}
 
-	a.Detected.Commands = appendUnique(a.Detected.Commands, name)
-	a.Detected.Flags = appendUniqueAll(a.Detected.Flags, flags)
-	a.Detected.Paths = appendUniqueAll(a.Detected.Paths, paths)
+	a.addDetectedCommand(name)
+	for _, f := range flags {
+		a.addDetectedFlag(f)
+	}
+	for _, p := range paths {
+		a.addDetectedPath(p)
+	}
 
 	switch name {
 	case "rm":
@@ -249,6 +256,11 @@ func shortFlagChars(flags []string) map[rune]bool {
 
 // splitArgs returns flags, path-like args, and the raw textual form of every arg.
 func splitArgs(words []*syntax.Word) (flags, paths, raw []string) {
+	n := len(words)
+	raw = make([]string, 0, n)
+	flags = make([]string, 0, n/2+1)
+	paths = make([]string, 0, n/2+1)
+
 	for _, w := range words {
 		text := wordText(w)
 		raw = append(raw, text)
@@ -361,24 +373,47 @@ func hasRemoteURL(args []string) bool {
 }
 
 func containsAny(haystack []string, needles ...string) bool {
-	for _, n := range needles {
-		if slices.Contains(haystack, n) {
-			return true
+	if len(haystack) == 0 {
+		return false
+	}
+	// For small arrays (like command arguments), linear scan is fast.
+	// We optimize the needle loop to minimize allocations.
+	for _, h := range haystack {
+		for _, n := range needles {
+			if h == n {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-func appendUnique(s []string, v string) []string {
-	if slices.Contains(s, v) {
-		return s
+func (a *Analysis) addDetectedCommand(v string) {
+	if a.seenCommands == nil {
+		a.seenCommands = make(map[string]struct{})
 	}
-	return append(s, v)
+	if _, ok := a.seenCommands[v]; !ok {
+		a.seenCommands[v] = struct{}{}
+		a.Detected.Commands = append(a.Detected.Commands, v)
+	}
 }
 
-func appendUniqueAll(s, vs []string) []string {
-	for _, v := range vs {
-		s = appendUnique(s, v)
+func (a *Analysis) addDetectedFlag(v string) {
+	if a.seenFlags == nil {
+		a.seenFlags = make(map[string]struct{})
 	}
-	return s
+	if _, ok := a.seenFlags[v]; !ok {
+		a.seenFlags[v] = struct{}{}
+		a.Detected.Flags = append(a.Detected.Flags, v)
+	}
+}
+
+func (a *Analysis) addDetectedPath(v string) {
+	if a.seenPaths == nil {
+		a.seenPaths = make(map[string]struct{})
+	}
+	if _, ok := a.seenPaths[v]; !ok {
+		a.seenPaths[v] = struct{}{}
+		a.Detected.Paths = append(a.Detected.Paths, v)
+	}
 }

@@ -109,8 +109,8 @@ github.com/OpenPeeDeeP/depguard/v2 v2.2.1 h1:vckeWVESWp6Qog7UZSARNqfu/cZqvki8zsu
 github.com/OpenPeeDeeP/depguard/v2 v2.2.1/go.mod h1:q4DKzC4UcVaAvcfd41CZh0PWpGgzrVxUYBlgKNGquUo=
 github.com/ProtonMail/go-crypto v1.1.6 h1:ZcV+Ropw6Qn0AX9brlQLAUXfqLBc7Bl+f/DmNxpLfdw=
 github.com/ProtonMail/go-crypto v1.1.6/go.mod h1:rA3QumHc/FZ8pAHreoekgiAbzpNsfQAosU5td4SnOrE=
-github.com/Shareed2k/netstatus v1.0.3-0.20260531211042-3743184bd9e6 h1:JvZRCRw+OYZuJS5+9sV4AvGjybXINro298jXRMZimbo=
-github.com/Shareed2k/netstatus v1.0.3-0.20260531211042-3743184bd9e6/go.mod h1:OkyqZo9liIcbqu10htMXx85IQgk86hxHHiJwziNms0A=
+github.com/Shareed2k/netstatus v1.0.3 h1:PtOSokyVgG3BohlJbBz8mfjlgTQa2rGQSjrmoeX3+TI=
+github.com/Shareed2k/netstatus v1.0.3/go.mod h1:OkyqZo9liIcbqu10htMXx85IQgk86hxHHiJwziNms0A=
 github.com/Telmate/proxmox-api-go v0.0.0-20260616195456-628d6065017a h1:v8YfxfkKWPhC3M+Qka/Wzo1/phAYMI46c79/BckgEz8=
 github.com/Telmate/proxmox-api-go v0.0.0-20260616195456-628d6065017a/go.mod h1:90hDRcdB9vqdHdtkKje50NGkGbphbGKhtefqezo/Bgc=
 github.com/adhocore/gronx v1.20.0 h1:PD13Mo0wekkZ7ZZR9yb1TqeqTfybs7/K3ez9DmjQwEs=

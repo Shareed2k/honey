@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -238,13 +239,9 @@ func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{})
 			}
 		}
 
-		// Sort labels manually
-		for i := 0; i < len(labels)-1; i++ {
-			for j := i + 1; j < len(labels); j++ {
-				if labels[i] > labels[j] {
-					labels[i], labels[j] = labels[j], labels[i]
-				}
-			}
+		// Sort labels using standard library
+		if len(labels) > 0 {
+			slices.Sort(labels)
 		}
 
 		if tagsStr, ok := r.Meta["tags"]; ok && tagsStr != "" {
@@ -252,14 +249,9 @@ func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{})
 			for i := range tags {
 				tags[i] = strings.TrimSpace(tags[i])
 			}
-			// Sort tags manually
-			for i := 0; i < len(tags)-1; i++ {
-				for j := i + 1; j < len(tags); j++ {
-					if tags[i] > tags[j] {
-						tags[i], tags[j] = tags[j], tags[i]
-					}
-				}
-			}
+			// Sort tags using standard library
+			slices.Sort(tags)
+
 			if len(labels) > 0 {
 				labels = append(tags, labels...)
 			} else {

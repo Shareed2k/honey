@@ -341,6 +341,11 @@ func StreamSFTPUploadParallel(ctx context.Context, user string, recs []hosts.Rec
 	if localAbs == "" || remotePath == "" {
 		return fmt.Errorf("upload: empty local or remote path")
 	}
+
+	if _, err := os.Stat(localAbs); err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+
 	maxConc := opts.MaxConc
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
@@ -528,21 +533,16 @@ func RunOneSFTPUploadWithProgress(user string, r hosts.Record, localAbs, remoteP
 		if hc, ok := client.(*sshclient.HoneyClient); ok && onProgress != nil {
 			upErr = hc.UploadWithProgress(localAbs, remotePath, onProgress)
 		} else {
+			var t int64
 			if onProgress != nil {
-				st, statErr := os.Stat(localAbs)
-				var t int64
-				if statErr == nil {
+				if st, statErr := os.Stat(localAbs); statErr == nil {
 					t = st.Size()
 				}
 				onProgress(0, t)
 			}
 			upErr = client.Upload(localAbs, remotePath)
 			if onProgress != nil && upErr == nil {
-				st, statErr := os.Stat(localAbs)
-				if statErr == nil {
-					t := st.Size()
-					onProgress(t, t)
-				}
+				onProgress(t, t)
 			}
 		}
 		if upErr != nil {

@@ -5,6 +5,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -45,6 +46,21 @@ Focus on:
 - concrete next checks or remediation steps, clearly marked as suggestions
 If the transcript lacks enough information, say so explicitly.`
 
+var regexCache sync.Map
+
+// getCompiledRegex retrieves or compiles a regex pattern and caches it.
+func getCompiledRegex(pat string) (*regexp.Regexp, error) {
+	if val, ok := regexCache.Load(pat); ok {
+		return val.(*regexp.Regexp), nil
+	}
+	re, err := regexp.Compile(pat)
+	if err != nil {
+		return nil, err
+	}
+	regexCache.Store(pat, re)
+	return re, nil
+}
+
 // ValidateHostField checks host syntax (empty, regex compile). Call from
 // ParseRemoteRecipe; ExpandStepHosts enforces match counts at runtime.
 func ValidateHostField(host string) error {
@@ -60,7 +76,7 @@ func ValidateHostField(host string) error {
 		if pat == "" {
 			return fmt.Errorf("pattern after %q is empty", MatchHostRegexPrefix)
 		}
-		if _, err := regexp.Compile(pat); err != nil {
+		if _, err := getCompiledRegex(pat); err != nil {
 			return fmt.Errorf("invalid regexp: %w", err)
 		}
 		return nil
@@ -98,7 +114,7 @@ func ExpandStepHosts(host string, records []hosts.Record) ([]hosts.Record, error
 		if pat == "" {
 			return nil, fmt.Errorf("pattern after %q is empty", MatchHostRegexPrefix)
 		}
-		re, err := regexp.Compile(pat)
+		re, err := getCompiledRegex(pat)
 		if err != nil {
 			return nil, fmt.Errorf("invalid regexp: %w", err)
 		}
