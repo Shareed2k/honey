@@ -71,7 +71,7 @@ func NewRecipesAPI(
 	valCache *lru.Cache[string, *ValidateContentResponse],
 	graphCache *lru.Cache[string, *cuetry.RecipeGraphPlan],
 ) *RecipesAPI {
-	dedupCache := ttlcache.New[string, string](
+	dedupCache := ttlcache.New(
 		ttlcache.WithTTL[string, string](24*time.Hour),
 		ttlcache.WithDisableTouchOnHit[string, string](),
 	)
