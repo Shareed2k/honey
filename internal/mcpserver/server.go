@@ -76,6 +76,16 @@ func NewServer(cfg *config.File, enf *policy.Enforcer) *mcp.Server {
 		Description: "Run a shell command on a host via SSH using its IP or hostname directly (use primary_ip from search_hosts). Commands are gated by honey's command-risk engine and OPA policy; critical or policy-denied commands are refused. Records output to session recordings if record_dir is configured.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPtr(true)},
 	}, handleExecOnHost)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "plan_command",
+		Description: "Analyze the risk of a shell command without executing it. Returns the risk level, detected signals, and policy decision (allow/deny). Safe: no SSH dial, no side effects.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, handlePlanCommand)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_host_details",
+		Description: "Get full details for a named host across all configured backends: IP addresses, provider, groups, meta, and derived capabilities (ssh, docker_exec). Safe: read-only.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, handleGetHostDetails)
 	return s
 }
 
