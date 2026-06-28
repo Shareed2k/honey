@@ -80,6 +80,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	github.com/things-go/go-socks5 v0.1.1
 	github.com/tidwall/gjson v1.19.0
+	github.com/webriots/rate v1.0.0
 	github.com/yalue/onnxruntime_go v1.31.0
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/otel v1.44.0
@@ -94,6 +95,7 @@ require (
 	golang.org/x/text v0.38.0
 	google.golang.org/api v0.286.0
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
+	gopkg.in/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2

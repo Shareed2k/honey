@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -128,6 +129,27 @@ func TestFileSink_concurrentWritesDontInterleave(t *testing.T) {
 		count++
 	}
 	assert.Equal(t, goroutines, count)
+}
+
+func TestFileSink_rotation(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+
+	s, err := audit.NewFileSink(path, audit.RotateOptions{MaxSizeMB: 1, MaxBackups: 2})
+	require.NoError(t, err)
+
+	// Write >1 MB to trigger rotation (1 KB padding per event × 1100 events = ~1.1 MB)
+	bigCmd := strings.Repeat("x", 1024)
+	for i := 0; i < 1100; i++ {
+		require.NoError(t, s.Log(context.Background(), audit.Event{Action: "exec", Command: bigCmd}))
+	}
+	require.NoError(t, s.Close())
+
+	// Rotation should have produced at least one backup (total files > 1)
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Greater(t, len(entries), 1, "expected rotation backup, got files: %v", entries)
 }
 
 func TestFileSink_roundtripDenyReason(t *testing.T) {

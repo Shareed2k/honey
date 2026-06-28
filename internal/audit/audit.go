@@ -7,11 +7,10 @@ package audit
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"sync"
 	"time"
 
-	"github.com/shareed2k/honey/internal/safepath"
+	"gopkg.in/lumberjack.v2"
 )
 
 // Event is one durable record of a security-relevant action. Zero-value
@@ -46,25 +45,43 @@ func NewNoopSink() Sink { return noopSink{} }
 func (noopSink) Log(_ context.Context, _ Event) error { return nil }
 func (noopSink) Close() error                         { return nil }
 
-// FileSink writes events as JSONL to an append-only file. Each Log call
-// writes exactly one newline-terminated JSON object. Concurrent calls are
-// serialised by a mutex so lines never interleave.
+// RotateOptions controls log rotation for FileSink. All fields are optional;
+// zero values use the defaults listed below.
+type RotateOptions struct {
+	MaxSizeMB  int  // rotate after this many MB (default 100)
+	MaxBackups int  // keep this many old files (default 5)
+	MaxAgeDays int  // delete files older than this (default 30)
+	Compress   bool // gzip old files
+}
+
+// FileSink writes events as JSONL to a rotating file managed by lumberjack.
+// Each Log call writes exactly one newline-terminated JSON object. Concurrent
+// calls are serialised by a mutex so lines never interleave.
 type FileSink struct {
 	mu  sync.Mutex
-	f   *os.File
+	lj  *lumberjack.Logger
 	enc *json.Encoder
 }
 
-// NewFileSink opens (or creates) path for append-only writing and returns a
-// FileSink. The caller must call Close when done.
-func NewFileSink(path string) (*FileSink, error) {
-	f, err := safepath.OpenAppend(path, 0o600)
-	if err != nil {
-		return nil, err
+// NewFileSink opens (or creates) path for writing and returns a FileSink.
+// The caller must call Close when done. An optional RotateOptions enables
+// size- and age-based log rotation; without it sensible defaults apply
+// (100 MB max size, 5 backups, 30-day retention).
+func NewFileSink(path string, opts ...RotateOptions) (*FileSink, error) {
+	o := RotateOptions{MaxSizeMB: 100, MaxBackups: 5, MaxAgeDays: 30}
+	if len(opts) > 0 {
+		o = opts[0]
 	}
-	enc := json.NewEncoder(f)
+	lj := &lumberjack.Logger{
+		Filename:   path,
+		MaxSize:    o.MaxSizeMB,
+		MaxBackups: o.MaxBackups,
+		MaxAge:     o.MaxAgeDays,
+		Compress:   o.Compress,
+	}
+	enc := json.NewEncoder(lj)
 	enc.SetEscapeHTML(false)
-	return &FileSink{f: f, enc: enc}, nil
+	return &FileSink{lj: lj, enc: enc}, nil
 }
 
 // Log serialises e as a JSON line and appends it to the sink file.
@@ -81,5 +98,5 @@ func (s *FileSink) Log(_ context.Context, e Event) error {
 func (s *FileSink) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.f.Close()
+	return s.lj.Close()
 }
