@@ -141,6 +141,35 @@ func OpenReadWriteProbe(path string) (err error) {
 	return nil
 }
 
+// OpenAppend opens (or creates) path for append-only writing and returns the file.
+// The caller is responsible for closing the returned file.
+func OpenAppend(path string, perm os.FileMode) (f *os.File, err error) {
+	abs, err := absClean(path)
+	if err != nil {
+		return nil, err
+	}
+	dir, file := filepath.Split(abs)
+	dir = filepath.Clean(dir)
+	if file == "" || file == "." {
+		return nil, fmt.Errorf("invalid path %q", abs)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, err
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		return os.OpenFile(filepath.Clean(abs), os.O_CREATE|os.O_APPEND|os.O_WRONLY, perm)
+	}
+	defer func() {
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+			f = nil
+		}
+	}()
+	return r.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, perm)
+}
+
 // WriteFile writes data to path using a temp file and rename within [os.Root] of the parent directory.
 func WriteFile(path string, data []byte, perm os.FileMode) (err error) {
 	abs, err := absClean(path)

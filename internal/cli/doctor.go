@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/policy"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // doctorStatus is the result level for one health check.
@@ -135,11 +135,7 @@ func checkAuditPath(_ context.Context, cfg *config.File) doctorResult {
 		return doctorResult{"audit: log", doctorOK, "disabled"}
 	}
 	path := cfg.Audit.EffectivePath()
-	dir := path[:strings.LastIndex(path, string(os.PathSeparator))]
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return doctorResult{"audit: log", doctorFail, fmt.Sprintf("cannot create dir %s: %v", dir, err)}
-	}
-	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := safepath.OpenAppend(path, 0o600)
 	if err != nil {
 		return doctorResult{"audit: log", doctorFail, fmt.Sprintf("cannot write %s: %v", path, err)}
 	}
@@ -148,12 +144,12 @@ func checkAuditPath(_ context.Context, cfg *config.File) doctorResult {
 }
 
 func checkOPAPolicy(ctx context.Context, _ *config.File) doctorResult {
-	dir := filepath.Clean(strings.TrimSpace(os.Getenv("HONEY_POLICY_DIR")))
-	if dir == "" || dir == "." {
+	dir := strings.TrimSpace(os.Getenv("HONEY_POLICY_DIR"))
+	if dir == "" {
 		msg := "HONEY_POLICY_DIR not set — exec allowed only with HONEY_EXEC_ALLOW_UNVERIFIED=1"
 		return doctorResult{"opa: policy", doctorWarn, msg}
 	}
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := safepath.Stat(dir); err != nil {
 		return doctorResult{"opa: policy", doctorFail, fmt.Sprintf("policy dir %s: %v", dir, err)}
 	}
 	if _, err := policy.New(ctx, dir, nil); err != nil {

@@ -8,9 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // Event is one durable record of a security-relevant action. Zero-value
@@ -57,7 +58,7 @@ type FileSink struct {
 // NewFileSink opens (or creates) path for append-only writing and returns a
 // FileSink. The caller must call Close when done.
 func NewFileSink(path string) (*FileSink, error) {
-	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := safepath.OpenAppend(path, 0o600)
 	if err != nil {
 		return nil, err
 	}
