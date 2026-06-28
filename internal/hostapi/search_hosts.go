@@ -101,6 +101,9 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput, reg hostexec.Registr
 	if err != nil {
 		return out, err
 	}
+	for i := range recs {
+		recs[i].Capabilities = recs[i].DeriveCapabilities()
+	}
 	out.Records = recs
 	out.Count = len(recs)
 	return out, nil

@@ -72,15 +72,16 @@ func toLowerASCII(s string) string {
 
 // Record is a normalized host across cloud providers.
 type Record struct {
-	Provider  string                    `json:"provider"`
-	Name      string                    `json:"name"`
-	PrimaryIP string                    `json:"primary_ip"`
-	ExtraIPs  []string                  `json:"extra_ips,omitempty"`
-	Zone      string                    `json:"zone,omitempty"`
-	Region    string                    `json:"region,omitempty"`
-	Meta      map[string]string         `json:"meta,omitempty"`
-	Vars      map[string]InventoryValue `json:"vars,omitempty"`
-	Groups    []string                  `json:"groups,omitempty"`
+	Provider     string                    `json:"provider"`
+	Name         string                    `json:"name"`
+	PrimaryIP    string                    `json:"primary_ip"`
+	ExtraIPs     []string                  `json:"extra_ips,omitempty"`
+	Zone         string                    `json:"zone,omitempty"`
+	Region       string                    `json:"region,omitempty"`
+	Meta         map[string]string         `json:"meta,omitempty"`
+	Vars         map[string]InventoryValue `json:"vars,omitempty"`
+	Groups       []string                  `json:"groups,omitempty"`
+	Capabilities []string                  `json:"capabilities,omitempty"`
 }
 
 // DedupeKey returns a stable key for deduplication.
@@ -142,9 +143,9 @@ func (r Record) IsConnectable() bool {
 	return r.Provider == "k8s" && strings.EqualFold(strings.TrimSpace(r.Meta["kind"]), "pod")
 }
 
-// Capabilities returns connection protocols available for this host,
+// DeriveCapabilities returns connection protocols available for this host,
 // derived from provider and meta. Order is stable: ssh, docker_exec, truenas_api.
-func (r Record) Capabilities() []string {
+func (r Record) DeriveCapabilities() []string {
 	caps := []string{}
 	if r.IsConnectable() {
 		caps = append(caps, "ssh")

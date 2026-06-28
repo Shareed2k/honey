@@ -65,6 +65,6 @@ func handleGetHostDetails(ctx context.Context, _ *mcp.CallToolRequest, in getHos
 
 	return nil, getHostDetailsOutput{
 		Record:       *rec,
-		Capabilities: rec.Capabilities(),
+		Capabilities: rec.DeriveCapabilities(),
 	}, nil
 }

@@ -169,7 +169,7 @@ func TestRecord_Capabilities(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := tt.r.Capabilities()
+			got := tt.r.DeriveCapabilities()
 			if len(got) != len(tt.want) {
 				t.Fatalf("Capabilities() = %v, want %v", got, tt.want)
 			}
