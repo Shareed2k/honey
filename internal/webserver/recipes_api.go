@@ -20,6 +20,15 @@ import (
 	"github.com/shareed2k/honey/internal/queue"
 )
 
+// recipeRunnerIface abstracts the execution layer so tests can inject a fake runner
+// without spinning up SSH connections.
+type recipeRunnerIface interface {
+	DryRun(ctx context.Context, req engine.RunRequest) (string, error)
+	Execute(ctx context.Context, req engine.RunRequest) (<-chan engine.HostExecResult, error)
+	ExecuteAndWait(ctx context.Context, req engine.RunRequest) error
+	AssessCommandRisk(ctx context.Context, req engine.RunRequest) []engine.StepRisk
+}
+
 // AIAssistant abstracts the AI-related functionality required by recipe generation and assistance.
 type AIAssistant interface {
 	resolveAssistChatModel(ctx context.Context, requested string) (string, error)
@@ -38,7 +47,7 @@ type RecipesAPI struct {
 	sshCache              *engine.ClientCache
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
-	runner                *engine.RecipeRunner
+	runner                recipeRunnerIface
 
 	webhookDedupCache *ttlcache.Cache[string, string]
 	webhookDedupMu    sync.Mutex

@@ -112,6 +112,8 @@ type Server struct {
 
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
+
+	recipesAPI *RecipesAPI
 }
 
 // NewServer builds handlers with the given auth token.
@@ -194,7 +196,8 @@ func NewServer(opts Options) (*Server, error) {
 }
 
 func (s *Server) routes() error {
-	recipesAPI := NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache, s.recipeValidationCache, s.recipeGraphCache)
+	s.recipesAPI = NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache, s.recipeValidationCache, s.recipeGraphCache)
+	recipesAPI := s.recipesAPI
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
