@@ -443,3 +443,31 @@ func TestHandleRecipesStoreDelete_emitsAuditEvent(t *testing.T) {
 		t.Errorf("Target = %q, want %q", e.Target, "myrecipe.cue")
 	}
 }
+
+func TestHandleCueExec_emitsAuditEvent_allowWithApprovalID(t *testing.T) {
+	t.Parallel()
+	sink := &captureSink{}
+	s := newTestServer(t, Options{AuditSink: sink})
+	s.recipesAPI.runner = &fakeRunner{ch: closedResultChan()}
+
+	body := `{"recipe_content":{"name":"deploy.cue","steps":[{"host":"*","command":"echo hi"}]},` +
+		`"execute":true,"ssh_user":"ops","records":[{"provider":"static","name":"h1","primary_ip":"1.1.1.1"}],` +
+		`"approval_id":"appr-xyz"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cue-exec", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer ")
+	w := httptest.NewRecorder()
+	s.router.ServeHTTP(w, req)
+
+	events := sink.all()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	e := events[0]
+	if e.Decision != "allow" {
+		t.Errorf("Decision = %q, want %q", e.Decision, "allow")
+	}
+	if e.ApprovalID != "appr-xyz" {
+		t.Errorf("ApprovalID = %q, want %q", e.ApprovalID, "appr-xyz")
+	}
+}

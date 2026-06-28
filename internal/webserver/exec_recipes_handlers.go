@@ -726,11 +726,12 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-			Source:   "web",
-			Actor:    req.ActorID,
-			Action:   "recipe_run",
-			Target:   req.Recipe.Name,
-			Decision: "allow",
+			Source:     "web",
+			Actor:      req.ActorID,
+			Action:     "recipe_run",
+			Target:     req.Recipe.Name,
+			Decision:   "allow",
+			ApprovalID: req.ApprovalID,
 		})
 		if rec != nil {
 			if id := rec.RecordingID(); id != "" {
@@ -759,11 +760,12 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-		Source:   "web",
-		Actor:    req.ActorID,
-		Action:   "recipe_run",
-		Target:   req.Recipe.Name,
-		Decision: "allow",
+		Source:     "web",
+		Actor:      req.ActorID,
+		Action:     "recipe_run",
+		Target:     req.Recipe.Name,
+		Decision:   "allow",
+		ApprovalID: req.ApprovalID,
 	})
 	results := make([]engine.HostExecResult, 0, len(jobs))
 	for res := range ch {

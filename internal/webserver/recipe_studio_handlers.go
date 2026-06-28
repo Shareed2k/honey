@@ -16,6 +16,24 @@ import (
 	"github.com/shareed2k/honey/internal/webserver/recipestore"
 )
 
+func (api *RecipesAPI) gateStoreMutation(r *http.Request, action, recipeName string) error {
+	if api.opts.Enforcer == nil {
+		return nil
+	}
+	d, err := api.opts.Enforcer.Evaluate(r.Context(), map[string]any{
+		"action": action,
+		"actor":  actorFromCtx(r.Context()),
+		"recipe": recipeName,
+	})
+	if err != nil {
+		return fmt.Errorf("policy: %w", err)
+	}
+	if !d.Allow {
+		return fmt.Errorf("%s", reasonOrForbidden(d.DenyReason))
+	}
+	return nil
+}
+
 func (api *RecipesAPI) recipeStore(_ *http.Request, gitOpts *config.StudioConfig) recipestore.RecipeStore {
 	var dir string
 	switch {
@@ -43,6 +61,10 @@ func (api *RecipesAPI) recipeStore(_ *http.Request, gitOpts *config.StudioConfig
 }
 
 func (api *RecipesAPI) handleRecipesStoreList(w http.ResponseWriter, r *http.Request) {
+	if err := api.gateStoreMutation(r, "recipe_list", ""); err != nil {
+		httpError(w, err, http.StatusForbidden)
+		return
+	}
 	store := api.recipeStore(r, nil)
 	list, err := store.List(r.Context())
 	if err != nil {
@@ -68,6 +90,10 @@ func (api *RecipesAPI) handleRecipesStoreGet(w http.ResponseWriter, r *http.Requ
 	name := chi.URLParam(r, "name")
 	if strings.TrimSpace(name) == "" {
 		httpError(w, fmt.Errorf("recipe name is required"), http.StatusBadRequest)
+		return
+	}
+	if err := api.gateStoreMutation(r, "recipe_read", name); err != nil {
+		httpError(w, err, http.StatusForbidden)
 		return
 	}
 	store := api.recipeStore(r, nil)
@@ -142,6 +168,10 @@ func (api *RecipesAPI) handleRecipesStoreSave(w http.ResponseWriter, r *http.Req
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
+	if err := api.gateStoreMutation(r, "recipe_save", name); err != nil {
+		httpError(w, err, http.StatusForbidden)
+		return
+	}
 	store := api.recipeStore(r, &req.StudioConfig)
 	if err := store.Save(r.Context(), name, req.Content); err != nil {
 		httpError(w, err, http.StatusInternalServerError)
@@ -161,6 +191,10 @@ func (api *RecipesAPI) handleRecipesStoreDelete(w http.ResponseWriter, r *http.R
 	name := chi.URLParam(r, "name")
 	if strings.TrimSpace(name) == "" {
 		httpError(w, fmt.Errorf("recipe name is required"), http.StatusBadRequest)
+		return
+	}
+	if err := api.gateStoreMutation(r, "recipe_delete", name); err != nil {
+		httpError(w, err, http.StatusForbidden)
 		return
 	}
 	store := api.recipeStore(r, nil)
