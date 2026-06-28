@@ -93,7 +93,11 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput, reg hostexec.Registr
 		}
 	}
 
-	recs, err := searchrun.RunSearch(ctx, q, provs, cfg.Defaults.CacheDir, searchrun.DefaultCacheTTL, in.NoCache, in.Refresh)
+	var cacheDir string
+	if cfg != nil {
+		cacheDir = cfg.Defaults.CacheDir
+	}
+	recs, err := searchrun.RunSearch(ctx, q, provs, cacheDir, searchrun.DefaultCacheTTL, in.NoCache, in.Refresh)
 	if err != nil {
 		return out, err
 	}
