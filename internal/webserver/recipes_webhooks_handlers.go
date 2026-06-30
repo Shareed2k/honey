@@ -168,17 +168,6 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 			return
 		}
 
-		if rec != nil {
-			hash, _ := recipe.HashJSON()
-			rec.RecordRecipeMeta(engine.RecipeMeta{
-				RecipePath:        recipePath,
-				HostCount:         len(searchOut.Records),
-				RecipeContentHash: hash,
-				StartedAt:         time.Now().UTC(),
-				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, engine.RecipeMetaHostLimit),
-			})
-		}
-
 		// Inject the pre-created recorder so its ID is known synchronously above;
 		// the runner records results into it but does NOT close it (we do, in defer).
 		if rerr := api.runner.ExecuteAndWait(ctx, engine.RunRequest{
@@ -254,14 +243,6 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		}
 		defer func() { _ = rec.Close() }()
 		
-		hash, _ := recipe.HashJSON()
-		rec.RecordRecipeMeta(engine.RecipeMeta{
-			RecipePath:        recipePath,
-			HostCount:         len(searchOut.Records),
-			RecipeContentHash: hash,
-			StartedAt:         time.Now().UTC(),
-			Hosts:             engine.HostsForRecipeMeta(searchOut.Records, engine.RecipeMetaHostLimit),
-		})
 		req.Recorder = rec
 	}
 

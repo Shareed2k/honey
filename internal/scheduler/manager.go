@@ -301,14 +301,6 @@ func (m *Manager) executeSchedule(
 			}
 			defer func() { _ = rec.Close() }()
 			
-			hash, _ := recipe.HashJSON()
-			rec.RecordRecipeMeta(engine.RecipeMeta{
-				RecipePath:        recipePath,
-				HostCount:         len(searchOut.Records),
-				RecipeContentHash: hash,
-				StartedAt:         time.Now().UTC(),
-				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, engine.RecipeMetaHostLimit),
-			})
 			req.Recorder = rec
 		}
 
