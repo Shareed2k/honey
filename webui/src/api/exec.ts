@@ -63,11 +63,13 @@ export async function deleteSnippet(id: string): Promise<void> {
 export async function execOnHostsStream(
   body: ExecOnHostsBody,
   onRow: (row: HostExecResultRow) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const r = await fetch('/api/v1/exec?stream=1', {
     method: 'POST',
     headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
   if (!r.ok) {
     const j = (await r.json().catch(() => ({}))) as { error?: string };

@@ -2,7 +2,7 @@ import { ParsedRecipe } from './recipes';
 
 
 
-export /** Matches Go ui.HostExecResult JSON (exported struct fields). */
+/** Matches Go ui.HostExecResult JSON (exported struct fields). */
 export type HostExecResultRow = {
   Name: string;
   IP: string;
@@ -31,6 +31,7 @@ export type ExecOnHostsBody = {
   file_extension?: string;
   remove_tmp_file?: boolean;
   script_args?: string[];
+  timeout?: string; // per-host command timeout, e.g. "30s"; empty uses server default
 };
 
 export type LintDiagnostic = {
@@ -64,4 +65,5 @@ export type CueExecRequest = {
   records: unknown[];
   env?: string[];
   record_session?: boolean;
+  timeout?: string; // per-host command timeout, e.g. "30s"; empty uses server default
 };

@@ -35,6 +35,7 @@ type AppConfig struct {
 	InsecureSkipVerify  bool              `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
 	Headers             map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 	CORS                *CORSConfig       `yaml:"cors,omitempty" json:"cors,omitempty"`
+	Webhooks            []string          `yaml:"-" json:"webhooks,omitempty"`
 }
 
 // CORSConfig defines the CORS policy for an application.

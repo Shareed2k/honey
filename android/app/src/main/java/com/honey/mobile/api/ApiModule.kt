@@ -19,19 +19,21 @@ object ApiModule {
     @Provides
     @Singleton
     fun provideHoneyApi(@ApplicationContext context: Context): HoneyApi {
-        // TODO: Replace dummy implementation with native Mobile AAR calls.
-        // This is necessary to keep the app compiling, but currently leaves other screens silently broken.
+        val configPath = "${context.filesDir.absolutePath}/config/config.yaml"
         return object : HoneyApi {
-            override suspend fun getMeta(): MetaResponse = MetaResponse("dummy")
+            override suspend fun getMeta(): MetaResponse = withContext(Dispatchers.IO) {
+                MetaResponse(version = Mobile.getVersion())
+            }
+
             override suspend fun getBackends(): List<Backend> = withContext(Dispatchers.IO) {
                 val reqJson = JSONObject().apply {
-                    put("config_path", "${context.filesDir.absolutePath}/config/config.yaml")
+                    put("config_path", configPath)
                 }.toString()
-                
+
                 val respJson = Mobile.listBackends(reqJson)
                 val jsonObj = JSONObject(respJson)
                 val backendsArray = jsonObj.optJSONArray("backends") ?: JSONArray()
-                
+
                 val parsedBackends = mutableListOf<Backend>()
                 for (i in 0 until backendsArray.length()) {
                     val backendObj = backendsArray.getJSONObject(i)
@@ -42,25 +44,30 @@ object ApiModule {
                 }
                 parsedBackends
             }
+
             override suspend fun searchHosts(req: SearchRequest): List<HostRecord> = withContext(Dispatchers.IO) {
                 val reqJson = JSONObject().apply {
-                    put("config_path", "${context.filesDir.absolutePath}/config/config.yaml")
+                    put("config_path", configPath)
                     put("name", req.name)
                     put("providers", req.providers)
                     put("backends", req.backends)
                 }.toString()
-                
+
                 val respJson = Mobile.searchHosts(reqJson)
                 val jsonObj = JSONObject(respJson)
                 val recordsArray = jsonObj.optJSONArray("records") ?: JSONArray()
-                
+
                 val parsedRecords = mutableListOf<HostRecord>()
                 for (i in 0 until recordsArray.length()) {
                     val recordObj = recordsArray.getJSONObject(i)
-                    
+
                     val name = recordObj.optString("name", "")
                     val provider = recordObj.optString("provider", "")
-                    
+                    val primaryIp = recordObj.optString("primary_ip", "")
+                    val meta = recordObj.optJSONObject("meta")
+                    val backendName = meta?.optString("backend_name", "") ?: ""
+                    val sshPort = meta?.optString("ssh_port", "")?.toIntOrNull() ?: 0
+
                     val groupsArray = recordObj.optJSONArray("groups")
                     val groups = mutableListOf<String>()
                     if (groupsArray != null) {
@@ -68,13 +75,52 @@ object ApiModule {
                             groups.add(groupsArray.getString(j))
                         }
                     }
-                    
-                    parsedRecords.add(HostRecord(name = name, provider = provider, groups = groups))
+
+                    parsedRecords.add(
+                        HostRecord(
+                            name = name,
+                            provider = provider,
+                            groups = groups,
+                            backendName = backendName,
+                            primaryIp = primaryIp,
+                            sshPort = sshPort,
+                        ),
+                    )
                 }
                 parsedRecords
             }
-            override suspend fun exec(req: ExecRequest): List<ExecResult> = emptyList()
+
+            override suspend fun exec(req: ExecRequest): List<ExecResult> = withContext(Dispatchers.IO) {
+                val reqJson = JSONObject().apply {
+                    put("config_path", configPath)
+                    put("backends", req.backends.joinToString(","))
+                    put("name", req.name)
+                    put("name_regex", req.nameRegex)
+                    put("providers", req.providers)
+                    put("host", req.name)
+                    put("host_ip", req.hostIp)
+                    put("ssh_port", req.sshPort)
+                    put("command", req.command)
+                    put("ssh_user", req.sshUser)
+                    put("ssh_identity_file", req.sshIdentityFile)
+                    put("ssh_identity_passphrase", req.sshIdentityPassphrase)
+                }.toString()
+
+                val respJson = Mobile.exec(reqJson)
+                val arr = JSONObject(respJson).optJSONArray("results") ?: JSONArray()
+                (0 until arr.length()).map { i ->
+                    val r = arr.getJSONObject(i)
+                    ExecResult(
+                        host = r.optString("host", ""),
+                        output = r.optString("output", ""),
+                        exit_code = r.optInt("exit_code", -1),
+                        error = r.optString("error", "").ifEmpty { null }
+                    )
+                }
+            }
+
             override suspend fun listRecipes(): List<Recipe> = emptyList()
+
             override suspend fun cueExec(req: CueExecRequest): CueExecResult = CueExecResult("Dummy plan")
         }
     }

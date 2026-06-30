@@ -324,6 +324,33 @@ func (c *testSSHClient) Run(cmd string) ([]byte, error) {
 	return sess.Output(cmd)
 }
 
+// RunContext mirrors sshclient.HoneyClient.RunContext: it aborts the in-flight
+// command (session close) when ctx is cancelled/timed out, so the engine's
+// per-host timeout + cancellation paths are exercised end-to-end in tests.
+func (c *testSSHClient) RunContext(ctx context.Context, cmd string) ([]byte, error) {
+	sess, err := c.c.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	type result struct {
+		out []byte
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		out, runErr := sess.CombinedOutput(cmd)
+		ch <- result{out: out, err: runErr}
+	}()
+	select {
+	case <-ctx.Done():
+		_ = sess.Close()
+		return nil, ctx.Err()
+	case r := <-ch:
+		_ = sess.Close()
+		return r.out, r.err
+	}
+}
+
 func (c *testSSHClient) RunWithStreams(cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sess, err := c.c.NewSession()
 	if err != nil {

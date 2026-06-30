@@ -103,6 +103,7 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 		Obs:            run.Params.Obs,
 		AttemptMax:     attemptMax,
 		Reg:            run.Params.Reg,
+		CmdTimeout:     run.Params.CmdTimeout,
 	})
 }
 
@@ -292,6 +293,7 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 		RetryCfg:       retryCfg,
 		Obs:            run.Params.Obs,
 		AttemptMax:     attemptMax,
+		CmdTimeout:     run.Params.CmdTimeout,
 	})
 }
 

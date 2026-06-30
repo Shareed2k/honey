@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
@@ -66,11 +67,24 @@ type ExecRequest struct {
 	ScriptArgs            []string       `json:"script_args,omitempty"`
 	Records               []hosts.Record `json:"records"`
 	RecordSession         bool           `json:"record_session"`
+	Timeout               string         `json:"timeout,omitempty"` // per-host command timeout (e.g. "30s"); empty uses config default
 }
 
 // ExecResponse is the JSON body for a successful exec run.
 type ExecResponse struct {
 	Results []engine.HostExecResult `json:"results"`
+}
+
+// resolveCmdTimeout resolves the per-host command timeout: the request value
+// (duration string) if valid, else the config default, else 0 (no timeout).
+func resolveCmdTimeout(cfg *config.File, reqTimeout string) time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(reqTimeout)); err == nil && d > 0 {
+		return d
+	}
+	if cfg != nil {
+		return cfg.Defaults.ExecTimeoutDuration()
+	}
+	return 0
 }
 
 // CueExecRequest is the JSON body for POST /api/v1/cue-exec.
@@ -83,6 +97,7 @@ type CueExecRequest struct {
 	Records       []hosts.Record         `json:"records"`
 	Env           []string               `json:"env,omitempty"`
 	RecordSession bool                   `json:"record_session"`
+	Timeout       string                 `json:"timeout,omitempty"` // per-host command timeout (e.g. "30s"); empty uses config default
 }
 
 // CueExecDryRunResponse is the JSON body when cue-exec runs in dry-run mode.
@@ -348,14 +363,15 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Query().Get("stream") == "1" {
-		s.handleExecStream(w, body, mode, cmd, user, jobs, scriptUnconnectable, recordJobCount, scriptOpts)
+		s.handleExecStream(r.Context(), w, body, mode, cmd, user, jobs, scriptUnconnectable, recordJobCount, scriptOpts)
 		return
 	}
 	s.handleExecSync(w, body, mode, cmd, user, jobs, scriptUnconnectable, recordJobCount, scriptOpts)
 }
 
-func (s *Server) handleExecStream(w http.ResponseWriter, body ExecRequest, mode, cmd, user string, jobs []hosts.Record, scriptUnconnectable []engine.HostExecResult, recordJobCount int, scriptOpts engine.ScriptUploadRunOptions) {
+func (s *Server) handleExecStream(ctx context.Context, w http.ResponseWriter, body ExecRequest, mode, cmd, user string, jobs []hosts.Record, scriptUnconnectable []engine.HostExecResult, recordJobCount int, scriptOpts engine.ScriptUploadRunOptions) {
 	execStart := time.Now()
+	cmdTimeout := resolveCmdTimeout(s.opts.Config, body.Timeout)
 	var rec *engine.SessionRecorder
 	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
 	if wantRec {
@@ -377,23 +393,20 @@ func (s *Server) handleExecStream(w http.ResponseWriter, body ExecRequest, mode,
 			if len(jobs) == 0 {
 				return
 			}
-
 			var tcJobs []engine.TargetContext
 			for _, j := range jobs {
 				tcJobs = append(tcJobs, engine.TargetContext{Record: j})
 			}
-
-			if err := engine.StreamScriptContentRunParallel(context.Background(), user, tcJobs, body.Command, body.FileExtension, scriptOpts, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry}); err != nil {
+			if err := engine.StreamScriptContentRunParallel(ctx, user, tcJobs, body.Command, body.FileExtension, scriptOpts, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry, CmdTimeout: cmdTimeout}); err != nil {
 				ch <- engine.HostExecResult{Name: "web-exec", Provider: "web", Success: false, ErrMsg: err.Error()}
 			}
 			return
 		}
-
 		var tcJobs []engine.TargetContext
 		for _, j := range jobs {
 			tcJobs = append(tcJobs, engine.TargetContext{Record: j})
 		}
-		_ = engine.StreamSSHParallel(context.Background(), user, tcJobs, false, func(_ engine.TargetContext, _ map[string]string) string { return cmd }, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry})
+		_ = engine.StreamSSHParallel(ctx, user, tcJobs, false, func(_ engine.TargetContext, _ map[string]string) string { return cmd }, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry, CmdTimeout: cmdTimeout})
 	}()
 	streamHostExecNDJSON(w, ch, rec)
 	if s.metrics != nil {
@@ -419,11 +432,11 @@ func (s *Server) handleExecSync(w http.ResponseWriter, body ExecRequest, mode, c
 	if mode == execModeScript {
 		results = append(results, scriptUnconnectable...)
 		if len(jobs) > 0 {
+			var scriptResults []engine.HostExecResult
 			tcJobs := make([]engine.TargetContext, 0, len(jobs))
 			for _, j := range jobs {
 				tcJobs = append(tcJobs, engine.TargetContext{Record: j})
 			}
-			var scriptResults []engine.HostExecResult
 			scriptResults, err = engine.ExecuteScriptContentRunParallel(user, tcJobs, body.Command, body.FileExtension, scriptOpts, 0, s.opts.ExecRegistry)
 			if err != nil {
 				if rec != nil {
@@ -662,6 +675,27 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	wantRec := strings.TrimSpace(api.opts.RecordDir) != "" && body.RecordSession
 	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 
+	recordRecipeMeta := func(rec *engine.SessionRecorder) {
+		if rec == nil {
+			return
+		}
+		hash, _ := recipe.HashJSON()
+		planText, _, _ := cuetry.RenderDryRunPlan(recipe)
+		var graph *cuetry.RecipeGraphPlan
+		if mode, err := cuetry.RecipeExecutionMode(recipe); err == nil && mode == cuetry.ExecutionModeGraph {
+			graph, _ = cuetry.BuildRecipeGraphPlan(recipe)
+		}
+		rec.RecordRecipeMeta(engine.RecipeMeta{
+			RecipePath:        recipeSourcePath,
+			HostCount:         len(jobs),
+			RecipeContentHash: hash,
+			StartedAt:         time.Now().UTC(),
+			Hosts:             engine.HostsForRecipeMeta(jobs, maxWebExecRecords),
+			Plan:              planText,
+			Graph:             graph,
+		})
+	}
+
 	req := engine.RunRequest{
 		Recipe:           recipe,
 		RecipeSourcePath: recipeSourcePath,
@@ -673,26 +707,12 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		BiometricToken:   strings.TrimSpace(r.Header.Get("X-Honey-Biometric")),
 		Env:              cliEnv,
 		AISystemPrompt:   aiPrompt,
-		PluginManager:    pluginMgr,
-	}
-
-	var rec *engine.SessionRecorder
-	if wantRec {
-		label := "web-cue-exec"
-		if !body.Execute {
-			label = "web-cue-exec-dry"
-		}
-		var rerr error
-		rec, rerr = engine.NewBatchSessionRecorder(api.opts.RecordDir, label, user, len(jobs))
-		if rerr != nil {
-			httpError(w, rerr, http.StatusInternalServerError)
-			return
-		}
-		defer func() { _ = rec.Close() }()
-		req.Recorder = rec
+		RecordSession:    wantRec,
+		CmdTimeout:       resolveCmdTimeout(api.opts.Config, body.Timeout),
 	}
 
 	if !body.Execute {
+		req.RecordLabel = "web-cue-exec-dry"
 		plan, err := api.runner.DryRun(r.Context(), req)
 		if err != nil {
 			httpError(w, err, http.StatusBadRequest)
@@ -706,13 +726,45 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, err := api.runner.Execute(r.Context(), req)
-	if err != nil {
-		writeExecError(w, err)
-		return
-	}
-
+	// Streaming needs the recording ID synchronously for the X-Honey-Recording-Id
+	// response header, so the recorder is created here and injected. The runner
+	// records results into it; this handler records the recipe meta and closes it.
 	if r.URL.Query().Get("stream") == "1" {
+		var rec *engine.SessionRecorder
+		if wantRec {
+			var rerr error
+			rec, rerr = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-cue-exec", user, len(jobs))
+			if rerr != nil {
+				httpError(w, rerr, http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = rec.Close() }()
+			recordRecipeMeta(rec)
+		}
+		req.Recorder = rec
+		ch, err := api.runner.Execute(r.Context(), req)
+		if err != nil {
+			if pending, ok := errors.AsType[*engine.ErrPendingApproval](err); ok {
+				_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
+					Source:     "web",
+					Actor:      req.ActorID,
+					Action:     "recipe_run",
+					Target:     req.Recipe.Name,
+					Decision:   "require_approval",
+					ApprovalID: pending.ID,
+				})
+			}
+			writeExecError(w, err)
+			return
+		}
+		_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
+			Source:     "web",
+			Actor:      req.ActorID,
+			Action:     "recipe_run",
+			Target:     req.Recipe.Name,
+			Decision:   "allow",
+			ApprovalID: req.ApprovalID,
+		})
 		if rec != nil {
 			if id := rec.RecordingID(); id != "" {
 				w.Header().Set("X-Honey-Recording-Id", id)
@@ -722,6 +774,31 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Non-stream execute: the runner owns the recorder lifecycle entirely.
+	req.RecordLabel = "web-cue-exec"
+	ch, err := api.runner.Execute(r.Context(), req)
+	if err != nil {
+		if pending, ok := errors.AsType[*engine.ErrPendingApproval](err); ok {
+			_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
+				Source:     "web",
+				Actor:      req.ActorID,
+				Action:     "recipe_run",
+				Target:     req.Recipe.Name,
+				Decision:   "require_approval",
+				ApprovalID: pending.ID,
+			})
+		}
+		writeExecError(w, err)
+		return
+	}
+	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
+		Source:     "web",
+		Actor:      req.ActorID,
+		Action:     "recipe_run",
+		Target:     req.Recipe.Name,
+		Decision:   "allow",
+		ApprovalID: req.ApprovalID,
+	})
 	results := make([]engine.HostExecResult, 0, len(jobs))
 	for res := range ch {
 		results = append(results, res)

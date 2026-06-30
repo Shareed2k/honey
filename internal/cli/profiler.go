@@ -26,7 +26,7 @@ type Profiler struct {
 
 // StartProfiler initializes and starts collecting system metrics in the background.
 func StartProfiler() *Profiler {
-	pid := int32(os.Getpid()) // #nosec G115 -- PIDs always fit in int32
+	pid := int32(os.Getpid() & 0x7FFFFFFF)
 	proc, err := process.NewProcess(pid)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "profiler warning: could not track process: %v\n", err)

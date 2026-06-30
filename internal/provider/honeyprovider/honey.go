@@ -46,11 +46,23 @@ type searchResponse struct {
 
 // Search queries the remote honey server for hosts matching the query.
 func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, error) {
+	// Strip tokens that name this honey proxy itself before forwarding to the server.
+	// The server only knows its own sub-backends (e.g. "gcp-prod"), not our local config name.
+	ownName := strings.ToLower(strings.TrimSpace(h.BackendName()))
+	var serverBackends []string
+	for _, b := range q.Backends {
+		lb := strings.ToLower(strings.TrimSpace(b))
+		if lb == "honey" || lb == ownName || (ownName != "" && lb == "honey:"+ownName) {
+			continue
+		}
+		serverBackends = append(serverBackends, b)
+	}
+
 	reqBody := hostapi.SearchHostsInput{
 		Name:      q.NameSubstring,
 		NameRegex: q.NameRegex,
 		Providers: strings.Join(q.Providers, ","),
-		Backends:  strings.Join(q.Backends, ","),
+		Backends:  strings.Join(serverBackends, ","),
 	}
 
 	b, err := json.Marshal(reqBody)

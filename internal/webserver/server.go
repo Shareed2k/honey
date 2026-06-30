@@ -297,10 +297,15 @@ func (s *Server) routes() error {
 
 		// Webhook results need auth
 		r.Get("/webhooks/results/{id}", recipesAPI.handleRecipeWebhookResult)
+
+		// Webhook debugging (web UI, authenticated): test-send + delivery inspection.
+		r.Post("/webhooks/{app_name}/{webhook_name}/debug", recipesAPI.handleWebhookDebug)
+		r.Get("/webhooks/{app_name}/{webhook_name}/deliveries", recipesAPI.handleWebhookDeliveries)
 	})
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
-	s.router.Post("/api/v1/webhooks/{app_name}/{webhook_name}", recipesAPI.handleRecipeWebhook)
+	s.router.With(recipesAPI.webhookRateLimit).
+		Post("/api/v1/webhooks/{app_name}/{webhook_name}", recipesAPI.handleRecipeWebhook)
 
 	s.router.Get("/ws/ssh", s.handleWebSSH)
 	s.router.Get("/ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)

@@ -159,15 +159,13 @@ func runExec(cmd *cobra.Command, args []string) error {
 		retryCfg = cuetry.RecipeStepRetry{Attempts: flagExecRetry, DelayMS: 1000, MaxDelayMS: 30000, Backoff: "fixed"}
 	}
 
+	tcJobs := make([]engine.TargetContext, 0, len(jobs))
+	for _, j := range jobs {
+		tcJobs = append(tcJobs, engine.TargetContext{Record: j})
+	}
 	out := make(chan engine.HostExecResult, len(jobs))
 	go func() {
 		defer close(out)
-
-		tcJobs := make([]engine.TargetContext, 0, len(jobs))
-		for _, j := range jobs {
-			tcJobs = append(tcJobs, engine.TargetContext{Record: j})
-		}
-
 		_ = engine.StreamSSHParallel(
 			context.Background(), sshUser, tcJobs, false,
 			func(_ engine.TargetContext, _ map[string]string) string { return finalCmd },

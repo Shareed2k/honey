@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"context"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -53,7 +54,8 @@ type RecipesAPI struct {
 	webhookDedupCache *ttlcache.Cache[string, string]
 	webhookDedupMu    sync.Mutex
 
-	webhookRL *wrate.TokenBucketLimiter
+	webhookRL      *wrate.TokenBucketLimiter
+	webhookCapture *webhookCaptureStore
 }
 
 // NewRecipesAPI creates a new isolated router and handler set for Recipes.
@@ -85,6 +87,7 @@ func NewRecipesAPI(
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
 		webhookDedupCache:     dedupCache,
+		webhookCapture:        newWebhookCaptureStore(),
 	}
 	rps := opts.WebhookRatePerSecond
 	if rps <= 0 {
@@ -176,6 +179,18 @@ func (api *RecipesAPI) sshUser(requested string) string {
 
 func (api *RecipesAPI) webhookAllow(appName string) bool {
 	return api.webhookRL.TakeToken([]byte(appName))
+}
+
+// webhookRateLimit enforces the per-app webhook token bucket as HTTP middleware.
+// Relies on chi having populated the {app_name} route param before it runs.
+func (api *RecipesAPI) webhookRateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !api.webhookAllow(chi.URLParam(r, "app_name")) {
+			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (api *RecipesAPI) allowedRecipePathSet() map[string]struct{} {

@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +19,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/apps"
-	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
@@ -59,6 +61,12 @@ func (api *RecipesAPI) resolveWebhookActor(r *http.Request, webhook cuetry.Recip
 	if u := userFromRequest(r, api.opts.TrustedProxyNets, api.opts.JWTPubKey); u != "api" {
 		return u
 	}
+	return webhookActorFromPayload(webhook, body, appName)
+}
+
+// webhookActorFromPayload resolves the actor from the configured gjson path, else
+// the synthetic "webhook:<app>" fallback. Used when there is no request identity.
+func webhookActorFromPayload(webhook cuetry.RecipeWebhook, body []byte, appName string) string {
 	if path := strings.TrimSpace(webhook.Actor); path != "" {
 		if v := gjson.GetBytes(body, path); v.Exists() {
 			if s := strings.TrimSpace(v.String()); s != "" {
@@ -69,26 +77,23 @@ func (api *RecipesAPI) resolveWebhookActor(r *http.Request, webhook cuetry.Recip
 	return "webhook:" + appName
 }
 
-func extractWebhookPayload(r *http.Request, webhook cuetry.RecipeWebhook) ([]byte, []string, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		return nil, nil, fmt.Errorf("read body: %w", err)
+// extractWebhookEnv applies the webhook's extract map (env-var name → gjson path)
+// to an already-read body, producing KEY=VALUE pairs.
+func extractWebhookEnv(body []byte, webhook cuetry.RecipeWebhook) ([]string, error) {
+	if len(webhook.Extract) == 0 {
+		return nil, nil
 	}
-
+	if !gjson.ValidBytes(body) {
+		return nil, fmt.Errorf("invalid json payload")
+	}
+	parsedJSON := gjson.ParseBytes(body)
 	var cliEnv []string
-	if len(webhook.Extract) > 0 {
-		if !gjson.ValidBytes(body) {
-			return nil, nil, fmt.Errorf("invalid json payload")
-		}
-		parsedJSON := gjson.ParseBytes(body)
-		for envKey, jsonPath := range webhook.Extract {
-			res := parsedJSON.Get(jsonPath)
-			if res.Exists() {
-				cliEnv = append(cliEnv, fmt.Sprintf("%s=%s", envKey, res.String()))
-			}
+	for envKey, jsonPath := range webhook.Extract {
+		if res := parsedJSON.Get(jsonPath); res.Exists() {
+			cliEnv = append(cliEnv, fmt.Sprintf("%s=%s", envKey, res.String()))
 		}
 	}
-	return body, cliEnv, nil
+	return cliEnv, nil
 }
 
 func checkWebhookIdempotency(api *RecipesAPI, webhook cuetry.RecipeWebhook, body []byte, appName, webhookName string, r *http.Request) (string, bool) {
@@ -127,10 +132,16 @@ func checkWebhookIdempotency(api *RecipesAPI, webhook cuetry.RecipeWebhook, body
 	return scopedKey, false
 }
 
-func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string) {
+// errWebhookBadTarget marks a webhook failure caused by host search / target
+// resolution (client/config issue → HTTP 400) rather than execution (→ 500).
+var errWebhookBadTarget = errors.New("webhook target error")
+
+// enqueueWebhookAsync submits the recipe run to the queue and returns the
+// recording id (empty when recording is disabled). It does not wait for
+// execution; per-host errors are recorded into the session, not returned.
+func (api *RecipesAPI) enqueueWebhookAsync(webhookName, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor, scopedKey string) (string, error) {
 	if api.webhookQueue == nil {
-		httpError(w, fmt.Errorf("server queue not configured"), http.StatusInternalServerError)
-		return
+		return "", fmt.Errorf("server queue not configured")
 	}
 
 	var rec *engine.SessionRecorder
@@ -138,18 +149,12 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 	if strings.TrimSpace(api.opts.RecordDir) != "" {
 		rec, err = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-webhook-"+webhookName, sshUser, 0)
 		if err != nil {
-			httpError(w, err, http.StatusInternalServerError)
-			return
+			return "", err
 		}
 	}
 
-	t := time.Now()
 	submitErr := api.webhookQueue.Submit(func() {
 		ctx := context.Background()
-
-		mgr, release := api.plugins.Borrow()
-		defer release()
-
 		defer func() {
 			if scopedKey != "" {
 				api.webhookDedupCache.Delete(scopedKey)
@@ -168,9 +173,20 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 		}
 		if len(searchOut.Records) == 0 {
 			if rec != nil {
-				rec.RecordError(fmt.Errorf("no target hosts found for app %q", appName))
+				rec.RecordError(fmt.Errorf("no target hosts found"))
 			}
 			return
+		}
+
+		if rec != nil {
+			hash, _ := recipe.HashJSON()
+			rec.RecordRecipeMeta(engine.RecipeMeta{
+				RecipePath:        recipePath,
+				HostCount:         len(searchOut.Records),
+				RecipeContentHash: hash,
+				StartedAt:         time.Now().UTC(),
+				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, engine.RecipeMetaHostLimit),
+			})
 		}
 
 		// Inject the pre-created recorder so its ID is known synchronously above;
@@ -184,51 +200,36 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 			ActorID:          actor,
 			Env:              envMap,
 			AISystemPrompt:   aiPrompt,
-			PluginManager:    mgr,
 			Recorder:         rec,
 		}); rerr != nil && rec != nil {
 			rec.RecordError(rerr)
 		}
 	})
-	zap.L().Debug("webhook stage", zap.String("stage", "enqueue"), zap.Duration("dur", time.Since(t)))
 	if submitErr != nil {
 		if rec != nil {
 			_ = rec.Close()
 		}
-		if submitErr == queue.ErrQueueFull {
-			httpError(w, fmt.Errorf("server busy: webhook queue full"), http.StatusTooManyRequests)
-			return
-		}
-		httpError(w, fmt.Errorf("submit webhook task: %w", submitErr), http.StatusInternalServerError)
-		return
+		return "", submitErr
 	}
 
-	w.WriteHeader(http.StatusAccepted)
-	response := map[string]string{"status": "queued"}
 	if rec != nil {
-		response["id"] = rec.RecordingID()
+		return rec.RecordingID(), nil
 	}
-	_ = json.NewEncoder(w).Encode(response)
+	return "", nil
 }
 
-func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, pluginMgr *plugins.Manager) {
-	if scopedKey != "" {
-		defer api.webhookDedupCache.Delete(scopedKey)
-	}
-
-	t := time.Now()
-	searchOut, err := hostapi.SearchHosts(r.Context(), searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
-	zap.L().Debug("webhook stage", zap.String("stage", "search"), zap.Duration("dur", time.Since(t)))
+// executeWebhookSync runs host search + recipe synchronously and returns the
+// per-host results. Search/target failures are wrapped with errWebhookBadTarget.
+func (api *RecipesAPI) executeWebhookSync(ctx context.Context, webhookName, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string) ([]engine.HostExecResult, error) {
+	searchOut, err := hostapi.SearchHosts(ctx, searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
 	if err != nil {
-		httpError(w, fmt.Errorf("search hosts: %w", err), http.StatusBadRequest)
-		return
+		return nil, errors.Join(errWebhookBadTarget, fmt.Errorf("search hosts: %w", err))
 	}
 	if len(searchOut.Records) == 0 {
-		httpError(w, fmt.Errorf("no target hosts found for app %q", appName), http.StatusBadRequest)
-		return
+		return nil, errors.Join(errWebhookBadTarget, fmt.Errorf("no target hosts found"))
 	}
 
-	req := engine.RunRequest{
+	ch, err := api.runner.Execute(ctx, engine.RunRequest{
 		Recipe:           recipe,
 		RecipeSourcePath: recipePath,
 		RecipeDir:        filepath.Dir(recipePath),
@@ -237,26 +238,11 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		ActorID:          actor,
 		Env:              envMap,
 		AISystemPrompt:   aiPrompt,
-		PluginManager:    pluginMgr,
-	}
-
-	var rec *engine.SessionRecorder
-	if strings.TrimSpace(api.opts.RecordDir) != "" {
-		var rerr error
-		rec, rerr = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-webhook-"+webhookName, sshUser, len(searchOut.Records))
-		if rerr != nil {
-			httpError(w, rerr, http.StatusInternalServerError)
-			return
-		}
-		defer func() { _ = rec.Close() }()
-
-		req.Recorder = rec
-	}
-
-	ch, err := api.runner.Execute(r.Context(), req)
+		RecordSession:    strings.TrimSpace(api.opts.RecordDir) != "",
+		RecordLabel:      "web-webhook-" + webhookName,
+	})
 	if err != nil {
-		httpError(w, err, http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
 	results := make([]engine.HostExecResult, 0, len(searchOut.Records))
@@ -269,12 +255,9 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		results = append(results, res)
 	}
 	if runFailed {
-		httpError(w, fmt.Errorf("recipe execution failed"), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("recipe execution failed")
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(CueExecExecuteResponse{Results: results})
+	return results, nil
 }
 
 // handleRecipeWebhook handles incoming Rundeck-style webhooks for recipe apps.
@@ -286,11 +269,6 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 
 	appName := chi.URLParam(r, "app_name")
 	webhookName := chi.URLParam(r, "webhook_name")
-
-	if !api.webhookAllow(appName) {
-		http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
-		return
-	}
 
 	if api.opts.Config == nil || api.opts.Config.Apps == nil {
 		httpError(w, fmt.Errorf("no apps configured"), http.StatusNotFound)
@@ -335,9 +313,29 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Read the payload once so it can be captured even on auth failure.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		httpError(w, fmt.Errorf("read body: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	isAsync := webhook.Async != nil && *webhook.Async
+	record := func(d WebhookDelivery) {
+		d.ID = newDeliveryID()
+		d.Source = "live"
+		d.ReceivedAt = time.Now().UTC()
+		d.RemoteAddr = r.RemoteAddr
+		d.ContentType = r.Header.Get("Content-Type")
+		d.Body = string(body)
+		d.Async = isAsync
+		api.webhookCapture.Record(appName, webhookName, d)
+	}
+
 	// 2. Authentication
 	if err := authenticateWebhook(r.Context(), api, webhook, pluginMgr, r); err != nil {
 		if err.Error() == "unauthorized" {
+			record(WebhookDelivery{Outcome: "unauthorized"})
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		} else {
 			httpError(w, err, http.StatusInternalServerError)
@@ -345,13 +343,12 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// 3. Extract JSON payload
-	body, cliEnv, err := extractWebhookPayload(r, webhook)
+	// 3. Extract JSON payload fields
+	cliEnv, err := extractWebhookEnv(body, webhook)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-
 	envMap, err := cuetry.ParseEnvKeyValuePairs(cliEnv)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -395,24 +392,48 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 
 	actor := api.resolveWebhookActor(r, webhook, body, appName)
-	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-		Source:   "webhook",
-		Actor:    actor,
-		Action:   "recipe_run",
-		Target:   recipe.Name,
-		Decision: "allow",
-	})
-
-	isAsync := webhook.Async != nil && *webhook.Async
 
 	// ---- Async path: return 202 immediately; search + execution run in the queue. ----
 	if isAsync {
-		handleAsyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor)
+		var id string
+		id, err = api.enqueueWebhookAsync(webhookName, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor, scopedKey)
+		if err != nil {
+			record(WebhookDelivery{AuthOK: true, Extracted: envMap, Actor: actor, IdempotencyKey: scopedKey, Outcome: "error", Error: err.Error()})
+			if errors.Is(err, queue.ErrQueueFull) {
+				httpError(w, fmt.Errorf("server busy: webhook queue full"), http.StatusTooManyRequests)
+				return
+			}
+			httpError(w, fmt.Errorf("submit webhook task: %w", err), http.StatusInternalServerError)
+			return
+		}
+		record(WebhookDelivery{AuthOK: true, Extracted: envMap, Actor: actor, IdempotencyKey: scopedKey, Outcome: "queued", ExecID: id})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		resp := map[string]string{"status": "queued"}
+		if id != "" {
+			resp["id"] = id
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
 
 	// ---- Synchronous path: search + execute inline, return full results. ----
-	handleSyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor, pluginMgr)
+	if scopedKey != "" {
+		defer api.webhookDedupCache.Delete(scopedKey)
+	}
+	results, err := api.executeWebhookSync(r.Context(), webhookName, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor)
+	if err != nil {
+		record(WebhookDelivery{AuthOK: true, Extracted: envMap, Actor: actor, IdempotencyKey: scopedKey, Outcome: "error", Error: err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, errWebhookBadTarget) {
+			status = http.StatusBadRequest
+		}
+		httpError(w, err, status)
+		return
+	}
+	record(WebhookDelivery{AuthOK: true, Extracted: envMap, Actor: actor, IdempotencyKey: scopedKey, Outcome: "executed", Results: results})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(CueExecExecuteResponse{Results: results})
 }
 
 // WebhookResultResponse is returned by GET /api/v1/webhooks/results/{id}
@@ -441,35 +462,314 @@ func (api *RecipesAPI) handleRecipeWebhookResult(w http.ResponseWriter, r *http.
 		return
 	}
 
-	events, err := recordings.LoadEvents(api.opts.RecordDir, id+".hrec.jsonl")
+	results, status, startedAt, err := api.loadRecordingResults(id)
 	if err != nil {
 		httpError(w, fmt.Errorf("read recording: %w", err), http.StatusNotFound)
 		return
 	}
 
-	resp := WebhookResultResponse{
-		ID:      id,
-		Status:  "completed",
-		Results: make([]engine.HostExecResult, 0),
-	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(WebhookResultResponse{
+		ID:        id,
+		Status:    status,
+		StartedAt: startedAt,
+		Results:   results,
+	})
+}
 
+// loadRecordingResults reads a webhook execution recording by id and returns the
+// host results, an overall status ("completed", or "failed" if any host failed),
+// and the RFC3339 start time. Returns an error if the recording can't be read
+// (e.g. the async run hasn't produced it yet).
+func (api *RecipesAPI) loadRecordingResults(id string) (results []engine.HostExecResult, status, startedAt string, err error) {
+	if strings.TrimSpace(api.opts.RecordDir) == "" {
+		return nil, "", "", fmt.Errorf("session recording not enabled")
+	}
+	events, err := recordings.LoadEvents(api.opts.RecordDir, id+".hrec.jsonl")
+	if err != nil {
+		return nil, "", "", err
+	}
+	results = make([]engine.HostExecResult, 0)
+	status = "completed"
 	for _, ev := range events {
-		if ev.Type == "recipe-meta" && len(ev.Result) > 0 {
+		switch {
+		case ev.Type == "recipe-meta" && len(ev.Result) > 0:
 			var meta engine.RecipeMeta
-			if err := json.Unmarshal(ev.Result, &meta); err == nil {
-				resp.StartedAt = meta.StartedAt.Format(time.RFC3339)
+			if json.Unmarshal(ev.Result, &meta) == nil {
+				startedAt = meta.StartedAt.Format(time.RFC3339)
 			}
-		} else if ev.Type == "result" && len(ev.Result) > 0 {
+		case ev.Type == "result" && len(ev.Result) > 0:
 			var res engine.HostExecResult
-			if err := json.Unmarshal(ev.Result, &res); err == nil {
-				resp.Results = append(resp.Results, res)
+			if json.Unmarshal(ev.Result, &res) == nil {
+				results = append(results, res)
 				if !res.Success && !res.Skipped {
-					resp.Status = "failed"
+					status = "failed"
 				}
 			}
 		}
 	}
+	return results, status, startedAt, nil
+}
+
+// ── Webhook debugging (Rundeck-style): test-send + delivery inspection ──────────
+
+// resolveRecipeAppPath validates that appName is a recipe app and returns the
+// app config plus the resolved absolute recipe path.
+func (api *RecipesAPI) resolveRecipeAppPath(appName string) (apps.AppConfig, string, int, error) {
+	if api.opts.Config == nil || api.opts.Config.Apps == nil {
+		return apps.AppConfig{}, "", http.StatusNotFound, fmt.Errorf("no apps configured")
+	}
+	app, ok := api.opts.Config.Apps[appName]
+	if !ok || app.Type != apps.AppTypeRecipe || strings.TrimSpace(app.TargetRecipe) == "" {
+		return apps.AppConfig{}, "", http.StatusNotFound, fmt.Errorf("app not found or not a valid recipe app")
+	}
+	recipePath := strings.TrimSpace(app.TargetRecipe)
+	if !filepath.IsAbs(recipePath) && api.opts.ConfigPath != "" {
+		recipePath = filepath.Join(filepath.Dir(api.opts.ConfigPath), recipePath)
+	}
+	return app, recipePath, http.StatusOK, nil
+}
+
+// parseRecipeFile reads and parses a recipe file (borrowing a plugin manager for
+// the parse). Used by debug + apps-list webhook discovery; not the live path,
+// which keeps its borrowed manager for auth.
+func (api *RecipesAPI) parseRecipeFile(recipePath string) (cuetry.Recipe, error) {
+	raw, err := safepath.ReadFile(recipePath)
+	if err != nil {
+		return cuetry.Recipe{}, fmt.Errorf("read target recipe: %w", err)
+	}
+	pluginMgr, release := api.plugins.Borrow()
+	defer release()
+	recipe, err := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{PluginManager: pluginMgr})
+	if err != nil {
+		return cuetry.Recipe{}, fmt.Errorf("parse recipe: %w", err)
+	}
+	return recipe, nil
+}
+
+// recipeWebhookNames returns the sorted webhook names declared by a recipe app,
+// or nil if it is not a recipe app, has no webhooks, or fails to parse.
+func (api *RecipesAPI) recipeWebhookNames(app apps.AppConfig) []string {
+	if app.Type != apps.AppTypeRecipe || strings.TrimSpace(app.TargetRecipe) == "" {
+		return nil
+	}
+	recipePath := strings.TrimSpace(app.TargetRecipe)
+	if !filepath.IsAbs(recipePath) && api.opts.ConfigPath != "" {
+		recipePath = filepath.Join(filepath.Dir(api.opts.ConfigPath), recipePath)
+	}
+	recipe, err := api.parseRecipeFile(recipePath)
+	if err != nil || len(recipe.Webhooks) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(recipe.Webhooks))
+	for name := range recipe.Webhooks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// webhookDebugIdempotencyDisplay derives the idempotency key the live path would
+// use, for display only (header-based keys are unavailable from a test payload).
+func webhookDebugIdempotencyDisplay(webhook cuetry.RecipeWebhook, body []byte) string {
+	if webhook.IdempotencyKey != "" {
+		if strings.HasPrefix(webhook.IdempotencyKey, "header:") {
+			return ""
+		}
+		if gjson.ValidBytes(body) {
+			return gjson.GetBytes(body, webhook.IdempotencyKey).String()
+		}
+		return ""
+	}
+	hash := sha256.Sum256(body)
+	return hex.EncodeToString(hash[:])
+}
+
+type webhookDebugRequest struct {
+	Payload json.RawMessage `json:"payload"`
+	Execute bool            `json:"execute"`
+}
+
+type webhookDebugResponse struct {
+	AuthOK         bool                    `json:"auth_ok"`
+	Extracted      map[string]string       `json:"extracted"`
+	Actor          string                  `json:"actor"`
+	IdempotencyKey string                  `json:"idempotency_key,omitempty"`
+	Async          bool                    `json:"async"`
+	Executed       bool                    `json:"executed"`
+	Outcome        string                  `json:"outcome"`
+	ExecID         string                  `json:"exec_id,omitempty"`
+	Results        []engine.HostExecResult `json:"results,omitempty"`
+	Error          string                  `json:"error,omitempty"`
+}
+
+// handleWebhookDebug previews (dry-run) or executes a webhook against a supplied
+// test payload. Authenticated by the web-UI auth middleware; the webhook's own
+// auth_secret is applied server-side, so the operator never supplies it.
+func (api *RecipesAPI) handleWebhookDebug(w http.ResponseWriter, r *http.Request) {
+	appName := chi.URLParam(r, "app_name")
+	webhookName := chi.URLParam(r, "webhook_name")
+
+	app, recipePath, status, err := api.resolveRecipeAppPath(appName)
+	if err != nil {
+		httpError(w, err, status)
+		return
+	}
+	recipe, err := api.parseRecipeFile(recipePath)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	webhook, ok := recipe.Webhooks[webhookName]
+	if !ok {
+		httpError(w, fmt.Errorf("webhook %q not found in recipe", webhookName), http.StatusNotFound)
+		return
+	}
+
+	var req webhookDebugRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpError(w, fmt.Errorf("decode request: %w", err), http.StatusBadRequest)
+		return
+	}
+	body := []byte(req.Payload)
+	if len(body) == 0 {
+		body = []byte("{}")
+	}
+
+	cliEnv, err := extractWebhookEnv(body, webhook)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	envMap, err := cuetry.ParseEnvKeyValuePairs(cliEnv)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	envMap, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), envMap)
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	actor := webhookActorFromPayload(webhook, body, appName)
+	idemKey := webhookDebugIdempotencyDisplay(webhook, body)
+	isAsync := webhook.Async != nil && *webhook.Async
+
+	resp := webhookDebugResponse{
+		AuthOK:         true, // operator already authenticated to the web UI
+		Extracted:      envMap,
+		Actor:          actor,
+		IdempotencyKey: idemKey,
+		Async:          isAsync,
+	}
+	record := func(source, outcome, execID, errMsg string, results []engine.HostExecResult) {
+		api.webhookCapture.Record(appName, webhookName, WebhookDelivery{
+			ID:             newDeliveryID(),
+			Source:         source,
+			ReceivedAt:     time.Now().UTC(),
+			ContentType:    "application/json",
+			Body:           string(body),
+			AuthOK:         true,
+			Extracted:      envMap,
+			Actor:          actor,
+			IdempotencyKey: idemKey,
+			Async:          isAsync,
+			Outcome:        outcome,
+			ExecID:         execID,
+			Error:          errMsg,
+			Results:        results,
+		})
+	}
+
+	if !req.Execute {
+		resp.Outcome = "dry_run"
+		record("dry_run", "dry_run", "", "", nil)
+		writeWebhookJSON(w, resp)
+		return
+	}
+
+	resp.Executed = true
+	sshUser := api.sshUser("")
+	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
+	searchIn := &hostapi.SearchHostsInput{
+		ConfigPath: api.opts.ConfigPath,
+		Config:     api.opts.Config,
+		Name:       app.Target,
+		Providers:  app.Provider,
+		Backends:   app.Backend,
+	}
+	if app.Target == "" && app.TargetRegex != "" {
+		searchIn.NameRegex = app.TargetRegex
+	}
+
+	if isAsync {
+		id, err := api.enqueueWebhookAsync(webhookName, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor, "")
+		if err != nil {
+			resp.Outcome, resp.Error = "error", err.Error()
+			record("test", "error", "", err.Error(), nil)
+			writeWebhookJSON(w, resp)
+			return
+		}
+		resp.Outcome, resp.ExecID = "queued", id
+		record("test", "queued", id, "", nil)
+		writeWebhookJSON(w, resp)
+		return
+	}
+
+	results, err := api.executeWebhookSync(r.Context(), webhookName, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor)
+	if err != nil {
+		resp.Outcome, resp.Error = "error", err.Error()
+		record("test", "error", "", err.Error(), nil)
+		writeWebhookJSON(w, resp)
+		return
+	}
+	resp.Outcome, resp.Results = "executed", results
+	record("test", "executed", "", "", results)
+	writeWebhookJSON(w, resp)
+}
+
+// handleWebhookDeliveries returns recent captured deliveries for a webhook.
+func (api *RecipesAPI) handleWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
+	appName := chi.URLParam(r, "app_name")
+	webhookName := chi.URLParam(r, "webhook_name")
+
+	limit := 20
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	deliveries := api.webhookCapture.List(appName, webhookName, limit)
+	// Enrich finished async ("queued") deliveries from their recording so the row
+	// shows the final outcome + host results. Capture store is left unchanged.
+	for i := range deliveries {
+		d := &deliveries[i]
+		if d.Outcome != "queued" || d.ExecID == "" {
+			continue
+		}
+		results, status, _, err := api.loadRecordingResults(d.ExecID)
+		// Keep "queued" until the run has actually produced results (or failed);
+		// the recording file can exist with only metadata mid-run.
+		if err != nil || (len(results) == 0 && status != "failed") {
+			continue
+		}
+		d.Results = results
+		if status == "failed" {
+			d.Outcome = "failed"
+		} else {
+			d.Outcome = "executed"
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"deliveries": deliveries,
+	})
+}
+
+func writeWebhookJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
 }
