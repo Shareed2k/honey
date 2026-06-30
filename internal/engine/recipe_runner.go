@@ -33,7 +33,7 @@ type RunnerOptions struct {
 	ExecRegistry hostexec.Registry
 	Metrics      metrics.Observer
 	Pools        *postgres.PoolManager
-	Cache        *ClientCache // optional shared SSH client cache; nil = per-run cache
+	Cache        *ClientCache      // optional shared SSH client cache; nil = per-run cache
 	RecordDir    string            // "" disables session recording
 	Enforcer     *policy.Enforcer  // optional OPA admission gate; nil = allow all
 	Approvals    *approval.Store   // optional pending-approval store; nil = require_approval hard-denies
@@ -292,7 +292,7 @@ func hostNames(records []hosts.Record) []string {
 // target hosts. Pre-flight errors (prompt validation, secret resolver, recorder
 // creation) are returned synchronously. Once execution starts, run errors arrive
 // on the channel as a synthetic failed HostExecResult. The runner owns the
-// (when not injected) recorder-close lifecycle, completing
+// recorder-close lifecycle (when not injected), completing
 // when the returned channel closes.
 func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan HostExecResult, error) {
 	if err := r.admitRecipe(ctx, req); err != nil {

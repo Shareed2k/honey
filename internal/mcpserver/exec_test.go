@@ -16,12 +16,12 @@ func withFakeExec(t *testing.T) *bool {
 	t.Helper()
 	called := false
 	prev := execSSH
-	execSSH = func(_ string, recs []hosts.Record, _ func(hosts.Record) string, _ int, _ hostexec.Registry) ([]engine.HostExecResult, error) {
+	execSSH = func(_ string, recs []engine.TargetContext, _ func(hosts.Record) string, _ int, _ hostexec.Registry) ([]engine.HostExecResult, error) {
 		called = true
 		name := ""
 		ip := ""
 		if len(recs) > 0 {
-			name, ip = recs[0].Name, recs[0].PrimaryIP
+			name, ip = recs[0].Record.Name, recs[0].Record.PrimaryIP
 		}
 		return []engine.HostExecResult{{Name: name, IP: ip, Output: "ok", ExitCode: 0}}, nil
 	}

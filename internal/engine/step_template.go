@@ -15,15 +15,15 @@ func runCueStepTemplateOnHost(
 	recipe cuetry.Recipe,
 	stepIdx int,
 	step cuetry.Step,
-	target hosts.Record,
+	tc TargetContext,
 	outputStore *cuetry.StepOutputStore,
 	outputCapture *cuetry.RecipeOutputCapture,
 	recipeKV *RecipeKVCoordinator,
-	secretResolver cuetry.SecretResolver,
+	_ cuetry.SecretResolver,
 	execute bool,
 ) HostExecResult {
 	stepNo := stepIdx + 1
-	hostLabel := target.Name
+	hostLabel := tc.Record.Name
 	if strings.TrimSpace(hostLabel) == "" {
 		hostLabel = cuetry.MatchLocalAIHost
 	}
@@ -36,7 +36,7 @@ func runCueStepTemplateOnHost(
 		render = ts.Render
 	}
 	if tpl == nil && strings.TrimSpace(render) == "" {
-		return HostExecResult{Name: prefix, Provider: target.Provider, IP: target.PrimaryIP, Success: false, ErrMsg: "internal: missing template block"}
+		return HostExecResult{Name: prefix, Provider: tc.Record.Provider, IP: tc.Record.PrimaryIP, Success: false, ErrMsg: "internal: missing template block"}
 	}
 	templateBody := strings.TrimSpace(render)
 	data := map[string]any{}
@@ -46,22 +46,15 @@ func runCueStepTemplateOnHost(
 	}
 	mode, _ := cuetry.RecipeExecutionMode(recipe)
 	hostName := hostLabel
-	extraEnv := make(map[string]string)
-	if len(step.Base().Env) > 0 || len(step.Base().Secrets) > 0 {
-		env, err := cuetry.EffectiveEnvForRun(ctx, execute, secretResolver, step.Base(), recipe.Defaults, nil, &target)
-		if err != nil {
-			return HostExecResult{Name: prefix, Provider: target.Provider, IP: target.PrimaryIP, Success: false, ErrMsg: err.Error()}
-		}
-		extraEnv = env
-	}
+	extraEnv := tc.Env
 	if mode == cuetry.ExecutionModeGraph && len(step.Base().EnvFrom) > 0 {
 		if err := cuetry.PrepareTemplateData(data, step.Base(), outputStore, outputCapture, KvReaderFromCoordinator(recipeKV), hostName, extraEnv, !execute, recipe.MatrixExpansions); err != nil {
-			return HostExecResult{Name: prefix, Provider: target.Provider, IP: target.PrimaryIP, Success: false, ErrMsg: err.Error()}
+			return HostExecResult{Name: prefix, Provider: tc.Record.Provider, IP: tc.Record.PrimaryIP, Success: false, ErrMsg: err.Error()}
 		}
 	} else if len(extraEnv) > 0 || outputCapture != nil {
 		vars := cuetry.BuildRecipeVarMap(outputCapture, extraEnv)
 		if err := cuetry.ExpandRecipeVarsInData(data, vars, execute); err != nil {
-			return HostExecResult{Name: prefix, Provider: target.Provider, IP: target.PrimaryIP, Success: false, ErrMsg: err.Error()}
+			return HostExecResult{Name: prefix, Provider: tc.Record.Provider, IP: tc.Record.PrimaryIP, Success: false, ErrMsg: err.Error()}
 		}
 		for k, v := range extraEnv {
 			if _, ok := data[k]; !ok {
@@ -79,17 +72,17 @@ func runCueStepTemplateOnHost(
 		Funcs:    cuetry.OutputTemplateFuncMap(outputCapture),
 	})
 	if err != nil {
-		return HostExecResult{Name: prefix, Provider: target.Provider, IP: target.PrimaryIP, Success: false, ErrMsg: err.Error()}
+		return HostExecResult{Name: prefix, Provider: tc.Record.Provider, IP: tc.Record.PrimaryIP, Success: false, ErrMsg: err.Error()}
 	}
-	recordTemplateCapture(recipe, step, target, outputStore, outputCapture, rendered)
+	recordTemplateCapture(recipe, step, tc.Record, outputStore, outputCapture, rendered)
 	out := rendered
 	if step.Base().NotifyEnabled() {
 		out += CueStepNotifyAppendSuffix(ctx, recipe, stepNo, cuetry.KindTemplate, step.Base().Notify, rendered)
 	}
 	return HostExecResult{
 		Name:          prefix,
-		Provider:      target.Provider,
-		IP:            target.PrimaryIP,
+		Provider:      tc.Record.Provider,
+		IP:            tc.Record.PrimaryIP,
 		Success:       true,
 		Output:        out,
 		OutputCapture: cuetry.StepOutputName(step),
@@ -179,7 +172,7 @@ func (e *TemplateExecutor) ExecuteStream(sc *StepContext) error {
 
 			mu.Lock()
 			if !res.Success && !res.Skipped {
-				stepErr = fmt.Errorf("template failed on %s: %s", target.Name, res.ErrMsg)
+				stepErr = fmt.Errorf("template failed on %s: %s", target.Record.Name, res.ErrMsg)
 			}
 			mu.Unlock()
 

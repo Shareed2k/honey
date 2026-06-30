@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
@@ -54,7 +55,12 @@ func (e *RecipeExecutor) ExecuteStream(sc *StepContext) error {
 		return fmt.Errorf("failed to read sub-recipe %q: %w", recipePath, err)
 	}
 
-	subRecipe, err := cuetry.ParseRemoteRecipeOpts(cueBytes, targets, cuetry.ParseOptions{
+	var targetRecs []hosts.Record
+	for _, tc := range targets {
+		targetRecs = append(targetRecs, tc.Record)
+	}
+
+	subRecipe, err := cuetry.ParseRemoteRecipeOpts(cueBytes, targetRecs, cuetry.ParseOptions{
 		PluginManager: sc.Run.Params.PluginMgr,
 	})
 	if err != nil {
@@ -85,7 +91,7 @@ func (e *RecipeExecutor) ExecuteStream(sc *StepContext) error {
 	subParams := CueRecipeRunParams{
 		Recipe:         subRecipe,
 		RecipeDir:      filepath.Dir(subRecipePath),
-		Records:        targets,
+		Records:        targetRecs,
 		SSHUser:        sc.Run.Params.SSHUser,
 		CLIEnv:         mergedEnv,
 		ConfigPath:     sc.Run.Params.ConfigPath,

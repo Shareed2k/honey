@@ -12,7 +12,6 @@ import (
 	"github.com/opensearch-project/opensearch-go/v2"
 	"github.com/opensearch-project/opensearch-go/v2/opensearchapi"
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 )
 
 // StreamCueStepOpensearch ...
@@ -40,7 +39,8 @@ func (e *OpensearchExecutor) ExecuteStream(sc *StepContext) error {
 		return fmt.Errorf("internal: opensearch step missing config")
 	}
 
-	execOne := func(r hosts.Record) HostExecResult {
+	execOne := func(tc TargetContext) HostExecResult {
+		r := tc.Record
 		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
 			res := HostExecResult{
 				Name:     r.Name,

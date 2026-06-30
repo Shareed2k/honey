@@ -377,12 +377,23 @@ func (s *Server) handleExecStream(w http.ResponseWriter, body ExecRequest, mode,
 			if len(jobs) == 0 {
 				return
 			}
-			if err := engine.StreamScriptContentRunParallel(context.Background(), user, jobs, body.Command, body.FileExtension, scriptOpts, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry}); err != nil {
+
+			var tcJobs []engine.TargetContext
+			for _, j := range jobs {
+				tcJobs = append(tcJobs, engine.TargetContext{Record: j})
+			}
+
+			if err := engine.StreamScriptContentRunParallel(context.Background(), user, tcJobs, body.Command, body.FileExtension, scriptOpts, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry}); err != nil {
 				ch <- engine.HostExecResult{Name: "web-exec", Provider: "web", Success: false, ErrMsg: err.Error()}
 			}
 			return
 		}
-		_ = engine.StreamSSHParallel(context.Background(), user, jobs, false, func(_ hosts.Record, _ map[string]string) string { return cmd }, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry})
+
+		var tcJobs []engine.TargetContext
+		for _, j := range jobs {
+			tcJobs = append(tcJobs, engine.TargetContext{Record: j})
+		}
+		_ = engine.StreamSSHParallel(context.Background(), user, tcJobs, false, func(_ engine.TargetContext, _ map[string]string) string { return cmd }, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry})
 	}()
 	streamHostExecNDJSON(w, ch, rec)
 	if s.metrics != nil {
@@ -408,8 +419,12 @@ func (s *Server) handleExecSync(w http.ResponseWriter, body ExecRequest, mode, c
 	if mode == execModeScript {
 		results = append(results, scriptUnconnectable...)
 		if len(jobs) > 0 {
+			tcJobs := make([]engine.TargetContext, 0, len(jobs))
+			for _, j := range jobs {
+				tcJobs = append(tcJobs, engine.TargetContext{Record: j})
+			}
 			var scriptResults []engine.HostExecResult
-			scriptResults, err = engine.ExecuteScriptContentRunParallel(user, jobs, body.Command, body.FileExtension, scriptOpts, 0, s.opts.ExecRegistry)
+			scriptResults, err = engine.ExecuteScriptContentRunParallel(user, tcJobs, body.Command, body.FileExtension, scriptOpts, 0, s.opts.ExecRegistry)
 			if err != nil {
 				if rec != nil {
 					rec.RecordError(err)
@@ -423,7 +438,11 @@ func (s *Server) handleExecSync(w http.ResponseWriter, body ExecRequest, mode, c
 			results = append(results, scriptResults...)
 		}
 	} else {
-		results, err = engine.ExecuteSSHParallel(user, jobs, func(_ hosts.Record) string { return cmd }, 0, s.opts.ExecRegistry)
+		tcJobs := make([]engine.TargetContext, 0, len(jobs))
+		for _, j := range jobs {
+			tcJobs = append(tcJobs, engine.TargetContext{Record: j})
+		}
+		results, err = engine.ExecuteSSHParallel(user, tcJobs, func(_ hosts.Record) string { return cmd }, 0, s.opts.ExecRegistry)
 		if err != nil {
 			if rec != nil {
 				rec.RecordError(err)

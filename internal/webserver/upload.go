@@ -112,7 +112,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := engine.ExecuteSFTPUploadParallel(user, []hosts.Record{rec}, localPath, meta.RemotePath, 1)
+	results, err := engine.ExecuteSFTPUploadParallel(user, []engine.TargetContext{{Record: rec}}, localPath, meta.RemotePath, 1)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return

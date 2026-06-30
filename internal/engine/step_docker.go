@@ -16,7 +16,6 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
@@ -38,7 +37,8 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 	if ds == nil || ds.Docker == nil {
 		return fmt.Errorf("internal: docker step missing docker field")
 	}
-	execOne := func(r hosts.Record) HostExecResult {
+	execOne := func(tc TargetContext) HostExecResult {
+		r := tc.Record
 		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
 			res := HostExecResult{
 				Name:     r.Name,
@@ -358,7 +358,7 @@ func (e *DockerExecutor) ExecuteDryRun(sc *StepContext) error {
 	}
 	for _, target := range targets {
 		_, _ = fmt.Fprintf(out, "step %d: kind=docker action=%q name=%q %s provider=%s run_as=%q\n",
-			i, action, target.Name, FormatTargetForDryRun(target), target.Provider, runAs)
+			i, action, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, runAs)
 	}
 	return nil
 }

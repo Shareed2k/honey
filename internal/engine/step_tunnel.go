@@ -44,7 +44,7 @@ func (e *TunnelExecutor) ExecuteStream(sc *StepContext) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
-				return runCueTunnelOnHost(ctx, step, target, run.Params.SSHUser, stepIdx, run.Cache, run.TunnelCoord, run.Params.Execute)
+				return runCueTunnelOnHost(ctx, step, target.Record, run.Params.SSHUser, stepIdx, run.Cache, run.TunnelCoord, run.Params.Execute)
 			})
 			RecordMaxAttempts(attemptMax, outcome.Attempts)
 			ch <- outcome.Result
@@ -301,7 +301,7 @@ func (e *TunnelExecutor) ExecuteDryRun(sc *StepContext) error {
 	WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 	for _, target := range targets {
 		_, _ = fmt.Fprintf(out, "step %d: kind=tunnel name=%q %s mode=%s output=%s\n",
-			i, target.Name, FormatTargetForDryRun(target), cuetry.EffectiveTunnelMode(tunnelOf(step)), tunnelDryRunJSON(tunnelOf(step)))
+			i, target.Record.Name, FormatTargetForDryRun(target.Record), cuetry.EffectiveTunnelMode(tunnelOf(step)), tunnelDryRunJSON(tunnelOf(step)))
 	}
 	return nil
 }

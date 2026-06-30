@@ -37,7 +37,7 @@ func riskGateDisabled() bool {
 // a clear reason in this non-interactive path (the approval flow is a later phase).
 // Returns the allowed targets and skip results for denied ones — mirroring
 // filterTargetsByPolicy so denied hosts stay visible in the run output.
-func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpreter string, targets []hosts.Record) (allowed []hosts.Record, skipped []HostExecResult, err error) {
+func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpreter string, targets []TargetContext) (allowed []TargetContext, skipped []HostExecResult, err error) {
 	if riskGateDisabled() || strings.TrimSpace(rawCommand) == "" {
 		return targets, nil, nil
 	}
@@ -47,7 +47,7 @@ func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpr
 	actor := actorOrAPI(run.Params.ActorID)
 
 	for _, t := range targets {
-		reason, denied, evalErr := commandRiskDecision(ctx, enforcer, actor, kind, rawCommand, analysis, run, t)
+		reason, denied, evalErr := commandRiskDecision(ctx, enforcer, actor, kind, rawCommand, analysis, run, t.Record)
 		if evalErr != nil {
 			return nil, nil, evalErr
 		}
@@ -55,7 +55,7 @@ func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpr
 			allowed = append(allowed, t)
 			continue
 		}
-		sk := WhenSkippedResult(t)
+		sk := WhenSkippedResult(t.Record)
 		sk.Output = "(blocked: " + reason + ")"
 		skipped = append(skipped, sk)
 	}

@@ -125,24 +125,26 @@ func (run *CueRun) GatherFacts(ctx context.Context) {
 	}
 	zap.L().Debug("gathering host facts")
 	encodedScript := base64.StdEncoding.EncodeToString([]byte(factsScript))
-	cmdFunc := func(_ hosts.Record, _ map[string]string) string {
+	cmdFunc := func(_ TargetContext, _ map[string]string) string {
 		return fmt.Sprintf("echo %s | base64 -d | sh", encodedScript)
 	}
-	var targets []hosts.Record
+	var targetRecs []hosts.Record
 	for _, r := range run.Params.Records {
 		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
-			targets = append(targets, r)
+			targetRecs = append(targetRecs, r)
 		}
 	}
-	if len(targets) == 0 {
+	if len(targetRecs) == 0 {
 		return
 	}
-	ch := make(chan HostExecResult, len(targets))
+	ch := make(chan HostExecResult, len(targetRecs))
 
-	targets = CueApplyRecipeSSHDialOptions(run.Params.Recipe, nil, targets)
+	targetRecs = CueApplyRecipeSSHDialOptions(run.Params.Recipe, nil, targetRecs)
 
-	for _, r := range targets {
+	var targets []TargetContext
+	for _, r := range targetRecs {
 		run.Facts[r.Name] = cuetry.DefaultFacts()
+		targets = append(targets, TargetContext{Record: r}) // no env needed for facts gathering
 	}
 
 	err := StreamSSHParallel(ctx, run.Params.SSHUser, targets, false, cmdFunc, ch, BatchOptions{
@@ -188,18 +190,42 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		return fmt.Errorf("execute step: %w", err)
 	}
 
+	var targetCtxs []TargetContext
+	for _, t := range targets {
+		env, err := run.StepEnv(ctx, step.Base(), &t, true, false)
+		if err != nil {
+			// If env resolution fails, we report an error for this host immediately.
+			ch <- HostExecResult{
+				Name:      t.Name,
+				IP:        t.PrimaryIP,
+				Provider:  t.Provider,
+				StepIndex: i,
+				StepID:    step.Base().ID,
+				StepKind:  kind,
+				Success:   false,
+				ErrMsg:    fmt.Sprintf("resolve env: %v", err),
+			}
+			continue
+		}
+		targetCtxs = append(targetCtxs, TargetContext{Record: t, Env: env})
+	}
+
+	if len(targetCtxs) == 0 && len(targets) > 0 {
+		// All targets failed env resolution
+		return nil
+	}
+
 	sc := &StepContext{
-		Ctx:         ctx,
-		Run:         run,
-		Targets:     targets,
-		Index:       i,
-		Step:        step,
-		Kind:        kind,
-		RetryCfg:    retryCfg,
-		AttemptMax:  attemptMax,
-		ResultCh:    ch,
-		History:     history,
-		EnvResolver: &runEnvResolver{run: run},
+		Ctx:        ctx,
+		Run:        run,
+		Targets:    targetCtxs,
+		Index:      i,
+		Step:       step,
+		Kind:       kind,
+		RetryCfg:   retryCfg,
+		AttemptMax: attemptMax,
+		ResultCh:   ch,
+		History:    history,
 	}
 
 	proxyCh := make(chan HostExecResult)
