@@ -311,7 +311,7 @@ func (m *Manager) executeSchedule(
 				return
 			}
 			defer func() { _ = rec.Close() }()
-			
+
 			req.Recorder = rec
 		}
 
