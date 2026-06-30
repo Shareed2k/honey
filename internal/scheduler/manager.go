@@ -22,6 +22,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/queue"
@@ -77,7 +78,6 @@ func New(opts Options) (*Manager, error) {
 		Metrics:      opts.Metrics,
 		Pools:        opts.Pools,
 		Cache:        opts.Cache,
-		Plugins:      openClosePlugins{cfg: opts.Config},
 		RecordDir:    opts.RecordDir,
 		Enforcer:     opts.Enforcer,
 	})
@@ -289,8 +289,19 @@ func (m *Manager) executeSchedule(
 	// when the task function returns (gronx cancels tick contexts).
 	runCtx := context.WithoutCancel(ctx)
 
-	// The runner owns the plugin and recorder lifecycle for the whole run.
+	// The runner owns the recorder lifecycle for the whole run. The caller owns the plugin lifecycle.
 	run := func() {
+		mgr, err := plugins.Open(context.Background(), m.opts.Config)
+		if err != nil {
+			zap.L().Warn("scheduler: plugin open failed", zap.Error(err))
+		}
+		defer func() {
+			if mgr != nil {
+				_ = mgr.Close()
+			}
+		}()
+		req.PluginManager = mgr
+
 		if strings.TrimSpace(m.opts.RecordDir) != "" {
 			var rec *engine.SessionRecorder
 			var err error

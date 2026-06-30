@@ -25,14 +25,6 @@ const RecipeMetaHostLimit = 200
 // recipeRunChannelCap is the buffer size for streaming host-exec results.
 const recipeRunChannelCap = 4096
 
-// PluginProvider supplies a plugin manager for one recipe run plus a release
-// func the runner calls when the run completes. Implementations differ in
-// lifecycle: a shared, ref-counted cache (reuse, no close) for the synchronous
-// request path; a fresh manager opened and closed per run for async paths.
-type PluginProvider interface {
-	Borrow() (*plugins.Manager, func())
-}
-
 // RunnerOptions configures a RecipeRunner. All fields are injected at
 // construction; the runner creates none of its own dependencies.
 type RunnerOptions struct {
@@ -42,7 +34,6 @@ type RunnerOptions struct {
 	Metrics      metrics.Observer
 	Pools        *postgres.PoolManager
 	Cache        *ClientCache // optional shared SSH client cache; nil = per-run cache
-	Plugins      PluginProvider
 	RecordDir    string            // "" disables session recording
 	Enforcer     *policy.Enforcer  // optional OPA admission gate; nil = allow all
 	Approvals    *approval.Store   // optional pending-approval store; nil = require_approval hard-denies
@@ -87,6 +78,7 @@ type RunRequest struct {
 	BiometricToken string
 	Env            map[string]string
 	AISystemPrompt string
+	PluginManager  *plugins.Manager // The plugin manager must be borrowed by the caller
 	// Recorder is used by the engine to record execution metadata and results.
 	// The lifecycle of the Recorder (opening and closing) MUST be managed by the caller.
 	Recorder *SessionRecorder
@@ -95,19 +87,15 @@ type RunRequest struct {
 // DryRun validates prompts and produces the recipe plan via the executor-based
 // dry-run (each step's ExecuteDryRun), matching what a live run would attempt.
 // When RecordSession is set (and no recorder is injected), it records the plan
-// into a fresh recording. The borrowed plugin manager is always released before
-// returning.
+// into a fresh recording.
 func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, error) {
-	mgr, release := r.opts.Plugins.Borrow()
-	defer release()
-
 	validatedEnv, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env)
 	if err != nil {
 		return "", err
 	}
 	req.Env = validatedEnv
 
-	params, err := r.buildRunParams(req, mgr)
+	params, err := r.buildRunParams(req, req.PluginManager)
 	if err != nil {
 		return "", err
 	}
@@ -304,25 +292,21 @@ func hostNames(records []hosts.Record) []string {
 // target hosts. Pre-flight errors (prompt validation, secret resolver, recorder
 // creation) are returned synchronously. Once execution starts, run errors arrive
 // on the channel as a synthetic failed HostExecResult. The runner owns the
-// plugin-release and (when not injected) recorder-close lifecycle, completing
+// (when not injected) recorder-close lifecycle, completing
 // when the returned channel closes.
 func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan HostExecResult, error) {
 	if err := r.admitRecipe(ctx, req); err != nil {
 		return nil, err
 	}
 
-	mgr, release := r.opts.Plugins.Borrow()
-
 	validatedEnv, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env)
 	if err != nil {
-		release()
 		return nil, err
 	}
 	req.Env = validatedEnv
 
-	params, err := r.buildRunParams(req, mgr)
+	params, err := r.buildRunParams(req, req.PluginManager)
 	if err != nil {
-		release()
 		return nil, err
 	}
 
@@ -333,7 +317,6 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 	ch := make(chan HostExecResult, recipeRunChannelCap)
 	go func() {
 		defer func() {
-			release()
 			close(ch) // last: consumers unblock only after cleanup
 		}()
 

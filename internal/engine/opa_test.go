@@ -25,13 +25,12 @@ func mustPolicy(t *testing.T, src string) *policy.Enforcer {
 // --- Scenario 1: recipe admission control --------------------------------
 
 func TestRecipeRunner_Admission_DenyBlocksExecute(t *testing.T) {
-	fp := &fakePluginProvider{}
 	denyAll := mustPolicy(t, `package honey
 import rego.v1
 default allow := false
 default deny_reason := "admission denied in test"
 `)
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp, Enforcer: denyAll})
+	r := NewRecipeRunner(RunnerOptions{Enforcer: denyAll})
 
 	ch, err := r.Execute(context.Background(), RunRequest{
 		Recipe:           parseTestRecipe(t, dryRunRecipe),
@@ -42,16 +41,14 @@ default deny_reason := "admission denied in test"
 	require.Error(t, err)
 	require.Nil(t, ch)
 	require.Contains(t, err.Error(), "admission denied in test")
-	require.Equal(t, 0, fp.released, "admission denial must short-circuit before borrowing a plugin")
 }
 
 func TestRecipeRunner_Admission_AllowProceeds(t *testing.T) {
-	fp := &fakePluginProvider{}
 	allowAll := mustPolicy(t, `package honey
 import rego.v1
 default allow := true
 `)
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp, Enforcer: allowAll})
+	r := NewRecipeRunner(RunnerOptions{Enforcer: allowAll})
 
 	// nil records → run-time "no hosts" surfaces on the channel, but admission
 	// passed (no pre-flight error), proving the gate let it through.
@@ -64,7 +61,6 @@ default allow := true
 	require.NotNil(t, ch)
 	for range ch { //nolint:revive // drain
 	}
-	require.Equal(t, 1, fp.released)
 }
 
 // --- Scenario 4: host-list filtering -------------------------------------
@@ -148,7 +144,7 @@ recipe: {
 	]
 }
 `
-	r := NewRecipeRunner(RunnerOptions{Plugins: &fakePluginProvider{}})
+	r := NewRecipeRunner(RunnerOptions{})
 	got := r.AssessCommandRisk(context.Background(), RunRequest{Recipe: parseTestRecipe(t, recipe)})
 	require.Len(t, got, 2)
 
@@ -178,7 +174,6 @@ decision := "require_biometric" if { input.action == "recipe_execute"; not input
 deny_reason := "biometric required" if { input.action == "recipe_execute"; not input.execution.biometricVerified }`)
 
 	r := NewRecipeRunner(RunnerOptions{
-		Plugins:   &fakePluginProvider{},
 		Enforcer:  enf,
 		Biometric: stubBiometric{validToken: "good-token"},
 	})

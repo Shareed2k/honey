@@ -126,7 +126,7 @@ func checkWebhookIdempotency(api *RecipesAPI, webhook cuetry.RecipeWebhook, body
 	return scopedKey, false
 }
 
-func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, _ *plugins.Manager) {
+func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, pluginMgr *plugins.Manager) {
 	if api.webhookQueue == nil {
 		httpError(w, fmt.Errorf("server queue not configured"), http.StatusInternalServerError)
 		return
@@ -179,6 +179,7 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 			ActorID:          actor,
 			Env:              envMap,
 			AISystemPrompt:   aiPrompt,
+			PluginManager:    pluginMgr,
 			Recorder:         rec,
 		}); rerr != nil && rec != nil {
 			rec.RecordError(rerr)
@@ -205,7 +206,7 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, _ *plugins.Manager) {
+func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, pluginMgr *plugins.Manager) {
 	if scopedKey != "" {
 		defer api.webhookDedupCache.Delete(scopedKey)
 	}
@@ -231,6 +232,7 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		ActorID:          actor,
 		Env:              envMap,
 		AISystemPrompt:   aiPrompt,
+		PluginManager:    pluginMgr,
 	}
 
 	var rec *engine.SessionRecorder

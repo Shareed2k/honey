@@ -654,6 +654,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		BiometricToken:   strings.TrimSpace(r.Header.Get("X-Honey-Biometric")),
 		Env:              cliEnv,
 		AISystemPrompt:   aiPrompt,
+		PluginManager:    pluginMgr,
 	}
 
 	var rec *engine.SessionRecorder

@@ -44,9 +44,6 @@ type RecipesAPI struct {
 	webhookDedupMu    sync.Mutex
 }
 
-// *plugincache.Cache must satisfy engine.PluginProvider so the runner can borrow it.
-var _ engine.PluginProvider = (*plugincache.Cache)(nil)
-
 // NewRecipesAPI creates a new isolated router and handler set for Recipes.
 func NewRecipesAPI(
 	opts Options,
@@ -88,7 +85,6 @@ func NewRecipesAPI(
 		Metrics:      metrics,
 		Pools:        pgPools,
 		Cache:        sshCache,
-		Plugins:      plugins,
 		RecordDir:    opts.RecordDir,
 		Enforcer:     opts.Enforcer,
 		Approvals:    opts.Approvals,
