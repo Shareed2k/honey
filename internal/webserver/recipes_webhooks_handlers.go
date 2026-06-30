@@ -462,7 +462,7 @@ func (api *RecipesAPI) handleRecipeWebhookResult(w http.ResponseWriter, r *http.
 		return
 	}
 
-	results, status, startedAt, err := api.loadRecordingResults(id)
+	results, status, startedAt, _, err := api.loadRecordingResults(id)
 	if err != nil {
 		httpError(w, fmt.Errorf("read recording: %w", err), http.StatusNotFound)
 		return
@@ -481,13 +481,13 @@ func (api *RecipesAPI) handleRecipeWebhookResult(w http.ResponseWriter, r *http.
 // host results, an overall status ("completed", or "failed" if any host failed),
 // and the RFC3339 start time. Returns an error if the recording can't be read
 // (e.g. the async run hasn't produced it yet).
-func (api *RecipesAPI) loadRecordingResults(id string) (results []engine.HostExecResult, status, startedAt string, err error) {
+func (api *RecipesAPI) loadRecordingResults(id string) (results []engine.HostExecResult, status, startedAt, runErr string, err error) {
 	if strings.TrimSpace(api.opts.RecordDir) == "" {
-		return nil, "", "", fmt.Errorf("session recording not enabled")
+		return nil, "", "", "", fmt.Errorf("session recording not enabled")
 	}
 	events, err := recordings.LoadEvents(api.opts.RecordDir, id+".hrec.jsonl")
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", err
 	}
 	results = make([]engine.HostExecResult, 0)
 	status = "completed"
@@ -506,9 +506,15 @@ func (api *RecipesAPI) loadRecordingResults(id string) (results []engine.HostExe
 					status = "failed"
 				}
 			}
+		case ev.Type == "error" && len(ev.Result) > 0:
+			var eMsg string
+			if json.Unmarshal(ev.Result, &eMsg) == nil {
+				runErr = eMsg
+				status = "failed"
+			}
 		}
 	}
-	return results, status, startedAt, nil
+	return results, status, startedAt, runErr, nil
 }
 
 // ── Webhook debugging (Rundeck-style): test-send + delivery inspection ──────────
@@ -749,13 +755,16 @@ func (api *RecipesAPI) handleWebhookDeliveries(w http.ResponseWriter, r *http.Re
 		if d.Outcome != "queued" || d.ExecID == "" {
 			continue
 		}
-		results, status, _, err := api.loadRecordingResults(d.ExecID)
+		results, status, _, runErr, err := api.loadRecordingResults(d.ExecID)
 		// Keep "queued" until the run has actually produced results (or failed);
 		// the recording file can exist with only metadata mid-run.
 		if err != nil || (len(results) == 0 && status != "failed") {
 			continue
 		}
 		d.Results = results
+		if runErr != "" {
+			d.Error = runErr
+		}
 		if status == "failed" {
 			d.Outcome = "failed"
 		} else {

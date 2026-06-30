@@ -288,6 +288,12 @@ export function WebhookDebugModal({
             expandable={{
               expandedRowRender: (d) => (
                 <Space direction="vertical" style={{ width: '100%' }}>
+                  {d.error && (
+                    <div>
+                      <Typography.Text type="secondary">Error</Typography.Text>
+                      <pre style={{ margin: '4px 0 0', color: '#ff4d4f' }}>{d.error}</pre>
+                    </div>
+                  )}
                   {d.results && d.results.length > 0 && (
                     <div>
                       <Typography.Text type="secondary">Host results</Typography.Text>
