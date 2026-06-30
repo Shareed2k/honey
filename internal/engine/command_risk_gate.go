@@ -37,7 +37,7 @@ func riskGateDisabled() bool {
 // a clear reason in this non-interactive path (the approval flow is a later phase).
 // Returns the allowed targets and skip results for denied ones — mirroring
 // filterTargetsByPolicy so denied hosts stay visible in the run output.
-func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpreter string, targets []hosts.Record) (allowed []hosts.Record, skipped []HostExecResult, err error) {
+func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpreter string, targets []TargetContext) (allowed []TargetContext, skipped []HostExecResult, err error) {
 	if riskGateDisabled() || strings.TrimSpace(rawCommand) == "" {
 		return targets, nil, nil
 	}
@@ -47,7 +47,7 @@ func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpr
 	actor := actorOrAPI(run.Params.ActorID)
 
 	for _, t := range targets {
-		reason, denied, evalErr := commandRiskDecision(ctx, enforcer, actor, kind, rawCommand, analysis, run, t)
+		reason, denied, evalErr := commandRiskDecision(ctx, enforcer, actor, kind, rawCommand, analysis, run, t.Record)
 		if evalErr != nil {
 			return nil, nil, evalErr
 		}
@@ -55,16 +55,16 @@ func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpr
 			allowed = append(allowed, t)
 			continue
 		}
-		sk := WhenSkippedResult(t)
+		sk := WhenSkippedResult(t.Record)
 		sk.Output = "(blocked: " + reason + ")"
 		skipped = append(skipped, sk)
 	}
 	return allowed, skipped, nil
 }
 
-// riskStepFilter wraps gateCommandRisk as a StepFilter so the risk gate
+// RiskStepFilter wraps gateCommandRisk as a StepFilter so the risk gate
 // participates in the same pipeline interface as policyStepFilter and whenStepFilter.
-type riskStepFilter struct {
+type RiskStepFilter struct {
 	run         *CueRun
 	kind        string
 	rawCommand  string
@@ -73,15 +73,14 @@ type riskStepFilter struct {
 
 // NewRiskStepFilter returns a StepFilter that gates targets via the command
 // risk analysis (built-in critical signals + OPA command_exec decision).
-func NewRiskStepFilter(run *CueRun, kind, rawCommand, interpreter string) StepFilter {
-	return &riskStepFilter{run: run, kind: kind, rawCommand: rawCommand, interpreter: interpreter}
+func NewRiskStepFilter(run *CueRun, kind, rawCommand, interpreter string) *RiskStepFilter {
+	return &RiskStepFilter{run: run, kind: kind, rawCommand: rawCommand, interpreter: interpreter}
 }
 
-func (f *riskStepFilter) Filter(ctx context.Context, targets []hosts.Record) ([]hosts.Record, []HostExecResult, error) {
+// Filter applies the command risk gate to the given targets.
+func (f *RiskStepFilter) Filter(ctx context.Context, targets []TargetContext) ([]TargetContext, []HostExecResult, error) {
 	return gateCommandRisk(ctx, f.run, f.kind, f.rawCommand, f.interpreter, targets)
 }
-
-var _ StepFilter = (*riskStepFilter)(nil)
 
 // commandRiskDecision returns (reason, denied, err) for one target. Built-in
 // critical signals deny first; otherwise the OPA enforcer (if any) decides. The

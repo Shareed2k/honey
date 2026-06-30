@@ -25,7 +25,7 @@ import (
 // SSHRemoteCmdFunc builds the remote shell string. kv is nil when kv_tunnel is disabled; otherwise it contains
 // HONEY_KV_URL (reachable from the remote via SSH remote forward) and HONEY_KV_TOKEN for Authorization.
 // SSHRemoteCmdFunc ...
-type SSHRemoteCmdFunc func(r hosts.Record, kv map[string]string) string
+type SSHRemoteCmdFunc func(tc TargetContext, kv map[string]string) string
 
 const (
 	defaultSSHBatchConcurrency = 32
@@ -77,7 +77,7 @@ func closeSSHIfEphemeral(cache *ClientCache, client HostClient) {
 // SSHPostHostResultFunc runs after each host's main SSH run and before the result is emitted (e.g. CUE step hooks).
 // It may set res.HookPhase and res.HookOutput. Hook failures must not change the original step success fields.
 // SSHPostHostResultFunc ...
-type SSHPostHostResultFunc func(ctx context.Context, r hosts.Record, res *HostExecResult)
+type SSHPostHostResultFunc func(ctx context.Context, tc TargetContext, res *HostExecResult)
 
 // BatchOptions groups the cross-cutting knobs shared by the parallel SSH/SFTP/script
 // runners (previously trailing positional parameters). Zero values are valid: a nil
@@ -99,7 +99,7 @@ type BatchOptions struct {
 // StreamSSHParallel runs the command on records and streams results to out channel.
 // It does not close the channel itself.
 // StreamSSHParallel ...
-func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, out chan<- HostExecResult, opts BatchOptions) error {
+func StreamSSHParallel(ctx context.Context, user string, jobs []TargetContext, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, out chan<- HostExecResult, opts BatchOptions) error {
 	maxConc := opts.MaxConc
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
@@ -114,30 +114,40 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kv
 		defer cache.CloseAll()
 	}
 
-	StreamParallel(jobs, maxConc, func(r hosts.Record) {
+	StreamParallel(jobs, maxConc, func(tc TargetContext) {
+		if ctx.Err() != nil {
+			out <- HostExecResult{
+				Name:     tc.Record.Name,
+				IP:       tc.Record.PrimaryIP,
+				Provider: tc.Record.Provider,
+				Success:  false,
+				ErrMsg:   "cancelled",
+			}
+			return
+		}
 		effUser := strings.TrimSpace(user)
 		if effUser == "" {
-			if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+			if u := strings.TrimSpace(tc.Record.Meta["ssh_user"]); u != "" {
 				effUser = u
 			}
 		}
 
 		run := func() HostExecResult {
-			if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
-				return runOneRemoteTrueNAS(ctx, effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+			if tc.Record.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(tc.Record, truenasshell.ConsoleTrueNASAPI) {
+				return runOneRemoteTrueNAS(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
 			}
-			return RunOneRemoteSSH(effUser, r, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+			return RunOneRemoteSSH(effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
 		}
 		outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, run)
 		RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
 		op := "exec"
-		if r.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
+		if tc.Record.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(tc.Record, truenasshell.ConsoleTrueNASAPI) {
 			op = "truenas"
 		}
 		observeSSHOperation(opts.Obs, op, hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
 		res := outcome.Result
 		if opts.Post != nil {
-			opts.Post(ctx, r, &res)
+			opts.Post(ctx, tc, &res)
 		}
 		out <- res
 	})
@@ -148,10 +158,10 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []hosts.Record, kv
 // PrimaryIP set. Failures on individual hosts do not cancel others.
 // It uses DialHoneyClient (golang.org/x/crypto/ssh + ~/.ssh/config) with known_hosts verification.
 // ExecuteSSHParallel ...
-func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hosts.Record) string, maxConc int, reg hostexec.Registry) ([]HostExecResult, error) {
-	var jobs []hosts.Record
+func ExecuteSSHParallel(user string, recs []TargetContext, remoteCmdFunc func(hosts.Record) string, maxConc int, reg hostexec.Registry) ([]HostExecResult, error) {
+	var jobs []TargetContext
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+		if strings.TrimSpace(r.Record.PrimaryIP) != "" || (r.Record.Provider == "k8s" && r.Record.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
@@ -162,8 +172,8 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hos
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		wrap := func(r hosts.Record, _ map[string]string) string {
-			return remoteCmdFunc(r)
+		wrap := func(tc TargetContext, _ map[string]string) string {
+			return remoteCmdFunc(tc.Record)
 		}
 		_ = StreamSSHParallel(context.Background(), user, jobs, false, wrap, ch, BatchOptions{MaxConc: maxConc, Reg: reg})
 	}()
@@ -175,18 +185,18 @@ func ExecuteSSHParallel(user string, recs []hosts.Record, remoteCmdFunc func(hos
 	return out, nil
 }
 
-func runOneRemoteTrueNAS(ctx context.Context, user string, r hosts.Record, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
+func runOneRemoteTrueNAS(ctx context.Context, user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
 	res := HostExecResult{
-		Name:     r.Name,
-		IP:       r.PrimaryIP,
-		Provider: r.Provider,
+		Name:     tc.Record.Name,
+		IP:       tc.Record.PrimaryIP,
+		Provider: tc.Record.Provider,
 	}
-	if !truenasshell.ShouldUseTrueNASShell(r, truenasshell.ConsoleTrueNASAPI) {
+	if !truenasshell.ShouldUseTrueNASShell(tc.Record, truenasshell.ConsoleTrueNASAPI) {
 		res.Success = false
 		res.ErrMsg = "truenas api shell not available for this record"
 		return res
 	}
-	b, ok := truenasprovider.BackendByName(r.Meta["backend_name"])
+	b, ok := truenasprovider.BackendByName(tc.Record.Meta["backend_name"])
 	if !ok {
 		res.Success = false
 		res.ErrMsg = "truenas backend not configured"
@@ -196,7 +206,7 @@ func runOneRemoteTrueNAS(ctx context.Context, user string, r hosts.Record, cache
 	var stopKV func()
 	if kvTunnel {
 		var kvErr error
-		kv, stopKV, kvErr = attachTrueNASKVTunnel(ctx, user, r, kvTunnel, recipeScopedKV, recipeKV, cache)
+		kv, stopKV, kvErr = attachTrueNASKVTunnel(ctx, user, tc.Record, kvTunnel, recipeScopedKV, recipeKV, cache)
 		if kvErr != nil {
 			res.Success = false
 			res.ErrMsg = "kv_tunnel: " + kvErr.Error()
@@ -206,12 +216,12 @@ func runOneRemoteTrueNAS(ctx context.Context, user string, r hosts.Record, cache
 			defer stopKV()
 		}
 	}
-	remoteCmd := strings.TrimSpace(cmd(r, kv))
+	remoteCmd := strings.TrimSpace(cmd(tc, kv))
 	if remoteCmd == "" {
 		res.Success = true
 		return res
 	}
-	out, code, runErr := truenasshell.RunRemoteCommand(ctx, b, r, remoteCmd)
+	out, code, runErr := truenasshell.RunRemoteCommand(ctx, b, tc.Record, remoteCmd)
 	if runErr != nil {
 		res.Success = false
 		res.ErrMsg = runErr.Error()
@@ -227,11 +237,11 @@ func runOneRemoteTrueNAS(ctx context.Context, user string, r hosts.Record, cache
 }
 
 // RunOneRemoteSSH ...
-func RunOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
+func RunOneRemoteSSH(user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
 	res := HostExecResult{
-		Name:     r.Name,
-		IP:       r.PrimaryIP,
-		Provider: r.Provider,
+		Name:     tc.Record.Name,
+		IP:       tc.Record.PrimaryIP,
+		Provider: tc.Record.Provider,
 	}
 	var stopKV func()
 	defer func() {
@@ -246,10 +256,10 @@ func RunOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel b
 			stopKV = nil
 		}
 
-		client, dialErr := cache.GetOrDial(user, r)
+		client, dialErr := cache.GetOrDial(user, tc.Record)
 		if dialErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
-				evictCachedSSHClient(cache, user, r, attempt, recipeKV)
+				evictCachedSSHClient(cache, user, tc.Record, attempt, recipeKV)
 				continue
 			}
 			res.Success = false
@@ -260,7 +270,7 @@ func RunOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel b
 		var kv map[string]string
 		if kvTunnel {
 			var kvErr error
-			kv, stopKV, kvErr = attachHostKVTunnel(client, user, r, recipeScopedKV, recipeKV)
+			kv, stopKV, kvErr = attachHostKVTunnel(client, user, tc.Record, recipeScopedKV, recipeKV)
 			if kvErr != nil {
 				closeSSHIfEphemeral(cache, client)
 				res.Success = false
@@ -269,7 +279,7 @@ func RunOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel b
 			}
 		}
 
-		remoteCmd := strings.TrimSpace(cmd(r, kv))
+		remoteCmd := strings.TrimSpace(cmd(tc, kv))
 		wrapped, werr := maybeWrapK8sKVShell(kvTunnel, client, kv, remoteCmd)
 		if werr != nil {
 			closeSSHIfEphemeral(cache, client)
@@ -312,7 +322,7 @@ func RunOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel b
 			}
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(runErr) {
 				closeSSHIfEphemeral(cache, client)
-				evictCachedSSHClient(cache, user, r, attempt, recipeKV)
+				evictCachedSSHClient(cache, user, tc.Record, attempt, recipeKV)
 				continue
 			}
 			closeSSHIfEphemeral(cache, client)
@@ -335,7 +345,7 @@ func RunOneRemoteSSH(user string, r hosts.Record, cache *ClientCache, kvTunnel b
 // StreamSFTPUploadParallel uploads the same local file to remotePath on each
 // record (SFTP over DialHoneyClient). Failures on one host do not cancel others.
 // StreamSFTPUploadParallel ...
-func StreamSFTPUploadParallel(ctx context.Context, user string, recs []hosts.Record, localAbs, remotePath string, out chan<- HostExecResult, opts BatchOptions) error {
+func StreamSFTPUploadParallel(ctx context.Context, user string, recs []TargetContext, localAbs, remotePath string, out chan<- HostExecResult, opts BatchOptions) error {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
 	if localAbs == "" || remotePath == "" {
@@ -350,18 +360,18 @@ func StreamSFTPUploadParallel(ctx context.Context, user string, recs []hosts.Rec
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
 	}
-	var jobs []hosts.Record
+	var jobs []TargetContext
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+		if strings.TrimSpace(r.Record.PrimaryIP) != "" || (r.Record.Provider == "k8s" && r.Record.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
 	if len(jobs) == 0 {
 		return nil
 	}
-	StreamParallel(jobs, maxConc, func(r hosts.Record) {
+	StreamParallel(jobs, maxConc, func(tc TargetContext) {
 		outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, func() HostExecResult {
-			return runOneSFTPUpload(user, r, localAbs, remotePath, opts.Cache)
+			return runOneSFTPUpload(user, tc.Record, localAbs, remotePath, opts.Cache)
 		})
 		RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
 		observeSSHOperation(opts.Obs, "sftp_put", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
@@ -397,13 +407,13 @@ func StreamSFTPDownloadParallel(ctx context.Context, user string, jobs []SFTPDow
 
 // StreamScriptUploadRunParallel uploads a script and executes it on multiple hosts in parallel.
 // StreamScriptUploadRunParallel ...
-func StreamScriptUploadRunParallel(ctx context.Context, user string, recs []hosts.Record, localAbs, remotePath string, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, out chan<- HostExecResult, opts BatchOptions) error {
+func StreamScriptUploadRunParallel(ctx context.Context, user string, recs []TargetContext, localAbs, remotePath string, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, out chan<- HostExecResult, opts BatchOptions) error {
 	return StreamScriptUploadRunParallelWithOptions(ctx, user, recs, localAbs, remotePath, kvTunnel, remoteCmd, ScriptUploadRunOptions{}, out, opts)
 }
 
 // StreamScriptUploadRunParallelWithOptions uploads a script and executes it with optional interpreter/cleanup behavior.
 // StreamScriptUploadRunParallelWithOptions ...
-func StreamScriptUploadRunParallelWithOptions(ctx context.Context, user string, recs []hosts.Record, localAbs, remotePath string, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, scriptOpts ScriptUploadRunOptions, out chan<- HostExecResult, opts BatchOptions) error {
+func StreamScriptUploadRunParallelWithOptions(ctx context.Context, user string, recs []TargetContext, localAbs, remotePath string, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, scriptOpts ScriptUploadRunOptions, out chan<- HostExecResult, opts BatchOptions) error {
 	cache := opts.Cache
 	if cache == nil {
 		cache = NewClientCache()
@@ -414,9 +424,9 @@ func StreamScriptUploadRunParallelWithOptions(ctx context.Context, user string, 
 	if err != nil {
 		return err
 	}
-	var jobs []hosts.Record
+	var jobs []TargetContext
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+		if strings.TrimSpace(r.Record.PrimaryIP) != "" || (r.Record.Provider == "k8s" && r.Record.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
@@ -430,7 +440,7 @@ func StreamScriptUploadRunParallelWithOptions(ctx context.Context, user string, 
 // StreamScriptContentRunParallel writes scriptContent to a local temp file, uploads it to each host,
 // runs it using Rundeck-style script-file semantics, and removes the local temp file afterwards.
 // StreamScriptContentRunParallel ...
-func StreamScriptContentRunParallel(ctx context.Context, user string, recs []hosts.Record, scriptContent, fileExtension string, scriptOpts ScriptUploadRunOptions, out chan<- HostExecResult, opts BatchOptions) error {
+func StreamScriptContentRunParallel(ctx context.Context, user string, recs []TargetContext, scriptContent, fileExtension string, scriptOpts ScriptUploadRunOptions, out chan<- HostExecResult, opts BatchOptions) error {
 	cache := opts.Cache
 	if cache == nil {
 		cache = NewClientCache()
@@ -449,7 +459,7 @@ func StreamScriptContentRunParallel(ctx context.Context, user string, recs []hos
 // ExecuteScriptContentRunParallel writes scriptContent to a local temp file, uploads it to each host,
 // runs it using Rundeck-style script-file semantics in parallel, and returns results synchronously.
 // ExecuteScriptContentRunParallel ...
-func ExecuteScriptContentRunParallel(user string, recs []hosts.Record, scriptContent, fileExtension string, opts ScriptUploadRunOptions, maxConc int, reg hostexec.Registry) ([]HostExecResult, error) {
+func ExecuteScriptContentRunParallel(user string, recs []TargetContext, scriptContent, fileExtension string, opts ScriptUploadRunOptions, maxConc int, reg hostexec.Registry) ([]HostExecResult, error) {
 	if len(recs) == 0 {
 		return []HostExecResult{}, nil
 	}
@@ -467,10 +477,10 @@ func ExecuteScriptContentRunParallel(user string, recs []hosts.Record, scriptCon
 
 // ExecuteSFTPUploadParallel executes an SFTP upload in parallel across multiple hosts and returns results synchronously.
 // ExecuteSFTPUploadParallel ...
-func ExecuteSFTPUploadParallel(user string, recs []hosts.Record, localAbs, remotePath string, maxConc int) ([]HostExecResult, error) {
-	var jobs []hosts.Record
+func ExecuteSFTPUploadParallel(user string, recs []TargetContext, localAbs, remotePath string, maxConc int) ([]HostExecResult, error) {
+	var jobs []TargetContext
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+		if strings.TrimSpace(r.Record.PrimaryIP) != "" || (r.Record.Provider == "k8s" && r.Record.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
@@ -574,10 +584,10 @@ func runOneSFTPUpload(user string, r hosts.Record, localAbs, remotePath string, 
 // ExecuteScriptUploadRunParallel uploads localAbs to remotePath on each host over SFTP,
 // then runs remoteCmd on the same SSH connection (one session per host per step).
 // ExecuteScriptUploadRunParallel ...
-func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, remotePath, remoteCmd string, maxConc int) ([]HostExecResult, error) {
-	var jobs []hosts.Record
+func ExecuteScriptUploadRunParallel(user string, recs []TargetContext, localAbs, remotePath, remoteCmd string, maxConc int) ([]HostExecResult, error) {
+	var jobs []TargetContext
 	for _, r := range recs {
-		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
+		if strings.TrimSpace(r.Record.PrimaryIP) != "" || (r.Record.Provider == "k8s" && r.Record.Meta["kind"] == "pod") {
 			jobs = append(jobs, r)
 		}
 	}
@@ -588,7 +598,7 @@ func ExecuteScriptUploadRunParallel(user string, recs []hosts.Record, localAbs, 
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		wrap := func(_ hosts.Record, _ map[string]string) string { return remoteCmd }
+		wrap := func(_ TargetContext, _ map[string]string) string { return remoteCmd }
 		_ = StreamScriptUploadRunParallel(context.Background(), user, recs, localAbs, remotePath, false, wrap, ch, BatchOptions{MaxConc: maxConc})
 	}()
 

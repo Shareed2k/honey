@@ -25,13 +25,12 @@ func mustPolicy(t *testing.T, src string) *policy.Enforcer {
 // --- Scenario 1: recipe admission control --------------------------------
 
 func TestRecipeRunner_Admission_DenyBlocksExecute(t *testing.T) {
-	fp := &fakePluginProvider{}
 	denyAll := mustPolicy(t, `package honey
 import rego.v1
 default allow := false
 default deny_reason := "admission denied in test"
 `)
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp, Enforcer: denyAll})
+	r := NewRecipeRunner(RunnerOptions{Enforcer: denyAll})
 
 	ch, err := r.Execute(context.Background(), RunRequest{
 		Recipe:           parseTestRecipe(t, dryRunRecipe),
@@ -42,16 +41,14 @@ default deny_reason := "admission denied in test"
 	require.Error(t, err)
 	require.Nil(t, ch)
 	require.Contains(t, err.Error(), "admission denied in test")
-	require.Equal(t, 0, fp.released, "admission denial must short-circuit before borrowing a plugin")
 }
 
 func TestRecipeRunner_Admission_AllowProceeds(t *testing.T) {
-	fp := &fakePluginProvider{}
 	allowAll := mustPolicy(t, `package honey
 import rego.v1
 default allow := true
 `)
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp, Enforcer: allowAll})
+	r := NewRecipeRunner(RunnerOptions{Enforcer: allowAll})
 
 	// nil records → run-time "no hosts" surfaces on the channel, but admission
 	// passed (no pre-flight error), proving the gate let it through.
@@ -64,7 +61,6 @@ default allow := true
 	require.NotNil(t, ch)
 	for range ch { //nolint:revive // drain
 	}
-	require.Equal(t, 1, fp.released)
 }
 
 // --- Scenario 4: host-list filtering -------------------------------------
@@ -148,7 +144,7 @@ recipe: {
 	]
 }
 `
-	r := NewRecipeRunner(RunnerOptions{Plugins: &fakePluginProvider{}})
+	r := NewRecipeRunner(RunnerOptions{})
 	got := r.AssessCommandRisk(context.Background(), RunRequest{Recipe: parseTestRecipe(t, recipe)})
 	require.Len(t, got, 2)
 
@@ -178,7 +174,6 @@ decision := "require_biometric" if { input.action == "recipe_execute"; not input
 deny_reason := "biometric required" if { input.action == "recipe_execute"; not input.execution.biometricVerified }`)
 
 	r := NewRecipeRunner(RunnerOptions{
-		Plugins:   &fakePluginProvider{},
 		Enforcer:  enf,
 		Biometric: stubBiometric{validToken: "good-token"},
 	})
@@ -201,7 +196,7 @@ deny_reason := "biometric required" if { input.action == "recipe_execute"; not i
 
 func TestGateCommandRisk_BuiltinCritical(t *testing.T) {
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice"}} // no enforcer
-	targets := []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}
+	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 
 	// Critical built-in pattern is denied even without an OPA enforcer.
 	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", "rm -rf /", "", targets)
@@ -235,15 +230,15 @@ deny_reason := "high-risk command on prod" if {
 	input.target.env == "prod"
 }`)
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice", Enforcer: enf}}
-	targets := []hosts.Record{
-		{Provider: "static", Name: "prod1", PrimaryIP: "1.1.1.1", Meta: map[string]string{"env": "prod"}},
-		{Provider: "static", Name: "stg1", PrimaryIP: "2.2.2.2", Meta: map[string]string{"env": "staging"}},
+	targets := []TargetContext{
+		{Record: hosts.Record{Provider: "static", Name: "prod1", PrimaryIP: "1.1.1.1", Meta: map[string]string{"env": "prod"}}},
+		{Record: hosts.Record{Provider: "static", Name: "stg1", PrimaryIP: "2.2.2.2", Meta: map[string]string{"env": "staging"}}},
 	}
 
 	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", "systemctl stop nginx", "", targets)
 	require.NoError(t, err)
 	require.Len(t, allowed, 1)
-	require.Equal(t, "stg1", allowed[0].Name)
+	require.Equal(t, "stg1", allowed[0].Record.Name)
 	require.Len(t, skipped, 1)
 	require.Equal(t, "prod1", skipped[0].Name)
 	require.Contains(t, skipped[0].Output, "high-risk command on prod")
@@ -252,7 +247,7 @@ deny_reason := "high-risk command on prod" if {
 func TestGateCommandRisk_Disabled(t *testing.T) {
 	t.Setenv("HONEY_RISK_DISABLE", "1")
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice"}}
-	targets := []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}
+	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", "rm -rf /", "", targets)
 	require.NoError(t, err)
 	require.Len(t, allowed, 1, "disable env bypasses even critical deny")
@@ -261,7 +256,7 @@ func TestGateCommandRisk_Disabled(t *testing.T) {
 
 func TestGateCommandRisk_PythonInterpreter(t *testing.T) {
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice"}} // no enforcer
-	targets := []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}
+	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 
 	// A python step shelling out to a critical command is denied via the
 	// gpython analyzer recursing into the shell detectors.
@@ -293,7 +288,7 @@ deny_reason := "python steps not allowed here" if {
 	input.command.interpreter == "python3"
 }`)
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice", Enforcer: enf}}
-	targets := []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}
+	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 
 	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", "print(\"hi\")", "python3", targets)
 	require.NoError(t, err)

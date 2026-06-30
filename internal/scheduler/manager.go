@@ -22,6 +22,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/queue"
@@ -77,7 +78,6 @@ func New(opts Options) (*Manager, error) {
 		Metrics:      opts.Metrics,
 		Pools:        opts.Pools,
 		Cache:        opts.Cache,
-		Plugins:      openClosePlugins{cfg: opts.Config},
 		RecordDir:    opts.RecordDir,
 		Enforcer:     opts.Enforcer,
 	})
@@ -283,22 +283,47 @@ func (m *Manager) executeSchedule(
 		ActorID:          "cron:" + appName,
 		Env:              cliEnv,
 		AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath),
-		RecordSession:    strings.TrimSpace(m.opts.RecordDir) != "",
-		RecordLabel:      fmt.Sprintf("cron-%s-%s", appName, scheduleName),
 	}
 
 	// Detach from the per-tick gronx context so the queued run is not cancelled
 	// when the task function returns (gronx cancels tick contexts).
 	runCtx := context.WithoutCancel(ctx)
 
-	// The runner owns the plugin and recorder lifecycle for the whole run.
+	// The runner owns the recorder lifecycle for the whole run. The caller owns the plugin lifecycle.
 	run := func() {
+		mgr, err := plugins.Open(context.Background(), m.opts.Config)
+		if err != nil {
+			zap.L().Warn("scheduler: plugin open failed", zap.Error(err))
+		}
+		defer func() {
+			if mgr != nil {
+				_ = mgr.Close()
+			}
+		}()
+		req.PluginManager = mgr
+
+		if strings.TrimSpace(m.opts.RecordDir) != "" {
+			var rec *engine.SessionRecorder
+			var err error
+			rec, err = engine.NewBatchSessionRecorder(m.opts.RecordDir, fmt.Sprintf("cron-%s-%s", appName, scheduleName), sshUser, len(searchOut.Records))
+			if err != nil {
+				zap.L().Error("scheduler: failed to create recorder", zap.Error(err))
+				return
+			}
+			defer func() { _ = rec.Close() }()
+
+			req.Recorder = rec
+		}
+
 		if rerr := m.runner.ExecuteAndWait(runCtx, req); rerr != nil {
 			zap.L().Error("scheduler: recipe execution failed",
 				zap.String("app", appName),
 				zap.String("schedule", scheduleName),
 				zap.Error(rerr),
 			)
+			if req.Recorder != nil {
+				req.Recorder.RecordError(rerr)
+			}
 		}
 	}
 

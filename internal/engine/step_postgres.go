@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/postgres"
 )
 
@@ -39,7 +38,8 @@ func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
 		return fmt.Errorf("internal: postgres step missing config")
 	}
 
-	execOne := func(r hosts.Record) HostExecResult {
+	execOne := func(tc TargetContext) HostExecResult {
+		r := tc.Record
 		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
 			res := HostExecResult{
 				Name:     r.Name,

@@ -1306,10 +1306,10 @@ type streamDoneMsg struct{}
 
 func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts.Record, cmdLine, targetNote string) tea.Cmd {
 	return func() tea.Msg {
-		var jobs []hosts.Record
+		var jobs []engine.TargetContext
 		for _, r := range targets {
 			if isExecutableHost(r) {
-				jobs = append(jobs, r)
+				jobs = append(jobs, engine.TargetContext{Record: r})
 			}
 		}
 
@@ -1325,7 +1325,8 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 
 		go func() {
 			defer close(ch)
-			cmdFunc := func(r hosts.Record, _ map[string]string) string {
+			cmdFunc := func(tc engine.TargetContext, _ map[string]string) string {
+				r := tc.Record
 				// Inject host variables even for direct UI commands
 				env, err := cuetry.EffectiveEnvHostOnly(&r)
 				if err != nil {

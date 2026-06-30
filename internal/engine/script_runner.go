@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
 	"golang.org/x/crypto/ssh"
 )
@@ -73,7 +72,7 @@ func newScriptContentRunner(user, scriptContent, fileExtension string, opts Scri
 		cleanup()
 		return nil, nil, err
 	}
-	cmdFunc := func(_ hosts.Record, _ map[string]string) string { return remoteCmd }
+	cmdFunc := func(_ TargetContext, _ map[string]string) string { return remoteCmd }
 	runner, err := newScriptRunner(user, localAbs, remotePath, false, cmdFunc, opts, cache, nil, false)
 	if err != nil {
 		cleanup()
@@ -82,7 +81,7 @@ func newScriptContentRunner(user, scriptContent, fileExtension string, opts Scri
 	return runner, cleanup, nil
 }
 
-func (sr *scriptRunner) stream(ctx context.Context, recs []hosts.Record, maxConc int, out chan<- HostExecResult, post SSHPostHostResultFunc, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) {
+func (sr *scriptRunner) stream(ctx context.Context, recs []TargetContext, maxConc int, out chan<- HostExecResult, post SSHPostHostResultFunc, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) {
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
 	}
@@ -90,18 +89,18 @@ func (sr *scriptRunner) stream(ctx context.Context, recs []hosts.Record, maxConc
 	var wg sync.WaitGroup
 	for i := range recs {
 		wg.Add(1)
-		go func(r hosts.Record) {
+		go func(tc TargetContext) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
-				return sr.runHost(r)
+				return sr.runHost(tc)
 			})
 			RecordMaxAttempts(attemptMax, outcome.Attempts)
 			observeSSHOperation(obs, "script", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
 			res := outcome.Result
 			if post != nil {
-				post(ctx, r, &res)
+				post(ctx, tc, &res)
 			}
 			out <- res
 		}(recs[i])
@@ -109,8 +108,8 @@ func (sr *scriptRunner) stream(ctx context.Context, recs []hosts.Record, maxConc
 	wg.Wait()
 }
 
-func (sr *scriptRunner) runHost(r hosts.Record) HostExecResult {
-	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
+func (sr *scriptRunner) runHost(tc TargetContext) HostExecResult {
+	res := HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider}
 	var stopKV func()
 	defer func() {
 		if stopKV != nil {
@@ -124,10 +123,10 @@ func (sr *scriptRunner) runHost(r hosts.Record) HostExecResult {
 			stopKV = nil
 		}
 
-		client, dialErr := sr.cache.GetOrDial(sr.user, r)
+		client, dialErr := sr.cache.GetOrDial(sr.user, tc.Record)
 		if dialErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(dialErr) {
-				evictCachedSSHClient(sr.cache, sr.user, r, attempt, sr.recipeKV)
+				evictCachedSSHClient(sr.cache, sr.user, tc.Record, attempt, sr.recipeKV)
 				continue
 			}
 			res.Success = false
@@ -138,7 +137,7 @@ func (sr *scriptRunner) runHost(r hosts.Record) HostExecResult {
 		if upErr := client.Upload(sr.localAbs, sr.remotePath); upErr != nil {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(upErr) {
 				closeSSHIfEphemeral(sr.cache, client)
-				evictCachedSSHClient(sr.cache, sr.user, r, attempt, sr.recipeKV)
+				evictCachedSSHClient(sr.cache, sr.user, tc.Record, attempt, sr.recipeKV)
 				continue
 			}
 			closeSSHIfEphemeral(sr.cache, client)
@@ -164,7 +163,7 @@ func (sr *scriptRunner) runHost(r hosts.Record) HostExecResult {
 		var kv map[string]string
 		if sr.kvTunnel {
 			var kvErr error
-			kv, stopKV, kvErr = attachHostKVTunnel(client, sr.user, r, sr.recipeScoped, sr.recipeKV)
+			kv, stopKV, kvErr = attachHostKVTunnel(client, sr.user, tc.Record, sr.recipeScoped, sr.recipeKV)
 			if kvErr != nil {
 				cleanupRemote()
 				closeSSHIfEphemeral(sr.cache, client)
@@ -174,7 +173,7 @@ func (sr *scriptRunner) runHost(r hosts.Record) HostExecResult {
 			}
 		}
 
-		remoteCmd := strings.TrimSpace(sr.cmd(r, kv))
+		remoteCmd := strings.TrimSpace(sr.cmd(tc, kv))
 		wrapped, werr := maybeWrapK8sKVShell(sr.kvTunnel, client, kv, remoteCmd)
 		if werr != nil {
 			cleanupRemote()
@@ -215,7 +214,7 @@ func (sr *scriptRunner) runHost(r hosts.Record) HostExecResult {
 			if attempt < sshTransientOpAttempts && IsSSHConnTransientError(runErr) {
 				cleanupRemote()
 				closeSSHIfEphemeral(sr.cache, client)
-				evictCachedSSHClient(sr.cache, sr.user, r, attempt, sr.recipeKV)
+				evictCachedSSHClient(sr.cache, sr.user, tc.Record, attempt, sr.recipeKV)
 				continue
 			}
 			cleanupRemote()

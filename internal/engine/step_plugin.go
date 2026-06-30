@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/stepkv"
@@ -26,7 +25,7 @@ type PluginExecutor struct{}
 
 // ExecuteStream streams the step execution.
 func (e *PluginExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax, envResolver := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax, sc.EnvResolver
+	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	if run.Params.PluginMgr == nil || !run.Params.PluginMgr.Enabled() {
 		return fmt.Errorf("plugin step requires plugins.enabled in honey config")
 	}
@@ -51,7 +50,7 @@ func (e *PluginExecutor) ExecuteStream(sc *StepContext) error {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runCuePluginOnHost(ctx, run, stepIdx, kind, step, target, retryCfg, attemptMax, envResolver)
+			res := runCuePluginOnHost(ctx, run, stepIdx, kind, step, target, retryCfg, attemptMax)
 			ch <- res
 		}()
 	}
@@ -59,7 +58,8 @@ func (e *PluginExecutor) ExecuteStream(sc *StepContext) error {
 	return nil
 }
 
-func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind string, step cuetry.Step, target hosts.Record, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32, envResolver StepEnvResolver) HostExecResult {
+func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind string, step cuetry.Step, tc TargetContext, retryCfg cuetry.RecipeStepRetry, attemptMax *atomic.Int32) HostExecResult {
+	target := tc.Record
 	pluginMgr := run.Params.PluginMgr
 	obs := run.Params.Obs
 	res := HostExecResult{Name: target.Name, IP: target.PrimaryIP, Provider: target.Provider, Success: false}
@@ -74,11 +74,7 @@ func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind stri
 		res.ErrMsg = "internal: plugin step missing plugin field"
 		return res
 	}
-	env, err := envResolver.Resolve(ctx, step.Base(), &target, run.Params.Execute, secretsDry)
-	if err != nil {
-		res.ErrMsg = err.Error()
-		return res
-	}
+	env := tc.Env
 	var kvSess *stepkv.Session
 	if run.Params.Execute && run.RecipeKV != nil {
 		kvSess, err = run.RecipeKV.EnsureSession()
@@ -180,7 +176,7 @@ func runCuePluginOnHost(ctx context.Context, run *CueRun, stepIdx int, kind stri
 			zap.Bool("skipped", res.Skipped),
 			zap.String("err", res.ErrMsg),
 		)
-		RunCueStepHooks(ctx, run, stepIdx, kind, step, target, &res, true)
+		RunCueStepHooks(ctx, run, stepIdx, kind, step, target, tc, &res, true)
 		return res
 	}
 	out, err := pluginMgr.ExecuteStep(callCtx, pls.Plugin.ID, pls.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, run.Params.Execute, secretsDry, kvSess)
@@ -226,7 +222,7 @@ func (e *PluginExecutor) ExecuteDryRun(sc *StepContext) error {
 	if pluginMgr == nil || !pluginMgr.Enabled() {
 		for _, target := range targets {
 			_, _ = fmt.Fprintf(out, "step %d: kind=plugin name=%q %s plugin=%s action=%s (plugins disabled)\n",
-				i, target.Name, FormatTargetForDryRun(target), pl.ID, pl.Action)
+				i, target.Record.Name, FormatTargetForDryRun(target.Record), pl.ID, pl.Action)
 		}
 		return nil
 	}
@@ -239,11 +235,10 @@ func (e *PluginExecutor) ExecuteDryRun(sc *StepContext) error {
 		PluginMgr:      pluginMgr,
 		Execute:        false,
 	}}
-	dryResolver := &runEnvResolver{run: dryRun}
 	for _, target := range targets {
-		res := runCuePluginOnHost(context.Background(), dryRun, i, cuetry.KindPlugin, step, target, cuetry.RecipeStepRetry{}, nil, dryResolver)
+		res := runCuePluginOnHost(context.Background(), dryRun, i, cuetry.KindPlugin, step, target, cuetry.RecipeStepRetry{}, nil)
 		_, _ = fmt.Fprintf(out, "step %d: kind=plugin name=%q %s plugin=%s action=%s success=%v skipped=%v output=%q\n",
-			i, target.Name, FormatTargetForDryRun(target), pl.ID, pl.Action, res.Success, res.Skipped, strings.TrimSpace(res.Output))
+			i, target.Record.Name, FormatTargetForDryRun(target.Record), pl.ID, pl.Action, res.Success, res.Skipped, strings.TrimSpace(res.Output))
 		if res.ErrMsg != "" {
 			_, _ = fmt.Fprintf(out, "  err=%q\n", res.ErrMsg)
 		}

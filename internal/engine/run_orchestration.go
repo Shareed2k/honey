@@ -188,15 +188,23 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 		PluginMgr:      pluginMgr,
 	}}
 
+	var targetCtxs []TargetContext
+	for _, t := range targets {
+		// Just provide empty env for dry run if not doing full resolution?
+		// Wait, `StepEnv` can be called here too for dry run.
+		env, _ := run.StepEnv(context.Background(), step.Base(), &t, false, true) // dryRun = true
+		targetCtxs = append(targetCtxs, TargetContext{Record: t, Env: env})
+	}
+
 	sc := &StepContext{
-		Ctx:         context.Background(),
-		Run:         run,
-		Out:         out,
-		Targets:     targets,
-		Index:       i,
-		Step:        step,
-		Kind:        kind,
-		EnvResolver: &runEnvResolver{run: run},
+		Ctx:      context.Background(),
+		Run:      run,
+		Out:      out,
+		Targets:  targetCtxs,
+		Index:    i,
+		Step:     step,
+		Kind:     kind,
+		ResultCh: nil, // dry-run doesn't stream results this way
 	}
 
 	exec, err := GetStepExecutor(kind)

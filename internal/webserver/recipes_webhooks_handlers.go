@@ -127,7 +127,7 @@ func checkWebhookIdempotency(api *RecipesAPI, webhook cuetry.RecipeWebhook, body
 	return scopedKey, false
 }
 
-func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, _ *plugins.Manager) {
+func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string) {
 	if api.webhookQueue == nil {
 		httpError(w, fmt.Errorf("server queue not configured"), http.StatusInternalServerError)
 		return
@@ -146,6 +146,10 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 	t := time.Now()
 	submitErr := api.webhookQueue.Submit(func() {
 		ctx := context.Background()
+
+		mgr, release := api.plugins.Borrow()
+		defer release()
+
 		defer func() {
 			if scopedKey != "" {
 				api.webhookDedupCache.Delete(scopedKey)
@@ -169,17 +173,6 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 			return
 		}
 
-		if rec != nil {
-			hash, _ := recipe.HashJSON()
-			rec.RecordRecipeMeta(engine.RecipeMeta{
-				RecipePath:        recipePath,
-				HostCount:         len(searchOut.Records),
-				RecipeContentHash: hash,
-				StartedAt:         time.Now().UTC(),
-				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, engine.RecipeMetaHostLimit),
-			})
-		}
-
 		// Inject the pre-created recorder so its ID is known synchronously above;
 		// the runner records results into it but does NOT close it (we do, in defer).
 		if rerr := api.runner.ExecuteAndWait(ctx, engine.RunRequest{
@@ -191,6 +184,7 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 			ActorID:          actor,
 			Env:              envMap,
 			AISystemPrompt:   aiPrompt,
+			PluginManager:    mgr,
 			Recorder:         rec,
 		}); rerr != nil && rec != nil {
 			rec.RecordError(rerr)
@@ -217,7 +211,7 @@ func handleAsyncWebhook(api *RecipesAPI, w http.ResponseWriter, _ *http.Request,
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, _ *plugins.Manager) {
+func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, appName, webhookName, scopedKey, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string, pluginMgr *plugins.Manager) {
 	if scopedKey != "" {
 		defer api.webhookDedupCache.Delete(scopedKey)
 	}
@@ -234,7 +228,7 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	ch, err := api.runner.Execute(r.Context(), engine.RunRequest{
+	req := engine.RunRequest{
 		Recipe:           recipe,
 		RecipeSourcePath: recipePath,
 		RecipeDir:        filepath.Dir(recipePath),
@@ -243,9 +237,23 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		ActorID:          actor,
 		Env:              envMap,
 		AISystemPrompt:   aiPrompt,
-		RecordSession:    strings.TrimSpace(api.opts.RecordDir) != "",
-		RecordLabel:      "web-webhook-" + webhookName,
-	})
+		PluginManager:    pluginMgr,
+	}
+
+	var rec *engine.SessionRecorder
+	if strings.TrimSpace(api.opts.RecordDir) != "" {
+		var rerr error
+		rec, rerr = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-webhook-"+webhookName, sshUser, len(searchOut.Records))
+		if rerr != nil {
+			httpError(w, rerr, http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = rec.Close() }()
+
+		req.Recorder = rec
+	}
+
+	ch, err := api.runner.Execute(r.Context(), req)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -399,7 +407,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 
 	// ---- Async path: return 202 immediately; search + execution run in the queue. ----
 	if isAsync {
-		handleAsyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor, pluginMgr)
+		handleAsyncWebhook(api, w, r, appName, webhookName, scopedKey, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor)
 		return
 	}
 

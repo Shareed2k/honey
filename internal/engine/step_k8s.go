@@ -135,7 +135,7 @@ func (e *K8sExecutor) ExecuteDryRun(_ *StepContext) error {
 
 // ExecuteStream streams the step execution.
 func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax, envResolver := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax, sc.EnvResolver
+	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	if _, ok := step.(*cuetry.K8sStep); !ok {
 		return fmt.Errorf("internal: k8s step missing k8s field")
 	}
@@ -152,7 +152,7 @@ func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runK8sActionOnHost(ctx, run, stepIdx, step, target, retryCfg, attemptMax, envResolver)
+			res := runK8sActionOnHost(ctx, run, stepIdx, step, target, retryCfg, attemptMax)
 			ch <- res
 		}()
 	}
@@ -165,11 +165,11 @@ func runK8sActionOnHost(
 	run *CueRun,
 	stepIdx int,
 	step cuetry.Step,
-	target hosts.Record,
+	tc TargetContext,
 	retryCfg cuetry.RecipeStepRetry,
 	attemptMax *atomic.Int32,
-	envResolver StepEnvResolver,
 ) HostExecResult {
+	target := tc.Record
 	res := HostExecResult{
 		Name:     target.Name,
 		IP:       target.PrimaryIP,
@@ -189,12 +189,8 @@ func runK8sActionOnHost(
 		return res
 	}
 
-	// Resolve env once for ${VAR} expansion in manifest and other action fields.
-	stepEnv, err := envResolver.Resolve(ctx, step.Base(), &target, run.Params.Execute, !run.Params.Execute)
-	if err != nil {
-		res.ErrMsg = fmt.Errorf("k8s step env: %w", err).Error()
-		return res
-	}
+	// Use pre-resolved env for ${VAR} expansion in manifest and other action fields.
+	stepEnv := tc.Env
 
 	var output string
 	outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
@@ -235,7 +231,7 @@ func runK8sActionOnHost(
 		run.OutputCapture.Set(strings.TrimSpace(k.Output), res.Output)
 	}
 
-	RunCueStepHooks(ctx, run, stepIdx, cuetry.KindK8s, step, target, &res, false)
+	RunCueStepHooks(ctx, run, stepIdx, cuetry.KindK8s, step, target, tc, &res, false)
 	return res
 }
 

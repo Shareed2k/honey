@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
 )
 
@@ -57,11 +56,9 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 	runAs := cuetry.EffectiveRunAs(b, run.Params.Recipe.Defaults)
 	kvTunnel := cuetry.KVTunnelEnabled(step, run.Params.Recipe.Defaults)
 
-	cmdFunc := func(r hosts.Record, kv map[string]string) string {
-		env, err := sc.EnvResolver.Resolve(ctx, b, &r, true, false)
-		if err != nil {
-			return fmt.Sprintf("echo 'env err: %s'", err.Error())
-		}
+	cmdFunc := func(tc TargetContext, kv map[string]string) string {
+		env := make(map[string]string)
+		maps.Copy(env, tc.Env)
 		maps.Copy(env, kv)
 		mainCmd := strings.TrimSpace(cs.Command)
 		if interp := strings.TrimSpace(cs.Interpreter); interp != "" {
@@ -184,12 +181,12 @@ func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
 	for _, target := range targets {
 		dest := localRoot
 		if len(targets) > 1 {
-			dest = filepath.Join(localRoot, CueSanitizeHostName(target.Name)+"_"+base)
+			dest = filepath.Join(localRoot, CueSanitizeHostName(target.Record.Name)+"_"+base)
 		} else if isDir {
 			dest = filepath.Join(localRoot, base)
 		}
 		jobs = append(jobs, SFTPDownloadJob{
-			Record:    target,
+			Record:    target.Record,
 			LocalAbs:  dest,
 			RemoteAbs: remotePath,
 		})
@@ -214,7 +211,7 @@ func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
 
 // ExecuteStream streams the step execution.
 func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax, envResolver := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax, sc.EnvResolver
+	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
 	ss, ok := step.(*cuetry.ScriptStep)
 	if !ok || ss.Script == nil {
 		return fmt.Errorf("internal: script step missing script field")
@@ -259,11 +256,9 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 		}
 	}
 
-	cmdFunc := func(r hosts.Record, kv map[string]string) string {
-		env, err := envResolver.Resolve(ctx, b, &r, true, false)
-		if err != nil {
-			return fmt.Sprintf("echo 'env err: %s'", err.Error())
-		}
+	cmdFunc := func(tc TargetContext, kv map[string]string) string {
+		env := make(map[string]string)
+		maps.Copy(env, tc.Env)
 		maps.Copy(env, kv)
 		remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env, ss.Interpreter)
 		if err != nil {
@@ -319,11 +314,7 @@ func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
 		WriteCueStepHooksDryLines(out, i, step)
 		WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 		for _, target := range targets {
-			env, err := sc.EnvResolver.Resolve(sc.Ctx, step.Base(), &target, false, true)
-			if err != nil {
-				return fmt.Errorf("step %d: %w", i, err)
-			}
-			inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(command))
+			inner, err := cuetry.ShellExportPrefixForRemote(target.Env, strings.TrimSpace(command))
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
@@ -333,7 +324,7 @@ func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
 			}
 
 			_, _ = fmt.Fprintf(out, "step %d: kind=command name=%q %s provider=%s run_as=%q remote=%q\n",
-				i, target.Name, FormatTargetForDryRun(target), target.Provider, runAs, remoteCmd)
+				i, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, runAs, remoteCmd)
 		}
 		return nil
 	}
@@ -360,7 +351,7 @@ func (e *PutExecutor) ExecuteDryRun(sc *StepContext) error {
 		}
 		for _, target := range targets {
 			_, _ = fmt.Fprintf(out, "step %d: kind=put name=%q %s provider=%s %q → remote:%q\n",
-				i, target.Name, FormatTargetForDryRun(target), target.Provider, localAbs, remotePath)
+				i, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, localAbs, remotePath)
 		}
 		return nil
 	}
@@ -397,12 +388,12 @@ func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
 	for _, target := range targets {
 		dest := localRoot
 		if len(targets) > 1 {
-			dest = filepath.Join(localRoot, CueSanitizeHostName(target.Name)+"_"+base)
+			dest = filepath.Join(localRoot, CueSanitizeHostName(target.Record.Name)+"_"+base)
 		} else if isDir {
 			dest = filepath.Join(localRoot, base)
 		}
 		jobs = append(jobs, SFTPDownloadJob{
-			Record:    target,
+			Record:    target.Record,
 			LocalAbs:  dest,
 			RemoteAbs: remotePath,
 		})
@@ -443,16 +434,12 @@ func (e *ScriptExecutor) ExecuteDryRun(sc *StepContext) error {
 			_, _ = fmt.Fprintf(out, "step %d: kind=script (warning: local not readable: %v)\n", i, statErr)
 		}
 		for _, target := range targets {
-			env, err := sc.EnvResolver.Resolve(sc.Ctx, step.Base(), &target, false, true)
-			if err != nil {
-				return fmt.Errorf("step %d: %w", i, err)
-			}
-			remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env, ss.Interpreter)
+			remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, target.Env, ss.Interpreter)
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
 			_, _ = fmt.Fprintf(out, "step %d: kind=script name=%q %s provider=%s put %q → %q then exec run_as=%q cmd=%q\n",
-				i, target.Name, FormatTargetForDryRun(target), target.Provider, localAbs, remotePath, runAs, remoteCmd)
+				i, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, localAbs, remotePath, runAs, remoteCmd)
 		}
 		return nil
 	}

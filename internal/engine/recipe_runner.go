@@ -25,14 +25,6 @@ const RecipeMetaHostLimit = 200
 // recipeRunChannelCap is the buffer size for streaming host-exec results.
 const recipeRunChannelCap = 4096
 
-// PluginProvider supplies a plugin manager for one recipe run plus a release
-// func the runner calls when the run completes. Implementations differ in
-// lifecycle: a shared, ref-counted cache (reuse, no close) for the synchronous
-// request path; a fresh manager opened and closed per run for async paths.
-type PluginProvider interface {
-	Borrow() (*plugins.Manager, func())
-}
-
 // RunnerOptions configures a RecipeRunner. All fields are injected at
 // construction; the runner creates none of its own dependencies.
 type RunnerOptions struct {
@@ -41,8 +33,7 @@ type RunnerOptions struct {
 	ExecRegistry hostexec.Registry
 	Metrics      metrics.Observer
 	Pools        *postgres.PoolManager
-	Cache        *ClientCache // optional shared SSH client cache; nil = per-run cache
-	Plugins      PluginProvider
+	Cache        *ClientCache      // optional shared SSH client cache; nil = per-run cache
 	RecordDir    string            // "" disables session recording
 	Enforcer     *policy.Enforcer  // optional OPA admission gate; nil = allow all
 	Approvals    *approval.Store   // optional pending-approval store; nil = require_approval hard-denies
@@ -87,31 +78,24 @@ type RunRequest struct {
 	BiometricToken string
 	Env            map[string]string
 	AISystemPrompt string
-	RecordSession  bool
-	RecordLabel    string
-	// Recorder, when non-nil, is used as-is and NOT closed by the runner (the
-	// caller owns its lifecycle — needed by the async webhook, which must know
-	// the recording ID before deferred execution). When nil and RecordSession
-	// is true, the runner opens and closes its own recorder.
+	PluginManager  *plugins.Manager // The plugin manager must be borrowed by the caller
+	// Recorder is used by the engine to record execution metadata and results.
+	// The lifecycle of the Recorder (opening and closing) MUST be managed by the caller.
 	Recorder *SessionRecorder
 }
 
 // DryRun validates prompts and produces the recipe plan via the executor-based
 // dry-run (each step's ExecuteDryRun), matching what a live run would attempt.
 // When RecordSession is set (and no recorder is injected), it records the plan
-// into a fresh recording. The borrowed plugin manager is always released before
-// returning.
+// into a fresh recording.
 func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, error) {
-	mgr, release := r.opts.Plugins.Borrow()
-	defer release()
-
 	validatedEnv, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env)
 	if err != nil {
 		return "", err
 	}
 	req.Env = validatedEnv
 
-	params, err := r.buildRunParams(req, mgr)
+	params, err := r.buildRunParams(req, req.PluginManager)
 	if err != nil {
 		return "", err
 	}
@@ -123,41 +107,16 @@ func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, erro
 	}
 	plan := buf.String()
 
-	rec, ownRec, err := r.acquireRecorder(req)
-	if err != nil {
-		return "", err
-	}
-	if ownRec {
-		defer func() { _ = rec.Close() }()
-	}
-	if rec != nil {
-		r.recordRecipeMeta(rec, req, plan)
+	if req.Recorder != nil {
+		r.recordRecipeMeta(req.Recorder, req, plan)
 		if strings.TrimSpace(plan) == "" {
-			rec.RecordData("plan", []byte("(empty plan)"))
+			req.Recorder.RecordData("plan", []byte("(empty plan)"))
 		} else {
-			rec.RecordData("plan", []byte(plan))
+			req.Recorder.RecordData("plan", []byte(plan))
 		}
 	}
 
 	return plan, nil
-}
-
-// acquireRecorder returns the recorder to use for a run. When req.Recorder is
-// set, it is returned with ownRec=false (caller closes). Otherwise, when
-// RecordSession is set and RecordDir is configured, a fresh recorder is opened
-// with ownRec=true (runner closes). Returns (nil, false, nil) when no recording.
-func (r *RecipeRunner) acquireRecorder(req RunRequest) (rec *SessionRecorder, ownRec bool, err error) {
-	if req.Recorder != nil {
-		return req.Recorder, false, nil
-	}
-	if !req.RecordSession || strings.TrimSpace(r.opts.RecordDir) == "" {
-		return nil, false, nil
-	}
-	rec, err = NewBatchSessionRecorder(r.opts.RecordDir, req.RecordLabel, req.SSHUser, len(req.Records))
-	if err != nil {
-		return nil, false, err
-	}
-	return rec, true, nil
 }
 
 // recordRecipeMeta writes the recipe-meta event. plan may be "" (computed by
@@ -333,44 +292,31 @@ func hostNames(records []hosts.Record) []string {
 // target hosts. Pre-flight errors (prompt validation, secret resolver, recorder
 // creation) are returned synchronously. Once execution starts, run errors arrive
 // on the channel as a synthetic failed HostExecResult. The runner owns the
-// plugin-release and (when not injected) recorder-close lifecycle, completing
+// recorder-close lifecycle (when not injected), completing
 // when the returned channel closes.
 func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan HostExecResult, error) {
 	if err := r.admitRecipe(ctx, req); err != nil {
 		return nil, err
 	}
 
-	mgr, release := r.opts.Plugins.Borrow()
-
 	validatedEnv, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env)
 	if err != nil {
-		release()
 		return nil, err
 	}
 	req.Env = validatedEnv
 
-	params, err := r.buildRunParams(req, mgr)
+	params, err := r.buildRunParams(req, req.PluginManager)
 	if err != nil {
-		release()
 		return nil, err
 	}
 
-	rec, ownRec, err := r.acquireRecorder(req)
-	if err != nil {
-		release()
-		return nil, err
-	}
-	if ownRec {
-		r.recordRecipeMeta(rec, req, "")
+	if req.Recorder != nil {
+		r.recordRecipeMeta(req.Recorder, req, "")
 	}
 
 	ch := make(chan HostExecResult, recipeRunChannelCap)
 	go func() {
 		defer func() {
-			release()
-			if ownRec && rec != nil {
-				_ = rec.Close()
-			}
 			close(ch) // last: consumers unblock only after cleanup
 		}()
 
@@ -382,15 +328,15 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 		}()
 
 		for res := range inner {
-			if rec != nil {
-				rec.RecordHostExecResult(res)
+			if req.Recorder != nil {
+				req.Recorder.RecordHostExecResult(res)
 			}
 			ch <- res
 		}
 
 		if streamErr := <-errCh; streamErr != nil {
-			if rec != nil {
-				rec.RecordError(streamErr)
+			if req.Recorder != nil {
+				req.Recorder.RecordError(streamErr)
 			}
 			ch <- HostExecResult{
 				Name:     "recipe-run",
