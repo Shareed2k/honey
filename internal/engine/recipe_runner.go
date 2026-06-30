@@ -87,12 +87,8 @@ type RunRequest struct {
 	BiometricToken string
 	Env            map[string]string
 	AISystemPrompt string
-	RecordSession  bool
-	RecordLabel    string
-	// Recorder, when non-nil, is used as-is and NOT closed by the runner (the
-	// caller owns its lifecycle — needed by the async webhook, which must know
-	// the recording ID before deferred execution). When nil and RecordSession
-	// is true, the runner opens and closes its own recorder.
+	// Recorder is used by the engine to record execution metadata and results.
+	// The lifecycle of the Recorder (opening and closing) MUST be managed by the caller.
 	Recorder *SessionRecorder
 }
 
@@ -123,41 +119,16 @@ func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, erro
 	}
 	plan := buf.String()
 
-	rec, ownRec, err := r.acquireRecorder(req)
-	if err != nil {
-		return "", err
-	}
-	if ownRec {
-		defer func() { _ = rec.Close() }()
-	}
-	if rec != nil {
-		r.recordRecipeMeta(rec, req, plan)
+	if req.Recorder != nil {
+		r.recordRecipeMeta(req.Recorder, req, plan)
 		if strings.TrimSpace(plan) == "" {
-			rec.RecordData("plan", []byte("(empty plan)"))
+			req.Recorder.RecordData("plan", []byte("(empty plan)"))
 		} else {
-			rec.RecordData("plan", []byte(plan))
+			req.Recorder.RecordData("plan", []byte(plan))
 		}
 	}
 
 	return plan, nil
-}
-
-// acquireRecorder returns the recorder to use for a run. When req.Recorder is
-// set, it is returned with ownRec=false (caller closes). Otherwise, when
-// RecordSession is set and RecordDir is configured, a fresh recorder is opened
-// with ownRec=true (runner closes). Returns (nil, false, nil) when no recording.
-func (r *RecipeRunner) acquireRecorder(req RunRequest) (rec *SessionRecorder, ownRec bool, err error) {
-	if req.Recorder != nil {
-		return req.Recorder, false, nil
-	}
-	if !req.RecordSession || strings.TrimSpace(r.opts.RecordDir) == "" {
-		return nil, false, nil
-	}
-	rec, err = NewBatchSessionRecorder(r.opts.RecordDir, req.RecordLabel, req.SSHUser, len(req.Records))
-	if err != nil {
-		return nil, false, err
-	}
-	return rec, true, nil
 }
 
 // recordRecipeMeta writes the recipe-meta event. plan may be "" (computed by
@@ -355,22 +326,14 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 		return nil, err
 	}
 
-	rec, ownRec, err := r.acquireRecorder(req)
-	if err != nil {
-		release()
-		return nil, err
-	}
-	if ownRec {
-		r.recordRecipeMeta(rec, req, "")
+	if req.Recorder != nil {
+		r.recordRecipeMeta(req.Recorder, req, "")
 	}
 
 	ch := make(chan HostExecResult, recipeRunChannelCap)
 	go func() {
 		defer func() {
 			release()
-			if ownRec && rec != nil {
-				_ = rec.Close()
-			}
 			close(ch) // last: consumers unblock only after cleanup
 		}()
 
@@ -382,15 +345,15 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 		}()
 
 		for res := range inner {
-			if rec != nil {
-				rec.RecordHostExecResult(res)
+			if req.Recorder != nil {
+				req.Recorder.RecordHostExecResult(res)
 			}
 			ch <- res
 		}
 
 		if streamErr := <-errCh; streamErr != nil {
-			if rec != nil {
-				rec.RecordError(streamErr)
+			if req.Recorder != nil {
+				req.Recorder.RecordError(streamErr)
 			}
 			ch <- HostExecResult{
 				Name:     "recipe-run",

@@ -233,7 +233,7 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	ch, err := api.runner.Execute(r.Context(), engine.RunRequest{
+	req := engine.RunRequest{
 		Recipe:           recipe,
 		RecipeSourcePath: recipePath,
 		RecipeDir:        filepath.Dir(recipePath),
@@ -242,9 +242,30 @@ func handleSyncWebhook(api *RecipesAPI, w http.ResponseWriter, r *http.Request, 
 		ActorID:          actor,
 		Env:              envMap,
 		AISystemPrompt:   aiPrompt,
-		RecordSession:    strings.TrimSpace(api.opts.RecordDir) != "",
-		RecordLabel:      "web-webhook-" + webhookName,
-	})
+	}
+
+	var rec *engine.SessionRecorder
+	if strings.TrimSpace(api.opts.RecordDir) != "" {
+		var rerr error
+		rec, rerr = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-webhook-"+webhookName, sshUser, len(searchOut.Records))
+		if rerr != nil {
+			httpError(w, rerr, http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = rec.Close() }()
+		
+		hash, _ := recipe.HashJSON()
+		rec.RecordRecipeMeta(engine.RecipeMeta{
+			RecipePath:        recipePath,
+			HostCount:         len(searchOut.Records),
+			RecipeContentHash: hash,
+			StartedAt:         time.Now().UTC(),
+			Hosts:             engine.HostsForRecipeMeta(searchOut.Records, engine.RecipeMetaHostLimit),
+		})
+		req.Recorder = rec
+	}
+
+	ch, err := api.runner.Execute(r.Context(), req)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return

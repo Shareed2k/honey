@@ -643,27 +643,6 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	wantRec := strings.TrimSpace(api.opts.RecordDir) != "" && body.RecordSession
 	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 
-	recordRecipeMeta := func(rec *engine.SessionRecorder) {
-		if rec == nil {
-			return
-		}
-		hash, _ := recipe.HashJSON()
-		planText, _, _ := cuetry.RenderDryRunPlan(recipe)
-		var graph *cuetry.RecipeGraphPlan
-		if mode, err := cuetry.RecipeExecutionMode(recipe); err == nil && mode == cuetry.ExecutionModeGraph {
-			graph, _ = cuetry.BuildRecipeGraphPlan(recipe)
-		}
-		rec.RecordRecipeMeta(engine.RecipeMeta{
-			RecipePath:        recipeSourcePath,
-			HostCount:         len(jobs),
-			RecipeContentHash: hash,
-			StartedAt:         time.Now().UTC(),
-			Hosts:             engine.HostsForRecipeMeta(jobs, maxWebExecRecords),
-			Plan:              planText,
-			Graph:             graph,
-		})
-	}
-
 	req := engine.RunRequest{
 		Recipe:           recipe,
 		RecipeSourcePath: recipeSourcePath,
@@ -675,11 +654,25 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		BiometricToken:   strings.TrimSpace(r.Header.Get("X-Honey-Biometric")),
 		Env:              cliEnv,
 		AISystemPrompt:   aiPrompt,
-		RecordSession:    wantRec,
+	}
+
+	var rec *engine.SessionRecorder
+	if wantRec {
+		label := "web-cue-exec"
+		if !body.Execute {
+			label = "web-cue-exec-dry"
+		}
+		var rerr error
+		rec, rerr = engine.NewBatchSessionRecorder(api.opts.RecordDir, label, user, len(jobs))
+		if rerr != nil {
+			httpError(w, rerr, http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = rec.Close() }()
+		req.Recorder = rec
 	}
 
 	if !body.Execute {
-		req.RecordLabel = "web-cue-exec-dry"
 		plan, err := api.runner.DryRun(r.Context(), req)
 		if err != nil {
 			httpError(w, err, http.StatusBadRequest)
@@ -693,27 +686,13 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Streaming needs the recording ID synchronously for the X-Honey-Recording-Id
-	// response header, so the recorder is created here and injected. The runner
-	// records results into it; this handler records the recipe meta and closes it.
+	ch, err := api.runner.Execute(r.Context(), req)
+	if err != nil {
+		writeExecError(w, err)
+		return
+	}
+
 	if r.URL.Query().Get("stream") == "1" {
-		var rec *engine.SessionRecorder
-		if wantRec {
-			var rerr error
-			rec, rerr = engine.NewBatchSessionRecorder(api.opts.RecordDir, "web-cue-exec", user, len(jobs))
-			if rerr != nil {
-				httpError(w, rerr, http.StatusInternalServerError)
-				return
-			}
-			defer func() { _ = rec.Close() }()
-			recordRecipeMeta(rec)
-		}
-		req.Recorder = rec
-		ch, err := api.runner.Execute(r.Context(), req)
-		if err != nil {
-			writeExecError(w, err)
-			return
-		}
 		if rec != nil {
 			if id := rec.RecordingID(); id != "" {
 				w.Header().Set("X-Honey-Recording-Id", id)
@@ -723,13 +702,6 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Non-stream execute: the runner owns the recorder lifecycle entirely.
-	req.RecordLabel = "web-cue-exec"
-	ch, err := api.runner.Execute(r.Context(), req)
-	if err != nil {
-		writeExecError(w, err)
-		return
-	}
 	results := make([]engine.HostExecResult, 0, len(jobs))
 	for res := range ch {
 		results = append(results, res)

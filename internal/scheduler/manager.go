@@ -283,8 +283,6 @@ func (m *Manager) executeSchedule(
 		ActorID:          "cron:" + appName,
 		Env:              cliEnv,
 		AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath),
-		RecordSession:    strings.TrimSpace(m.opts.RecordDir) != "",
-		RecordLabel:      fmt.Sprintf("cron-%s-%s", appName, scheduleName),
 	}
 
 	// Detach from the per-tick gronx context so the queued run is not cancelled
@@ -293,12 +291,36 @@ func (m *Manager) executeSchedule(
 
 	// The runner owns the plugin and recorder lifecycle for the whole run.
 	run := func() {
+		if strings.TrimSpace(m.opts.RecordDir) != "" {
+			var rec *engine.SessionRecorder
+			var err error
+			rec, err = engine.NewBatchSessionRecorder(m.opts.RecordDir, fmt.Sprintf("cron-%s-%s", appName, scheduleName), sshUser, len(searchOut.Records))
+			if err != nil {
+				zap.L().Error("scheduler: failed to create recorder", zap.Error(err))
+				return
+			}
+			defer func() { _ = rec.Close() }()
+			
+			hash, _ := recipe.HashJSON()
+			rec.RecordRecipeMeta(engine.RecipeMeta{
+				RecipePath:        recipePath,
+				HostCount:         len(searchOut.Records),
+				RecipeContentHash: hash,
+				StartedAt:         time.Now().UTC(),
+				Hosts:             engine.HostsForRecipeMeta(searchOut.Records, engine.RecipeMetaHostLimit),
+			})
+			req.Recorder = rec
+		}
+
 		if rerr := m.runner.ExecuteAndWait(runCtx, req); rerr != nil {
 			zap.L().Error("scheduler: recipe execution failed",
 				zap.String("app", appName),
 				zap.String("schedule", scheduleName),
 				zap.Error(rerr),
 			)
+			if req.Recorder != nil {
+				req.Recorder.RecordError(rerr)
+			}
 		}
 	}
 
