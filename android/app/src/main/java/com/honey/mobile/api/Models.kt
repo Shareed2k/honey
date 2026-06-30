@@ -25,13 +25,24 @@ data class SearchResponse(
 data class HostRecord(
     val name: String,
     val provider: String,
-    val groups: List<String> = emptyList()
+    val groups: List<String> = emptyList(),
+    val backendName: String = "",
+    val primaryIp: String = "",
+    val sshPort: Int = 0,
 )
 
 data class ExecRequest(
     val backends: List<String>,
     val command: String,
-    val dry_run: Boolean = false
+    val name: String = "",
+    val nameRegex: String = "",
+    val providers: String = "",
+    val hostIp: String = "",
+    val sshPort: Int = 0,
+    val sshUser: String = "",
+    val dry_run: Boolean = false,
+    val sshIdentityFile: String = "",
+    val sshIdentityPassphrase: String = ""
 )
 
 data class ExecResult(

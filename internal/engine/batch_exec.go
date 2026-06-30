@@ -94,6 +94,10 @@ type BatchOptions struct {
 	Obs            metrics.Observer
 	AttemptMax     *atomic.Int32
 	Reg            hostexec.Registry
+	// CmdTimeout bounds each per-host remote command; 0 means no timeout. On
+	// expiry the SSH session is closed (best-effort kill) and the host result
+	// is marked failed/timed-out.
+	CmdTimeout time.Duration
 }
 
 // StreamSSHParallel runs the command on records and streams results to out channel.
@@ -115,16 +119,12 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []TargetContext, k
 	}
 
 	StreamParallel(jobs, maxConc, func(tc TargetContext) {
+		// Stop dialing new hosts once the run is cancelled / timed out.
 		if ctx.Err() != nil {
-			out <- HostExecResult{
-				Name:     tc.Record.Name,
-				IP:       tc.Record.PrimaryIP,
-				Provider: tc.Record.Provider,
-				Success:  false,
-				ErrMsg:   "cancelled",
-			}
+			out <- HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider, Success: false, ErrMsg: "cancelled"}
 			return
 		}
+
 		effUser := strings.TrimSpace(user)
 		if effUser == "" {
 			if u := strings.TrimSpace(tc.Record.Meta["ssh_user"]); u != "" {
@@ -136,7 +136,7 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []TargetContext, k
 			if tc.Record.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(tc.Record, truenasshell.ConsoleTrueNASAPI) {
 				return runOneRemoteTrueNAS(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
 			}
-			return RunOneRemoteSSH(effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+			return RunOneRemoteSSH(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV, opts.CmdTimeout)
 		}
 		outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, run)
 		RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
@@ -236,8 +236,16 @@ func runOneRemoteTrueNAS(ctx context.Context, user string, tc TargetContext, cac
 	return res
 }
 
-// RunOneRemoteSSH ...
-func RunOneRemoteSSH(user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
+// ctxCommandRunner is the optional capability a HostClient implements when it
+// can run a command under a context and abort the in-flight command on cancel/
+// timeout (the SSH client closes its session). Clients without it (e.g. k8s,
+// which cancels via its own ctx path) fall back to the non-cancellable Run.
+type ctxCommandRunner interface {
+	RunContext(ctx context.Context, cmd string) ([]byte, error)
+}
+
+// RunOneRemoteSSH executes a single remote command on a host with transient retry support.
+func RunOneRemoteSSH(ctx context.Context, user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, cmdTimeout time.Duration) HostExecResult {
 	res := HostExecResult{
 		Name:     tc.Record.Name,
 		IP:       tc.Record.PrimaryIP,
@@ -296,7 +304,21 @@ func RunOneRemoteSSH(user string, tc TargetContext, cache *ClientCache, kvTunnel
 			return res
 		}
 
-		raw, runErr := client.Run(remoteCmd)
+		var raw []byte
+		var runErr error
+		if rc, ok := client.(ctxCommandRunner); ok {
+			// Cancellable path (SSH): closing the session on ctx cancel/timeout
+			// aborts the in-flight command.
+			if cmdTimeout > 0 {
+				cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
+				raw, runErr = rc.RunContext(cmdCtx, remoteCmd)
+				cancel()
+			} else {
+				raw, runErr = rc.RunContext(ctx, remoteCmd)
+			}
+		} else {
+			raw, runErr = client.Run(remoteCmd)
+		}
 		out := strings.TrimSpace(string(raw))
 		if len(out) > maxOutputPerHost {
 			out = out[:maxOutputPerHost] + "\n…(truncated)"
@@ -304,6 +326,21 @@ func RunOneRemoteSSH(user string, tc TargetContext, cache *ClientCache, kvTunnel
 		res.Output = out
 
 		if runErr != nil {
+			// Context cancellation / timeout — not retryable, report distinctly.
+			if errors.Is(runErr, context.DeadlineExceeded) {
+				closeSSHIfEphemeral(cache, client)
+				evictCachedSSHClient(cache, user, tc.Record, attempt, recipeKV)
+				res.Success = false
+				res.ErrMsg = fmt.Sprintf("command timed out after %s", cmdTimeout)
+				return res
+			}
+			if errors.Is(runErr, context.Canceled) {
+				closeSSHIfEphemeral(cache, client)
+				evictCachedSSHClient(cache, user, tc.Record, attempt, recipeKV)
+				res.Success = false
+				res.ErrMsg = "cancelled"
+				return res
+			}
 			var ee *ssh.ExitError
 			if errors.As(runErr, &ee) {
 				closeSSHIfEphemeral(cache, client)
@@ -424,6 +461,7 @@ func StreamScriptUploadRunParallelWithOptions(ctx context.Context, user string, 
 	if err != nil {
 		return err
 	}
+	runner.cmdTimeout = opts.CmdTimeout
 	var jobs []TargetContext
 	for _, r := range recs {
 		if strings.TrimSpace(r.Record.PrimaryIP) != "" || (r.Record.Provider == "k8s" && r.Record.Meta["kind"] == "pod") {

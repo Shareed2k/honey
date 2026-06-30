@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -31,6 +32,8 @@ func RunParallel(
 
 	g, ctx := errgroup.WithContext(ctx)
 	results := make([][]Record, len(enabled))
+	var mu sync.Mutex
+	var provErrs []string
 	for i, p := range enabled {
 		i, p := i, p
 		g.Go(func() error {
@@ -55,11 +58,11 @@ func RunParallel(
 			zap.L().Debug("provider search start", zap.String("provider", p.ID()), zap.String("backend", p.BackendName()))
 			recs, err = p.Search(ctx, q)
 			if err != nil {
-				// errgroup surfaces only the first error; log each provider's failure
-				// at Warn for attribution, then return a wrapped error for the caller
-				// to handle once at Error.
 				zap.L().Warn("provider search failed", zap.String("provider", p.ID()), zap.Error(err))
-				return fmt.Errorf("provider %s: %w", p.ID(), err)
+				mu.Lock()
+				provErrs = append(provErrs, fmt.Sprintf("%s: %v", p.ID(), err))
+				mu.Unlock()
+				return nil
 			}
 			zap.L().Debug("provider search success", zap.String("provider", p.ID()), zap.String("backend", p.BackendName()), zap.Int("found", len(recs)))
 
@@ -87,6 +90,9 @@ func RunParallel(
 	var merged RecordSet
 	for _, sl := range results {
 		merged = merged.MergeDedupe(sl)
+	}
+	if len(merged) == 0 && len(provErrs) > 0 {
+		return nil, fmt.Errorf("all backends failed: %s", strings.Join(provErrs, "; "))
 	}
 	return merged, nil
 }

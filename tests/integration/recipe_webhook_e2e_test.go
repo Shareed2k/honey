@@ -162,3 +162,83 @@ recipe: {
 	assert.Contains(t, string(output), "msg-123")
 	assert.Contains(t, string(output), "hello-from-e2e-webhook")
 }
+
+// TestWebhookDeliveriesEnrichmentE2E fires a live async webhook against a real
+// SSH container, then verifies the deliveries endpoint enriches the captured
+// (queued) row with the final outcome + host results once the recording lands.
+func TestWebhookDeliveriesEnrichmentE2E(t *testing.T) {
+	sshH, sshP, keyFile := startSSH(t)
+	rec := hosts.CloneWithMetaSSHPort(hosts.Record{Provider: "test", Name: "ssh-test", PrimaryIP: sshH}, sshP)
+	searchReg := searchrun.NewRegistry([]searchrun.ProviderFactory{webhookTestFactory{rec: rec}})
+	execReg := &testRegistry{Dialer: newTestDialer(sshH, sshP, keyFile)}
+
+	tmpDir := t.TempDir()
+	recipePath := filepath.Join(tmpDir, "webhook_async.cue")
+	cueContent := `
+recipe: {
+	name: "test-webhook-async"
+	webhooks: {
+		"hook1": {
+			async: true
+		}
+	}
+	steps: [
+		{
+			host: "*"
+			command: "echo enrich-e2e"
+		}
+	]
+}
+`
+	require.NoError(t, os.WriteFile(recipePath, []byte(cueContent), 0o600))
+
+	configPath := filepath.Join(tmpDir, "honey.yaml")
+	cfg := &config.File{
+		Apps: map[string]apps.AppConfig{
+			"webhook_app": {Type: apps.AppTypeRecipe, TargetRecipe: recipePath, Target: "ssh-test"},
+		},
+		Defaults: config.Defaults{SSHUser: "testuser"},
+	}
+	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o600))
+
+	opts := webserver.Options{
+		ConfigPath:     configPath,
+		Config:         cfg,
+		Token:          "test-token",
+		RecordDir:      tmpDir, // enables recording → enrichment
+		SearchRegistry: searchReg,
+		ExecRegistry:   execReg,
+	}
+	baseURL := newTestServer(t, opts)
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+
+	// Fire the live async webhook → 202 queued.
+	resp := doJSON(t, httpClient, baseURL+"/api/v1/webhooks/webhook_app/hook1", map[string]interface{}{})
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	resp.Body.Close()
+
+	// Poll the authed deliveries endpoint until the queued row enriches.
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		req, _ := http.NewRequest(http.MethodGet, baseURL+"/api/v1/webhooks/webhook_app/hook1/deliveries", nil)
+		req.Header.Set("Authorization", "Bearer test-token")
+		dResp, err := httpClient.Do(req)
+		require.NoError(t, err)
+		var out struct {
+			Deliveries []webserver.WebhookDelivery `json:"deliveries"`
+		}
+		require.NoError(t, json.NewDecoder(dResp.Body).Decode(&out))
+		dResp.Body.Close()
+
+		if len(out.Deliveries) == 1 && out.Deliveries[0].Outcome != "queued" {
+			d := out.Deliveries[0]
+			assert.Contains(t, []string{"executed", "failed"}, d.Outcome)
+			assert.NotEmpty(t, d.Results, "enriched delivery should carry host results")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("delivery never enriched: %+v", out.Deliveries)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}

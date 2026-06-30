@@ -121,6 +121,20 @@ type StudioConfig struct {
 	GitSSH      string `yaml:"git_ssh,omitempty" json:"git_ssh,omitempty" honey:"label=Default Git SSH private key;secret" mod:"trim"`
 }
 
+// ExecTimeoutDuration parses Defaults.ExecTimeout into a duration; returns 0
+// (no timeout) when empty or unparseable.
+func (d Defaults) ExecTimeoutDuration() time.Duration {
+	s := strings.TrimSpace(d.ExecTimeout)
+	if s == "" {
+		return 0
+	}
+	dur, err := time.ParseDuration(s)
+	if err != nil || dur < 0 {
+		return 0
+	}
+	return dur
+}
+
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
 	SSHUser         string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user" mod:"trim"`
@@ -130,6 +144,7 @@ type Defaults struct {
 	CacheDir        string         `yaml:"cache_dir" json:"cache_dir" honey:"label=Cache directory" mod:"trim"`
 	RecordDir       string         `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory" mod:"trim"`
 	RecordRetention string         `yaml:"record_retention" json:"record_retention" honey:"label=Auto-delete recordings older than this (e.g. 720h, 30d); empty disables" mod:"trim"`
+	ExecTimeout     string         `yaml:"exec_timeout" json:"exec_timeout" honey:"label=Per-host command timeout (e.g. 30s, 5m); empty disables" mod:"trim"`
 	Output          string         `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning" mod:"trim"` // e.g. "table", "json", "tui" (default)
 	Name            string         `yaml:"name" json:"name" honey:"label=Name filter" mod:"trim"`
 	NameRegex       string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex" mod:"trim"`

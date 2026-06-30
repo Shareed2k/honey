@@ -78,10 +78,19 @@ type RunRequest struct {
 	BiometricToken string
 	Env            map[string]string
 	AISystemPrompt string
-	PluginManager  *plugins.Manager // The plugin manager must be borrowed by the caller
-	// Recorder is used by the engine to record execution metadata and results.
-	// The lifecycle of the Recorder (opening and closing) MUST be managed by the caller.
+	RecordSession  bool
+	RecordLabel    string
+	// CmdTimeout bounds each per-host remote command; 0 = no timeout.
+	CmdTimeout time.Duration
+	// Recorder, when non-nil, is used as-is and NOT closed by the runner (the
+	// caller owns its lifecycle — needed by the async webhook, which must know
+	// the recording ID before deferred execution). When nil and RecordSession
+	// is true, the runner opens and closes its own recorder.
 	Recorder *SessionRecorder
+
+	// PluginManager provides the shared plugin manager. The caller borrows it
+	// and is responsible for calling release() when the run is complete.
+	PluginManager *plugins.Manager
 }
 
 // DryRun validates prompts and produces the recipe plan via the executor-based
@@ -171,6 +180,7 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 		Cache:          r.opts.Cache,
 		Enforcer:       r.opts.Enforcer,
 		Inventory:      invFromConfig(r.opts.Config),
+		CmdTimeout:     req.CmdTimeout,
 	}, nil
 }
 

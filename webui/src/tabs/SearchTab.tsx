@@ -231,6 +231,8 @@ export function SearchTab({
   const [scriptInterpreterCustom, setScriptInterpreterCustom] = useState('');
   const [removeTmpFile, setRemoveTmpFile] = useState(true);
   const [execRunAs, setExecRunAs] = useState('');
+  const [execTimeout, setExecTimeout] = useState('');
+  const execAbortRef = useRef<AbortController | null>(null);
 
   // Saved exec snippets (server-side, pluggable storage).
   const [snippets, setSnippets] = useState<ExecSnippet[]>([]);
@@ -470,6 +472,7 @@ export function SearchTab({
         record_session: !!(recordWebSession && meta?.session_recording_available),
       };
       if (execRunAs.trim()) req.run_as = execRunAs.trim();
+      if (execTimeout.trim()) req.timeout = execTimeout.trim();
       if (isScript) {
         req.exec_mode = 'script';
         if (effectiveInterpreter) req.script_interpreter = effectiveInterpreter;
@@ -478,13 +481,21 @@ export function SearchTab({
       } else {
         req.command = body;
       }
-      await execOnHostsStream(req, (row) => setExecResults((prev) => [...(prev || []), row]));
+      const ctrl = new AbortController();
+      execAbortRef.current = ctrl;
+      await execOnHostsStream(req, (row) => setExecResults((prev) => [...(prev || []), row]), ctrl.signal);
     } catch (e) {
-      setExecErr(e instanceof Error ? e.message : String(e));
+      // AbortError = user pressed Stop; not a real error.
+      if (!(e instanceof DOMException && e.name === 'AbortError')) {
+        setExecErr(e instanceof Error ? e.message : String(e));
+      }
     } finally {
+      execAbortRef.current = null;
       setExecBusy(false);
     }
   };
+
+  const stopParallelExec = () => execAbortRef.current?.abort();
 
   const closeUploadModal = () => {
     setUploadModalOpen(false);
@@ -843,6 +854,14 @@ export function SearchTab({
             onChange={(e) => setExecRunAs(e.target.value)}
             style={{ width: 220 }}
           />
+          <Input
+            size="small"
+            prefix="Timeout"
+            placeholder="per-host, e.g. 30s"
+            value={execTimeout}
+            onChange={(e) => setExecTimeout(e.target.value)}
+            style={{ width: 200 }}
+          />
           <Button
             type="primary"
             loading={execBusy}
@@ -852,6 +871,11 @@ export function SearchTab({
           >
             {execMode === 'script' ? 'Run script on' : 'Run on'} {selectedRecords.length} host(s)
           </Button>
+          {execBusy && (
+            <Button danger onClick={stopParallelExec}>
+              Stop
+            </Button>
+          )}
           <Button onClick={clearExecOutput}>Clear results</Button>
         </Space>
         <Modal maskClosable={false}           title="Save snippet"

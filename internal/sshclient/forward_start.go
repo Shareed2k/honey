@@ -201,6 +201,17 @@ func StartDynamicForward(ctx context.Context, client *ssh.Client, bindHost strin
 			case <-dialCtx.Done():
 				return nil, dialCtx.Err()
 			}
+			if network == "udp" {
+				// SSH carries no UDP. Tunnel DNS (:53) as DNS-over-TCP; drop other UDP.
+				if !isDNSPort(addr) {
+					return nil, fmt.Errorf("udp over ssh unsupported (dns/53 only): %s", addr)
+				}
+				tcpConn, derr := dialSSH(dialCtx, client, "tcp", addr)
+				if derr != nil {
+					return nil, derr
+				}
+				return newDNSStreamConn(tcpConn), nil
+			}
 			return dialSSH(dialCtx, client, network, addr)
 		}),
 	)
@@ -284,6 +295,17 @@ func StartDynamicForwardMulti(ctx context.Context, clients []WeightedClient, bin
 				return nil, dialCtx.Err()
 			}
 			id := b.Get()
+			if network == "udp" {
+				// SSH carries no UDP. Tunnel DNS (:53) as DNS-over-TCP; drop other UDP.
+				if !isDNSPort(tgt) {
+					return nil, fmt.Errorf("udp over ssh unsupported (dns/53 only): %s", tgt)
+				}
+				tcpConn, derr := dialSSH(dialCtx, clientMap[id], "tcp", tgt)
+				if derr != nil {
+					return nil, derr
+				}
+				return newDNSStreamConn(tcpConn), nil
+			}
 			return dialSSH(dialCtx, clientMap[id], network, tgt)
 		}),
 	)

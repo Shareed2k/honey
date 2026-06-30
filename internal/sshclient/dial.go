@@ -614,6 +614,43 @@ func (h *HoneyClient) RunWithStreams(cmd string, stdin io.Reader, stdout, stderr
 	return sess.Run(cmd)
 }
 
+// RunContext runs cmd on the remote and returns its combined output, honouring
+// ctx cancellation: when ctx is cancelled (e.g. timeout or user stop) the SSH
+// session is closed, which aborts the in-flight command (the remote process
+// receives SIGHUP as the channel tears down). Returns ctx.Err() on cancellation.
+func (h *HoneyClient) RunContext(ctx context.Context, cmd string) ([]byte, error) {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return nil, fmt.Errorf("empty remote command")
+	}
+	if h.Client == nil || h.Client.Client == nil {
+		return nil, fmt.Errorf("ssh client is not connected")
+	}
+	sess, err := h.NewSession()
+	if err != nil {
+		return nil, err
+	}
+
+	type result struct {
+		out []byte
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		out, runErr := sess.CombinedOutput(cmd)
+		ch <- result{out: out, err: runErr}
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = sess.Close() // unblocks CombinedOutput
+		return nil, ctx.Err()
+	case r := <-ch:
+		_ = sess.Close()
+		return r.out, r.err
+	}
+}
+
 // StartLocalForward starts a local port forward.
 func (h *HoneyClient) StartLocalForward(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int) (host string, port int, stop func(), err error) {
 	if leaf := h.LeafSSH(); leaf != nil {
@@ -938,6 +975,54 @@ func closeSSHStack(stack []*ssh.Client) {
 // If overridePort is in 1..65535, it replaces the leaf port from resolution (e.g. from record meta.ssh_port).
 // When recipeIdentityFile is non-empty, auth uses only that private key (see buildAuthExclusiveIdentityFile).
 func DialHoneyClient(userOverride, hostAlias string, overridePort int, recipeIdentityFile string) (*HoneyClient, error) {
+	recipeIdentityFile = strings.TrimSpace(recipeIdentityFile)
+	var exclusive goph.Auth
+	if recipeIdentityFile != "" {
+		a, err := buildAuthExclusiveIdentityFile(recipeIdentityFile)
+		if err != nil {
+			return nil, err
+		}
+		exclusive = a
+	}
+	return dialHoneyWithAuth(userOverride, hostAlias, overridePort, exclusive)
+}
+
+// DialHoneyClientWithKey is like DialHoneyClient but authenticates with an
+// in-memory private key (PEM bytes) instead of a file path, so the key never
+// touches disk. Used by the mobile VPN dial where the key comes from the
+// platform keystore.
+func DialHoneyClientWithKey(userOverride, hostAlias string, overridePort int, keyPEM []byte, passphrase string) (*HoneyClient, error) {
+	auth, err := signerAuthFromPEM(keyPEM, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	return dialHoneyWithAuth(userOverride, hostAlias, overridePort, auth)
+}
+
+// signerAuthFromPEM parses an in-memory private key (optionally passphrase
+// protected) into an exclusive goph.Auth backed by an ssh.Signer.
+func signerAuthFromPEM(keyPEM []byte, passphrase string) (goph.Auth, error) {
+	if len(keyPEM) == 0 {
+		return nil, fmt.Errorf("empty ssh private key")
+	}
+	var signer ssh.Signer
+	var err error
+	if passphrase != "" {
+		signer, err = ssh.ParsePrivateKeyWithPassphrase(keyPEM, []byte(passphrase))
+	} else {
+		signer, err = ssh.ParsePrivateKey(keyPEM)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("parse ssh private key: %w", err)
+	}
+	return goph.Auth{ssh.PublicKeys(signer)}, nil
+}
+
+// dialHoneyWithAuth performs the SSH dial (with ProxyJump chain and known_hosts
+// verification). When exclusiveAuth is non-nil it is the only auth method used;
+// otherwise auth is built from ssh-agent, ssh_config IdentityFile,
+// HONEY_SSH_IDENTITY_FILES and default ~/.ssh keys.
+func dialHoneyWithAuth(userOverride, hostAlias string, overridePort int, exclusiveAuth goph.Auth) (*HoneyClient, error) {
 	zap.L().Debug("dialing honey client", zap.String("host", hostAlias), zap.String("user", userOverride))
 	hostAlias = strings.TrimSpace(hostAlias)
 	if hostAlias == "" {
@@ -956,12 +1041,8 @@ func DialHoneyClient(userOverride, hostAlias string, overridePort int, recipeIde
 		final.port = overridePort
 	}
 	var auth goph.Auth
-	recipeIdentityFile = strings.TrimSpace(recipeIdentityFile)
-	if recipeIdentityFile != "" {
-		auth, err = buildAuthExclusiveIdentityFile(recipeIdentityFile)
-		if err != nil {
-			return nil, err
-		}
+	if exclusiveAuth != nil {
+		auth = exclusiveAuth
 	} else {
 		idFiles := append([]string(nil), leafCfg.identityPaths...)
 		for _, hop := range parseProxyJumpChain(leafCfg.proxyJump) {

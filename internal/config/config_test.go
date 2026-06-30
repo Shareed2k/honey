@@ -466,3 +466,28 @@ func TestSaveValidation(t *testing.T) {
 		}
 	})
 }
+
+func TestExecTimeoutDuration(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"empty", "", 0},
+		{"seconds", "30s", 30 * time.Second},
+		{"minutes", "5m", 5 * time.Minute},
+		{"whitespace", "  2m  ", 2 * time.Minute},
+		{"invalid", "nonsense", 0},
+		{"negative", "-5s", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := Defaults{ExecTimeout: tt.in}.ExecTimeoutDuration()
+			if got != tt.want {
+				t.Errorf("ExecTimeoutDuration(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}

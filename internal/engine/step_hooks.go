@@ -182,8 +182,7 @@ func runCueStepHookRemote(ctx context.Context, run *CueRun, stepNo int, kind str
 		}
 		return remoteCmd
 	}
-	_ = ctx // remote path uses existing pooled sessions; cancellation is best-effort via process on remote
-	hres := RunOneRemoteSSH(run.Params.SSHUser, TargetContext{Record: r}, run.Cache, kvTunnel, build, run.RecipeKV, recipeScopedKV)
+	hres := RunOneRemoteSSH(ctx, run.Params.SSHUser, tc, run.Cache, kvTunnel, build, run.RecipeKV, recipeScopedKV, run.Params.CmdTimeout)
 	var b strings.Builder
 	if strings.TrimSpace(hres.Output) != "" {
 		b.WriteString(strings.TrimSpace(hres.Output))

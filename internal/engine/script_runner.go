@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -38,6 +39,7 @@ type scriptRunner struct {
 	kvTunnel     bool
 	recipeKV     *RecipeKVCoordinator
 	recipeScoped bool
+	cmdTimeout   time.Duration // per-host script-run timeout; 0 = none
 }
 
 func newScriptRunner(user, localAbs, remotePath string, kvTunnel bool, cmd SSHRemoteCmdFunc, opts ScriptUploadRunOptions, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScoped bool) (*scriptRunner, error) {
@@ -93,8 +95,12 @@ func (sr *scriptRunner) stream(ctx context.Context, recs []TargetContext, maxCon
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				out <- HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider, Success: false, ErrMsg: "cancelled"}
+				return
+			}
 			outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
-				return sr.runHost(tc)
+				return sr.runHost(ctx, tc)
 			})
 			RecordMaxAttempts(attemptMax, outcome.Attempts)
 			observeSSHOperation(obs, "script", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
@@ -108,7 +114,7 @@ func (sr *scriptRunner) stream(ctx context.Context, recs []TargetContext, maxCon
 	wg.Wait()
 }
 
-func (sr *scriptRunner) runHost(tc TargetContext) HostExecResult {
+func (sr *scriptRunner) runHost(ctx context.Context, tc TargetContext) HostExecResult {
 	res := HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider}
 	var stopKV func()
 	defer func() {
@@ -192,7 +198,19 @@ func (sr *scriptRunner) runHost(tc TargetContext) HostExecResult {
 			return res
 		}
 
-		raw, runErr := client.Run(remoteCmd)
+		var raw []byte
+		var runErr error
+		if rc, ok := client.(ctxCommandRunner); ok {
+			if sr.cmdTimeout > 0 {
+				cmdCtx, cancel := context.WithTimeout(ctx, sr.cmdTimeout)
+				raw, runErr = rc.RunContext(cmdCtx, remoteCmd)
+				cancel()
+			} else {
+				raw, runErr = rc.RunContext(ctx, remoteCmd)
+			}
+		} else {
+			raw, runErr = client.Run(remoteCmd)
+		}
 		out := strings.TrimSpace(string(raw))
 		if len(out) > maxOutputPerHost {
 			out = out[:maxOutputPerHost] + "\n...(truncated)"
@@ -200,6 +218,21 @@ func (sr *scriptRunner) runHost(tc TargetContext) HostExecResult {
 		res.Output = "script put -> " + sr.remotePath + "\n" + out
 
 		if runErr != nil {
+			// Context cancellation / timeout — not retryable.
+			if errors.Is(runErr, context.DeadlineExceeded) {
+				closeSSHIfEphemeral(sr.cache, client)
+				evictCachedSSHClient(sr.cache, sr.user, tc.Record, attempt, sr.recipeKV)
+				res.Success = false
+				res.ErrMsg = fmt.Sprintf("script timed out after %s", sr.cmdTimeout)
+				return res
+			}
+			if errors.Is(runErr, context.Canceled) {
+				closeSSHIfEphemeral(sr.cache, client)
+				evictCachedSSHClient(sr.cache, sr.user, tc.Record, attempt, sr.recipeKV)
+				res.Success = false
+				res.ErrMsg = "cancelled"
+				return res
+			}
 			var ee *ssh.ExitError
 			if errors.As(runErr, &ee) {
 				cleanupRemote()

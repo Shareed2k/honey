@@ -115,3 +115,8 @@ func (sshFallbackExecutor) DialUpstream(_ context.Context, _ string, _ hosts.Rec
 func buildHostExecRegistry() hostexec.Registry {
 	return &executionRouter{searchReg: GetSearchRegistry()}
 }
+
+// GetExecRegistry returns the host execution registry for SSH/Docker/TrueNAS dispatch.
+func GetExecRegistry() hostexec.Registry {
+	return buildHostExecRegistry()
+}

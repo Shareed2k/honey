@@ -13,6 +13,7 @@ export interface AppConfig {
   local_port: number;
   ttl: number;
   open_browser: boolean;
+  webhooks?: string[];
 }
 
 export interface ProxySession {

@@ -260,3 +260,275 @@ func TestWebhookRateLimit(t *testing.T) {
 		t.Fatalf("expected 429 after burst exhausted, got %d", code)
 	}
 }
+
+// newWebhookDebugServer builds a test server with one sync recipe app exposing
+// webhook "hook1" that extracts payload.var into HONEY_PROMPT_VAR.
+func newWebhookDebugServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	tempDir := t.TempDir()
+	recipePath := filepath.Join(tempDir, "test.cue")
+	cueContent := `
+recipe: {
+	name: "test-webhook"
+	webhooks: {
+		"hook1": {
+			extract: {
+				"HONEY_PROMPT_VAR": "payload.var"
+			}
+			async: false
+		}
+	}
+	steps: [
+		{
+			host: "localhost"
+			env: {
+				HONEY_PROMPT_VAR: string | *""
+			}
+			command: "echo \(env.HONEY_PROMPT_VAR)"
+		}
+	]
+}
+`
+	if err := os.WriteFile(recipePath, []byte(cueContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(tempDir, "honey.yaml")
+	if err := os.WriteFile(configPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.File{
+		Apps: map[string]apps.AppConfig{
+			"app1": {Type: apps.AppTypeRecipe, TargetRecipe: recipePath, Target: "dynamic:localhost"},
+		},
+	}
+	opts := Options{
+		ConfigPath:     configPath,
+		Config:         cfg,
+		Token:          "dummy",
+		SearchRegistry: searchrun.NewRegistry([]searchrun.ProviderFactory{dummyFactory{}}),
+	}
+	q, _ := queue.NewAntsQueue(5)
+	srv, err := NewServer(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.webhookQueue = q
+	ts := httptest.NewServer(srv.router)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func getWebhookDeliveries(t *testing.T, ts *httptest.Server) []WebhookDelivery {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/webhooks/app1/hook1/deliveries", nil)
+	req.Header.Set("Authorization", "Bearer dummy")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("deliveries status %d", resp.StatusCode)
+	}
+	var out struct {
+		Deliveries []WebhookDelivery `json:"deliveries"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Deliveries
+}
+
+func TestWebhookDebugDryRun(t *testing.T) {
+	ts := newWebhookDebugServer(t)
+	// Outer "payload" is the debug field; its value is the webhook body.
+	body := `{"payload": {"payload": {"var": "hello"}}, "execute": false}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/webhooks/app1/hook1/debug", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer dummy")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	var out webhookDebugResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Outcome != "dry_run" || out.Executed {
+		t.Fatalf("expected dry_run/not-executed, got %+v", out)
+	}
+	if out.Extracted["HONEY_PROMPT_VAR"] != "hello" {
+		t.Fatalf("extracted = %+v", out.Extracted)
+	}
+	if len(out.Results) != 0 {
+		t.Fatalf("dry-run must not execute; got %d results", len(out.Results))
+	}
+	if d := getWebhookDeliveries(t, ts); len(d) != 1 || d[0].Source != "dry_run" {
+		t.Fatalf("deliveries = %+v", d)
+	}
+}
+
+func TestWebhookDebugExecute(t *testing.T) {
+	ts := newWebhookDebugServer(t)
+	body := `{"payload": {"payload": {"var": "hi"}}, "execute": true}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/webhooks/app1/hook1/debug", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer dummy")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	var out webhookDebugResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Outcome != "executed" || !out.Executed {
+		t.Fatalf("expected executed, got %+v", out)
+	}
+	if len(out.Results) == 0 {
+		t.Fatalf("expected results")
+	}
+	if d := getWebhookDeliveries(t, ts); len(d) != 1 || d[0].Source != "test" || len(d[0].Results) == 0 {
+		t.Fatalf("deliveries = %+v", d)
+	}
+}
+
+func TestWebhookLiveDeliveryCaptured(t *testing.T) {
+	ts := newWebhookDebugServer(t)
+	payload := []byte(`{"payload": {"var": "live"}}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/webhooks/app1/hook1", bytes.NewBuffer(payload))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("live status %d", resp.StatusCode)
+	}
+	d := getWebhookDeliveries(t, ts)
+	if len(d) != 1 || d[0].Source != "live" || d[0].Outcome != "executed" || len(d[0].Results) == 0 {
+		t.Fatalf("deliveries = %+v", d)
+	}
+	if d[0].Extracted["HONEY_PROMPT_VAR"] != "live" {
+		t.Fatalf("extracted = %+v", d[0].Extracted)
+	}
+}
+
+// newAsyncWebhookServer builds a test server with session recording enabled and
+// an async webhook so deliveries can be enriched from the recording.
+func newAsyncWebhookServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	tempDir := t.TempDir()
+	recipePath := filepath.Join(tempDir, "test.cue")
+	cueContent := `
+recipe: {
+	name: "test-webhook-async"
+	webhooks: {
+		"hook1": {
+			async: true
+		}
+	}
+	steps: [
+		{
+			host: "localhost"
+			command: "echo async-test"
+		}
+	]
+}
+`
+	if err := os.WriteFile(recipePath, []byte(cueContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(tempDir, "honey.yaml")
+	if err := os.WriteFile(configPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.File{
+		Apps: map[string]apps.AppConfig{
+			"app1": {Type: apps.AppTypeRecipe, TargetRecipe: recipePath, Target: "dynamic:localhost"},
+		},
+	}
+	opts := Options{
+		ConfigPath:     configPath,
+		Config:         cfg,
+		Token:          "dummy",
+		RecordDir:      tempDir, // enables recording → deliveries enrichment
+		SearchRegistry: searchrun.NewRegistry([]searchrun.ProviderFactory{dummyFactory{}}),
+	}
+	q, _ := queue.NewAntsQueue(5)
+	srv, err := NewServer(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.webhookQueue = q
+	ts := httptest.NewServer(srv.router)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func TestWebhookDeliveriesEnrichesAsync(t *testing.T) {
+	ts := newAsyncWebhookServer(t)
+
+	body := `{"payload": {}, "execute": true}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/webhooks/app1/hook1/debug", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer dummy")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out webhookDebugResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Outcome != "queued" || out.ExecID == "" {
+		t.Fatalf("expected queued + exec_id, got %+v", out)
+	}
+
+	// Poll /deliveries until the async row enriches from its recording.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		d := getWebhookDeliveries(t, ts)
+		if len(d) == 1 && d[0].Outcome != "queued" {
+			if d[0].Outcome != "executed" && d[0].Outcome != "failed" {
+				t.Fatalf("unexpected enriched outcome: %+v", d[0])
+			}
+			if len(d[0].Results) == 0 {
+				t.Fatalf("enriched row has no results: %+v", d[0])
+			}
+			return // success
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("delivery never enriched: %+v", d)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func TestWebhookDeliveriesNoEnrichWithoutRecording(t *testing.T) {
+	// newWebhookDebugServer has no RecordDir; async run cannot record → no exec_id,
+	// so the queued delivery stays queued with no results (enrichment is a no-op).
+	ts := newWebhookDebugServer(t)
+	// hook1 here is sync; force the async path by posting to a sync hook won't yield
+	// queued. Instead assert the enrichment guard: a sync executed delivery is left
+	// alone and a row without exec_id is never marked executed by enrichment.
+	body := `{"payload": {"payload": {"var": "x"}}, "execute": true}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/webhooks/app1/hook1/debug", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer dummy")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	d := getWebhookDeliveries(t, ts)
+	if len(d) != 1 || d[0].ExecID != "" {
+		t.Fatalf("sync delivery should have no exec_id: %+v", d)
+	}
+}

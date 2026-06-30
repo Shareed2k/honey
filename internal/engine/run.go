@@ -438,6 +438,12 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	for i, ws := range p.Recipe.Steps {
 		step := ws.Step
 
+		// Stop running further steps once the run is cancelled / timed out.
+		if err := ctx.Err(); err != nil {
+			runErr = err
+			return err
+		}
+
 		rows, err := StreamCueRecipeStep(ctx, run, i, step, history, out)
 		if len(rows) > 0 {
 			history = append(history, rows)

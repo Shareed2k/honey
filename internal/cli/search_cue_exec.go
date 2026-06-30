@@ -3,8 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/shareed2k/honey/internal/config"
@@ -22,6 +25,7 @@ var (
 	flagCueExecProfile bool
 	flagCueExecCheck   bool
 	flagCueExecEnv     []string
+	flagCueExecTimeout time.Duration
 	flagRetryFailed    string
 
 	cueExecCmd = &cobra.Command{
@@ -70,6 +74,7 @@ func init() {
 	cueExecCmd.Flags().BoolVar(&flagCueExecProfile, "profile", false, "Print execution profile (CPU, Mem, Network, SSH stats) after run")
 	cueExecCmd.Flags().BoolVar(&flagCueExecCheck, "check", false, "Analyze per-step recipe risk and print the decision without executing")
 	cueExecCmd.Flags().StringArrayVarP(&flagCueExecEnv, "env", "e", nil, "Remote env for command/script (repeat: -e KEY=value); overrides recipe env on duplicate keys")
+	cueExecCmd.Flags().DurationVar(&flagCueExecTimeout, "timeout", 0, "Per-host command timeout (e.g. 30s, 5m); 0 uses config default / disables")
 	cueExecCmd.Flags().StringVar(&flagRetryFailed, "retry-failed", "", "Re-run only hosts that did not succeed in this recording (basename, e.g. 20260529_….hrec.jsonl)")
 }
 
@@ -123,16 +128,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		return runCueExecCheck(context.Background(), cmd.OutOrStdout(), recipe, recipeDir, records)
 	}
 
-	if recipe.Defaults != nil && recipe.Defaults.K8sDebugImage != "" {
-		for i := range records {
-			if records[i].Provider == "k8s" && records[i].Meta["kind"] == "pod" {
-				if records[i].Meta == nil {
-					records[i].Meta = make(map[string]string)
-				}
-				records[i].Meta["debug_image"] = recipe.Defaults.K8sDebugImage
-			}
-		}
-	}
+	injectK8sDebugImage(recipe, records)
 
 	recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
 	flagSet := recordDirFlagChanged(cmd) && strings.TrimSpace(flagRecordDir) != ""
@@ -179,7 +175,15 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		defer prof.StopAndPrintReport(len(records), len(recipe.Steps), cache)
 	}
 
-	return engine.RunCueRecipeSteps(context.Background(), cmd.OutOrStdout(), engine.CueRecipeRunParams{
+	effTimeout := flagCueExecTimeout
+	if effTimeout == 0 && cfg != nil {
+		effTimeout = cfg.Defaults.ExecTimeoutDuration()
+	}
+	// Ctrl-C / SIGTERM cancels the run and aborts in-flight remote commands.
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return engine.RunCueRecipeSteps(ctx, cmd.OutOrStdout(), engine.CueRecipeRunParams{
 		Recipe:         recipe,
 		RecipeDir:      recipeDir,
 		Records:        records,
@@ -193,6 +197,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		JSON:           flagOutput == "json" || flagJSON,
 		Reg:            cache.Reg(),
 		Cache:          cache,
+		CmdTimeout:     effTimeout,
 	}, rec)
 }
 
@@ -215,4 +220,17 @@ func filterRetryFailedRecords(cmd *cobra.Command, records []hosts.Record) ([]hos
 	fmt.Fprintf(cmd.ErrOrStderr(), "retry-failed: %d succeeded host(s) skipped, retrying %d\n",
 		len(succeeded), len(filtered))
 	return filtered, nil
+}
+
+func injectK8sDebugImage(recipe cuetry.Recipe, records []hosts.Record) {
+	if recipe.Defaults != nil && recipe.Defaults.K8sDebugImage != "" {
+		for i := range records {
+			if records[i].Provider == "k8s" && records[i].Meta["kind"] == "pod" {
+				if records[i].Meta == nil {
+					records[i].Meta = make(map[string]string)
+				}
+				records[i].Meta["debug_image"] = recipe.Defaults.K8sDebugImage
+			}
+		}
+	}
 }

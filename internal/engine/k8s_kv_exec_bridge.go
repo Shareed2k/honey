@@ -73,7 +73,7 @@ func writeHkvFrame(w io.Writer, mu *sync.Mutex, typ hkvFrameKind, cid uint32, pa
 	buf := make([]byte, 9+payLen)
 	buf[0] = byte(typ)
 	binary.BigEndian.PutUint32(buf[1:5], cid)
-	binary.BigEndian.PutUint32(buf[5:9], uint32(payLen)) // #nosec G115 -- payLen bounded by hkvMaxFramePayload (16MiB), fits uint32
+	binary.BigEndian.PutUint32(buf[5:9], uint32(payLen&0xFFFFFFFF))
 	if payLen > 0 {
 		copy(buf[9:], payload)
 	}
