@@ -25,6 +25,7 @@ honey
 
 */*.aar
 android/app/libs/*.aar
+android/app/libs/*.jar
 android/.kotlin
 android/.claude
 android/.idea

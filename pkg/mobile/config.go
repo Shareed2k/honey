@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/shareed2k/honey/internal/config"
 )
@@ -78,4 +79,18 @@ func SaveConfig(configDir string, configJSON string) error {
 		return err
 	}
 	return cfg.Save(filepath.Join(configDir, "config.yaml"))
+}
+
+// defaultSSHUser returns Defaults.SSHUser from the config at configPath, or ""
+// if unset/unreadable. Mirrors the desktop fallback used when no SSH user is
+// given (internal/cli/search.go).
+func defaultSSHUser(configPath string) string {
+	if strings.TrimSpace(configPath) == "" {
+		return ""
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Defaults.SSHUser)
 }

@@ -20,8 +20,8 @@ func runOne(t *testing.T, ctx context.Context, reg *testRegistry, rec hosts.Reco
 	ch := make(chan engine.HostExecResult, 1)
 	go func() {
 		defer close(ch)
-		_ = engine.StreamSSHParallel(ctx, "testuser", []hosts.Record{rec}, false,
-			func(_ hosts.Record, _ map[string]string) string { return cmd }, ch, opts)
+		_ = engine.StreamSSHParallel(ctx, "testuser", []engine.TargetContext{{Record: rec}}, false,
+			func(_ engine.TargetContext, _ map[string]string) string { return cmd }, ch, opts)
 	}()
 
 	var res engine.HostExecResult

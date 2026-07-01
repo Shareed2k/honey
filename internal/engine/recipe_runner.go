@@ -16,6 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
+	"go.uber.org/zap"
 )
 
 // RecipeMetaHostLimit caps how many host records are copied into a recording's
@@ -370,10 +371,22 @@ func (r *RecipeRunner) ExecuteAndWait(ctx context.Context, req RunRequest) error
 		return err
 	}
 	var runErr error
+	var results []HostExecResult
 	for res := range ch {
+		results = append(results, res)
 		if res.Provider == "engine" && res.Name == "recipe-run" && !res.Success {
 			runErr = fmt.Errorf("recipe run failed: %s", res.ErrMsg)
 		}
 	}
+
+	if r.opts.Config != nil && r.opts.Config.SMTP != nil {
+		smtp := r.opts.Config.SMTP
+		zap.L().Info("ExecuteAndWait initializing RunReporter", zap.String("host", smtp.Host), zap.Int("port", smtp.Port))
+		reporter := NewRunReporter(smtp.Host, smtp.Port, smtp.Username, smtp.Password)
+		reporter.Report(ctx, req.Recipe, results, runErr)
+	} else {
+		zap.L().Info("ExecuteAndWait skipping RunReporter", zap.Bool("hasConfig", r.opts.Config != nil))
+	}
+
 	return runErr
 }
