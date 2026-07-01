@@ -150,7 +150,14 @@ func TestRiskStepFilter_safeCommand_allowsAll(t *testing.T) {
 	t.Parallel()
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "test"}}
 	targets := []TargetContext{{Record: hosts.Record{Name: "h1"}}, {Record: hosts.Record{Name: "h2"}}}
-	f := NewRiskStepFilter(run, "command", "echo hello", "")
+	opts := ExecutionOptions{
+		Execute:   true,
+		Enforcer:  run.Params.Enforcer,
+		ActorID:   run.Params.ActorID,
+		Inventory: run.Params.Inventory,
+		Recipe:    run.Params.Recipe,
+	}
+	f := NewRiskStepFilter(opts, "command", "echo hello", "")
 	allowed, skipped, err := f.Filter(context.Background(), targets)
 	require.NoError(t, err)
 	assert.Equal(t, targets, allowed)
@@ -161,7 +168,14 @@ func TestRiskStepFilter_criticalCommand_skipsAll(t *testing.T) {
 	t.Parallel()
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "test"}}
 	targets := []TargetContext{{Record: hosts.Record{Name: "h1"}}, {Record: hosts.Record{Name: "h2"}}}
-	f := NewRiskStepFilter(run, "command", "rm -rf /", "")
+	opts := ExecutionOptions{
+		Execute:   true,
+		Enforcer:  run.Params.Enforcer,
+		ActorID:   run.Params.ActorID,
+		Inventory: run.Params.Inventory,
+		Recipe:    run.Params.Recipe,
+	}
+	f := NewRiskStepFilter(opts, "command", "rm -rf /", "")
 	allowed, skipped, err := f.Filter(context.Background(), targets)
 	require.NoError(t, err)
 	assert.Empty(t, allowed)
@@ -175,7 +189,14 @@ func TestRiskStepFilter_emptyCommand_passthrough(t *testing.T) {
 	t.Parallel()
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "test"}}
 	targets := []TargetContext{{Record: hosts.Record{Name: "h1"}}}
-	f := NewRiskStepFilter(run, "command", "", "")
+	opts := ExecutionOptions{
+		Execute:   true,
+		Enforcer:  run.Params.Enforcer,
+		ActorID:   run.Params.ActorID,
+		Inventory: run.Params.Inventory,
+		Recipe:    run.Params.Recipe,
+	}
+	f := NewRiskStepFilter(opts, "command", "", "")
 	allowed, skipped, err := f.Filter(context.Background(), targets)
 	require.NoError(t, err)
 	assert.Equal(t, targets, allowed)

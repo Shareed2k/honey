@@ -18,6 +18,7 @@ import { Alert, Button, Card, Descriptions, Input, Modal, Pagination, Select, Sp
 import type { ColumnsType } from 'antd/es/table';
 import { ParameterPromptModal } from '../RecipeStudio/ParameterPromptModal';
 import { WebhookDebugModal } from './WebhookDebugModal';
+import { useHostSelection } from '../contexts/HostSelectionContext';
 import './apps-tab.css';
 
 type CatalogTree = {
@@ -82,7 +83,8 @@ function catalogCompletionSource(options: Completion[]) {
   };
 }
 
-export function AppsTab({ sshUser, providers, backends }: { sshUser: string, providers: string[], backends: string[] }) {
+export function AppsTab() {
+  const { sshUser, selectedProviders: providers, selectedBackends: backends } = useHostSelection();
   const [apps, setApps] = useState<{ [key: string]: AppConfig }>({});
   const [sessions, setSessions] = useState<ProxySession[]>([]);
   const [error, setError] = useState<string | null>(null);

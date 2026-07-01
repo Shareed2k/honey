@@ -199,7 +199,7 @@ func TestGateCommandRisk_BuiltinCritical(t *testing.T) {
 	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 
 	// Critical built-in pattern is denied even without an OPA enforcer.
-	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", "rm -rf /", "", targets)
+	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "rm -rf /", "", targets)
 	require.NoError(t, err)
 	require.Empty(t, allowed)
 	require.Len(t, skipped, 1)
@@ -207,7 +207,7 @@ func TestGateCommandRisk_BuiltinCritical(t *testing.T) {
 	require.Contains(t, skipped[0].Output, "command risk")
 
 	// Safe command passes through untouched.
-	allowed, skipped, err = gateCommandRisk(context.Background(), run, "command", "uptime", "", targets)
+	allowed, skipped, err = gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "uptime", "", targets)
 	require.NoError(t, err)
 	require.Len(t, allowed, 1)
 	require.Empty(t, skipped)
@@ -235,7 +235,7 @@ deny_reason := "high-risk command on prod" if {
 		{Record: hosts.Record{Provider: "static", Name: "stg1", PrimaryIP: "2.2.2.2", Meta: map[string]string{"env": "staging"}}},
 	}
 
-	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", "systemctl stop nginx", "", targets)
+	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "systemctl stop nginx", "", targets)
 	require.NoError(t, err)
 	require.Len(t, allowed, 1)
 	require.Equal(t, "stg1", allowed[0].Record.Name)
@@ -248,7 +248,7 @@ func TestGateCommandRisk_Disabled(t *testing.T) {
 	t.Setenv("HONEY_RISK_DISABLE", "1")
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice"}}
 	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
-	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", "rm -rf /", "", targets)
+	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "rm -rf /", "", targets)
 	require.NoError(t, err)
 	require.Len(t, allowed, 1, "disable env bypasses even critical deny")
 	require.Empty(t, skipped)
@@ -260,14 +260,14 @@ func TestGateCommandRisk_PythonInterpreter(t *testing.T) {
 
 	// A python step shelling out to a critical command is denied via the
 	// gpython analyzer recursing into the shell detectors.
-	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", `os.system("rm -rf /")`, "python3", targets)
+	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", `os.system("rm -rf /")`, "python3", targets)
 	require.NoError(t, err)
 	require.Empty(t, allowed)
 	require.Len(t, skipped, 1)
 	require.Contains(t, skipped[0].Output, "command risk")
 
 	// Benign python is not shell-parsed (no bogus UNPARSEABLE_COMMAND) → allowed.
-	allowed, skipped, err = gateCommandRisk(context.Background(), run, "command", "print(\"hi\")", "python3", targets)
+	allowed, skipped, err = gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "print(\"hi\")", "python3", targets)
 	require.NoError(t, err)
 	require.Len(t, allowed, 1)
 	require.Empty(t, skipped)
@@ -290,7 +290,7 @@ deny_reason := "python steps not allowed here" if {
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice", Enforcer: enf}}
 	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 
-	allowed, skipped, err := gateCommandRisk(context.Background(), run, "command", "print(\"hi\")", "python3", targets)
+	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "print(\"hi\")", "python3", targets)
 	require.NoError(t, err)
 	require.Empty(t, allowed)
 	require.Len(t, skipped, 1)

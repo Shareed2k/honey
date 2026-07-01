@@ -30,19 +30,20 @@ type ScriptUploadRunOptions struct {
 }
 
 type scriptRunner struct {
-	user         string
-	localAbs     string
-	remotePath   string
-	cmd          SSHRemoteCmdFunc
-	opts         ScriptUploadRunOptions
-	cache        *ClientCache
-	kvTunnel     bool
-	recipeKV     *RecipeKVCoordinator
-	recipeScoped bool
-	cmdTimeout   time.Duration // per-host script-run timeout; 0 = none
+	user           string
+	localAbs       string
+	remotePath     string
+	cmd            SSHRemoteCmdFunc
+	opts           ScriptUploadRunOptions
+	cache          *ClientCache
+	kvTunnel       bool
+	recipeKV       *RecipeKVCoordinator
+	recipeScoped   bool
+	cmdTimeout     time.Duration // per-host script-run timeout; 0 = none
+	maxOutputBytes int
 }
 
-func newScriptRunner(user, localAbs, remotePath string, kvTunnel bool, cmd SSHRemoteCmdFunc, opts ScriptUploadRunOptions, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScoped bool) (*scriptRunner, error) {
+func newScriptRunner(user, localAbs, remotePath string, kvTunnel bool, cmd SSHRemoteCmdFunc, opts ScriptUploadRunOptions, cache *ClientCache, recipeKV *RecipeKVCoordinator, recipeScoped bool, maxOutputBytes int) (*scriptRunner, error) {
 	localAbs = strings.TrimSpace(localAbs)
 	remotePath = strings.TrimSpace(remotePath)
 	if localAbs == "" || remotePath == "" {
@@ -52,19 +53,20 @@ func newScriptRunner(user, localAbs, remotePath string, kvTunnel bool, cmd SSHRe
 		return nil, fmt.Errorf("script step: empty remote command")
 	}
 	return &scriptRunner{
-		user:         user,
-		localAbs:     localAbs,
-		remotePath:   remotePath,
-		cmd:          cmd,
-		opts:         opts,
-		cache:        cache,
-		kvTunnel:     kvTunnel,
-		recipeKV:     recipeKV,
-		recipeScoped: recipeScoped,
+		user:           user,
+		localAbs:       localAbs,
+		remotePath:     remotePath,
+		cmd:            cmd,
+		opts:           opts,
+		cache:          cache,
+		kvTunnel:       kvTunnel,
+		recipeKV:       recipeKV,
+		recipeScoped:   recipeScoped,
+		maxOutputBytes: maxOutputBytes,
 	}, nil
 }
 
-func newScriptContentRunner(user, scriptContent, fileExtension string, opts ScriptUploadRunOptions, cache *ClientCache) (*scriptRunner, func(), error) {
+func newScriptContentRunner(user, scriptContent, fileExtension string, opts ScriptUploadRunOptions, cache *ClientCache, maxOutputBytes int) (*scriptRunner, func(), error) {
 	localAbs, remotePath, cleanup, err := prepareScriptContentFile(scriptContent, fileExtension)
 	if err != nil {
 		return nil, nil, err
@@ -75,7 +77,7 @@ func newScriptContentRunner(user, scriptContent, fileExtension string, opts Scri
 		return nil, nil, err
 	}
 	cmdFunc := func(_ TargetContext, _ map[string]string) string { return remoteCmd }
-	runner, err := newScriptRunner(user, localAbs, remotePath, false, cmdFunc, opts, cache, nil, false)
+	runner, err := newScriptRunner(user, localAbs, remotePath, false, cmdFunc, opts, cache, nil, false, maxOutputBytes)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
@@ -212,8 +214,8 @@ func (sr *scriptRunner) runHost(ctx context.Context, tc TargetContext) HostExecR
 			raw, runErr = client.Run(remoteCmd)
 		}
 		out := strings.TrimSpace(string(raw))
-		if len(out) > maxOutputPerHost {
-			out = out[:maxOutputPerHost] + "\n...(truncated)"
+		if sr.maxOutputBytes > 0 && len(out) > sr.maxOutputBytes {
+			out = out[:sr.maxOutputBytes] + "\n...(truncated)"
 		}
 		res.Output = "script put -> " + sr.remotePath + "\n" + out
 

@@ -138,7 +138,7 @@ func (b *pluginRemoteBridge) remoteExecTrueNAS(ctx context.Context, in apiv1.Rem
 	if err != nil {
 		return apiv1.RemoteExecOutput{Failed: true, Error: err.Error()}
 	}
-	out, code, runErr := truenasshell.RunRemoteCommand(ctx, backend, b.record, remoteCmd)
+	out, code, runErr := truenasshell.RunRemoteCommand(ctx, backend, b.record, remoteCmd, 0)
 	if runErr != nil {
 		return apiv1.RemoteExecOutput{Failed: true, Error: runErr.Error()}
 	}

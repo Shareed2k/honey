@@ -3,16 +3,13 @@ import { Alert, Button, Card, Checkbox, Form, InputNumber, Select, Space, Typogr
 import { startAgentTransferStream } from '../api/files';
 import { type AgentTransferBackendRef, type AgentTransferCloud, type AgentTransferEvent } from '../api/types/files';
 import { recordKey } from '../HostPicker';
-import type { HostRecord } from '../HostPicker';
+import { useHostSelection } from '../contexts/HostSelectionContext';
+import { useAppContext } from '../contexts/AppContext';
 
-type BackendRow = { kind: string; name: string; hint: string };
+export function FilesTab() {
+  const { records, sshUser, setSshUser } = useHostSelection();
+  const { backends } = useAppContext();
 
-interface Props {
-  records: HostRecord[];
-  backends: BackendRow[];
-}
-
-export function FilesTab({ records, backends }: Props) {
   const [transferSourceHostKey, setTransferSourceHostKey] = useState('');
   const [transferDestHostKey, setTransferDestHostKey] = useState('');
   const [transferSourcePath, setTransferSourcePath] = useState('/tmp/source.bin');
@@ -31,7 +28,6 @@ export function FilesTab({ records, backends }: Props) {
   const [transferBusy, setTransferBusy] = useState(false);
   const [transferErr, setTransferErr] = useState<string | null>(null);
   const [transferEvents, setTransferEvents] = useState<AgentTransferEvent[]>([]);
-  const [sshUser, setSshUser] = useState('');
   const transferAbortRef = useRef<AbortController | null>(null);
 
   const transferHostOptions = useMemo(() => records.filter((r) => !!r.primary_ip.trim()), [records]);

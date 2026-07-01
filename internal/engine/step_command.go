@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -32,8 +34,8 @@ type GetExecutor struct{}
 type ScriptExecutor struct{}
 
 // ExecuteStream streams the step execution.
-func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *CommandExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	stepIdx, kind, step, targets, ch, retryCfg, attemptMax := req.Index, req.Kind, req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	cs, ok := step.(*cuetry.CommandStep)
 	if !ok {
 		return fmt.Errorf("internal: command step has wrong type %T", step)
@@ -41,7 +43,7 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 
 	var riskSkipped []HostExecResult
 	var err error
-	targets, riskSkipped, err = NewRiskStepFilter(run, kind, cs.Command, cs.Interpreter).Filter(ctx, targets)
+	targets, riskSkipped, err = NewRiskStepFilter(opts, kind, cs.Command, cs.Interpreter).Filter(ctx, targets)
 	if err != nil {
 		return err
 	}
@@ -53,8 +55,8 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 	}
 
 	b := step.Base()
-	runAs := cuetry.EffectiveRunAs(b, run.Params.Recipe.Defaults)
-	kvTunnel := cuetry.KVTunnelEnabled(step, run.Params.Recipe.Defaults)
+	runAs := cuetry.EffectiveRunAs(b, opts.Recipe.Defaults)
+	kvTunnel := cuetry.KVTunnelEnabled(step, opts.Recipe.Defaults)
 
 	cmdFunc := func(tc TargetContext, kv map[string]string) string {
 		env := make(map[string]string)
@@ -92,40 +94,40 @@ func (e *CommandExecutor) ExecuteStream(sc *StepContext) error {
 	}
 
 	recipeScoped := kvTunnel
-	post := CueRecipeSSHPostHostResult(ctx, run, stepIdx, kind, step, recipeScoped)
-	return StreamSSHParallel(ctx, run.Params.SSHUser, targets, kvTunnel, cmdFunc, ch, BatchOptions{
-		MaxConc:        RecipeHostMaxConc(step, run.Params.Recipe.Defaults),
-		Cache:          run.Cache,
-		RecipeKV:       run.RecipeKV,
+	post := CueRecipeSSHPostHostResult(ctx, opts, stepIdx, kind, step, recipeScoped)
+	return StreamSSHParallel(ctx, opts.SSHUser, targets, kvTunnel, cmdFunc, ch, BatchOptions{
+		MaxConc:        RecipeHostMaxConc(step, opts.Recipe.Defaults),
+		Cache:          opts.Cache,
+		RecipeKV:       opts.RecipeKV,
 		RecipeScopedKV: recipeScoped,
 		Post:           post,
 		RetryCfg:       retryCfg,
-		Obs:            run.Params.Obs,
+		Obs:            opts.Obs,
 		AttemptMax:     attemptMax,
-		Reg:            run.Params.Reg,
-		CmdTimeout:     run.Params.CmdTimeout,
+		Reg:            opts.Reg,
+		CmdTimeout:     opts.CmdTimeout,
 	})
 }
 
 // ExecuteStream streams the step execution.
-func (e *PutExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *PutExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	step, targets, ch, retryCfg, attemptMax := req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	ps, ok := step.(*cuetry.PutStep)
 	if !ok || ps.Put == nil {
 		return fmt.Errorf("internal: put step missing put field")
 	}
 
 	// Expand variables in the paths
-	localExpanded, err := cuetry.ExpandRecipeVars(ps.Put.Local, run.Params.CLIEnv, false)
+	localExpanded, err := cuetry.ExpandRecipeVars(ps.Put.Local, opts.CLIEnv, false)
 	if err != nil {
 		return fmt.Errorf("put.local var expansion: %w", err)
 	}
-	remoteExpanded, err := cuetry.ExpandRecipeVars(ps.Put.Remote, run.Params.CLIEnv, false)
+	remoteExpanded, err := cuetry.ExpandRecipeVars(ps.Put.Remote, opts.CLIEnv, false)
 	if err != nil {
 		return fmt.Errorf("put.remote var expansion: %w", err)
 	}
 
-	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, localExpanded)
+	localAbs, err := cuetry.ResolveLocalAgainstRecipe(opts.RecipeDir, localExpanded)
 	if err != nil {
 		return fmt.Errorf("put.local: %w", err)
 	}
@@ -133,35 +135,35 @@ func (e *PutExecutor) ExecuteStream(sc *StepContext) error {
 	if _, statErr := os.Stat(localAbs); statErr != nil {
 		return fmt.Errorf("put: local file %q: %w", localAbs, statErr)
 	}
-	return StreamSFTPUploadParallel(ctx, run.Params.SSHUser, targets, localAbs, remotePath, ch, BatchOptions{
-		MaxConc:    RecipeHostMaxConc(step, run.Params.Recipe.Defaults),
-		Cache:      run.Cache,
+	return StreamSFTPUploadParallel(ctx, opts.SSHUser, targets, localAbs, remotePath, ch, BatchOptions{
+		MaxConc:    RecipeHostMaxConc(step, opts.Recipe.Defaults),
+		Cache:      opts.Cache,
 		RetryCfg:   retryCfg,
-		Obs:        run.Params.Obs,
+		Obs:        opts.Obs,
 		AttemptMax: attemptMax,
 	})
 }
 
 // ExecuteStream streams the step execution.
-func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *GetExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	step, targets, ch, retryCfg, attemptMax := req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	gs, okt := step.(*cuetry.GetStep)
 	if !okt || gs.Get == nil {
 		return fmt.Errorf("internal: get step missing get field")
 	}
 
 	// Expand variables in the paths
-	localExpanded, err := cuetry.ExpandRecipeVars(gs.Get.Local, run.Params.CLIEnv, false)
+	localExpanded, err := cuetry.ExpandRecipeVars(gs.Get.Local, opts.CLIEnv, false)
 	if err != nil {
 		return fmt.Errorf("get.local var expansion: %w", err)
 	}
-	remoteExpanded, err := cuetry.ExpandRecipeVars(gs.Get.Remote, run.Params.CLIEnv, false)
+	remoteExpanded, err := cuetry.ExpandRecipeVars(gs.Get.Remote, opts.CLIEnv, false)
 	if err != nil {
 		return fmt.Errorf("get.remote var expansion: %w", err)
 	}
 
 	remotePath := strings.TrimSpace(remoteExpanded)
-	localRoot, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, localExpanded)
+	localRoot, err := cuetry.ResolveLocalAgainstRecipe(opts.RecipeDir, localExpanded)
 	if err != nil {
 		return fmt.Errorf("get.local: %w", err)
 	}
@@ -201,41 +203,41 @@ func (e *GetExecutor) ExecuteStream(sc *StepContext) error {
 			return fmt.Errorf("get: mkdir parent: %w", err)
 		}
 	}
-	return StreamSFTPDownloadParallel(ctx, run.Params.SSHUser, jobs, ch, BatchOptions{
-		MaxConc:    RecipeHostMaxConc(step, run.Params.Recipe.Defaults),
-		Cache:      run.Cache,
+	return StreamSFTPDownloadParallel(ctx, opts.SSHUser, jobs, ch, BatchOptions{
+		MaxConc:    RecipeHostMaxConc(step, opts.Recipe.Defaults),
+		Cache:      opts.Cache,
 		RetryCfg:   retryCfg,
-		Obs:        run.Params.Obs,
+		Obs:        opts.Obs,
 		AttemptMax: attemptMax,
 	})
 }
 
 // ExecuteStream streams the step execution.
-func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, kind, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Kind, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *ScriptExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	stepIdx, kind, step, targets, ch, retryCfg, attemptMax := req.Index, req.Kind, req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	ss, ok := step.(*cuetry.ScriptStep)
 	if !ok || ss.Script == nil {
 		return fmt.Errorf("internal: script step missing script field")
 	}
 
 	// Expand variables in the paths
-	localExpanded, err := cuetry.ExpandRecipeVars(ss.Script.Local, run.Params.CLIEnv, false)
+	localExpanded, err := cuetry.ExpandRecipeVars(ss.Script.Local, opts.CLIEnv, false)
 	if err != nil {
 		return fmt.Errorf("script.local var expansion: %w", err)
 	}
-	remoteExpanded, err := cuetry.ExpandRecipeVars(ss.Script.Remote, run.Params.CLIEnv, false)
+	remoteExpanded, err := cuetry.ExpandRecipeVars(ss.Script.Remote, opts.CLIEnv, false)
 	if err != nil {
 		return fmt.Errorf("script.remote var expansion: %w", err)
 	}
 
 	b := step.Base()
-	localAbs, err := cuetry.ResolveLocalAgainstRecipe(run.Params.RecipeDir, localExpanded)
+	localAbs, err := cuetry.ResolveLocalAgainstRecipe(opts.RecipeDir, localExpanded)
 	if err != nil {
 		return fmt.Errorf("script.local: %w", err)
 	}
 	remotePath := strings.TrimSpace(remoteExpanded)
-	runAs := cuetry.EffectiveRunAs(b, run.Params.Recipe.Defaults)
-	kvTunnel := cuetry.KVTunnelEnabled(step, run.Params.Recipe.Defaults)
+	runAs := cuetry.EffectiveRunAs(b, opts.Recipe.Defaults)
+	kvTunnel := cuetry.KVTunnelEnabled(step, opts.Recipe.Defaults)
 
 	if _, statErr := os.Stat(localAbs); statErr != nil {
 		return fmt.Errorf("script: local file %q: %w", localAbs, statErr)
@@ -245,7 +247,7 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 	// safepath.ReadFile reads via os.Root on the parent dir, so the basename
 	if scriptSrc, rerr := safepath.ReadFile(localAbs); rerr == nil {
 		var riskSkipped []HostExecResult
-		targets, riskSkipped, err = NewRiskStepFilter(run, kind, string(scriptSrc), ss.Interpreter).Filter(ctx, targets)
+		targets, riskSkipped, err = NewRiskStepFilter(opts, kind, string(scriptSrc), ss.Interpreter).Filter(ctx, targets)
 		if err != nil {
 			return err
 		}
@@ -283,23 +285,23 @@ func (e *ScriptExecutor) ExecuteStream(sc *StepContext) error {
 	}
 
 	recipeScoped := kvTunnel
-	post := CueRecipeSSHPostHostResult(ctx, run, stepIdx, kind, step, recipeScoped)
-	return StreamScriptUploadRunParallel(ctx, run.Params.SSHUser, targets, localAbs, remotePath, kvTunnel, cmdFunc, ch, BatchOptions{
-		MaxConc:        RecipeHostMaxConc(step, run.Params.Recipe.Defaults),
-		Cache:          run.Cache,
-		RecipeKV:       run.RecipeKV,
+	post := CueRecipeSSHPostHostResult(ctx, opts, stepIdx, kind, step, recipeScoped)
+	return StreamScriptUploadRunParallel(ctx, opts.SSHUser, targets, localAbs, remotePath, kvTunnel, cmdFunc, ch, BatchOptions{
+		MaxConc:        RecipeHostMaxConc(step, opts.Recipe.Defaults),
+		Cache:          opts.Cache,
+		RecipeKV:       opts.RecipeKV,
 		RecipeScopedKV: recipeScoped,
 		Post:           post,
 		RetryCfg:       retryCfg,
-		Obs:            run.Params.Obs,
+		Obs:            opts.Obs,
 		AttemptMax:     attemptMax,
-		CmdTimeout:     run.Params.CmdTimeout,
+		CmdTimeout:     opts.CmdTimeout,
 	})
 }
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, execute, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.Execute, sc.Index, sc.Step, sc.Targets
+func (e *CommandExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, recipe, execute, i, step, targets := out, opts.Recipe, opts.Execute, req.Index, req.Step, req.Targets
 	cs, _ := step.(*cuetry.CommandStep)
 	command := ""
 	if cs != nil {
@@ -334,8 +336,8 @@ func (e *CommandExecutor) ExecuteDryRun(sc *StepContext) error {
 }
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *PutExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, recipeDir, execute, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.RecipeDir, sc.Run.Params.Execute, sc.Index, sc.Step, sc.Targets
+func (e *PutExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, recipe, recipeDir, execute, i, step, targets := out, opts.Recipe, opts.RecipeDir, opts.Execute, req.Index, req.Step, req.Targets
 	ps, _ := step.(*cuetry.PutStep)
 	if ps == nil || ps.Put == nil {
 		return fmt.Errorf("step %d: internal: missing put", i)
@@ -361,8 +363,8 @@ func (e *PutExecutor) ExecuteDryRun(sc *StepContext) error {
 }
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, recipeDir, execute, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Run.Params.RecipeDir, sc.Run.Params.Execute, sc.Index, sc.Step, sc.Targets
+func (e *GetExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, recipe, recipeDir, execute, i, step, targets := out, opts.Recipe, opts.RecipeDir, opts.Execute, req.Index, req.Step, req.Targets
 	gs, _ := step.(*cuetry.GetStep)
 	if gs == nil || gs.Get == nil {
 		return fmt.Errorf("step %d: internal: missing get", i)
@@ -413,8 +415,8 @@ func (e *GetExecutor) ExecuteDryRun(sc *StepContext) error {
 }
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *ScriptExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipeDir, recipe, execute, i, step, targets := sc.Out, sc.Run.Params.RecipeDir, sc.Run.Params.Recipe, sc.Run.Params.Execute, sc.Index, sc.Step, sc.Targets
+func (e *ScriptExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, recipeDir, recipe, execute, i, step, targets := out, opts.RecipeDir, opts.Recipe, opts.Execute, req.Index, req.Step, req.Targets
 	ss, _ := step.(*cuetry.ScriptStep)
 	if ss == nil || ss.Script == nil {
 		return fmt.Errorf("step %d: internal: missing script", i)

@@ -202,6 +202,7 @@ func (api *RecipesAPI) enqueueWebhookAsync(webhookName, sshUser string, searchIn
 			Env:              envMap,
 			AISystemPrompt:   aiPrompt,
 			Recorder:         rec,
+			PluginPolicy:     engine.LifecycleFresh,
 		}); rerr != nil && rec != nil {
 			rec.RecordError(rerr)
 		}
@@ -241,6 +242,7 @@ func (api *RecipesAPI) executeWebhookSync(ctx context.Context, webhookName, sshU
 		AISystemPrompt:   aiPrompt,
 		RecordSession:    strings.TrimSpace(api.opts.RecordDir) != "",
 		RecordLabel:      "web-webhook-" + webhookName,
+		PluginPolicy:     engine.LifecycleShared,
 	})
 	if err != nil {
 		return nil, err

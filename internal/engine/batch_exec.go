@@ -98,6 +98,18 @@ type BatchOptions struct {
 	// expiry the SSH session is closed (best-effort kill) and the host result
 	// is marked failed/timed-out.
 	CmdTimeout time.Duration
+	// MaxOutputBytes limits the captured output per host. 0 = default (6000), < 0 = unlimited.
+	MaxOutputBytes int
+}
+
+func resolveMaxOutputBytes(opts BatchOptions) int {
+	if opts.MaxOutputBytes == 0 {
+		return maxOutputPerHost
+	}
+	if opts.MaxOutputBytes < 0 {
+		return -1 // unlimited
+	}
+	return opts.MaxOutputBytes
 }
 
 // StreamSSHParallel runs the command on records and streams results to out channel.
@@ -134,9 +146,9 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []TargetContext, k
 
 		run := func() HostExecResult {
 			if tc.Record.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(tc.Record, truenasshell.ConsoleTrueNASAPI) {
-				return runOneRemoteTrueNAS(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV)
+				return runOneRemoteTrueNAS(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV, resolveMaxOutputBytes(opts))
 			}
-			return RunOneRemoteSSH(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV, opts.CmdTimeout)
+			return RunOneRemoteSSH(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV, opts.CmdTimeout, resolveMaxOutputBytes(opts))
 		}
 		outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, run)
 		RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
@@ -185,7 +197,7 @@ func ExecuteSSHParallel(user string, recs []TargetContext, remoteCmdFunc func(ho
 	return out, nil
 }
 
-func runOneRemoteTrueNAS(ctx context.Context, user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool) HostExecResult {
+func runOneRemoteTrueNAS(ctx context.Context, user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, maxOutputBytes int) HostExecResult {
 	res := HostExecResult{
 		Name:     tc.Record.Name,
 		IP:       tc.Record.PrimaryIP,
@@ -221,7 +233,7 @@ func runOneRemoteTrueNAS(ctx context.Context, user string, tc TargetContext, cac
 		res.Success = true
 		return res
 	}
-	out, code, runErr := truenasshell.RunRemoteCommand(ctx, b, tc.Record, remoteCmd)
+	out, code, runErr := truenasshell.RunRemoteCommand(ctx, b, tc.Record, remoteCmd, maxOutputBytes)
 	if runErr != nil {
 		res.Success = false
 		res.ErrMsg = runErr.Error()
@@ -245,7 +257,7 @@ type ctxCommandRunner interface {
 }
 
 // RunOneRemoteSSH executes a single remote command on a host with transient retry support.
-func RunOneRemoteSSH(ctx context.Context, user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, cmdTimeout time.Duration) HostExecResult {
+func RunOneRemoteSSH(ctx context.Context, user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, recipeKV *RecipeKVCoordinator, recipeScopedKV bool, cmdTimeout time.Duration, maxOutputBytes int) HostExecResult {
 	res := HostExecResult{
 		Name:     tc.Record.Name,
 		IP:       tc.Record.PrimaryIP,
@@ -320,8 +332,8 @@ func RunOneRemoteSSH(ctx context.Context, user string, tc TargetContext, cache *
 			raw, runErr = client.Run(remoteCmd)
 		}
 		out := strings.TrimSpace(string(raw))
-		if len(out) > maxOutputPerHost {
-			out = out[:maxOutputPerHost] + "\n…(truncated)"
+		if maxOutputBytes > 0 && len(out) > maxOutputBytes {
+			out = out[:maxOutputBytes] + "\n…(truncated)"
 		}
 		res.Output = out
 
@@ -457,7 +469,7 @@ func StreamScriptUploadRunParallelWithOptions(ctx context.Context, user string, 
 		cache.SetRegistry(opts.Reg)
 		defer cache.CloseAll()
 	}
-	runner, err := newScriptRunner(user, localAbs, remotePath, kvTunnel, remoteCmd, scriptOpts, cache, opts.RecipeKV, opts.RecipeScopedKV)
+	runner, err := newScriptRunner(user, localAbs, remotePath, kvTunnel, remoteCmd, scriptOpts, cache, opts.RecipeKV, opts.RecipeScopedKV, resolveMaxOutputBytes(opts))
 	if err != nil {
 		return err
 	}
@@ -485,7 +497,7 @@ func StreamScriptContentRunParallel(ctx context.Context, user string, recs []Tar
 		cache.SetRegistry(opts.Reg)
 		defer cache.CloseAll()
 	}
-	runner, cleanup, err := newScriptContentRunner(user, scriptContent, fileExtension, scriptOpts, cache)
+	runner, cleanup, err := newScriptContentRunner(user, scriptContent, fileExtension, scriptOpts, cache, resolveMaxOutputBytes(opts))
 	if err != nil {
 		return err
 	}

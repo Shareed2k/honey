@@ -119,6 +119,8 @@ type Server struct {
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
 
 	recipesAPI *RecipesAPI
+
+	commandRunner *engine.CommandRunner
 }
 
 // NewServer builds handlers with the given auth token.
@@ -172,6 +174,12 @@ func NewServer(opts Options) (*Server, error) {
 		fileClientCache:       engine.NewClientCache(),
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
+		commandRunner: engine.NewCommandRunner(engine.CommandRunnerOptions{
+			ExecRegistry:   opts.ExecRegistry,
+			SearchRegistry: opts.SearchRegistry,
+			Metrics:        opts.Metrics,
+			RecordDir:      opts.RecordDir,
+		}),
 	}
 	if opts.Config != nil {
 		schedMgr, err := scheduler.New(scheduler.Options{

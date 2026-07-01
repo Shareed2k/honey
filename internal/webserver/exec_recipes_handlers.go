@@ -1,7 +1,6 @@
 package webserver
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,7 +66,8 @@ type ExecRequest struct {
 	ScriptArgs            []string       `json:"script_args,omitempty"`
 	Records               []hosts.Record `json:"records"`
 	RecordSession         bool           `json:"record_session"`
-	Timeout               string         `json:"timeout,omitempty"` // per-host command timeout (e.g. "30s"); empty uses config default
+	Timeout               string         `json:"timeout,omitempty"`          // per-host command timeout (e.g. "30s"); empty uses config default
+	MaxOutputBytes        int            `json:"max_output_bytes,omitempty"` // 0 = default (6000), < 0 = unlimited
 }
 
 // ExecResponse is the JSON body for a successful exec run.
@@ -342,18 +342,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		cmd = wrapped
 	}
 	user := s.sshUser(body.SSHUser)
-	jobs := filterConnectableRecords(body.Records)
-	var scriptUnconnectable []engine.HostExecResult
-	if mode == execModeScript {
-		scriptUnconnectable = buildUnconnectableExecResults(body.Records)
-	} else if len(jobs) == 0 {
-		httpError(w, fmt.Errorf("no connectable hosts in selection (%s)", execConnectableHint), http.StatusBadRequest)
-		return
-	}
-	recordJobCount := len(jobs)
-	if mode == execModeScript {
-		recordJobCount = len(body.Records)
-	}
+
 	scriptOpts := engine.ScriptUploadRunOptions{
 		ScriptInterpreter:     strings.TrimSpace(body.ScriptInterpreter),
 		InterpreterArgsQuoted: body.InterpreterArgsQuoted,
@@ -362,146 +351,41 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		RunAs:                 strings.TrimSpace(body.RunAs),
 	}
 
+	req := engine.CommandRunRequest{
+		Command:        cmd,
+		IsScript:       mode == execModeScript,
+		FileExtension:  body.FileExtension,
+		ScriptOpts:     scriptOpts,
+		Records:        body.Records,
+		SSHUser:        user,
+		ActorID:        actorFromCtx(r.Context()),
+		RecordSession:  body.RecordSession,
+		RecordLabel:    "web-exec",
+		CmdTimeout:     resolveCmdTimeout(s.opts.Config, body.Timeout),
+		MaxOutputBytes: body.MaxOutputBytes,
+	}
+
 	if r.URL.Query().Get("stream") == "1" {
-		s.handleExecStream(r.Context(), w, body, mode, cmd, user, jobs, scriptUnconnectable, recordJobCount, scriptOpts)
+		ch, err := s.commandRunner.Execute(r.Context(), req)
+		if err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		streamHostExecNDJSON(w, ch, nil)
 		return
 	}
-	s.handleExecSync(w, body, mode, cmd, user, jobs, scriptUnconnectable, recordJobCount, scriptOpts)
-}
 
-func (s *Server) handleExecStream(ctx context.Context, w http.ResponseWriter, body ExecRequest, mode, cmd, user string, jobs []hosts.Record, scriptUnconnectable []engine.HostExecResult, recordJobCount int, scriptOpts engine.ScriptUploadRunOptions) {
-	execStart := time.Now()
-	cmdTimeout := resolveCmdTimeout(s.opts.Config, body.Timeout)
-	var rec *engine.SessionRecorder
-	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
-	if wantRec {
-		var err error
-		rec, err = engine.NewBatchSessionRecorder(s.opts.RecordDir, "web-exec", user, recordJobCount)
-		if err != nil {
+	results, err := s.commandRunner.ExecuteAndWait(r.Context(), req)
+	if err != nil {
+		if len(results) == 0 {
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
-		defer func() { _ = rec.Close() }()
-	}
-	ch := make(chan engine.HostExecResult, len(jobs))
-	go func() {
-		defer close(ch)
-		if mode == execModeScript {
-			for i := range scriptUnconnectable {
-				ch <- scriptUnconnectable[i]
-			}
-			if len(jobs) == 0 {
-				return
-			}
-			var tcJobs []engine.TargetContext
-			for _, j := range jobs {
-				tcJobs = append(tcJobs, engine.TargetContext{Record: j})
-			}
-			if err := engine.StreamScriptContentRunParallel(ctx, user, tcJobs, body.Command, body.FileExtension, scriptOpts, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry, CmdTimeout: cmdTimeout}); err != nil {
-				ch <- engine.HostExecResult{Name: "web-exec", Provider: "web", Success: false, ErrMsg: err.Error()}
-			}
-			return
-		}
-		var tcJobs []engine.TargetContext
-		for _, j := range jobs {
-			tcJobs = append(tcJobs, engine.TargetContext{Record: j})
-		}
-		_ = engine.StreamSSHParallel(ctx, user, tcJobs, false, func(_ engine.TargetContext, _ map[string]string) string { return cmd }, ch, engine.BatchOptions{Obs: s.metrics, Reg: s.opts.ExecRegistry, CmdTimeout: cmdTimeout})
-	}()
-	streamHostExecNDJSON(w, ch, rec)
-	if s.metrics != nil {
-		s.metrics.ObserveExecCommand("ok", recordJobCount, time.Since(execStart))
-	}
-}
-
-func (s *Server) handleExecSync(w http.ResponseWriter, body ExecRequest, mode, cmd, user string, jobs []hosts.Record, scriptUnconnectable []engine.HostExecResult, recordJobCount int, scriptOpts engine.ScriptUploadRunOptions) {
-	execStart := time.Now()
-	var rec *engine.SessionRecorder
-	wantRec := strings.TrimSpace(s.opts.RecordDir) != "" && body.RecordSession
-	if wantRec {
-		var err error
-		rec, err = engine.NewBatchSessionRecorder(s.opts.RecordDir, "web-exec", user, recordJobCount)
-		if err != nil {
-			httpError(w, err, http.StatusInternalServerError)
-			return
-		}
-		defer func() { _ = rec.Close() }()
-	}
-	var results []engine.HostExecResult
-	var err error
-	if mode == execModeScript {
-		results = append(results, scriptUnconnectable...)
-		if len(jobs) > 0 {
-			var scriptResults []engine.HostExecResult
-			tcJobs := make([]engine.TargetContext, 0, len(jobs))
-			for _, j := range jobs {
-				tcJobs = append(tcJobs, engine.TargetContext{Record: j})
-			}
-			scriptResults, err = engine.ExecuteScriptContentRunParallel(user, tcJobs, body.Command, body.FileExtension, scriptOpts, 0, s.opts.ExecRegistry)
-			if err != nil {
-				if rec != nil {
-					rec.RecordError(err)
-				}
-				if s.metrics != nil {
-					s.metrics.ObserveExecCommand("error", recordJobCount, time.Since(execStart))
-				}
-				httpError(w, err, http.StatusInternalServerError)
-				return
-			}
-			results = append(results, scriptResults...)
-		}
-	} else {
-		tcJobs := make([]engine.TargetContext, 0, len(jobs))
-		for _, j := range jobs {
-			tcJobs = append(tcJobs, engine.TargetContext{Record: j})
-		}
-		results, err = engine.ExecuteSSHParallel(user, tcJobs, func(_ hosts.Record) string { return cmd }, 0, s.opts.ExecRegistry)
-		if err != nil {
-			if rec != nil {
-				rec.RecordError(err)
-			}
-			if s.metrics != nil {
-				s.metrics.ObserveExecCommand("error", recordJobCount, time.Since(execStart))
-			}
-			httpError(w, err, http.StatusInternalServerError)
-			return
-		}
-	}
-	if rec != nil {
-		for i := range results {
-			rec.RecordHostExecResult(results[i])
-		}
-	}
-	if s.metrics != nil {
-		status := "ok"
-		for _, res := range results {
-			if !res.Success && !res.Skipped {
-				status = "error"
-				break
-			}
-		}
-		s.metrics.ObserveExecCommand(status, recordJobCount, time.Since(execStart))
+		// If we have results, the HTTP handler usually still sends a 200 with the results JSON
+		// (The client will see success:false inside the results).
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ExecResponse{Results: results})
-}
-
-func buildUnconnectableExecResults(recs []hosts.Record) []engine.HostExecResult {
-	var out []engine.HostExecResult
-	for i := range recs {
-		r := recs[i]
-		if r.IsConnectable() {
-			continue
-		}
-		out = append(out, engine.HostExecResult{
-			Name:     r.Name,
-			IP:       r.PrimaryIP,
-			Provider: r.Provider,
-			Success:  false,
-			ErrMsg:   fmt.Sprintf("record is not connectable (%s)", execConnectableHint),
-		})
-	}
-	return out
 }
 
 func filterConnectableRecords(recs []hosts.Record) []hosts.Record {
@@ -709,6 +593,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		AISystemPrompt:   aiPrompt,
 		RecordSession:    wantRec,
 		CmdTimeout:       resolveCmdTimeout(api.opts.Config, body.Timeout),
+		PluginPolicy:     engine.LifecycleShared,
 	}
 
 	if !body.Execute {

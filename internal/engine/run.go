@@ -216,25 +216,45 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		return nil
 	}
 
-	sc := &StepContext{
-		Ctx:        ctx,
-		Run:        run,
+	req := ExecutionRequest{
 		Targets:    targetCtxs,
 		Index:      i,
 		Step:       step,
 		Kind:       kind,
 		RetryCfg:   retryCfg,
 		AttemptMax: attemptMax,
-		ResultCh:   ch,
 		History:    history,
 	}
 
+	opts := ExecutionOptions{
+		Execute:           run.Params.Execute,
+		Recipe:            run.Params.Recipe,
+		RecipeDir:         run.Params.RecipeDir,
+		SSHUser:           run.Params.SSHUser,
+		CLIEnv:            run.Params.CLIEnv,
+		SecretResolver:    run.Params.SecretResolver,
+		PluginMgr:         run.Params.PluginMgr,
+		Obs:               run.Params.Obs,
+		Cache:             run.Cache,
+		RecipeKV:          run.RecipeKV,
+		ConfigPath:        run.Params.ConfigPath,
+		Enforcer:          run.Params.Enforcer,
+		Inventory:         run.Params.Inventory,
+		CmdTimeout:        run.Params.CmdTimeout,
+		Reg:               run.Params.Reg,
+		Pools:             run.Params.Pools,
+		Records:           run.Params.Records,
+		OutputStore:       run.OutputStore,
+		OutputCapture:     run.OutputCapture,
+		Facts:             run.Facts,
+		TriggeredHandlers: run.TriggeredHandlers,
+	}
+
 	proxyCh := make(chan HostExecResult)
-	sc.ResultCh = proxyCh
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- exec.ExecuteStream(sc)
+		errCh <- exec.ExecuteStream(ctx, req, opts, proxyCh)
 		close(proxyCh)
 	}()
 

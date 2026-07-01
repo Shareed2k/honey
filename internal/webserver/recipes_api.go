@@ -107,16 +107,18 @@ func NewRecipesAPI(
 		biometric = opts.WebAuthn
 	}
 	api.runner = engine.NewRecipeRunner(engine.RunnerOptions{
-		ConfigPath:   opts.ConfigPath,
-		Config:       opts.Config,
-		ExecRegistry: opts.ExecRegistry,
-		Metrics:      metrics,
-		Pools:        pgPools,
-		Cache:        sshCache,
-		RecordDir:    opts.RecordDir,
-		Enforcer:     opts.Enforcer,
-		Approvals:    opts.Approvals,
-		Biometric:    biometric,
+		ConfigPath:     opts.ConfigPath,
+		Config:         opts.Config,
+		ExecRegistry:   opts.ExecRegistry,
+		Metrics:        metrics,
+		Pools:          pgPools,
+		Cache:          sshCache,
+		RecordDir:      opts.RecordDir,
+		Enforcer:       opts.Enforcer,
+		Approvals:      opts.Approvals,
+		Biometric:      biometric,
+		SearchRegistry: opts.SearchRegistry,
+		PluginCache:    plugins,
 	})
 	return api
 }

@@ -129,17 +129,17 @@ func init() {
 type K8sExecutor struct{}
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *K8sExecutor) ExecuteDryRun(_ *StepContext) error {
+func (e *K8sExecutor) ExecuteDryRun(_ context.Context, _ ExecutionRequest, _ ExecutionOptions, _ io.Writer) error {
 	return nil
 }
 
 // ExecuteStream streams the step execution.
-func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *K8sExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	stepIdx, step, targets, ch, retryCfg, attemptMax := req.Index, req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	if _, ok := step.(*cuetry.K8sStep); !ok {
 		return fmt.Errorf("internal: k8s step missing k8s field")
 	}
-	maxConc := RecipeHostMaxConc(step, run.Params.Recipe.Defaults)
+	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
 	if maxConc <= 0 {
 		maxConc = 8
 	}
@@ -152,7 +152,7 @@ func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := runK8sActionOnHost(ctx, run, stepIdx, step, target, retryCfg, attemptMax)
+			res := runK8sActionOnHost(ctx, opts, stepIdx, step, target, retryCfg, attemptMax)
 			ch <- res
 		}()
 	}
@@ -162,7 +162,7 @@ func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
 
 func runK8sActionOnHost(
 	ctx context.Context,
-	run *CueRun,
+	opts ExecutionOptions,
 	stepIdx int,
 	step cuetry.Step,
 	tc TargetContext,
@@ -227,11 +227,11 @@ func runK8sActionOnHost(
 	RecordMaxAttempts(attemptMax, outcome.Attempts)
 	res = outcome.Result
 
-	if res.Success && strings.TrimSpace(k.Output) != "" && run.OutputCapture != nil {
-		run.OutputCapture.Set(strings.TrimSpace(k.Output), res.Output)
+	if res.Success && strings.TrimSpace(k.Output) != "" && opts.OutputCapture != nil {
+		opts.OutputCapture.Set(strings.TrimSpace(k.Output), res.Output)
 	}
 
-	RunCueStepHooks(ctx, run, stepIdx, cuetry.KindK8s, step, target, tc, &res, false)
+	RunCueStepHooks(ctx, opts, stepIdx, cuetry.KindK8s, step, target, tc, &res, false)
 	return res
 }
 

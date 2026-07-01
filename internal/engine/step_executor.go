@@ -6,9 +6,17 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/postgres"
 
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/policy"
 )
 
 // TargetContext binds a host record with its pre-resolved environment.
@@ -17,31 +25,55 @@ type TargetContext struct {
 	Env    map[string]string
 }
 
-// StepContext bundles the per-step arguments for executing or dry-running a
-// recipe step. Run is always set and is the single source of run-scoped inputs
-// (recipe, records, env, secret resolver, plugin manager, …) via Run.Params;
-// the remaining fields are specific to this step and invocation.
-type StepContext struct {
-	Ctx        context.Context
-	Run        *CueRun
-	Out        io.Writer
+// ExecutionRequest represents a self-contained execution payload.
+type ExecutionRequest struct {
 	Targets    []TargetContext
 	Index      int
 	Step       cuetry.Step
 	Kind       string
 	RetryCfg   cuetry.RecipeStepRetry
 	AttemptMax *atomic.Int32
-	ResultCh   chan<- HostExecResult
 	History    [][]HostExecResult
+}
+
+// ExecutionOptions provides engine-level context dependencies for specific
+// executors (like sub-recipes or SSH commands) without forcing the executor
+// to depend on the entire CueRun lifecycle state.
+type ExecutionOptions struct {
+	Execute           bool
+	JSON              bool
+	Recipe            cuetry.Recipe
+	RecipeDir         string
+	SSHUser           string
+	ActorID           string
+	CLIEnv            map[string]string
+	AISystemPrompt    string
+	SecretResolver    cuetry.SecretResolver
+	PluginMgr         *plugins.Manager
+	Obs               metrics.Observer
+	Cache             *ClientCache
+	RecipeKV          *RecipeKVCoordinator
+	ConfigPath        string
+	Enforcer          *policy.Enforcer
+	Inventory         config.Inventory
+	CmdTimeout        time.Duration
+	Reg               hostexec.Registry
+	Pools             *postgres.PoolManager
+	Records           []hosts.Record
+	OutputStore       *cuetry.StepOutputStore
+	OutputCapture     *cuetry.RecipeOutputCapture
+	Facts             map[string]map[string]any
+	TriggeredHandlers map[string]bool
+	TunnelCoord       *RecipeTunnelCoordinator
 }
 
 // StepExecutor defines a deep module responsible for a specific recipe step kind.
 type StepExecutor interface {
-	// ExecuteDryRun performs a dry run of the step, writing its plan to sc.Out.
-	ExecuteDryRun(sc *StepContext) error
+	// ExecuteDryRun performs a dry run of the step, writing its plan to out.
+	ExecuteDryRun(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error
 
-	// ExecuteStream performs actual execution of the step, sending results to sc.ResultCh.
-	ExecuteStream(sc *StepContext) error
+	// ExecuteStream performs actual execution of the step, sending results to resCh.
+	ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error
 }
 
 var (

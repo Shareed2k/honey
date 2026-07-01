@@ -10,19 +10,16 @@ import type { ExecOnHostsBody, ExecSnippet, HostExecResultRow } from '../api/typ
 import type { FormDataUploadProgressEvent, UploadStreamServerEvent } from '../api/types/files';
 import type { EditorLanguage } from '../CodeEditor';
 import { HostPicker, recordKey } from '../HostPicker';
+import { useHostSelection } from '../contexts/HostSelectionContext';
+import { useAppContext } from '../contexts/AppContext';
+import { useTunnel } from '../contexts/TunnelContext';
+import { useReplay } from '../contexts/ReplayContext';
+import { useTerminal } from '../contexts/TerminalContext';
+import type { BackendRow } from '../contexts/AppContext';
 
 const CodeEditor = lazy(() => import('../CodeEditor'));
 import type { HostRecord } from '../HostPicker';
 import type { TerminalSessionConfig, PveConsoleMode, TrueNASConsoleMode } from '../TerminalModal';
-
-export type BackendRow = { kind: string; name: string; hint: string };
-
-type MetaInfo = {
-  version: string;
-  config_path: string;
-  session_recording_available?: boolean;
-  terminal_assist_available?: boolean;
-};
 
 type UploadXferState = {
   honeyLoaded: number;
@@ -32,28 +29,6 @@ type UploadXferState = {
   sftpTotal: number;
   sftpActive: boolean;
 };
-
-interface Props {
-  records: HostRecord[];
-  selectedKeys: Record<string, boolean>;
-  onRecordsChange: (records: HostRecord[]) => void;
-  onSelectedKeysChange: (keys: Record<string, boolean>) => void;
-  selectedProviders: string[];
-  onSelectedProvidersChange: (v: string[]) => void;
-  selectedBackends: string[];
-  onSelectedBackendsChange: (v: string[]) => void;
-  backends: BackendRow[];
-  providerIds: string[];
-  sshUser: string;
-  onSshUserChange: (v: string) => void;
-  meta: MetaInfo | null;
-  onOpenTunnel: (rec: HostRecord) => void;
-  onOpenReplay: (rec: HostRecord) => void;
-  onOpenReplayAll: () => void;
-  onOpenTerminal: (cfg: TerminalSessionConfig) => void;
-  /** Externally tracked terminal configs, needed to show open-state on buttons */
-  terminals?: TerminalSessionConfig[];
-}
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -188,26 +163,17 @@ function UploadProgressBar({ xfer }: { xfer: UploadXferState }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export function SearchTab({
-  records,
-  selectedKeys,
-  onRecordsChange,
-  onSelectedKeysChange,
-  selectedProviders,
-  onSelectedProvidersChange,
-  selectedBackends,
-  onSelectedBackendsChange,
-  backends,
-  providerIds,
-  sshUser,
-  onSshUserChange,
-  meta,
-  onOpenTunnel,
-  onOpenReplay,
-  onOpenReplayAll,
-  onOpenTerminal,
-  terminals = [],
-}: Props) {
+export function SearchTab() {
+  const {
+    records, setRecords, selectedKeys, setSelectedKeys,
+    selectedProviders, setSelectedProviders, selectedBackends, setSelectedBackends,
+    providerIds, sshUser, setSshUser
+  } = useHostSelection();
+  const { meta, backends } = useAppContext();
+  const { handleOpenTunnel } = useTunnel();
+  const { openReplayModal, openReplayAllRecordings } = useReplay();
+  const { handleOpenTerminal, terminals = [] } = useTerminal();
+
   const [name, setName] = useState(() => {
     return new URLSearchParams(window.location.search).get('name') || '';
   });
@@ -321,12 +287,12 @@ export function SearchTab({
       const j = await r.json();
       if (!r.ok) {
         setSearchErr((j as { error?: string }).error || r.statusText);
-        onRecordsChange([]);
+        setRecords([]);
         return;
       }
       setExecResults(null);
       setExecErr(null);
-      onRecordsChange((j as { records: HostRecord[] }).records || []);
+      setRecords((j as { records: HostRecord[] }).records || []);
     } finally {
       setSearching(false);
     }
@@ -342,7 +308,7 @@ export function SearchTab({
 
   const toggleRowSelected = (rec: HostRecord) => {
     const k = recordKey(rec);
-    onSelectedKeysChange(
+    setSelectedKeys(
       (() => {
         const next = { ...selectedKeys };
         if (next[k]) {
@@ -360,10 +326,10 @@ export function SearchTab({
     for (const r of visibleRecords) {
       next[recordKey(r)] = true;
     }
-    onSelectedKeysChange(next);
+    setSelectedKeys(next);
   };
 
-  const clearHostSelection = () => onSelectedKeysChange({});
+  const clearHostSelection = () => setSelectedKeys({});
 
   const clearExecOutput = () => {
     setExecErr(null);
@@ -645,7 +611,7 @@ export function SearchTab({
     const id = Math.random().toString(36).slice(2);
     sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
     const cfg: TerminalSessionConfig = { id, record: rec, pve, truenasConsole };
-    onOpenTerminal(cfg);
+    handleOpenTerminal(cfg);
   };
 
   // ── exec table columns ────────────────────────────────────────────────────
@@ -685,7 +651,7 @@ export function SearchTab({
           value={localProviders}
           onChange={setLocalProviders}
           onDropdownVisibleChange={(open) => {
-            if (!open) onSelectedProvidersChange(localProviders);
+            if (!open) setSelectedProviders(localProviders);
           }}
           options={providerOptions}
           style={{ width: 180 }}
@@ -700,7 +666,7 @@ export function SearchTab({
           value={localBackends}
           onChange={setLocalBackends}
           onDropdownVisibleChange={(open) => {
-            if (!open) onSelectedBackendsChange(localBackends);
+            if (!open) setSelectedBackends(localBackends);
           }}
           options={backendOptions}
           style={{ width: 200 }}
@@ -710,7 +676,7 @@ export function SearchTab({
           virtual={false}
         />
         {meta?.session_recording_available && (
-          <Button onClick={() => void onOpenReplayAll()}>Browse recordings</Button>
+          <Button onClick={() => void openReplayAllRecordings()}>Browse recordings</Button>
         )}
       </Space>
 
@@ -726,7 +692,7 @@ export function SearchTab({
         <Input
           placeholder="SSH user"
           value={sshUser}
-          onChange={(e) => onSshUserChange(e.target.value)}
+          onChange={(e) => setSshUser(e.target.value)}
           style={{ width: 140 }}
         />
         <Checkbox
@@ -976,12 +942,12 @@ export function SearchTab({
                     ? 'Port-forward requires SSH IP or a TrueNAS API shell target'
                     : undefined
                 }
-                onClick={() => onOpenTunnel(rec)}
+                onClick={() => handleOpenTunnel(rec)}
               >
                 Tunnel
               </Button>
               {meta?.session_recording_available ? (
-                <Button size="small" onClick={() => void onOpenReplay(rec)}>
+                <Button size="small" onClick={() => void openReplayModal(rec)}>
                   Play
                 </Button>
               ) : null}

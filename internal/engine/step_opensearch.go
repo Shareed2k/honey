@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -23,13 +24,13 @@ func init() {
 type OpensearchExecutor struct{}
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *OpensearchExecutor) ExecuteDryRun(_ *StepContext) error {
+func (e *OpensearchExecutor) ExecuteDryRun(_ context.Context, _ ExecutionRequest, _ ExecutionOptions, _ io.Writer) error {
 	return nil
 }
 
 // ExecuteStream streams the step execution.
-func (e *OpensearchExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *OpensearchExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	step, targets, ch, retryCfg, attemptMax := req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	os, _ := step.(*cuetry.OpensearchStep)
 	if os == nil || os.Opensearch == nil {
 		return fmt.Errorf("internal: opensearch step missing opensearch field")
@@ -140,8 +141,8 @@ func (e *OpensearchExecutor) ExecuteStream(sc *StepContext) error {
 
 	for _, target := range targets {
 		res := execOne(target)
-		if res.Success && es.Output != "" && run.OutputCapture != nil {
-			run.OutputCapture.Set(es.Output, res.Output)
+		if res.Success && es.Output != "" && opts.OutputCapture != nil {
+			opts.OutputCapture.Set(es.Output, res.Output)
 		}
 		ch <- res
 	}

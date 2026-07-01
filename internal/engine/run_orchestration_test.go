@@ -48,8 +48,7 @@ func TestCueRecipeSSHPostHostResult_CheckCmd(t *testing.T) {
 			CheckCmd: "test -f /etc/ready",
 		},
 	}
-	run := &CueRun{}
-	post := CueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
+	post := CueRecipeSSHPostHostResult(context.TODO(), ExecutionOptions{}, 0, cuetry.KindCommand, step, false)
 
 	resChecked := HostExecResult{
 		Output:  "HONEY_CHECK_CMD_OK",
@@ -392,7 +391,7 @@ func TestCueRecipeSSHPostHostResult_changedWhenFailedWhen(t *testing.T) {
 			NotifyHandler: []string{"restart"},
 		},
 	}
-	post := CueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
+	post := CueRecipeSSHPostHostResult(context.TODO(), ExecutionOptions{}, 0, cuetry.KindCommand, step, false)
 	res := &HostExecResult{Success: true, Output: "bad", ExitCode: 0}
 
 	post(context.TODO(), TargetContext{Record: hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}}, res)

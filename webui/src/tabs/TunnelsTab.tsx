@@ -3,12 +3,10 @@ import { Alert, Button, Modal, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { fetchTunnels, fetchTunnelLogs, stopTunnel } from '../api/tunnels';
 import type { TunnelInfo } from '../api/types/tunnels';
+import { useNavigation } from '../contexts/NavigationContext';
 
-interface Props {
-  onNavigateToSearch: () => void;
-}
-
-export function TunnelsTab({ onNavigateToSearch }: Props) {
+export function TunnelsTab() {
+  const { setTab } = useNavigation();
   const [tunnelsList, setTunnelsList] = useState<TunnelInfo[]>([]);
   const [tunnelsListErr, setTunnelsListErr] = useState<string | null>(null);
   const [tunnelLogOpen, setTunnelLogOpen] = useState<string | null>(null);
@@ -62,7 +60,7 @@ export function TunnelsTab({ onNavigateToSearch }: Props) {
       {tunnelsList.length === 0 ? (
         <Typography.Text type="secondary">
           No active tunnels. You can start one from the{' '}
-          <Button type="link" style={{ padding: 0 }} onClick={onNavigateToSearch}>Search tab</Button>.
+          <Button type="link" style={{ padding: 0 }} onClick={() => setTab('search')}>Search tab</Button>.
         </Typography.Text>
       ) : (
         <Table dataSource={tunnelsList} columns={columns} rowKey="id" size="small" pagination={false} />

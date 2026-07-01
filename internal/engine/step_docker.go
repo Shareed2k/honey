@@ -31,8 +31,8 @@ func init() {
 type DockerExecutor struct{}
 
 // ExecuteStream streams the step execution.
-func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *DockerExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	step, targets, ch, retryCfg, attemptMax := req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	ds, _ := step.(*cuetry.DockerStep)
 	if ds == nil || ds.Docker == nil {
 		return fmt.Errorf("internal: docker step missing docker field")
@@ -62,11 +62,11 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 					mCli, err = client.New(client.FromEnv)
 				}
 			} else {
-				sshUser := run.Params.SSHUser
+				sshUser := opts.SSHUser
 				if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
 					sshUser = u
 				}
-				honeyClient, dialErr := run.Cache.GetOrDial(sshUser, r)
+				honeyClient, dialErr := opts.Cache.GetOrDial(sshUser, r)
 				if dialErr != nil {
 					res.Success = false
 					res.ErrMsg = fmt.Sprintf("ssh dial error: %s", dialErr.Error())
@@ -92,7 +92,7 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 				bc := dockerprovider.BackendConfig{
 					SSHUser: sshUser,
 					Socket:  socketPath,
-					RunAs:   cuetry.EffectiveRunAs(step.Base(), run.Params.Recipe.Defaults),
+					RunAs:   cuetry.EffectiveRunAs(step.Base(), opts.Recipe.Defaults),
 				}
 				opts := dockerprovider.APIClientOptions{
 					SSHUser:     sshUser,
@@ -110,7 +110,7 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 			}
 			defer mCli.Close()
 
-			outputStr, execErr := executeDockerSDKAction(ctx, mCli, ds.Docker, run.Params.RecipeDir)
+			outputStr, execErr := executeDockerSDKAction(ctx, mCli, ds.Docker, opts.RecipeDir)
 			if execErr != nil {
 				res.Success = false
 				res.ErrMsg = execErr.Error()
@@ -348,8 +348,8 @@ func dockerStdCopy(dstout, dsterr io.Writer, src io.Reader) error {
 }
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *DockerExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Index, sc.Step, sc.Targets
+func (e *DockerExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, recipe, i, step, targets := out, opts.Recipe, req.Index, req.Step, req.Targets
 	runAs := cuetry.EffectiveRunAs(step.Base(), recipe.Defaults)
 	ds, _ := step.(*cuetry.DockerStep)
 	action := ""

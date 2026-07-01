@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 
@@ -97,8 +98,8 @@ func init() {
 type TemplateExecutor struct{}
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *TemplateExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, execute, i, step := sc.Out, sc.Run.Params.Execute, sc.Index, sc.Step
+func (e *TemplateExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, execute, i, step := out, opts.Execute, req.Index, req.Step
 	if execute {
 		return nil
 	}
@@ -132,15 +133,15 @@ func (e *TemplateExecutor) ExecuteDryRun(sc *StepContext) error {
 }
 
 // ExecuteStream streams the step execution.
-func (e *TemplateExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, step, ch := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.ResultCh
-	targets := sc.Targets
+func (e *TemplateExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	stepIdx, step, ch := req.Index, req.Step, resCh
+	targets := req.Targets
 
 	if len(targets) == 0 {
 		return nil
 	}
 
-	maxConc := RecipeHostMaxConc(step, run.Params.Recipe.Defaults)
+	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
 	if maxConc <= 0 {
 		maxConc = 8
 	}
@@ -159,15 +160,15 @@ func (e *TemplateExecutor) ExecuteStream(sc *StepContext) error {
 
 			res := runCueStepTemplateOnHost(
 				ctx,
-				run.Params.Recipe,
+				opts.Recipe,
 				stepIdx,
 				step,
 				target,
-				run.OutputStore,
-				run.OutputCapture,
-				run.RecipeKV,
-				run.Params.SecretResolver,
-				run.Params.Execute,
+				opts.OutputStore,
+				opts.OutputCapture,
+				opts.RecipeKV,
+				opts.SecretResolver,
+				opts.Execute,
 			)
 
 			mu.Lock()
