@@ -23,7 +23,7 @@ tasks:
   golint:
     desc: Run golangci-lint
     cmds:
-      - go tool golangci-lint run
+      - go tool golangci-lint run --timeout=15m
       
   govulncheck:
     desc: Run govulncheck

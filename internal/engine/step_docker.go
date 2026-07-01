@@ -182,7 +182,9 @@ func executeDockerBuild(ctx context.Context, cli *client.Client, b *cuetry.Docke
 }
 
 func executeDockerPush(ctx context.Context, cli *client.Client, p *cuetry.DockerPush) (string, error) {
-	resp, err := cli.ImagePush(ctx, p.Image, client.ImagePushOptions{})
+	resp, err := cli.ImagePush(ctx, p.Image, client.ImagePushOptions{
+		RegistryAuth: "e30=", // base64 of "{}"
+	})
 	if err != nil {
 		return "", err
 	}
