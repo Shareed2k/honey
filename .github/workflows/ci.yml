@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Build web UI (embed static)
         run: go tool task webui
@@ -61,7 +61,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Run lint + security checks
         run: go tool task lint
@@ -86,7 +86,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Build web UI (embed static)
         run: go tool task webui
