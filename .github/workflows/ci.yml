@@ -18,16 +18,14 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
+      - uses: actions/setup-node@v4
 
       - name: Build web UI (embed static)
         run: go tool task webui
@@ -42,7 +40,7 @@ jobs:
         run: go test -tags integration -coverprofile=coverage-int.txt -covermode=atomic -timeout 10m -v ./tests/integration/...
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: ./coverage-unit.txt,./coverage-int.txt
           fail_ci_if_error: false
@@ -52,16 +50,14 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
+      - uses: actions/setup-node@v4
 
       - name: Run lint + security checks
         run: go tool task lint
@@ -82,11 +78,9 @@ jobs:
           - {goos: darwin,  goarch: arm64, cc: oa64-clang,              ext: ""}
           - {goos: windows, goarch: amd64, cc: x86_64-w64-mingw32-gcc, cxx: x86_64-w64-mingw32-g++, ext: ".exe"}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
+      - uses: actions/setup-node@v4
 
       - name: Build web UI (embed static)
         run: go tool task webui
@@ -112,7 +106,7 @@ jobs:
           sha256sum "${OUT}" > "${OUT}.sha256"
           cat "${OUT}.sha256"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: honey-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |

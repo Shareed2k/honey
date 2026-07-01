@@ -20,9 +20,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
@@ -43,7 +43,7 @@ jobs:
           ls -la dist/
 
       - name: UPX (Linux)
-        uses: crazy-max/ghaction-upx@v4
+        uses: crazy-max/ghaction-upx@v3
         with:
           version: latest
           files: |
@@ -51,7 +51,7 @@ jobs:
           args: --best --lzma
 
       - name: UPX (Darwin, packed on Linux)
-        uses: crazy-max/ghaction-upx@v4
+        uses: crazy-max/ghaction-upx@v3
         with:
           version: latest
           files: |
@@ -61,7 +61,7 @@ jobs:
       - name: List dist after UPX
         run: ls -la dist/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: honey-transfer-agent-binaries
           path: dist/*
@@ -74,13 +74,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
           name: honey-transfer-agent-binaries
           path: dist
 
       - name: Publish release assets
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           files: dist/*
         env:
