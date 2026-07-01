@@ -10,6 +10,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/aichat"
 	"github.com/shareed2k/honey/internal/commandrisk"
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
 )
@@ -60,7 +61,7 @@ func runExecCheck(ctx context.Context, command string, jobs []hosts.Record) erro
 // checkEnforcer builds an OPA enforcer from HONEY_POLICY_DIR (+ config inventory),
 // or returns nil when no policy dir is configured.
 func checkEnforcer(ctx context.Context) *policy.Enforcer {
-	dir := strings.TrimSpace(os.Getenv(policyDirEnv))
+	dir := config.ResolvePolicyDir(resolvedCfg)
 	if dir == "" {
 		return nil
 	}

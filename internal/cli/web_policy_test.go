@@ -38,7 +38,7 @@ func TestInventoryData(t *testing.T) {
 }
 
 func TestResolveWebAuthConfig_AllDisabledByDefault(t *testing.T) {
-	t.Setenv(policyDirEnv, "")
+	t.Setenv("HONEY_POLICY_DIR", "")
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "")
 
@@ -60,7 +60,7 @@ default allow := false
 	if err := os.WriteFile(filepath.Join(dir, "p.rego"), []byte(rego), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(policyDirEnv, dir)
+	t.Setenv("HONEY_POLICY_DIR", dir)
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "")
 
@@ -81,7 +81,7 @@ default allow := false
 }
 
 func TestResolveWebAuthConfig_BadPolicyDirErrors(t *testing.T) {
-	t.Setenv(policyDirEnv, filepath.Join(t.TempDir(), "does-not-exist"))
+	t.Setenv("HONEY_POLICY_DIR", filepath.Join(t.TempDir(), "does-not-exist"))
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "")
 
@@ -92,7 +92,7 @@ func TestResolveWebAuthConfig_BadPolicyDirErrors(t *testing.T) {
 
 func TestResolveWebAuthConfig_JWTKey(t *testing.T) {
 	pub, _, _ := ed25519.GenerateKey(nil)
-	t.Setenv(policyDirEnv, "")
+	t.Setenv("HONEY_POLICY_DIR", "")
 	t.Setenv(jwtPublicKeyEnv, base64.StdEncoding.EncodeToString(pub))
 	t.Setenv(trustedProxiesEnv, "")
 
@@ -106,7 +106,7 @@ func TestResolveWebAuthConfig_JWTKey(t *testing.T) {
 }
 
 func TestResolveWebAuthConfig_BadJWTKeyErrors(t *testing.T) {
-	t.Setenv(policyDirEnv, "")
+	t.Setenv("HONEY_POLICY_DIR", "")
 	t.Setenv(jwtPublicKeyEnv, "not-base64!!!")
 	t.Setenv(trustedProxiesEnv, "")
 
@@ -122,7 +122,7 @@ func TestResolveWebAuthConfig_BadJWTKeyErrors(t *testing.T) {
 }
 
 func TestResolveWebAuthConfig_TrustedProxies(t *testing.T) {
-	t.Setenv(policyDirEnv, "")
+	t.Setenv("HONEY_POLICY_DIR", "")
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "127.0.0.0/8, 10.0.0.5")
 
@@ -145,7 +145,7 @@ func TestResolveWebAuthConfig_TrustedProxies(t *testing.T) {
 }
 
 func TestResolveWebAuthConfig_BadProxyErrors(t *testing.T) {
-	t.Setenv(policyDirEnv, "")
+	t.Setenv("HONEY_POLICY_DIR", "")
 	t.Setenv(jwtPublicKeyEnv, "")
 	t.Setenv(trustedProxiesEnv, "not-an-ip")
 

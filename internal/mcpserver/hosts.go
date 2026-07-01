@@ -12,7 +12,7 @@ import (
 // findHostFn is a package-level var so tests can inject a fake search without
 // touching real backends.
 var findHostFn = func(ctx context.Context, in *hostapi.SearchHostsInput) (hostapi.SearchHostsOutput, error) {
-	return hostapi.SearchHosts(ctx, in, nil, nil)
+	return hostapi.SearchHosts(ctx, in, nil, globalSearchReg)
 }
 
 type getHostDetailsInput struct {

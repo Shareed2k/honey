@@ -107,7 +107,7 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 		recordDir = serverCfg.Defaults.RecordDir
 	}
 
-	rawResults, err := execSSH("", []engine.TargetContext{{Record: record}}, func(_ hosts.Record) string { return cmd }, 8, nil)
+	rawResults, err := execSSH("", []engine.TargetContext{{Record: record}}, func(_ hosts.Record) string { return cmd }, 8, globalExecReg)
 	if err != nil {
 		return nil, execOnHostOutput{}, fmt.Errorf("ssh exec: %w", err)
 	}

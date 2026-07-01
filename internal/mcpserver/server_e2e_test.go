@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/policy"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 // newE2ESession wires a real MCP client to the honey server over an in-memory
@@ -17,7 +18,7 @@ import (
 func newE2ESession(t *testing.T, enf *policy.Enforcer) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	srv := NewServer(&config.File{}, enf)
+	srv := NewServer(&config.File{}, enf, searchrun.NewRegistry(nil), nil)
 	serverT, clientT := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(ctx, serverT, nil); err != nil {
 		t.Fatalf("server connect: %v", err)

@@ -2,9 +2,11 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -65,6 +67,95 @@ func TestHandleGetHostDetails_emptyName_error(t *testing.T) {
 	_, _, err := handleGetHostDetails(context.Background(), nil, in)
 	if err == nil {
 		t.Fatal("expected validation error for empty name")
+	}
+}
+
+func TestHandleSearchHosts_success(t *testing.T) {
+	rec := hosts.Record{
+		Name:      "redis-1",
+		Provider:  "gcp",
+		PrimaryIP: "10.0.0.2",
+	}
+	withFakeSearch(t, func(_ context.Context, in *hostapi.SearchHostsInput) (hostapi.SearchHostsOutput, error) {
+		if in.NameRegex != "redis" {
+			t.Errorf("expected NameRegex=redis, got %q", in.NameRegex)
+		}
+		if in.Providers != "gcp" {
+			t.Errorf("expected Providers=gcp, got %q", in.Providers)
+		}
+		return hostapi.SearchHostsOutput{Records: []hosts.Record{rec}, Count: 1}, nil
+	})
+
+	in := searchHostsInput{NameRegex: "redis", Providers: "gcp"}
+	_, out, err := handleSearchHosts(context.Background(), nil, in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Count != 1 {
+		t.Fatalf("Count = %d, want 1", out.Count)
+	}
+	if out.Records[0].Name != "redis-1" {
+		t.Errorf("Records[0].Name = %q, want redis-1", out.Records[0].Name)
+	}
+}
+
+func TestHandleSearchHosts_error(t *testing.T) {
+	withFakeSearch(t, func(_ context.Context, _ *hostapi.SearchHostsInput) (hostapi.SearchHostsOutput, error) {
+		return hostapi.SearchHostsOutput{}, fmt.Errorf("search failed")
+	})
+
+	in := searchHostsInput{NameRegex: "redis"}
+	_, _, err := handleSearchHosts(context.Background(), nil, in)
+	if err == nil {
+		t.Fatal("expected error from search")
+	}
+	if err.Error() != "search failed" {
+		t.Errorf("expected 'search failed', got %v", err)
+	}
+}
+
+func withFakeListBackends(t *testing.T, fn func(configPath string) (hostapi.ListBackendsOutput, error)) {
+	t.Helper()
+	prev := listBackendsFn
+	listBackendsFn = fn
+	t.Cleanup(func() { listBackendsFn = prev })
+}
+
+func TestHandleListBackends_success(t *testing.T) {
+	withFakeListBackends(t, func(configPath string) (hostapi.ListBackendsOutput, error) {
+		return hostapi.ListBackendsOutput{
+			ConfigPath: configPath,
+			Backends: []config.BackendRow{
+				{Kind: "gcp", Name: "gcp-prod", Hint: "gcp project"},
+			},
+		}, nil
+	})
+
+	in := listBackendsInput{ConfigPath: "testdata/dummy.yaml"}
+	_, out, err := handleListBackends(context.Background(), nil, in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.Backends) != 1 {
+		t.Fatalf("len(Backends) = %d, want 1", len(out.Backends))
+	}
+	if out.Backends[0].Name != "gcp-prod" {
+		t.Errorf("Backends[0].Name = %q, want gcp-prod", out.Backends[0].Name)
+	}
+}
+
+func TestHandleListBackends_error(t *testing.T) {
+	withFakeListBackends(t, func(_ string) (hostapi.ListBackendsOutput, error) {
+		return hostapi.ListBackendsOutput{}, fmt.Errorf("list backends failed")
+	})
+
+	in := listBackendsInput{}
+	_, _, err := handleListBackends(context.Background(), nil, in)
+	if err == nil {
+		t.Fatal("expected error from list_backends")
+	}
+	if err.Error() != "list backends failed" {
+		t.Errorf("expected 'list backends failed', got %v", err)
 	}
 }
 

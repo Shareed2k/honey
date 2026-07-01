@@ -2,7 +2,6 @@ package mcpserver
 
 import (
 	"context"
-	"os"
 
 	"github.com/go-playground/mold/v4/modifiers"
 	"github.com/go-playground/validator/v10"
@@ -12,7 +11,9 @@ import (
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/policy"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 const serverVersion = "0.1.1"
@@ -32,22 +33,25 @@ var (
 	// auditSink receives one event per exec_on_host gate decision.
 	// Defaults to a no-op sink when audit is disabled in config.
 	auditSink audit.Sink = audit.NewNoopSink()
+	// globalSearchReg is the global search registry injected into the server.
+	globalSearchReg *searchrun.Registry
+	// globalExecReg is the global execution registry injected into the server.
+	globalExecReg hostexec.Registry
 )
 
 // mcpActor is the actor id used in policy input for MCP-driven exec. Stdio MCP
 // has no per-call identity, so all MCP exec is attributed to "mcp".
 const mcpActor = "mcp"
 
-// policyDirEnv points at a directory of .rego files; empty uses no enforcer.
-const policyDirEnv = "HONEY_POLICY_DIR"
-
 // NewServer builds the honey MCP server with its tools registered and the given
 // config and (optional) policy enforcer wired in. Transport is the caller's
 // choice — Run uses stdio; tests use an in-memory transport. A nil enforcer
 // leaves OPA opt-in; built-in critical command-risk denies always apply.
-func NewServer(cfg *config.File, enf *policy.Enforcer) *mcp.Server {
+func NewServer(cfg *config.File, enf *policy.Enforcer, searchReg *searchrun.Registry, execReg hostexec.Registry) *mcp.Server {
 	serverCfg = cfg
 	policyEnforcer = enf
+	globalSearchReg = searchReg
+	globalExecReg = execReg
 
 	// Open audit sink from config if enabled; fall back to no-op.
 	auditSink = audit.NewNoopSink()
@@ -91,14 +95,14 @@ func NewServer(cfg *config.File, enf *policy.Enforcer) *mcp.Server {
 
 // Run starts the MCP server on stdio until the client disconnects.
 // cfg and cfgPath are the honey config already loaded by the CLI root PersistentPreRunE.
-func Run(ctx context.Context, cfg *config.File, cfgPath string) error {
+func Run(ctx context.Context, cfg *config.File, cfgPath string, searchReg *searchrun.Registry, execReg hostexec.Registry) error {
 	_ = cfgPath
 
 	// Build the OPA enforcer when a policy dir is configured. With none set,
 	// the enforcer stays nil (opt-in) and only built-in critical command-risk
 	// denies apply to exec_on_host.
 	var enf *policy.Enforcer
-	if dir := os.Getenv(policyDirEnv); dir != "" {
+	if dir := config.ResolvePolicyDir(cfg); dir != "" {
 		e, err := policy.New(ctx, dir, nil)
 		if err != nil {
 			return err
@@ -106,7 +110,7 @@ func Run(ctx context.Context, cfg *config.File, cfgPath string) error {
 		enf = e
 	}
 
-	return NewServer(cfg, enf).Run(ctx, &mcp.StdioTransport{})
+	return NewServer(cfg, enf, searchReg, execReg).Run(ctx, &mcp.StdioTransport{})
 }
 
 func boolPtr(b bool) *bool { return &b }
@@ -124,7 +128,7 @@ func handleSearchHosts(ctx context.Context, _ *mcp.CallToolRequest, in searchHos
 	if err := validate.Struct(in); err != nil {
 		return nil, searchHostsOutput{}, err
 	}
-	out, err := hostapi.SearchHosts(ctx, &in, nil, nil)
+	out, err := findHostFn(ctx, &in)
 	if err != nil {
 		return nil, searchHostsOutput{}, err
 	}
@@ -148,11 +152,15 @@ type listBackendsRow struct {
 	Hint string `json:"hint"`
 }
 
+var listBackendsFn = func(configPath string) (hostapi.ListBackendsOutput, error) {
+	return hostapi.ListBackends(configPath, globalSearchReg)
+}
+
 func handleListBackends(ctx context.Context, _ *mcp.CallToolRequest, in listBackendsInput) (*mcp.CallToolResult, listBackendsOutput, error) {
 	if err := conform.Struct(ctx, &in); err != nil {
 		return nil, listBackendsOutput{}, err
 	}
-	lb, err := hostapi.ListBackends(in.ConfigPath, nil)
+	lb, err := listBackendsFn(in.ConfigPath)
 	if err != nil {
 		return nil, listBackendsOutput{}, err
 	}

@@ -157,6 +157,7 @@ type Defaults struct {
 	Output          string         `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning" mod:"trim"` // e.g. "table", "json", "tui" (default)
 	Name            string         `yaml:"name" json:"name" honey:"label=Name filter" mod:"trim"`
 	NameRegex       string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex" mod:"trim"`
+	PolicyDir       string         `yaml:"policy_dir" json:"policy_dir" honey:"label=Policy directory" mod:"trim"`
 	AISystemPrompt  string         `yaml:"ai_system_prompt" json:"ai_system_prompt" honey:"label=Default system prompt for CUE recipe ai step" mod:"trim"`
 	DockerDiscover  DockerDiscover `yaml:"docker_discover,omitempty" json:"docker_discover,omitempty" honey:"label=Docker Auto-Discover Defaults"`
 	Logs            Logs           `yaml:"logs,omitempty" json:"logs,omitempty" honey:"label=Logs command defaults"`
@@ -527,6 +528,20 @@ func ResolveRecordDir(cfg *File, configPath string, recordDirFlag string, record
 		}
 	}
 	return strings.TrimSpace(DefaultRecordDir(configPath))
+}
+
+// ResolvePolicyDir returns the policy directory for OPA evaluation.
+// Precedence: HONEY_POLICY_DIR environment variable > defaults.policy_dir from config > empty.
+func ResolvePolicyDir(cfg *File) string {
+	if env := strings.TrimSpace(os.Getenv("HONEY_POLICY_DIR")); env != "" {
+		return env
+	}
+	if cfg != nil {
+		if s := strings.TrimSpace(cfg.Defaults.PolicyDir); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // TransferConfig controls the agent-transfer code path. Zero values mean "use

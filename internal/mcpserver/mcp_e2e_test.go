@@ -8,8 +8,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/shareed2k/honey/internal/commandrisk"
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/searchrun"
 )
 
 // newMCPSession creates a honey MCP server + in-memory client session.
@@ -17,7 +20,7 @@ import (
 func newMCPSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := NewServer(nil, nil)
+	server := NewServer(nil, nil, searchrun.NewRegistry(nil), nil)
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, st, nil); err != nil {
 		t.Fatalf("server.Connect: %v", err)
@@ -174,6 +177,78 @@ func TestMCPE2E_GetHostDetails_capabilities(t *testing.T) {
 	}
 }
 
+func TestMCPE2E_SearchHosts(t *testing.T) {
+	rec := hosts.Record{
+		Name:      "redis-prod-1",
+		Provider:  "gcp",
+		PrimaryIP: "10.0.0.10",
+	}
+	withFakeSearch(t, func(_ context.Context, in *hostapi.SearchHostsInput) (hostapi.SearchHostsOutput, error) {
+		if in.NameRegex != "redis" {
+			t.Errorf("expected NameRegex=redis, got %q", in.NameRegex)
+		}
+		if in.Providers != "gcp" {
+			t.Errorf("expected Providers=gcp, got %q", in.Providers)
+		}
+		return hostapi.SearchHostsOutput{Records: []hosts.Record{rec}, Count: 1}, nil
+	})
+
+	session := newMCPSession(t)
+
+	isErr, text := callTool(t, session, "search_hosts", map[string]any{
+		"name_regex": "redis",
+		"providers":  "gcp",
+	})
+	if isErr {
+		t.Fatal("expected success, got IsError=true")
+	}
+
+	var out searchHostsOutput
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Count != 1 {
+		t.Fatalf("Count = %d, want 1", out.Count)
+	}
+	if len(out.Records) != 1 {
+		t.Fatalf("len(Records) = %d, want 1", len(out.Records))
+	}
+	if out.Records[0].Name != "redis-prod-1" {
+		t.Errorf("Records[0].Name = %q, want redis-prod-1", out.Records[0].Name)
+	}
+}
+
+func TestMCPE2E_ListBackends(t *testing.T) {
+	withFakeListBackends(t, func(configPath string) (hostapi.ListBackendsOutput, error) {
+		return hostapi.ListBackendsOutput{
+			ConfigPath: configPath,
+			Backends: []config.BackendRow{
+				{Kind: "gcp", Name: "gcp-prod", Hint: "gcp project"},
+			},
+		}, nil
+	})
+
+	session := newMCPSession(t)
+
+	isErr, text := callTool(t, session, "list_backends", map[string]any{
+		"config_path": "",
+	})
+	if isErr {
+		t.Fatal("expected success, got IsError=true")
+	}
+
+	var out listBackendsOutput
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(out.Backends) != 1 {
+		t.Fatalf("len(Backends) = %d, want 1", len(out.Backends))
+	}
+	if out.Backends[0].Name != "gcp-prod" {
+		t.Errorf("Backends[0].Name = %q, want gcp-prod", out.Backends[0].Name)
+	}
+}
+
 // TestMCPE2E_GetHostDetails_notFound tests that missing host returns IsError=true.
 func TestMCPE2E_GetHostDetails_notFound(t *testing.T) {
 	withFakeSearch(t, func(_ context.Context, _ *hostapi.SearchHostsInput) (hostapi.SearchHostsOutput, error) {
@@ -185,5 +260,79 @@ func TestMCPE2E_GetHostDetails_notFound(t *testing.T) {
 	isErr, _ := callTool(t, session, "get_host_details", map[string]any{"name": "ghost"})
 	if !isErr {
 		t.Error("expected IsError=true for missing host, got success")
+	}
+}
+
+func newMCPSessionWithExecReg(t *testing.T, execReg hostexec.Registry) *mcp.ClientSession {
+	t.Helper()
+	ctx := context.Background()
+	server := NewServer(nil, nil, searchrun.NewRegistry(nil), execReg)
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(ctx, st, nil); err != nil {
+		t.Fatalf("server.Connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+type mockExecRegistry struct {
+	hostexec.Registry
+	output string
+}
+
+func (m mockExecRegistry) ForRecord(_ hosts.Record) hostexec.Executor {
+	return mockExecutor{output: m.output}
+}
+
+type mockExecutor struct {
+	hostexec.Executor
+	output string
+}
+
+func (m mockExecutor) Dial(_ string, _ hosts.Record) (hostexec.HostClient, error) {
+	return mockClient{output: m.output}, nil
+}
+
+type mockClient struct {
+	hostexec.HostClient
+	output string
+}
+
+func (m mockClient) Run(_ string) ([]byte, error) {
+	return []byte(m.output), nil
+}
+
+func (m mockClient) Close() error {
+	return nil
+}
+
+func TestMCPE2E_ExecOnHost(t *testing.T) {
+	t.Setenv(execAllowUnverifiedEnv, "1")
+
+	execReg := mockExecRegistry{output: "mock ssh output"}
+	session := newMCPSessionWithExecReg(t, execReg)
+
+	isErr, text := callTool(t, session, "exec_on_host", map[string]any{
+		"command": "ls /tmp",
+		"host":    "10.201.0.45",
+	})
+	if isErr {
+		t.Fatal("expected success, got IsError=true")
+	}
+
+	var out execOnHostOutput
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(out.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(out.Results))
+	}
+	if out.Results[0].Output != "mock ssh output" {
+		t.Errorf("Results[0].Output = %q, want 'mock ssh output'", out.Results[0].Output)
 	}
 }

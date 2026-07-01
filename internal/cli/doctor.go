@@ -143,8 +143,8 @@ func checkAuditPath(_ context.Context, cfg *config.File) doctorResult {
 	return doctorResult{"audit: log", doctorOK, path}
 }
 
-func checkOPAPolicy(ctx context.Context, _ *config.File) doctorResult {
-	dir := strings.TrimSpace(os.Getenv("HONEY_POLICY_DIR"))
+func checkOPAPolicy(ctx context.Context, cfg *config.File) doctorResult {
+	dir := config.ResolvePolicyDir(cfg)
 	if dir == "" {
 		msg := "HONEY_POLICY_DIR not set — exec allowed only with HONEY_EXEC_ALLOW_UNVERIFIED=1"
 		return doctorResult{"opa: policy", doctorWarn, msg}
@@ -171,8 +171,8 @@ func checkPlugins(ctx context.Context, cfg *config.File) doctorResult {
 	return doctorResult{"plugins: load", doctorOK, fmt.Sprintf("%d plugin(s) loaded", len(list))}
 }
 
-func checkMCPPolicyDir(_ context.Context, _ *config.File) doctorResult {
-	dir := strings.TrimSpace(os.Getenv("HONEY_POLICY_DIR"))
+func checkMCPPolicyDir(_ context.Context, cfg *config.File) doctorResult {
+	dir := config.ResolvePolicyDir(cfg)
 	allow := strings.TrimSpace(os.Getenv("HONEY_EXEC_ALLOW_UNVERIFIED"))
 	switch {
 	case dir != "":
