@@ -467,6 +467,43 @@ func TestSaveValidation(t *testing.T) {
 	})
 }
 
+func TestParseSMTPConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `
+version: 1
+smtp:
+  host: "smtp.example.com"
+  port: 587
+  username: "testuser"
+  password: "testpassword"
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.SMTP == nil {
+		t.Fatal("expected SMTP config to be parsed")
+	}
+	if f.SMTP.Host != "smtp.example.com" {
+		t.Errorf("expected host smtp.example.com, got %s", f.SMTP.Host)
+	}
+	if f.SMTP.Port != 587 {
+		t.Errorf("expected port 587, got %d", f.SMTP.Port)
+	}
+	if f.SMTP.Username != "testuser" {
+		t.Errorf("expected username testuser, got %s", f.SMTP.Username)
+	}
+	if f.SMTP.Password != "testpassword" {
+		t.Errorf("expected password testpassword, got %s", f.SMTP.Password)
+	}
+}
+
 func TestExecTimeoutDuration(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

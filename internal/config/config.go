@@ -33,6 +33,15 @@ type File struct {
 	AlertMappings []AlertMapping     `yaml:"alert_mappings,omitempty" json:"alert_mappings,omitempty"`
 	AlertWebhook  AlertWebhookConfig `yaml:"alert_webhook,omitempty" json:"alert_webhook,omitempty"`
 	Audit         Audit              `yaml:"audit,omitempty" json:"audit,omitempty"`
+	SMTP          *SMTPConfig        `yaml:"smtp,omitempty" json:"smtp,omitempty"`
+}
+
+// SMTPConfig holds global SMTP configuration for email notifications.
+type SMTPConfig struct {
+	Host     string `yaml:"host,omitempty" json:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty" json:"port,omitempty"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty" honey:"secret"`
 }
 
 // AlertNotifySlack configures Slack notifications for alert findings.
