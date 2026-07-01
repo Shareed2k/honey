@@ -19,13 +19,23 @@ type Recipe struct {
 	Type             string                    `json:"type,omitempty"`
 	Webhooks         map[string]RecipeWebhook  `json:"webhooks,omitempty"`
 	Schedules        map[string]RecipeSchedule `json:"schedules,omitempty"`
+	Notification     *RecipeNotification       `json:"notification,omitempty"`
 	Defaults         *RecipeDefaults           `json:"defaults,omitempty"`
-	MailOn           *RecipeMailOn             `json:"mail_on,omitempty"`
-	ErrorMail        *RecipeMailConfig         `json:"error_mail,omitempty"`
-	InfoMail         *RecipeMailConfig         `json:"info_mail,omitempty"`
 	Steps            []StepWrapper             `json:"steps"`
 	Handlers         []StepWrapper             `json:"handlers,omitempty"`
 	MatrixExpansions map[string][]string       `json:"-"` // internal tracking, not unmarshaled
+}
+
+// RecipeNotification defines the notification routing configuration for a recipe.
+type RecipeNotification struct {
+	Email *RecipeEmailNotification `json:"email,omitempty"`
+}
+
+// RecipeEmailNotification configures email alerts for successes and failures.
+type RecipeEmailNotification struct {
+	SendOn    *RecipeMailOn     `json:"send_on,omitempty"`
+	OnSuccess *RecipeMailConfig `json:"on_success,omitempty"`
+	OnFailure *RecipeMailConfig `json:"on_failure,omitempty"`
 }
 
 // RecipeMailOn defines conditions under which emails are sent at the end of a run.
