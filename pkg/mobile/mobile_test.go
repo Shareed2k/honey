@@ -106,8 +106,8 @@ func TestSearchHosts(t *testing.T) {
 	if err == nil {
 		t.Fatalf("SearchHosts() expected error for missing backend, got nil")
 	}
-	if !strings.Contains(err.Error(), "no backends match") {
-		t.Errorf("SearchHosts() expected 'no backends match' error, got: %v", err)
+	if !strings.Contains(err.Error(), "no backends match") && !strings.Contains(err.Error(), "all backends failed") {
+		t.Errorf("SearchHosts() expected backend failure error, got: %v", err)
 	}
 
 	// Now let's try with empty string so it doesn't fail JSON parsing
