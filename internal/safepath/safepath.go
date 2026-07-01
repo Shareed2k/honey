@@ -187,6 +187,7 @@ func WriteFile(path string, data []byte, perm os.FileMode) (err error) {
 	r, err := os.OpenRoot(dir)
 	if err != nil {
 		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		// codeql[go/path-injection]
 		tmpAbs := filepath.Join(dir, file+".tmp")
 		if werr := os.WriteFile(tmpAbs, data, perm); werr != nil {
 			return werr

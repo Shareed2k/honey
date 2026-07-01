@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -395,9 +396,9 @@ func RunOneRemoteSSH(ctx context.Context, user string, tc TargetContext, cache *
 // record (SFTP over DialHoneyClient). Failures on one host do not cancel others.
 // StreamSFTPUploadParallel ...
 func StreamSFTPUploadParallel(ctx context.Context, user string, recs []TargetContext, localAbs, remotePath string, out chan<- HostExecResult, opts BatchOptions) error {
-	localAbs = strings.TrimSpace(localAbs)
+	localAbs = filepath.Clean(strings.TrimSpace(localAbs))
 	remotePath = strings.TrimSpace(remotePath)
-	if localAbs == "" || remotePath == "" {
+	if localAbs == "" || localAbs == "." || remotePath == "" {
 		return fmt.Errorf("upload: empty local or remote path")
 	}
 
@@ -578,6 +579,12 @@ func ExecuteSFTPDownloadParallel(user string, jobs []SFTPDownloadJob, maxConc in
 // RunOneSFTPUploadWithProgress ...
 func RunOneSFTPUploadWithProgress(user string, r hosts.Record, localAbs, remotePath string, cache *ClientCache, onProgress func(written, total int64)) HostExecResult {
 	res := HostExecResult{Name: r.Name, IP: r.PrimaryIP, Provider: r.Provider}
+	localAbs = filepath.Clean(strings.TrimSpace(localAbs))
+	if localAbs == "" || localAbs == "." {
+		res.Success = false
+		res.ErrMsg = "upload: empty local path"
+		return res
+	}
 	for attempt := 1; attempt <= sshTransientOpAttempts; attempt++ {
 		client, dialErr := cache.GetOrDial(user, r)
 		if dialErr != nil {

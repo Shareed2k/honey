@@ -166,7 +166,7 @@ func runCueStepHookRemote(ctx context.Context, opts ExecutionOptions, stepNo int
 			var err error
 			env, err = cuetry.EffectiveEnvForRemoteHook(ctx, true, opts.SecretResolver, step.Base(), opts.Recipe.Defaults, hook, opts.CLIEnv, &r2)
 			if err != nil {
-				return fmt.Sprintf("echo 'env err: %s'", err.Error())
+				return "echo 'env err: failed to resolve environment variables'"
 			}
 		}
 		for k, v := range kv {
