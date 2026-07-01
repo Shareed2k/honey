@@ -42,6 +42,23 @@ func (c *fakeHostClient) Close() error {
 	return nil
 }
 
+type fakeFailingHostClient struct {
+	engine.HostClient
+}
+
+func (c *fakeFailingHostClient) SupportsKVTunnel() bool {
+	return false
+}
+
+func (c *fakeFailingHostClient) Run(cmd string) ([]byte, error) {
+	fmt.Printf("fakeFailingHostClient.Run called with %s\n", cmd)
+	return []byte("test-email-error-output"), fmt.Errorf("simulated failure")
+}
+
+func (c *fakeFailingHostClient) Close() error {
+	return nil
+}
+
 func TestEmailNotificationE2E(t *testing.T) {
 	ctx := context.Background()
 
@@ -192,5 +209,138 @@ recipe: {
 
 	if !foundEmail {
 		t.Fatal("timed out waiting for correct email notification to be sent and received by Mailhog")
+	}
+}
+
+func TestEmailNotificationFailureE2E(t *testing.T) {
+	ctx := context.Background()
+
+	// Spin up Mailhog to catch SMTP traffic and verify it via HTTP API
+	reqContainer := testcontainers.ContainerRequest{
+		Image:        "mailhog/mailhog:latest",
+		ExposedPorts: []string{"1025/tcp", "8025/tcp"},
+		WaitingFor:   wait.ForHTTP("/").WithPort("8025/tcp"),
+	}
+	mailhogC, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: reqContainer,
+		Started:          true,
+	})
+	if err != nil {
+		t.Fatalf("failed to start mailhog: %v", err)
+	}
+	defer mailhogC.Terminate(ctx)
+
+	host, err := mailhogC.Host(ctx)
+	if err != nil {
+		t.Fatalf("failed to get mailhog host: %v", err)
+	}
+	smtpPort, err := mailhogC.MappedPort(ctx, "1025")
+	if err != nil {
+		t.Fatalf("failed to get mailhog smtp port: %v", err)
+	}
+	httpPort, err := mailhogC.MappedPort(ctx, "8025")
+	if err != nil {
+		t.Fatalf("failed to get mailhog http port: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	recipePath := filepath.Join(tmpDir, "test_email_fail.cue")
+	cueContent := `
+recipe: {
+	name: "test-email-failure-notifications"
+	notification: {
+		email: {
+			send_on: {
+				failure: true
+			}
+			on_failure: {
+				from: "bot@honey.local"
+				to: ["oncall@honey.local"]
+				prefix: "[HONEY-FAIL]"
+				attach_logs: true
+			}
+		}
+	}
+	steps: [
+		{
+			host: "localhost"
+			command: "echo test-email-error-output"
+		}
+	]
+}
+`
+	if err := os.WriteFile(recipePath, []byte(cueContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	portInt, _ := strconv.Atoi(smtpPort.Port())
+	cfg := &config.File{
+		Apps: map[string]apps.AppConfig{},
+		SMTP: &config.SMTPConfig{
+			Host: host,
+			Port: portInt,
+		},
+	}
+
+	raw, err := os.ReadFile(recipePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recipe, err := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runner := engine.NewRecipeRunner(engine.RunnerOptions{
+		Config: cfg,
+		ExecRegistry: &testRegistry{Dialer: DialerFunc(func(user, targetHost string, port int, keyFile string) (engine.HostClient, error) {
+			return &fakeFailingHostClient{}, nil
+		})},
+	})
+
+	req := engine.RunRequest{
+		Recipe:           recipe,
+		RecipeSourcePath: recipePath,
+		RecipeDir:        filepath.Dir(recipePath),
+		Records:          []hosts.Record{{Name: "localhost", PrimaryIP: "127.0.0.1", Provider: "local"}},
+	}
+
+	_ = runner.ExecuteAndWait(ctx, req)
+
+	// Poll Mailhog API to verify the email arrived
+	apiURL := "http://" + host + ":" + httpPort.Port() + "/api/v2/messages"
+	deadline := time.Now().Add(5 * time.Second)
+	var foundEmail bool
+
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(apiURL)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			var result struct {
+				Count int `json:"count"`
+				Items []struct {
+					Content struct {
+						Body string `json:"Body"`
+					} `json:"Content"`
+				} `json:"items"`
+			}
+
+			if json.Unmarshal(body, &result) == nil && result.Count > 0 {
+				emailBody := result.Items[0].Content.Body
+				t.Logf("Got failure email body: %s", emailBody)
+				if strings.Contains(emailBody, "test-email-failure-notifications") && strings.Contains(emailBody, "FAILED") && strings.Contains(emailBody, "test-email-error-output") {
+					foundEmail = true
+					break
+				}
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if !foundEmail {
+		t.Fatal("timed out waiting for correct failure email notification to be sent and received by Mailhog")
 	}
 }
