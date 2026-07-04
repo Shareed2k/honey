@@ -1,0 +1,46 @@
+# APISIX standalone routes/ssls for the honey mTLS example (TEMPLATE).
+#
+# This file documents the shape. PEM material is injected by render.sh, which
+# reads ./certs and writes apisix.local.yaml (the file APISIX actually loads).
+# The __PLACEHOLDER__ tokens below are replaced with indented PEM blocks.
+#
+# Flow: client presents a cert -> APISIX verifies it against client.ca ->
+# serverless-pre-function copies the cert CN into X-Honey-User -> honey trusts
+# that header (HONEY_TRUSTED_PROXIES) and uses it as the OPA actor.
+
+ssls:
+  - id: honey-mtls
+    snis:
+      - honey.example
+    cert: |
+__SERVER_CRT__
+    key: |
+__SERVER_KEY__
+    # Require + verify a client cert signed by this CA (Phase 2: honey's device CA).
+    client:
+      ca: |
+__CLIENT_CA__
+      depth: 2
+
+routes:
+  - id: honey-api
+    uri: /api/v1/*
+    plugins:
+      # Derive a clean actor from the verified client cert subject DN
+      # ("CN=honey-app" -> "honey-app") and set it as the trusted-proxy identity.
+      serverless-pre-function:
+        phase: rewrite
+        functions:
+          - "return function(conf, ctx) local dn = ngx.var.ssl_client_s_dn; if dn then local cn = string.match(dn, 'CN=([^,/]+)'); if cn then ngx.req.set_header('X-Honey-User', cn) end end end"
+      # Also forward the fingerprint for per-device policy / auditing.
+      proxy-rewrite:
+        headers:
+          set:
+            X-Ssl-Client-Fingerprint: "$ssl_client_fingerprint"
+    upstream:
+      type: roundrobin
+      nodes:
+        # honey, reachable only from APISIX on the private network.
+        # host.docker.internal lets a containerized APISIX reach honey on the host.
+        "host.docker.internal:8765": 1
+#END

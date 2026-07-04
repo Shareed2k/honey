@@ -1,0 +1,15 @@
+# Apache APISIX in standalone mode, fronting honey with mTLS.
+# Run honey on the host first:  honey web --no-auth --listen localhost:8765 \
+#   (with HONEY_TRUSTED_PROXIES + HONEY_POLICY_DIR set — see README).
+services:
+  apisix:
+    image: apache/apisix:3.9.1-debian
+    restart: unless-stopped
+    ports:
+      - "9443:9443"   # mTLS listener (client cert required)
+    volumes:
+      - ./config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix.local.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    extra_hosts:
+      # lets the container reach honey running on the host (upstream node)
+      - "host.docker.internal:host-gateway"

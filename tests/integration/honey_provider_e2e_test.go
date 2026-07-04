@@ -3,9 +3,12 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/shareed2k/honey/internal/config"
@@ -245,4 +248,184 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestHoneyProviderE2E_Exec(t *testing.T) {
+	// We need the local ssh test server
+	sshH, sshP, keyFile := startSSH(t)
+
+	reg := &testRegistry{
+		Dialer: newTestDialer(sshH, sshP, keyFile),
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configYAML := `
+version: 1
+backends:
+  local:
+    - name: "prod"
+      hosts:
+        - name: "remote-host"
+          primary_ip: "127.0.0.1"
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	remoteSearchReg := searchrun.NewRegistry([]searchrun.ProviderFactory{
+		localprovider.NewFactory(testLocalConfig{}),
+	})
+
+	opts := webserver.Options{
+		SearchRegistry: remoteSearchReg,
+		ExecRegistry:   reg,
+		Token:          "test-token",
+		ConfigPath:     configPath,
+	}
+	baseURL := newTestServer(t, opts)
+
+	cfg := &config.File{
+		Backends: config.Backends{
+			Honey: []config.HoneyBackend{
+				{Name: "remote1", URL: baseURL, Token: "test-token", Insecure: false},
+			},
+		},
+	}
+
+	classCfg := honeyTestConfig{cfg}
+	factory := honeyprovider.NewFactory(classCfg)
+	provider := factory.FromConfig(nil)[0]
+
+	// Find the record via Search
+	recs, err := provider.Search(context.Background(), hosts.Query{})
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(recs))
+	}
+	targetRec := recs[0]
+
+	// Validate the tag exists
+	if targetRec.Meta["honey_upstream_backend"] != "remote1" {
+		t.Fatalf("expected honey_upstream_backend tag on record, got %q", targetRec.Meta["honey_upstream_backend"])
+	}
+
+	// Now try to execute using the custom executor.
+	// `factory` implements `ExecutorProvider`, let's check it.
+	ep, ok := factory.(searchrun.ExecutorProvider)
+	if !ok {
+		t.Fatalf("factory does not implement ExecutorProvider")
+	}
+
+	if !ep.HandlesRecord(targetRec) {
+		t.Fatalf("factory should handle the record")
+	}
+
+	executor := ep.ExecutorFor(targetRec, nil)
+	if executor == nil {
+		t.Fatalf("expected executor, got nil")
+	}
+
+	client, err := executor.Dial("testuser", targetRec)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+
+	out, err := client.Run("echo hello proxy")
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	if string(out) != "hello proxy" && string(out) != "hello proxy\n" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestHoneyProviderE2E_StreamsAndTunnels(t *testing.T) {
+	sshH, sshP, keyFile := startSSH(t)
+
+	reg := &testRegistry{
+		Dialer: newTestDialer(sshH, sshP, keyFile),
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configYAML := `
+version: 1
+backends:
+  local:
+    - name: "prod"
+      hosts:
+        - name: "remote-host"
+          primary_ip: "127.0.0.1"
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	remoteSearchReg := searchrun.NewRegistry([]searchrun.ProviderFactory{
+		localprovider.NewFactory(testLocalConfig{}),
+	})
+
+	opts := webserver.Options{
+		SearchRegistry: remoteSearchReg,
+		ExecRegistry:   reg,
+		Token:          "test-token",
+		ConfigPath:     configPath,
+	}
+	baseURL := newTestServer(t, opts)
+
+	cfg := &config.File{
+		Backends: config.Backends{
+			Honey: []config.HoneyBackend{
+				{Name: "remote1", URL: baseURL, Token: "test-token", Insecure: false},
+			},
+		},
+	}
+
+	classCfg := honeyTestConfig{cfg}
+	factory := honeyprovider.NewFactory(classCfg)
+	provider := factory.FromConfig(nil)[0]
+
+	recs, err := provider.Search(context.Background(), hosts.Query{})
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	targetRec := recs[0]
+
+	ep, _ := factory.(searchrun.ExecutorProvider)
+	executor := ep.ExecutorFor(targetRec, nil)
+	client, err := executor.Dial("testuser", targetRec)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	
+	// Test RunWithStreams
+	var outBuf bytes.Buffer
+	err = client.RunWithStreams("echo stream proxy", nil, &outBuf, nil)
+	if err != nil {
+		t.Fatalf("RunWithStreams failed: %v", err)
+	}
+	if outBuf.String() != "stream proxy\n" && outBuf.String() != "stream proxy" {
+		t.Fatalf("unexpected stream output: %q", outBuf.String())
+	}
+	
+	// Test Tunnel Upstream
+	// Since SSH starts with a banner, if we read it, we know the tunnel works.
+	conn, err := executor.DialUpstream(context.Background(), "testuser", targetRec, fmt.Sprintf("127.0.0.1:%d", sshP))
+	if err != nil {
+		t.Fatalf("DialUpstream failed: %v", err)
+	}
+	defer conn.Close()
+	
+	banner := make([]byte, 20)
+	n, err := conn.Read(banner)
+	if err != nil {
+		t.Fatalf("tunnel read failed: %v", err)
+	}
+	if !strings.Contains(string(banner[:n]), "SSH-") {
+		t.Fatalf("expected SSH banner, got %q", string(banner[:n]))
+	}
 }
