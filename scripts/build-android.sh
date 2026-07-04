@@ -17,7 +17,10 @@ fi
 
 echo "Building AAR for Android..."
 # We compile the pkg/mobile package into an AAR library.
-gomobile bind -target=android/arm64 -trimpath -o "$OUT_DIR/honey.aar" \
+# -androidapi 26 matches the app's minSdk. Lower values (gomobile defaults to 16)
+# fail against NDK r27 ("unsupported API version 16") and lack getifaddrs, which
+# the netstatus cgo dependency needs (declared on Android API >= 24).
+gomobile bind -target=android/arm64 -androidapi 26 -trimpath -o "$OUT_DIR/honey.aar" \
   -ldflags="-s -w -extldflags=-Wl,-z,max-page-size=0x4000" ./pkg/mobile
 
 echo "Build complete: $OUT_DIR/honey.aar"

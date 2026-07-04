@@ -1,0 +1,3 @@
+# Demo PKI + rendered config are generated locally, never committed.
+certs/
+apisix.local.yaml
