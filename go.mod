@@ -56,6 +56,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2
 	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/kevinburke/ssh_config v1.6.0
+	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/melbahja/goph v1.5.1
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.0
@@ -605,6 +606,7 @@ require (
 	mvdan.cc/gofumpt v0.9.2 // indirect
 	mvdan.cc/sh/moreinterp v0.0.0-20260120230322-19def062a997 // indirect
 	mvdan.cc/unparam v0.0.0-20251027182757-5beb8c8f8f15 // indirect
+	rsc.io/qr v0.2.0 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect

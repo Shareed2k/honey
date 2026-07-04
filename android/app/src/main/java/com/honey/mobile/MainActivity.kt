@@ -12,6 +12,7 @@ import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.*
@@ -78,6 +79,7 @@ private val navDests = listOf(
     NavDest("keys", "SSH Keys", Icons.Outlined.Key),
     NavDest("secrets", "Secrets", Icons.Outlined.Lock),
     NavDest("backends", "Backends", Icons.Outlined.Dns),
+    NavDest("enroll", "Enroll device", Icons.Outlined.QrCodeScanner),
     NavDest("config", "Config", Icons.Outlined.Settings),
 )
 
@@ -218,6 +220,7 @@ fun HoneyNavApp() {
                     )
                 }
                 composable("recipes") { RecipesScreen() }
+                composable("enroll") { EnrollScreen() }
                 composable("keys") { KeysScreen() }
                 composable("secrets") { SecretsScreen() }
                 composable("config") { ConfigScreen() }

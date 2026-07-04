@@ -141,6 +141,61 @@ func OpenReadWriteProbe(path string) (err error) {
 	return nil
 }
 
+// Open opens the named file for reading using [os.Root] on the parent directory.
+// The caller is responsible for closing the returned file.
+func Open(path string) (f *os.File, err error) {
+	abs, err := absClean(path)
+	if err != nil {
+		return nil, err
+	}
+	dir, file := filepath.Split(abs)
+	dir = filepath.Clean(dir)
+	if file == "" || file == "." {
+		return nil, fmt.Errorf("invalid path %q", abs)
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		return os.Open(filepath.Clean(abs))
+	}
+	defer func() {
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+			f = nil
+		}
+	}()
+	return r.Open(file)
+}
+
+// Create creates or truncates the named file for writing using [os.Root] on the parent directory.
+// The caller is responsible for closing the returned file.
+func Create(path string) (f *os.File, err error) {
+	abs, err := absClean(path)
+	if err != nil {
+		return nil, err
+	}
+	dir, file := filepath.Split(abs)
+	dir = filepath.Clean(dir)
+	if file == "" || file == "." {
+		return nil, fmt.Errorf("invalid path %q", abs)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, err
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		return os.Create(filepath.Clean(abs))
+	}
+	defer func() {
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+			f = nil
+		}
+	}()
+	return r.Create(file)
+}
+
 // OpenAppend opens (or creates) path for append-only writing and returns the file.
 // The caller is responsible for closing the returned file.
 func OpenAppend(path string, perm os.FileMode) (f *os.File, err error) {
