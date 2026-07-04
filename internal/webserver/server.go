@@ -121,6 +121,11 @@ type Server struct {
 	recipesAPI *RecipesAPI
 
 	commandRunner *engine.CommandRunner
+
+	// deviceCA + enroll back the mTLS device-enrollment endpoints. Both are nil
+	// when no state dir is available (enrollment disabled).
+	deviceCA *DeviceCA
+	enroll   *enrollStore
 }
 
 // NewServer builds handlers with the given auth token.
@@ -202,6 +207,16 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
+
+	// Device mTLS enrollment: load-or-create a device CA under the state dir.
+	// Non-fatal — endpoints report 503 when unavailable.
+	if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
+		if ca, caErr := LoadOrCreateDeviceCA(stateDir); caErr == nil {
+			s.deviceCA = ca
+			s.enroll = newEnrollStore()
+		}
+	}
+
 	if err := s.routes(); err != nil {
 		return nil, err
 	}
@@ -309,7 +324,15 @@ func (s *Server) routes() error {
 		// Webhook debugging (web UI, authenticated): test-send + delivery inspection.
 		r.Post("/webhooks/{app_name}/{webhook_name}/debug", recipesAPI.handleWebhookDebug)
 		r.Get("/webhooks/{app_name}/{webhook_name}/deliveries", recipesAPI.handleWebhookDeliveries)
+
+		// Device mTLS enrollment: mint a one-time code (operator) + list issued devices.
+		r.Post("/devices/enroll-code", s.handleMintEnrollCode)
+		r.Get("/devices", s.handleListDevices)
 	})
+
+	// Device enrollment is authenticated by the one-time code, not the session
+	// token, so it mounts outside the main auth group.
+	s.router.Post("/api/v1/devices/enroll", s.handleDeviceEnroll)
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
 	s.router.With(recipesAPI.webhookRateLimit).

@@ -113,5 +113,12 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
+	for i := range searchResp.Records {
+		if searchResp.Records[i].Meta == nil {
+			searchResp.Records[i].Meta = make(map[string]string)
+		}
+		searchResp.Records[i].Meta["honey_upstream_backend"] = h.BackendName()
+	}
+
 	return searchResp.Records, nil
 }
