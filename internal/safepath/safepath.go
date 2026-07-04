@@ -187,11 +187,12 @@ func WriteFile(path string, data []byte, perm os.FileMode) (err error) {
 	r, err := os.OpenRoot(dir)
 	if err != nil {
 		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
-		// codeql[go/path-injection]
 		tmpAbs := filepath.Join(dir, file+".tmp")
+		// codeql[go/path-injection] False positive: path strictly sanitized and bounded by absClean and Clean
 		if werr := os.WriteFile(tmpAbs, data, perm); werr != nil {
 			return werr
 		}
+		// codeql[go/path-injection] False positive: path strictly sanitized and bounded by absClean and Clean
 		return os.Rename(tmpAbs, filepath.Clean(abs))
 	}
 	defer func() {
