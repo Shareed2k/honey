@@ -167,6 +167,36 @@ func Open(path string) (f *os.File, err error) {
 	return r.Open(file)
 }
 
+// OpenFile opens the named file with specified flag and permission using [os.Root] on the parent directory.
+func OpenFile(path string, flag int, perm os.FileMode) (f *os.File, err error) {
+	abs, err := absClean(path)
+	if err != nil {
+		return nil, err
+	}
+	dir, file := filepath.Split(abs)
+	dir = filepath.Clean(dir)
+	if file == "" || file == "." {
+		return nil, fmt.Errorf("invalid path %q", abs)
+	}
+	if (flag & os.O_CREATE) != 0 {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return nil, err
+		}
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		return os.OpenFile(filepath.Clean(abs), flag, perm)
+	}
+	defer func() {
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+			f = nil
+		}
+	}()
+	return r.OpenFile(file, flag, perm)
+}
+
 // Create creates or truncates the named file for writing using [os.Root] on the parent directory.
 // The caller is responsible for closing the returned file.
 func Create(path string) (f *os.File, err error) {
@@ -260,4 +290,68 @@ func WriteFile(path string, data []byte, perm os.FileMode) (err error) {
 		return err
 	}
 	return r.Rename(tmp, file)
+}
+
+// ReadDir reads the named directory and returns all its directory entries.
+func ReadDir(path string) ([]os.DirEntry, error) {
+	abs, err := absClean(path)
+	if err != nil {
+		return nil, err
+	}
+	dir, file := filepath.Split(abs)
+	dir = filepath.Clean(dir)
+	if file == "" || file == "." {
+		return nil, fmt.Errorf("invalid path %q", abs)
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		return os.ReadDir(filepath.Clean(abs))
+	}
+	defer func() {
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+	f, err := r.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
+}
+
+// MkdirAll creates a directory named path, along with any necessary parents,
+// using [os.MkdirAll]. It first ensures the path is clean and absolute.
+func MkdirAll(path string, perm os.FileMode) error {
+	abs, err := absClean(path)
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(abs, perm)
+}
+
+// Remove removes the named file or (empty) directory.
+// It uses [os.Root] on the parent directory if possible.
+func Remove(path string) (err error) {
+	abs, err := absClean(path)
+	if err != nil {
+		return err
+	}
+	dir, file := filepath.Split(abs)
+	dir = filepath.Clean(dir)
+	if file == "" || file == "." {
+		return fmt.Errorf("invalid path %q", abs)
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		// Fallback for systems where os.OpenRoot is restricted (e.g. Android)
+		return os.Remove(filepath.Clean(abs))
+	}
+	defer func() {
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+	return r.Remove(file)
 }

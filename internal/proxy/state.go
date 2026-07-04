@@ -43,8 +43,7 @@ func (m *StateManager) load() ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	// #nosec G304 -- path is strictly constructed from internal config.ResolveStateDir() and hardcoded filename
-	b, err := os.ReadFile(path)
+	b, err := safepath.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

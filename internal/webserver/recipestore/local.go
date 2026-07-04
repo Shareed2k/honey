@@ -79,8 +79,7 @@ func (s *LocalRecipeStore) Save(_ context.Context, name string, content string) 
 
 	finalContent := []byte(content)
 	if strings.HasPrefix(strings.TrimSpace(content), "{") {
-		// #nosec G304
-		existingCUE, err := os.ReadFile(path)
+		existingCUE, err := safepath.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}

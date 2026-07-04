@@ -20,6 +20,8 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/shareed2k/honey/internal/safepath"
+
 	//nolint:staticcheck // SA1019: required by client-go v0.36.1 spdy.NewDialer interface
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/client-go/kubernetes"
@@ -191,7 +193,7 @@ func (c *K8sNativeClient) Upload(localPath, remotePath string) error {
 		remotePath = path.Join(strings.TrimRight(remotePath, "/"), base)
 	}
 
-	localFile, err := os.Open(localPath) // #nosec G304 -- CLI tool, user explicitly provides the local path for upload
+	localFile, err := safepath.Open(localPath)
 	if err != nil {
 		return err
 	}
@@ -257,8 +259,7 @@ func (c *K8sNativeClient) Download(remotePath, localPath string) error {
 		}
 
 		if hdr.Name == remoteBase {
-			// #nosec G304 -- CLI tool, user explicitly provides the local path for download
-			localFile, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, hdr.FileInfo().Mode())
+			localFile, err := safepath.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, hdr.FileInfo().Mode())
 			if err != nil {
 				return err
 			}

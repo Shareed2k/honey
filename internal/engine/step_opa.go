@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/policy"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 func init() {
@@ -64,9 +64,7 @@ func (e *OPAExecutor) evaluate(ctx context.Context, opts ExecutionOptions, step 
 	if !filepath.IsAbs(policyPath) {
 		policyPath = filepath.Join(opts.RecipeDir, policyPath)
 	}
-	// #nosec G304 -- policy path is recipe-author controlled and resolved within
-	// the recipe directory; recipes are already trusted code in this engine.
-	src, err := os.ReadFile(policyPath)
+	src, err := safepath.ReadFile(policyPath)
 	if err != nil {
 		return fail("read policy %q: %v", step.OPA.Policy, err)
 	}

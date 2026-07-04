@@ -12,6 +12,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/anomaly"
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -190,7 +191,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 
 	var out io.Writer = os.Stdout
 	if flagLogsOutputFile != "" {
-		f, err := os.Create(flagLogsOutputFile) // #nosec G304 -- destination controlled by user flag
+		f, err := safepath.Create(flagLogsOutputFile)
 		if err != nil {
 			return fmt.Errorf("output file: %w", err)
 		}

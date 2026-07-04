@@ -238,7 +238,7 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 	var copyErr error
 	switch strings.TrimSpace(req.Direction) {
 	case "local_to_remote":
-		st, stErr := os.Stat(localAbs) // #nosec G304 -- localAbs is validated under configured root.
+		st, stErr := safepath.Stat(localAbs)
 		if stErr != nil {
 			httpError(w, fmt.Errorf("local path stat: %w", stErr), http.StatusBadRequest)
 			return

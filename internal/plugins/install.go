@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 const (
@@ -137,7 +139,7 @@ func downloadAndExtract(ctx context.Context, url string) (string, func(), error)
 }
 
 func extractArchiveTarGz(path string) (string, func(), error) {
-	f, err := os.Open(path) // #nosec G304 -- user-supplied archive path
+	f, err := safepath.Open(path)
 	if err != nil {
 		return "", nil, err
 	}
@@ -173,7 +175,7 @@ func extractTar(tr *tar.Reader, src string) (string, func(), error) {
 			continue
 		}
 		dest := filepath.Join(dir, base)
-		out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) // #nosec G304 -- dest is under temp dir
+		out, err := safepath.Create(dest)
 		if err != nil {
 			cleanup()
 			return "", nil, err
@@ -212,7 +214,7 @@ func extractArchiveZip(path string) (string, func(), error) {
 			cleanup()
 			return "", nil, err
 		}
-		out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) // #nosec G304 -- dest is under temp dir
+		out, err := safepath.Create(dest)
 		if err != nil {
 			_ = rc.Close()
 			cleanup()
@@ -231,12 +233,12 @@ func extractArchiveZip(path string) (string, func(), error) {
 }
 
 func copyFile(src, dst string) error {
-	in, err := os.Open(src) // #nosec G304 -- internal use only
+	in, err := safepath.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) // #nosec G304 -- dst is under plugins dir
+	out, err := safepath.Create(dst)
 	if err != nil {
 		return err
 	}

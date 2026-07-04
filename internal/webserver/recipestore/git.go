@@ -13,6 +13,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // GitRecipeStore implements RecipeStore by pulling, committing, and pushing from/to a remote Git repository.
@@ -135,8 +136,7 @@ func (s *GitRecipeStore) Get(ctx context.Context, name string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(s.localPath, name)
-	// #nosec G304
-	b, err := os.ReadFile(path)
+	b, err := safepath.ReadFile(path)
 	if err != nil {
 		return "", err
 	}

@@ -72,7 +72,7 @@ func ListLocalDirUnderRoot(root, requested string) (string, []LocalFileEntry, er
 	if err != nil {
 		return "", nil, err
 	}
-	entries, err := os.ReadDir(resolvedPath) // #nosec G304 -- path is root-jail validated above.
+	entries, err := safepath.ReadDir(resolvedPath)
 	if err != nil {
 		return "", nil, err
 	}

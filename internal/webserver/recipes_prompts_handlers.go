@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // PromptUploadResponse is returned by POST /api/v1/recipes/prompts/upload.
@@ -57,7 +58,7 @@ func (api *RecipesAPI) handleRecipesPromptsUpload(w http.ResponseWriter, r *http
 	}
 	localPath := filepath.Clean(filepath.Join(tmpDir, base))
 
-	out, err := os.Create(localPath) // #nosec G304 -- localPath is securely joined in a temporary directory
+	out, err := safepath.Create(localPath)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return

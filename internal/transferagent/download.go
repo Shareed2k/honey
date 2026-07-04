@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 const (
@@ -66,7 +68,7 @@ func fetchAgentBinary(url, destPath string) error {
 		return fmt.Errorf("GET %q: status %s: %s", url, resp.Status, strings.TrimSpace(string(slurp)))
 	}
 	tmp := destPath + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) // #nosec G304 -- tmp path under cache dir.
+	f, err := safepath.Create(tmp)
 	if err != nil {
 		return err
 	}

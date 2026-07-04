@@ -393,7 +393,7 @@ func (h *HoneyClient) UploadWithProgress(localPath, remotePath string, onProgres
 	if err != nil {
 		return err
 	}
-	in, err := os.Open(localPath) // #nosec G304 -- caller controls local path in CLI/web flows.
+	in, err := safepath.Open(localPath)
 	if err != nil {
 		return err
 	}
@@ -451,10 +451,7 @@ func (h *HoneyClient) Download(remotePath, localPath string) error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
-		return err
-	}
-	out, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600) // #nosec G304 -- caller controls destination.
+	out, err := safepath.Create(localPath)
 	if err != nil {
 		return err
 	}

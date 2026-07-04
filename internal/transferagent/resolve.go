@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shareed2k/honey/internal/safepath"
 	"go.uber.org/zap"
 )
 
@@ -21,7 +22,7 @@ var (
 )
 
 func ensureExecutable(path string) error {
-	st, err := os.Stat(path) // #nosec G304 -- path is selected from controlled options.
+	st, err := safepath.Stat(path)
 	if err != nil {
 		return err
 	}
@@ -146,7 +147,7 @@ func transferAgentSourceStamp(root string) (time.Time, error) {
 	files = append(files, filepath.Join(root, "go.mod"), filepath.Join(root, "go.sum"))
 	latest := time.Time{}
 	for _, p := range files {
-		st, err := os.Stat(p) // #nosec G304 -- controlled paths under repo root.
+		st, err := safepath.Stat(p)
 		if err != nil {
 			continue
 		}
@@ -161,7 +162,7 @@ func transferAgentSourceStamp(root string) (time.Time, error) {
 }
 
 func isAgentBinaryFresh(binPath string, sourceStamp time.Time) bool {
-	st, err := os.Stat(binPath) // #nosec G304 -- controlled cache path.
+	st, err := safepath.Stat(binPath)
 	if err != nil || st.IsDir() {
 		return false
 	}
