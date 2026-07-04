@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/devmtls"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -38,11 +39,16 @@ func (f honeyFactory) FromConfig(_ searchrun.ProviderOverrides) []hosts.Backend 
 	}
 	var out []hosts.Backend
 	for _, b := range f.cfg.HoneyBackends() {
+		if b.MTLS && !devmtls.Registered() {
+			continue // mTLS-managed but no device credential registered yet
+		}
 		out = append(out, &Honey{
 			Name:     b.Name,
 			URL:      b.URL,
 			Token:    b.Token,
 			Insecure: b.Insecure,
+			MTLS:     b.MTLS,
+			ServerCA: b.ServerCA,
 		})
 	}
 	return out
@@ -60,8 +66,12 @@ func (f honeyFactory) BackendRows() []config.BackendRow {
 		return nil
 	}
 
-	// 1. Add the Honey backends themselves
+	// 1. Add the Honey backends themselves (skip mTLS-managed ones only when no
+	// device credential is registered to reach them).
 	for _, b := range backends {
+		if b.MTLS && !devmtls.Registered() {
+			continue
+		}
 		rows = append(rows, config.BackendRow{
 			Kind: "honey",
 			Name: b.Name,
@@ -90,6 +100,9 @@ func (f honeyFactory) BackendRows() []config.BackendRow {
 
 	for _, b := range backends {
 		b := b // capture loop variable
+		if b.MTLS && !devmtls.Registered() {
+			continue // mTLS-managed but no device credential registered yet
+		}
 		wg.Add(1)
 
 		go func() {
@@ -100,12 +113,22 @@ func (f honeyFactory) BackendRows() []config.BackendRow {
 			if err != nil {
 				return
 			}
-			if b.Token != "" {
+			if !b.MTLS && b.Token != "" {
 				req.Header.Set("Authorization", "Bearer "+b.Token)
 			}
 
 			client := defaultClient
-			if b.Insecure {
+			switch {
+			case b.MTLS:
+				cfg, cerr := devmtls.ClientTLSConfig(b.ServerCA)
+				if cerr != nil {
+					return
+				}
+				client = &http.Client{
+					Timeout:   2 * time.Second,
+					Transport: &http.Transport{DisableKeepAlives: true, TLSClientConfig: cfg},
+				}
+			case b.Insecure:
 				client = insecureClient
 			}
 
@@ -147,10 +170,15 @@ func (f honeyFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.
 	upstreamName := r.Meta["honey_upstream_backend"]
 	for _, b := range f.cfg.HoneyBackends() {
 		if b.Name == upstreamName {
+			if b.MTLS && !devmtls.Registered() {
+				return nil // no device credential to reach the mTLS gateway
+			}
 			return &Executor{
 				URL:      b.URL,
 				Token:    b.Token,
 				Insecure: b.Insecure,
+				MTLS:     b.MTLS,
+				ServerCA: b.ServerCA,
 			}
 		}
 	}

@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/honeyprovider"
+	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -103,4 +106,52 @@ func TestBackendRows(t *testing.T) {
 	assert.Equal(t, 4, honeyCount)
 	assert.Equal(t, 2, sshCount)
 	assert.Equal(t, 1, k8sCount)
+}
+
+// TestMTLSBackendsSkipped verifies mTLS-managed honey backends are ignored by the
+// in-process provider (owned by the device client): not listed, not fetched, and
+// no executor is offered.
+func TestMTLSBackendsSkipped(t *testing.T) {
+	t.Parallel()
+
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(hostapi.ListBackendsOutput{
+			Backends: []config.BackendRow{{Kind: "ssh", Name: "remote", Hint: "10.0.0.9"}},
+		})
+	}))
+	defer server.Close()
+
+	cfg := &mockConfigProvider{
+		backends: []config.HoneyBackend{
+			{Name: "go-honey", URL: server.URL, Token: "t"},
+			{Name: "mtls-honey", URL: server.URL, Token: "t", MTLS: true},
+		},
+	}
+	factory := honeyprovider.NewFactory(cfg)
+
+	// FromConfig: only the non-mTLS backend becomes a search provider.
+	providers := factory.FromConfig(searchrun.ProviderOverrides{})
+	assert.Len(t, providers, 1)
+
+	// BackendRows: the mTLS backend's own "honey" row is absent; only go-honey
+	// (1 honey row) + its 1 fetched ssh row.
+	rows := factory.BackendRows()
+	var honeyNames []string
+	for _, r := range rows {
+		if r.Kind == "honey" {
+			honeyNames = append(honeyNames, r.Name)
+		}
+	}
+	assert.Equal(t, []string{"go-honey"}, honeyNames)
+	// Only the non-mTLS backend was fetched over HTTP.
+	assert.Equal(t, int32(1), atomic.LoadInt32(&hits))
+
+	// ExecutorFor: an mTLS upstream yields no (token-based) WS executor.
+	ep, ok := factory.(searchrun.ExecutorProvider)
+	require.True(t, ok)
+	rec := hosts.Record{Meta: map[string]string{"honey_upstream_backend": "mtls-honey"}}
+	assert.Nil(t, ep.ExecutorFor(rec, nil))
 }

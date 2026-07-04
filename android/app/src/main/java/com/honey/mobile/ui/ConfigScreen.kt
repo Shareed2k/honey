@@ -437,6 +437,7 @@ private fun HoneyForm(
     var url by remember { mutableStateOf(initial?.url ?: "") }
     var token by remember { mutableStateOf(initial?.token ?: "") }
     var insecure by remember { mutableStateOf(initial?.insecure ?: false) }
+    var mtls by remember { mutableStateOf(initial?.mtls ?: false) }
     var nameError by remember { mutableStateOf<String?>(null) }
     var urlError by remember { mutableStateOf<String?>(null) }
 
@@ -457,13 +458,20 @@ private fun HoneyForm(
         Checkbox(checked = insecure, onCheckedChange = { insecure = it })
         Text("Insecure (skip TLS verify)", modifier = Modifier.padding(start = 8.dp))
     }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+    ) {
+        Checkbox(checked = mtls, onCheckedChange = { mtls = it })
+        Text("mTLS (use enrolled device certificate)", modifier = Modifier.padding(start = 8.dp))
+    }
     TextButton(
         onClick = {
             var isValid = true
             if (name.isBlank()) { nameError = "Name is required"; isValid = false }
             if (url.isBlank()) { urlError = "URL is required"; isValid = false }
             else if (!Validators.isValidUrl(url)) { urlError = "Invalid URL"; isValid = false }
-            if (isValid) onSave(HoneyBackendConfig(name = name, url = url, token = token, insecure = insecure))
+            if (isValid) onSave(HoneyBackendConfig(name = name, url = url, token = token, insecure = insecure, mtls = mtls))
         },
         modifier = Modifier.fillMaxWidth(),
     ) { Text("Save", color = NeonCyan, fontWeight = FontWeight.SemiBold) }

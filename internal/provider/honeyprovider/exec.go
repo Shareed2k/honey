@@ -14,16 +14,28 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/shareed2k/honey/internal/devmtls"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
 )
+
+// clientTLSConfig builds the TLS config for a honey upstream connection: the
+// device mTLS client credential when mtls, else optional insecure server TLS.
+func clientTLSConfig(insecure, mtls bool, serverCA string) (*tls.Config, error) {
+	if mtls {
+		return devmtls.ClientTLSConfig(serverCA)
+	}
+	return &tls.Config{InsecureSkipVerify: insecure}, nil // #nosec G402 -- insecure is operator opt-in
+}
 
 // Executor implements the hostexec.Executor interface to proxy connections through an upstream Honey server.
 type Executor struct {
 	URL      string
 	Token    string
 	Insecure bool
+	MTLS     bool
+	ServerCA string
 }
 
 // Dial creates a new HostClient that proxies execution to the upstream Honey server.
@@ -32,6 +44,8 @@ func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error
 		url:      e.URL,
 		token:    e.Token,
 		insecure: e.Insecure,
+		mtls:     e.MTLS,
+		serverCA: e.ServerCA,
 		user:     user,
 		record:   r,
 	}, nil
@@ -104,7 +118,15 @@ func (e *Executor) RunTunnel(ctx context.Context, user string, r hosts.Record, l
 // DialUpstream dials a remote address via the upstream Honey proxy.
 func (e *Executor) DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
 	wsURL := strings.Replace(e.URL, "http", "ws", 1) + "/api/v1/ws/tunnel"
-	conn, err := dialWS(ctx, wsURL, e.Token, e.Insecure)
+	tlsCfg, err := clientTLSConfig(e.Insecure, e.MTLS, e.ServerCA)
+	if err != nil {
+		return nil, err
+	}
+	token := e.Token
+	if e.MTLS {
+		token = ""
+	}
+	conn, err := dialWS(ctx, wsURL, token, tlsCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -128,11 +150,11 @@ func (e *Executor) DialUpstream(ctx context.Context, user string, r hosts.Record
 	return &wsConn{conn: conn}, nil
 }
 
-func dialWS(ctx context.Context, u, token string, insecure bool) (*websocket.Conn, error) {
+func dialWS(ctx context.Context, u, token string, tlsCfg *tls.Config) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,
 		HandshakeTimeout: 15 * time.Second,
-		TLSClientConfig:  &tls.Config{InsecureSkipVerify: insecure}, // #nosec G402
+		TLSClientConfig:  tlsCfg,
 	}
 	headers := http.Header{}
 	if token != "" {
@@ -204,6 +226,8 @@ type Client struct {
 	url      string
 	token    string
 	insecure bool
+	mtls     bool
+	serverCA string
 	user     string
 	record   hosts.Record
 }
@@ -226,13 +250,17 @@ func (c *Client) doRequest(ctx context.Context, path string, body any, out any) 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if c.token != "" {
+	if !c.mtls && c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
+	tlsCfg, err := clientTLSConfig(c.insecure, c.mtls, c.serverCA)
+	if err != nil {
+		return err
+	}
 	tr := &http.Transport{
 		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: c.insecure}, // #nosec G402
+		TLSClientConfig: tlsCfg,
 	}
 	client := &http.Client{
 		Transport: tr,
@@ -296,7 +324,15 @@ func (c *Client) Run(cmd string) ([]byte, error) {
 // RunWithStreams executes a command on the upstream server over a WebSocket stream.
 func (c *Client) RunWithStreams(cmd string, stdin io.Reader, stdout, _ io.Writer) error {
 	wsURL := strings.Replace(c.url, "http", "ws", 1) + "/api/v1/ws/exec"
-	conn, err := dialWS(context.Background(), wsURL, c.token, c.insecure)
+	tlsCfg, err := clientTLSConfig(c.insecure, c.mtls, c.serverCA)
+	if err != nil {
+		return err
+	}
+	token := c.token
+	if c.mtls {
+		token = ""
+	}
+	conn, err := dialWS(context.Background(), wsURL, token, tlsCfg)
 	if err != nil {
 		return err
 	}

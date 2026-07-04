@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/shareed2k/honey/internal/devmtls"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -22,9 +23,15 @@ type Honey struct {
 	URL      string
 	Token    string
 	Insecure bool
+	// MTLS routes this backend over the device mTLS client credential (registered
+	// via devmtls) instead of the bearer token. ServerCA optionally pins the
+	// gateway server cert.
+	MTLS     bool
+	ServerCA string
 
 	clientOnce sync.Once
 	client     *http.Client
+	clientErr  error
 }
 
 // ID returns the backend identifier.
@@ -77,7 +84,8 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if h.Token != "" {
+	// mTLS-managed backends authenticate by client cert; token-based ones by bearer.
+	if !h.MTLS && h.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+h.Token)
 	}
 
@@ -88,7 +96,14 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 		} else {
 			tr = &http.Transport{}
 		}
-		if h.Insecure {
+		if h.MTLS {
+			cfg, cerr := devmtls.ClientTLSConfig(h.ServerCA)
+			if cerr != nil {
+				h.clientErr = fmt.Errorf("honey mTLS: %w", cerr)
+				return
+			}
+			tr.TLSClientConfig = cfg
+		} else if h.Insecure {
 			if tr.TLSClientConfig == nil {
 				tr.TLSClientConfig = &tls.Config{}
 			}
@@ -96,6 +111,9 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 		}
 		h.client = &http.Client{Transport: tr}
 	})
+	if h.clientErr != nil {
+		return nil, h.clientErr
+	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {

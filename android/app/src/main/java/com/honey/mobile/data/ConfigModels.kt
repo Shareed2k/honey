@@ -34,7 +34,11 @@ data class HoneyBackendConfig(
     @SerializedName("name") val name: String,
     @SerializedName("url") val url: String = "",
     @SerializedName("token") val token: String = "",
-    @SerializedName("insecure") val insecure: Boolean = false
+    @SerializedName("insecure") val insecure: Boolean = false,
+    // mtls routes this backend through the enrolled device client certificate
+    // (the in-process engine does mTLS); server_ca optionally pins the gateway.
+    @SerializedName("mtls") val mtls: Boolean = false,
+    @SerializedName("server_ca") val serverCa: String = ""
 )
 
 data class BackendItem(
