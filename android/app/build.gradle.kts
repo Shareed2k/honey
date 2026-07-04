@@ -53,6 +53,13 @@ dependencies {
     ksp(libs.room.compiler)
     implementation(libs.security.crypto)
     implementation(libs.gson)
+    implementation(libs.okhttp)
+    implementation(libs.bouncycastle.pkix)
+    implementation(libs.bouncycastle.prov)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
+    implementation(libs.mlkit.barcode)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }

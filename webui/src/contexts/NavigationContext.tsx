@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 
-export type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback' | 'agent' | 'studio';
+export type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback' | 'agent' | 'studio' | 'devices';
 
 interface NavigationContextType {
   tab: Tab;
