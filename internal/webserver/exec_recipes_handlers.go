@@ -559,27 +559,6 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	wantRec := strings.TrimSpace(api.opts.RecordDir) != "" && body.RecordSession
 	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 
-	recordRecipeMeta := func(rec *engine.SessionRecorder) {
-		if rec == nil {
-			return
-		}
-		hash, _ := recipe.HashJSON()
-		planText, _, _ := cuetry.RenderDryRunPlan(recipe)
-		var graph *cuetry.RecipeGraphPlan
-		if mode, err := cuetry.RecipeExecutionMode(recipe); err == nil && mode == cuetry.ExecutionModeGraph {
-			graph, _ = cuetry.BuildRecipeGraphPlan(recipe)
-		}
-		rec.RecordRecipeMeta(engine.RecipeMeta{
-			RecipePath:        recipeSourcePath,
-			HostCount:         len(jobs),
-			RecipeContentHash: hash,
-			StartedAt:         time.Now().UTC(),
-			Hosts:             engine.HostsForRecipeMeta(jobs, maxWebExecRecords),
-			Plan:              planText,
-			Graph:             graph,
-		})
-	}
-
 	req := engine.RunRequest{
 		Recipe:           recipe,
 		RecipeSourcePath: recipeSourcePath,
@@ -624,7 +603,6 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			defer func() { _ = rec.Close() }()
-			recordRecipeMeta(rec)
 		}
 		req.Recorder = rec
 		ch, err := api.runner.Execute(r.Context(), req)

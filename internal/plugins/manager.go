@@ -131,6 +131,9 @@ func loadPluginDir(ctx context.Context, dir string, cfg config.PluginsEffective)
 	manifestCfg := map[string]string{
 		"plugin_id": manifest.ID,
 	}
+	for k, v := range manifest.Config {
+		manifestCfg[k] = v
+	}
 	timeout, err := extismTimeoutMS(cfg.TimeoutMS)
 	if err != nil {
 		return nil, err
@@ -287,7 +290,8 @@ func (m *Manager) Call(ctx context.Context, pluginID, export string, in, out any
 	callCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		timeout := time.Duration(m.TimeoutMS()) * time.Millisecond
+		callCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	lp.callMu.Lock()

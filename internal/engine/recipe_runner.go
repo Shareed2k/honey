@@ -128,28 +128,55 @@ func (r *RecipeRunner) resolveTargets(ctx context.Context, req *RunRequest) erro
 	return nil
 }
 
+// borrowPluginManager borrows or opens a plugin manager for one Recipe run.
+// The returned release function must be called after the run finishes.
+func (r *RecipeRunner) borrowPluginManager(ctx context.Context, req RunRequest) (*plugins.Manager, func(), error) {
+	if req.PluginPolicy == LifecycleShared && r.opts.PluginCache != nil {
+		mgr, release := r.opts.PluginCache.Borrow()
+		if mgr == nil {
+			return nil, nil, fmt.Errorf("failed to borrow shared plugin manager")
+		}
+		return mgr, release, nil
+	}
+
+	mgr, err := plugins.Open(ctx, r.opts.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("plugin open: %w", err)
+	}
+	return mgr, func() { _ = mgr.Close() }, nil
+}
+
 // withPluginManager borrows or opens a plugin manager, yields it to fn, and ensures
 // it is released or closed afterwards.
 func (r *RecipeRunner) withPluginManager(ctx context.Context, req RunRequest, fn func(*plugins.Manager) error) error {
-	var mgr *plugins.Manager
-	var release func()
-
-	if req.PluginPolicy == LifecycleShared && r.opts.PluginCache != nil {
-		mgr, release = r.opts.PluginCache.Borrow()
-		if mgr == nil {
-			return fmt.Errorf("failed to borrow shared plugin manager")
-		}
-	} else {
-		m, err := plugins.Open(ctx, r.opts.Config)
-		if err != nil {
-			return fmt.Errorf("plugin open: %w", err)
-		}
-		mgr = m
-		release = func() { _ = m.Close() }
+	mgr, release, err := r.borrowPluginManager(ctx, req)
+	if err != nil {
+		return err
 	}
 	defer release()
 
 	return fn(mgr)
+}
+
+// openRunRecorder returns the caller-provided recorder, or opens one owned by
+// the runner when session recording is requested. owned reports whether the
+// caller must close it.
+func (r *RecipeRunner) openRunRecorder(req RunRequest) (*SessionRecorder, bool, error) {
+	if req.Recorder != nil {
+		return req.Recorder, false, nil
+	}
+	if !req.RecordSession || strings.TrimSpace(r.opts.RecordDir) == "" {
+		return nil, false, nil
+	}
+	label := strings.TrimSpace(req.RecordLabel)
+	if label == "" {
+		label = "recipe-run"
+	}
+	rec, err := NewBatchSessionRecorder(r.opts.RecordDir, label, req.SSHUser, len(req.Records))
+	if err != nil {
+		return nil, false, fmt.Errorf("session recorder: %w", err)
+	}
+	return rec, true, nil
 }
 
 // DryRun validates prompts and produces the recipe plan via the executor-based
@@ -186,12 +213,19 @@ func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, erro
 		return "", err
 	}
 
-	if req.Recorder != nil {
-		r.recordRecipeMeta(req.Recorder, req, plan)
+	rec, closeRec, err := r.openRunRecorder(req)
+	if err != nil {
+		return "", err
+	}
+	if closeRec {
+		defer func() { _ = rec.Close() }()
+	}
+	if rec != nil {
+		r.recordRecipeMeta(rec, req, plan)
 		if strings.TrimSpace(plan) == "" {
-			req.Recorder.RecordData("plan", []byte("(empty plan)"))
+			rec.RecordData("plan", []byte("(empty plan)"))
 		} else {
-			req.Recorder.RecordData("plan", []byte(plan))
+			rec.RecordData("plan", []byte(plan))
 		}
 	}
 
@@ -389,21 +423,9 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 	}
 	req.Env = validatedEnv
 
-	var mgr *plugins.Manager
-	var release func()
-
-	if req.PluginPolicy == LifecycleShared && r.opts.PluginCache != nil {
-		mgr, release = r.opts.PluginCache.Borrow()
-		if mgr == nil {
-			return nil, fmt.Errorf("failed to borrow shared plugin manager")
-		}
-	} else {
-		m, err := plugins.Open(ctx, r.opts.Config)
-		if err != nil {
-			return nil, fmt.Errorf("plugin open: %w", err)
-		}
-		mgr = m
-		release = func() { _ = m.Close() }
+	mgr, release, err := r.borrowPluginManager(ctx, req)
+	if err != nil {
+		return nil, err
 	}
 
 	params, err := r.buildRunParams(req, mgr)
@@ -412,14 +434,22 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 		return nil, err
 	}
 
-	if req.Recorder != nil {
-		r.recordRecipeMeta(req.Recorder, req, "")
+	rec, closeRec, err := r.openRunRecorder(req)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	if rec != nil {
+		r.recordRecipeMeta(rec, req, "")
 	}
 
 	ch := make(chan HostExecResult, recipeRunChannelCap)
 	go func() {
 		defer release()
 		defer func() {
+			if closeRec {
+				_ = rec.Close()
+			}
 			close(ch) // last: consumers unblock only after cleanup
 		}()
 
@@ -431,15 +461,15 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 		}()
 
 		for res := range inner {
-			if req.Recorder != nil {
-				req.Recorder.RecordHostExecResult(res)
+			if rec != nil {
+				rec.RecordHostExecResult(res)
 			}
 			ch <- res
 		}
 
 		if streamErr := <-errCh; streamErr != nil {
-			if req.Recorder != nil {
-				req.Recorder.RecordError(streamErr)
+			if rec != nil {
+				rec.RecordError(streamErr)
 			}
 			ch <- HostExecResult{
 				Name:     "recipe-run",
@@ -476,8 +506,6 @@ func (r *RecipeRunner) ExecuteAndWait(ctx context.Context, req RunRequest) error
 		zap.L().Info("ExecuteAndWait initializing RunReporter", zap.String("host", smtp.Host), zap.Int("port", smtp.Port))
 		reporter := NewRunReporter(smtp.Host, smtp.Port, smtp.Username, smtp.Password)
 		reporter.Report(ctx, req.Recipe, results, runErr)
-	} else {
-		zap.L().Info("ExecuteAndWait skipping RunReporter", zap.Bool("hasConfig", r.opts.Config != nil))
 	}
 
 	return runErr

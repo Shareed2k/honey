@@ -272,10 +272,11 @@ func startSSH(t *testing.T) (host string, port int, keyFile string) {
 			Image:        "lscr.io/linuxserver/openssh-server:latest",
 			ExposedPorts: []string{"2222/tcp"},
 			Env: map[string]string{
-				"PUID":       "1000",
-				"PGID":       "1000",
-				"PUBLIC_KEY": authorizedKey,
-				"USER_NAME":  "testuser",
+				"PUID":        "1000",
+				"PGID":        "1000",
+				"PUBLIC_KEY":  authorizedKey,
+				"USER_NAME":   "testuser",
+				"SUDO_ACCESS": "true",
 			},
 			WaitingFor: wait.ForListeningPort("2222/tcp").WithStartupTimeout(120 * time.Second),
 		}

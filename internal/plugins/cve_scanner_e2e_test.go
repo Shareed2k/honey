@@ -187,6 +187,44 @@ func TestCVEScanner_scanExecuteNormalizesReport(t *testing.T) {
 	}
 }
 
+func TestCVEScanner_scanExecuteAutoInstall(t *testing.T) {
+	mgr := loadCVEScannerManager(t)
+	bridge := &scriptBridge{
+		scanRows: "CVE-2024-0001|Critical|openssl|3.0.2|3.0.13\n",
+	}
+	ctx := WithHostRunContext(t.Context(), &HostRunContext{
+		Execute: true,
+		Record:  hosts.Record{Name: "web1"},
+		Bridge:  bridge,
+	})
+	in := apiv1.ExecuteStepInput{
+		APIVersion: apiv1.APIVersion,
+		PluginID:   "cve-scanner",
+		Action:     "scan",
+		Config:     []byte(`{"scanner":"trivy","target":"dir:/"}`),
+		Execute:    true,
+	}
+	var out apiv1.ExecuteStepOutput
+	if err := mgr.Call(ctx, "cve-scanner", "execute_step", in, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Success {
+		t.Fatalf("scan failed: %+v", out)
+	}
+
+	for _, want := range []string{
+		"trivy not found in PATH",
+		"curl -sSfL",
+		"sha256sum -c",
+		"tar -xzf",
+		"mv /tmp/trivy /usr/local/bin/trivy",
+	} {
+		if !strings.Contains(bridge.lastScript, want) {
+			t.Fatalf("scan script missing auto-install logic %q:\n%s", want, bridge.lastScript)
+		}
+	}
+}
+
 func TestCVEScanner_patchRunsManagerScript(t *testing.T) {
 	mgr := loadCVEScannerManager(t)
 	bridge := &scriptBridge{}

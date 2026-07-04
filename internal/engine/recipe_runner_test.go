@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,6 +45,28 @@ func TestRecipeRunner_DryRun_returnsPlan(t *testing.T) {
 	// does not. Asserting it locks DryRun to the executor path (matches the old
 	// handleCueExec behavior consumed by clients).
 	require.Contains(t, plan, "Dry-run only")
+}
+
+func TestRecipeRunner_DryRun_recordSessionCreatesRecording(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRecipeRunner(RunnerOptions{RecordDir: dir})
+
+	plan, err := r.DryRun(context.Background(), RunRequest{
+		Recipe:           parseTestRecipe(t, dryRunRecipe),
+		RecipeSourcePath: "inline.cue",
+		Records:          []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}},
+		RecordSession:    true,
+		RecordLabel:      "web-cue-exec-dry",
+	})
+	require.NoError(t, err)
+	require.Contains(t, plan, "echo hello")
+
+	raw := readOnlyRecording(t, dir)
+	require.Equal(t, 1, strings.Count(raw, `"type":"recipe-meta"`), raw)
+	require.Contains(t, raw, `"recipe_path":"inline.cue"`)
+	require.Contains(t, raw, `"host_count":1`)
+	require.Contains(t, raw, `"direction":"plan"`)
+	require.Contains(t, raw, `"type":"close"`)
 }
 
 func TestRecipeRunner_DryRun_missingRequiredPromptErrors(t *testing.T) {
@@ -103,6 +127,55 @@ func TestRecipeRunner_Execute_handlesRunError(t *testing.T) {
 	require.False(t, got[len(got)-1].Success)
 }
 
+func TestRecipeRunner_Execute_recordSessionCreatesRecording(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRecipeRunner(RunnerOptions{RecordDir: dir})
+
+	ch, err := r.Execute(context.Background(), RunRequest{
+		Recipe:           parseTestRecipe(t, dryRunRecipe),
+		RecipeSourcePath: "run.cue",
+		RecordSession:    true,
+		RecordLabel:      "web-cue-exec",
+	})
+	require.NoError(t, err)
+
+	//nolint:revive // empty block is required to drain the channel
+	for range ch {
+	}
+
+	raw := readOnlyRecording(t, dir)
+	require.Equal(t, 1, strings.Count(raw, `"type":"recipe-meta"`), raw)
+	require.Contains(t, raw, `"recipe_path":"run.cue"`)
+	require.Contains(t, raw, `"host_count":0`)
+	require.Contains(t, raw, `"type":"error"`)
+	require.Contains(t, raw, `"no hosts in current result set"`)
+	require.Contains(t, raw, `"type":"close"`)
+}
+
+func TestRecipeRunner_Execute_injectedRecorderRecordsSingleRecipeMeta(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := NewBatchSessionRecorder(dir, "web-cue-exec", "alice", 0)
+	require.NoError(t, err)
+
+	r := NewRecipeRunner(RunnerOptions{})
+	ch, err := r.Execute(context.Background(), RunRequest{
+		Recipe:           parseTestRecipe(t, dryRunRecipe),
+		RecipeSourcePath: "stream.cue",
+		Recorder:         rec,
+	})
+	require.NoError(t, err)
+
+	//nolint:revive // empty block is required to drain the channel
+	for range ch {
+	}
+	require.NoError(t, rec.Close())
+
+	raw, err := os.ReadFile(rec.Path())
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(raw), `"type":"recipe-meta"`), string(raw))
+	require.Contains(t, string(raw), `"recipe_path":"stream.cue"`)
+}
+
 func TestRecipeRunner_ExecuteAndWait_surfacesRunError(t *testing.T) {
 	r := NewRecipeRunner(RunnerOptions{})
 
@@ -130,4 +203,24 @@ recipe: {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "TARGET")
+}
+
+func readOnlyRecording(t *testing.T, dir string) string {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+
+	var path string
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".hrec.jsonl") {
+			require.Empty(t, path, "expected one recording file")
+			path = filepath.Join(dir, entry.Name())
+		}
+	}
+	require.NotEmpty(t, path, "expected a recording file")
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(raw)
 }
