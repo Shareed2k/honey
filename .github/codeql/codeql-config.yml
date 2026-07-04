@@ -1,0 +1,33 @@
+name: "honey CodeQL config"
+
+# Skip generated, vendored, and test artifacts. Scanning minified web bundles or
+# fixtures produces noise, not actionable findings.
+paths-ignore:
+  - internal/webserver/static
+  - webui/dist
+  - "**/node_modules"
+  - "**/testdata"
+
+# Queries excluded below are false-positive or by-design for THIS codebase. Every
+# other security query (uncontrolled-allocation-size, request-forgery/SSRF,
+# insecure-randomness, etc.) stays enabled — those were fixed in code, not muted.
+query-filters:
+  # honey is, by design, a remote command-execution tool: internal/sshclient and
+  # the docker/exec providers run operator-supplied commands on target hosts.
+  # Every such call is "user-controlled" by nature, so go/command-injection
+  # reports the product's core function, not a vulnerability.
+  - exclude:
+      id: go/command-injection
+
+  # All filesystem access for user/config-derived paths is routed through
+  # internal/safepath, which confines reads/writes with os.Root (Go 1.24+,
+  # OS-enforced, traversal-proof). CodeQL's Go path-injection query does not model
+  # os.Root as a barrier, so it flags safepath and its callers as false positives.
+  - exclude:
+      id: go/path-injection
+
+  # The only archive extraction (internal/plugins/install.go) sanitizes each entry
+  # with filepath.Base before writing via safepath, so archive names cannot
+  # traverse; the zip-slip reports are false positives.
+  - exclude:
+      id: go/zipslip

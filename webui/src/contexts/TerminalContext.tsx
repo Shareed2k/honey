@@ -34,7 +34,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         const sessionRec = sessionStorage.getItem(`honey_term_${id}`);
         const record = sessionRec ? JSON.parse(sessionRec) : { _key: key, provider: 'loading', name: 'loading', primary_ip: '' };
         return {
-          id: id || Math.random().toString(36).slice(2),
+          id: id || crypto.randomUUID(),
           record,
           pve: (pve as PveConsoleMode) || 'serial',
           truenasConsole: (truenasConsole as TrueNASConsoleMode) || 'ssh',

@@ -141,10 +141,7 @@ func (e *TemplateExecutor) ExecuteStream(ctx context.Context, req ExecutionReque
 		return nil
 	}
 
-	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
-	if maxConc <= 0 {
-		maxConc = 8
-	}
+	maxConc := clampConcurrency(RecipeHostMaxConc(step, opts.Recipe.Defaults), 8)
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	var mu sync.Mutex

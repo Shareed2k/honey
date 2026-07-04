@@ -608,7 +608,7 @@ export function SearchTab() {
   };
 
   const openTerminalSession = (rec: HostRecord, pve: PveConsoleMode, truenasConsole?: TrueNASConsoleMode) => {
-    const id = Math.random().toString(36).slice(2);
+    const id = crypto.randomUUID();
     sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
     const cfg: TerminalSessionConfig = { id, record: rec, pve, truenasConsole };
     handleOpenTerminal(cfg);
