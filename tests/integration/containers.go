@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -381,14 +382,18 @@ func (c *testSSHClient) Upload(localPath, remotePath string) error {
 		return err
 	}
 
-	out, err := sftpClient.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	out, err := sftpClient.Create(remotePath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
 	_, err = io.Copy(out, in)
-	return err
+	if err != nil {
+		return err
+	}
+	// Close forces the flush in pkg/sftp
+	return out.Close()
 }
 func (c *testSSHClient) Download(remotePath, localPath string) error {
 	sftpClient, err := sftp.NewClient(c.c)
@@ -412,17 +417,55 @@ func (c *testSSHClient) Download(remotePath, localPath string) error {
 	_, err = io.Copy(dst, src)
 	return err
 }
-func (c *testSSHClient) ListRemoteDir(_ string) ([]hostexec.RemoteFileEntry, error) {
-	return nil, fmt.Errorf("not implemented")
+func (c *testSSHClient) ListRemoteDir(path string) ([]hostexec.RemoteFileEntry, error) {
+	out, err := c.Run(fmt.Sprintf("ls -1 %s", path))
+	if err != nil {
+		return nil, err
+	}
+	var res []hostexec.RemoteFileEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		res = append(res, hostexec.RemoteFileEntry{
+			Name:  line,
+			Path:  path + "/" + line,
+			IsDir: false,
+		})
+	}
+	return res, nil
 }
 
-func (c *testSSHClient) StatRemote(_ string) (hostexec.RemoteFileEntry, error) {
-	return hostexec.RemoteFileEntry{}, fmt.Errorf("not implemented")
+func (c *testSSHClient) StatRemote(path string) (hostexec.RemoteFileEntry, error) {
+	out, err := c.Run(fmt.Sprintf("stat -c '%%F %%s' %s", path))
+	if err != nil {
+		return hostexec.RemoteFileEntry{}, err
+	}
+	
+	parts := strings.SplitN(strings.TrimSpace(string(out)), " ", 2)
+	isDir := parts[0] == "directory"
+	var size int64
+	if len(parts) > 1 {
+		size, _ = strconv.ParseInt(parts[1], 10, 64)
+	}
+
+	return hostexec.RemoteFileEntry{
+		Name:  filepath.Base(path),
+		Path:  path,
+		IsDir: isDir,
+		Size:  size,
+	}, nil
 }
 
-func (c *testSSHClient) MkdirAllRemote(_ string) error { return fmt.Errorf("not implemented") }
+func (c *testSSHClient) MkdirAllRemote(path string) error {
+	_, err := c.Run("mkdir -p " + path)
+	return err
+}
 
-func (c *testSSHClient) RemoveRemote(_ string, _ bool) error { return fmt.Errorf("not implemented") }
+func (c *testSSHClient) RemoveRemote(path string, _ bool) error {
+	_, err := c.Run("rm -rf " + path)
+	return err
+}
 func (c *testSSHClient) Close() error                        { return c.c.Close() }
 
 // dialSSHTestContainer dials the test SSH container with InsecureIgnoreHostKey.

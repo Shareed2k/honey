@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
 )
@@ -139,4 +140,49 @@ func RemoteCopyRemoteToLocal(user string, record hosts.Record, remotePath, local
 		defer func() { _ = client.Close() }()
 	}
 	return client.Download(remotePath, localPath)
+}
+
+// RemoteStat queries a file stat on the remote host using a cached client.
+func RemoteStat(user string, record hosts.Record, remotePath string, cache *engine.ClientCache) (hostexec.RemoteFileEntry, error) {
+	if !record.IsConnectable() {
+		return hostexec.RemoteFileEntry{}, fmt.Errorf("record is not connectable")
+	}
+	client, err := cache.GetOrDial(user, record)
+	if err != nil {
+		return hostexec.RemoteFileEntry{}, err
+	}
+	if cache == nil {
+		defer func() { _ = client.Close() }()
+	}
+	return client.StatRemote(remotePath)
+}
+
+// RemoteMkdirAll creates a directory on the remote host using a cached client.
+func RemoteMkdirAll(user string, record hosts.Record, remotePath string, cache *engine.ClientCache) error {
+	if !record.IsConnectable() {
+		return fmt.Errorf("record is not connectable")
+	}
+	client, err := cache.GetOrDial(user, record)
+	if err != nil {
+		return err
+	}
+	if cache == nil {
+		defer func() { _ = client.Close() }()
+	}
+	return client.MkdirAllRemote(remotePath)
+}
+
+// RemoteRemove deletes a file or directory on the remote host using a cached client.
+func RemoteRemove(user string, record hosts.Record, remotePath string, recursive bool, cache *engine.ClientCache) error {
+	if !record.IsConnectable() {
+		return fmt.Errorf("record is not connectable")
+	}
+	client, err := cache.GetOrDial(user, record)
+	if err != nil {
+		return err
+	}
+	if cache == nil {
+		defer func() { _ = client.Close() }()
+	}
+	return client.RemoveRemote(remotePath, recursive)
 }

@@ -6,11 +6,10 @@ import (
 )
 
 // ExecutorProvider is optionally implemented by factories that provide a custom exec transport.
-// The resolver routes records by ProviderName() before calling ExecutorFor, so ExecutorFor
-// never needs to re-check the provider — only record-specific metadata (kind, etc.).
+// The resolver routes records by calling HandlesRecord before calling ExecutorFor.
 type ExecutorProvider interface {
-	// ProviderName returns the r.Provider value this factory owns.
-	ProviderName() string
+	// HandlesRecord reports whether this factory can provide an executor for the record.
+	HandlesRecord(r hosts.Record) bool
 	// ExecutorFor returns the executor for r, or nil to fall through to SSH.
 	ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor
 }
@@ -19,7 +18,7 @@ type ExecutorProvider interface {
 func (r *Registry) ResolveExecutor(rec hosts.Record, reg hostexec.Registry) hostexec.Executor {
 	for _, f := range r.Factories {
 		ep, ok := f.(ExecutorProvider)
-		if !ok || ep.ProviderName() != rec.Provider {
+		if !ok || !ep.HandlesRecord(rec) {
 			continue
 		}
 		return ep.ExecutorFor(rec, reg)

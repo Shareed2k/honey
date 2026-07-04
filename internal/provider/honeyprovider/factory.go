@@ -10,6 +10,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -137,7 +138,27 @@ func (f honeyFactory) BackendSlicePtr() any {
 	return f.cfg.HoneyBackendSlicePtr()
 }
 
+func (f honeyFactory) HandlesRecord(r hosts.Record) bool {
+	return r.Meta["honey_upstream_backend"] != ""
+}
+
+func (f honeyFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
+	// Find the configured honey backend matching the record's upstream source.
+	upstreamName := r.Meta["honey_upstream_backend"]
+	for _, b := range f.cfg.HoneyBackends() {
+		if b.Name == upstreamName {
+			return &Executor{
+				URL:      b.URL,
+				Token:    b.Token,
+				Insecure: b.Insecure,
+			}
+		}
+	}
+	return nil
+}
+
 var (
 	_ searchrun.ProviderFactory       = honeyFactory{}
 	_ searchrun.BackendConfigRegistry = honeyFactory{}
+	_ searchrun.ExecutorProvider      = honeyFactory{}
 )
