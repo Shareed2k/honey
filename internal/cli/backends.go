@@ -31,7 +31,7 @@ func runBackends(cmd *cobra.Command, _ []string) error {
 	if cfgPath == "" {
 		return fmt.Errorf("no config file found; run 'honey config' to create one")
 	}
-	rows := getSearchRegistry().ListBackendRows()
+	rows := GetSearchRegistry().ListBackendRows()
 	if flagBackendsJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")

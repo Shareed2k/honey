@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"time"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -31,6 +33,7 @@ type CueRecipeRunParams struct {
 	Cache          *ClientCache     // optional shared cache; nil = create a fresh per-run cache
 	Enforcer       *policy.Enforcer // optional OPA host-filter gate; nil = allow all
 	Inventory      config.Inventory // config inventory; resolved per-host into OPA host_vars
+	CmdTimeout     time.Duration    // per-host command timeout; 0 = none
 }
 
 // CueRun ...

@@ -22,6 +22,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // InteractiveRunner runs an interactive TTY session against a Docker container.
@@ -449,7 +450,7 @@ func (c *DockerNativeClient) Upload(localPath, remotePath string) error {
 		remotePath = path.Join(strings.TrimRight(remotePath, "/"), base)
 	}
 
-	localFile, err := os.Open(localPath) // #nosec G304
+	localFile, err := safepath.Open(localPath)
 	if err != nil {
 		return err
 	}
@@ -535,7 +536,7 @@ func (c *DockerNativeClient) Download(remotePath, localPath string) error {
 		if hdr.Typeflag == tar.TypeDir {
 			continue
 		}
-		f, err := os.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, tarHeaderFileMode(hdr.Mode)) // #nosec G304
+		f, err := safepath.OpenFile(localPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, tarHeaderFileMode(hdr.Mode))
 		if err != nil {
 			return err
 		}

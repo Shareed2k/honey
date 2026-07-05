@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -419,5 +421,110 @@ func TestParseYAMLAppliesDefaultTags(t *testing.T) {
 	}
 	if f.Defaults.Logs.AnomalyFreqRatio != 5.0 {
 		t.Fatalf("defaults.logs.anomaly_freq_ratio = %v want 5.0", f.Defaults.Logs.AnomalyFreqRatio)
+	}
+}
+
+func TestSaveValidation(t *testing.T) {
+	t.Run("invalid config", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+
+		f := &File{
+			Version: 1,
+			Backends: Backends{
+				Honey: []HoneyBackend{{Name: "", URL: "not-a-url"}}, // Invalid: empty name, bad URL format
+			},
+		}
+		err := f.Save(path)
+		if err == nil {
+			t.Fatal("expected validation error, got nil")
+		}
+		if !strings.Contains(err.Error(), "validation") {
+			t.Fatalf("expected validation error, got: %v", err)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("file should not exist if validation failed")
+		}
+	})
+
+	t.Run("valid config", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+
+		f := &File{
+			Version: 1,
+			Backends: Backends{
+				Honey: []HoneyBackend{{Name: "test", URL: "https://honey.local"}},
+			},
+		}
+		err := f.Save(path)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			t.Fatal("file should exist after successful save")
+		}
+	})
+}
+
+func TestParseSMTPConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `
+version: 1
+smtp:
+  host: "smtp.example.com"
+  port: 587
+  username: "testuser"
+  password: "testpassword"
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.SMTP == nil {
+		t.Fatal("expected SMTP config to be parsed")
+	}
+	if f.SMTP.Host != "smtp.example.com" {
+		t.Errorf("expected host smtp.example.com, got %s", f.SMTP.Host)
+	}
+	if f.SMTP.Port != 587 {
+		t.Errorf("expected port 587, got %d", f.SMTP.Port)
+	}
+	if f.SMTP.Username != "testuser" {
+		t.Errorf("expected username testuser, got %s", f.SMTP.Username)
+	}
+	if f.SMTP.Password != "testpassword" {
+		t.Errorf("expected password testpassword, got %s", f.SMTP.Password)
+	}
+}
+
+func TestExecTimeoutDuration(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"empty", "", 0},
+		{"seconds", "30s", 30 * time.Second},
+		{"minutes", "5m", 5 * time.Minute},
+		{"whitespace", "  2m  ", 2 * time.Minute},
+		{"invalid", "nonsense", 0},
+		{"negative", "-5s", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := Defaults{ExecTimeout: tt.in}.ExecTimeoutDuration()
+			if got != tt.want {
+				t.Errorf("ExecTimeoutDuration(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
 	}
 }

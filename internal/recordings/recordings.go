@@ -3,6 +3,7 @@ package recordings
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -11,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/jsonutil"
+	"github.com/tidwall/gjson"
 )
 
 // Limits for loading a full recording into memory (aligned with HTTP API).
@@ -81,21 +84,28 @@ func ValidateBaseName(name string) error {
 
 // ParseJSONL parses newline-delimited JSON events with MaxPlayEvents cap.
 func ParseJSONL(raw []byte) ([]Event, error) {
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	events := make([]Event, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	// Increase max token size if there are very large lines
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, MaxPlayBytes)
+
+	var events []Event
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
 			continue
 		}
 		var evt Event
-		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+		if err := jsonutil.Unmarshal(line, &evt); err != nil {
 			return nil, fmt.Errorf("invalid recording event JSON: %w", err)
 		}
 		events = append(events, evt)
 		if len(events) > MaxPlayEvents {
 			return nil, fmt.Errorf("too many recording events (max %d)", MaxPlayEvents)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan recording events: %w", err)
 	}
 	return events, nil
 }
@@ -201,28 +211,34 @@ func ExtractFailedHosts(events []Event) []hosts.Record {
 	seen := make(map[string]bool)
 	var failed []hosts.Record
 
-	type partialResult struct {
-		Provider  string            `json:"provider"`
-		Name      string            `json:"name"`
-		PrimaryIP string            `json:"primary_ip"`
-		ExtraIPs  []string          `json:"extra_ips"`
-		Meta      map[string]string `json:"meta"`
-		Success   bool              `json:"success"`
-	}
-
 	for _, e := range events {
 		if e.Type == "result" {
-			var res partialResult
-			if err := json.Unmarshal(e.Result, &res); err == nil && !res.Success {
-				key := res.Provider + ":" + res.Name + ":" + res.PrimaryIP
+			res := gjson.ParseBytes(e.Result)
+			if !res.Get("success").Bool() {
+				provider := res.Get("provider").String()
+				name := res.Get("name").String()
+				primaryIP := res.Get("primary_ip").String()
+
+				key := provider + ":" + name + ":" + primaryIP
 				if !seen[key] {
 					seen[key] = true
+
+					var extraIPs []string
+					for _, ip := range res.Get("extra_ips").Array() {
+						extraIPs = append(extraIPs, ip.String())
+					}
+
+					meta := make(map[string]string)
+					for k, v := range res.Get("meta").Map() {
+						meta[k] = v.String()
+					}
+
 					failed = append(failed, hosts.Record{
-						Provider:  res.Provider,
-						Name:      res.Name,
-						PrimaryIP: res.PrimaryIP,
-						ExtraIPs:  res.ExtraIPs,
-						Meta:      res.Meta,
+						Provider:  provider,
+						Name:      name,
+						PrimaryIP: primaryIP,
+						ExtraIPs:  extraIPs,
+						Meta:      meta,
 					})
 				}
 			}

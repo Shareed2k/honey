@@ -62,6 +62,12 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	cfgPath := resolvedCfgPath
 	cfg := resolvedCfg
 	recordDir := config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
+	// Make the resolved record dir explicit in the config defaults for this
+	// session so the Config screen shows it and async webhook runs are recorded
+	// (and thus retrievable via the webhook results endpoint).
+	if cfg != nil && strings.TrimSpace(cfg.Defaults.RecordDir) == "" {
+		cfg.Defaults.RecordDir = recordDir
+	}
 	var prom *metrics.Registry
 	if strings.TrimSpace(webMetricsListen) != "" {
 		prom = metrics.NewRegistry(BuildVersion(), BuildCommit())
@@ -95,7 +101,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		ConfigPath:         cfgPath,
 		Config:             cfg,
 		ExecRegistry:       buildHostExecRegistry(),
-		SearchRegistry:     getSearchRegistry(),
+		SearchRegistry:     GetSearchRegistry(),
 		RecordDir:          recordDir,
 		LocalFilesRoot:     webFilesRoot,
 		AgentBinaryPath:    webAgentBin,

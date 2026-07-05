@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,17 +11,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/plugins"
 )
-
-// fakePluginProvider satisfies PluginProvider without opening real plugins.
-type fakePluginProvider struct {
-	released int
-}
-
-func (f *fakePluginProvider) Borrow() (*plugins.Manager, func()) {
-	return nil, func() { f.released++ }
-}
 
 // parseTestRecipe is a small helper to parse inline CUE for tests.
 func parseTestRecipe(t *testing.T, content string) cuetry.Recipe {
@@ -39,9 +31,8 @@ recipe: {
 }
 `
 
-func TestRecipeRunner_DryRun_returnsPlanAndReleasesPlugin(t *testing.T) {
-	fp := &fakePluginProvider{}
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+func TestRecipeRunner_DryRun_returnsPlan(t *testing.T) {
+	r := NewRecipeRunner(RunnerOptions{})
 
 	plan, err := r.DryRun(context.Background(), RunRequest{
 		Recipe:  parseTestRecipe(t, dryRunRecipe),
@@ -54,12 +45,32 @@ func TestRecipeRunner_DryRun_returnsPlanAndReleasesPlugin(t *testing.T) {
 	// does not. Asserting it locks DryRun to the executor path (matches the old
 	// handleCueExec behavior consumed by clients).
 	require.Contains(t, plan, "Dry-run only")
-	require.Equal(t, 1, fp.released, "borrowed plugin manager must be released")
+}
+
+func TestRecipeRunner_DryRun_recordSessionCreatesRecording(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRecipeRunner(RunnerOptions{RecordDir: dir})
+
+	plan, err := r.DryRun(context.Background(), RunRequest{
+		Recipe:           parseTestRecipe(t, dryRunRecipe),
+		RecipeSourcePath: "inline.cue",
+		Records:          []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}},
+		RecordSession:    true,
+		RecordLabel:      "web-cue-exec-dry",
+	})
+	require.NoError(t, err)
+	require.Contains(t, plan, "echo hello")
+
+	raw := readOnlyRecording(t, dir)
+	require.Equal(t, 1, strings.Count(raw, `"type":"recipe-meta"`), raw)
+	require.Contains(t, raw, `"recipe_path":"inline.cue"`)
+	require.Contains(t, raw, `"host_count":1`)
+	require.Contains(t, raw, `"direction":"plan"`)
+	require.Contains(t, raw, `"type":"close"`)
 }
 
 func TestRecipeRunner_DryRun_missingRequiredPromptErrors(t *testing.T) {
-	fp := &fakePluginProvider{}
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+	r := NewRecipeRunner(RunnerOptions{})
 
 	const recipeWithPrompt = `
 recipe: {
@@ -75,12 +86,10 @@ recipe: {
 	})
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "TARGET"), "error should name the missing prompt")
-	require.Equal(t, 1, fp.released, "plugin must be released even on validation error")
 }
 
 func TestRecipeRunner_Execute_missingRequiredPromptErrorsSync(t *testing.T) {
-	fp := &fakePluginProvider{}
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+	r := NewRecipeRunner(RunnerOptions{})
 
 	const recipeWithPrompt = `
 recipe: {
@@ -96,14 +105,12 @@ recipe: {
 	})
 	require.Error(t, err, "missing required prompt is a synchronous pre-flight error")
 	require.Nil(t, ch)
-	require.Equal(t, 1, fp.released, "plugin must be released on pre-flight error")
 }
 
-func TestRecipeRunner_Execute_releasesPluginAfterChannelDrains(t *testing.T) {
-	fp := &fakePluginProvider{}
+func TestRecipeRunner_Execute_handlesRunError(t *testing.T) {
 	// No ExecRegistry/records → StreamCueRecipeSteps returns the "no hosts" error,
 	// which the runner surfaces as a synthetic failed result, then closes the channel.
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+	r := NewRecipeRunner(RunnerOptions{})
 
 	ch, err := r.Execute(context.Background(), RunRequest{
 		Recipe:  parseTestRecipe(t, dryRunRecipe),
@@ -116,15 +123,61 @@ func TestRecipeRunner_Execute_releasesPluginAfterChannelDrains(t *testing.T) {
 	for res := range ch {
 		got = append(got, res)
 	}
-	// Channel is closed → plugin released exactly once.
-	require.Equal(t, 1, fp.released)
 	require.NotEmpty(t, got, "a run with no hosts emits a synthetic failed result")
 	require.False(t, got[len(got)-1].Success)
 }
 
+func TestRecipeRunner_Execute_recordSessionCreatesRecording(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRecipeRunner(RunnerOptions{RecordDir: dir})
+
+	ch, err := r.Execute(context.Background(), RunRequest{
+		Recipe:           parseTestRecipe(t, dryRunRecipe),
+		RecipeSourcePath: "run.cue",
+		RecordSession:    true,
+		RecordLabel:      "web-cue-exec",
+	})
+	require.NoError(t, err)
+
+	//nolint:revive // empty block is required to drain the channel
+	for range ch {
+	}
+
+	raw := readOnlyRecording(t, dir)
+	require.Equal(t, 1, strings.Count(raw, `"type":"recipe-meta"`), raw)
+	require.Contains(t, raw, `"recipe_path":"run.cue"`)
+	require.Contains(t, raw, `"host_count":0`)
+	require.Contains(t, raw, `"type":"error"`)
+	require.Contains(t, raw, `"no hosts in current result set"`)
+	require.Contains(t, raw, `"type":"close"`)
+}
+
+func TestRecipeRunner_Execute_injectedRecorderRecordsSingleRecipeMeta(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := NewBatchSessionRecorder(dir, "web-cue-exec", "alice", 0)
+	require.NoError(t, err)
+
+	r := NewRecipeRunner(RunnerOptions{})
+	ch, err := r.Execute(context.Background(), RunRequest{
+		Recipe:           parseTestRecipe(t, dryRunRecipe),
+		RecipeSourcePath: "stream.cue",
+		Recorder:         rec,
+	})
+	require.NoError(t, err)
+
+	//nolint:revive // empty block is required to drain the channel
+	for range ch {
+	}
+	require.NoError(t, rec.Close())
+
+	raw, err := os.ReadFile(rec.Path())
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(raw), `"type":"recipe-meta"`), string(raw))
+	require.Contains(t, string(raw), `"recipe_path":"stream.cue"`)
+}
+
 func TestRecipeRunner_ExecuteAndWait_surfacesRunError(t *testing.T) {
-	fp := &fakePluginProvider{}
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+	r := NewRecipeRunner(RunnerOptions{})
 
 	// No records → run fails; ExecuteAndWait drains and returns the run error.
 	err := r.ExecuteAndWait(context.Background(), RunRequest{
@@ -132,12 +185,10 @@ func TestRecipeRunner_ExecuteAndWait_surfacesRunError(t *testing.T) {
 		Records: nil,
 	})
 	require.Error(t, err)
-	require.Equal(t, 1, fp.released, "plugin released after the run drains")
 }
 
 func TestRecipeRunner_ExecuteAndWait_preflightError(t *testing.T) {
-	fp := &fakePluginProvider{}
-	r := NewRecipeRunner(RunnerOptions{Plugins: fp})
+	r := NewRecipeRunner(RunnerOptions{})
 
 	const recipeWithPrompt = `
 recipe: {
@@ -152,5 +203,24 @@ recipe: {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "TARGET")
-	require.Equal(t, 1, fp.released)
+}
+
+func readOnlyRecording(t *testing.T, dir string) string {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+
+	var path string
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".hrec.jsonl") {
+			require.Empty(t, path, "expected one recording file")
+			path = filepath.Join(dir, entry.Name())
+		}
+	}
+	require.NotEmpty(t, path, "expected a recording file")
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(raw)
 }

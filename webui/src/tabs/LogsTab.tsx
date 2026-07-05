@@ -8,6 +8,9 @@ import { apiPost } from '../api/core';
 import { fetchLogsDefaults, streamLogs, fetchRcaDiagnosis, fetchLogSummary } from '../api/logs';
 import type { LogsStreamRequest, LogTemplateStat } from '../api/types/logs';
 
+import { useHostSelection } from '../contexts/HostSelectionContext';
+import { useAppContext } from '../contexts/AppContext';
+
 const AiMarkdown = lazy(async () => import('../AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
 const ANOM_RE = /^\[ANOM /;
@@ -21,14 +24,10 @@ function hasSavedField(saved: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(saved, key);
 }
 
-interface Props {
-  sshUser: string;
-  providers: string[];
-  backends: string[];
-  logsCommandAllowed?: boolean;
-}
-
-export function LogsTab({ sshUser, providers, backends, logsCommandAllowed = false }: Props) {
+export function LogsTab() {
+  const { sshUser, selectedProviders: providers, selectedBackends: backends } = useHostSelection();
+  const { meta } = useAppContext();
+  const logsCommandAllowed = !!meta?.logs_command_allowed;
   const saved = useMemo(loadSaved, []);
 
   const [target, setTarget] = useState<string>((saved.target as string) ?? '');

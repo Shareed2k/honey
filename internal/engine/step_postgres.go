@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/postgres"
 )
 
@@ -23,13 +23,13 @@ func init() {
 type PostgresExecutor struct{}
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *PostgresExecutor) ExecuteDryRun(_ *StepContext) error {
+func (e *PostgresExecutor) ExecuteDryRun(_ context.Context, _ ExecutionRequest, _ ExecutionOptions, _ io.Writer) error {
 	return nil
 }
 
 // ExecuteStream streams the step execution.
-func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *PostgresExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	step, targets, ch, retryCfg, attemptMax := req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	pgs, _ := step.(*cuetry.PostgresStep)
 	if pgs == nil || pgs.Postgres == nil {
 		return fmt.Errorf("internal: postgres step missing postgres field")
@@ -39,7 +39,8 @@ func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
 		return fmt.Errorf("internal: postgres step missing config")
 	}
 
-	execOne := func(r hosts.Record) HostExecResult {
+	execOne := func(tc TargetContext) HostExecResult {
+		r := tc.Record
 		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
 			res := HostExecResult{
 				Name:     r.Name,
@@ -48,7 +49,7 @@ func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
 			}
 
 			// 1. Resolve DSN Secret
-			dsn, err := resolvePostgresDSN(ctx, run, step, p.DSNSecret)
+			dsn, err := resolvePostgresDSN(ctx, opts, step, p.DSNSecret)
 			if err != nil {
 				res.Success = false
 				res.ErrMsg = fmt.Sprintf("dsn resolve error: %s", err.Error())
@@ -58,7 +59,7 @@ func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
 			// 2. Rewrite DSN if TunnelStep is set
 			tunnelStep := strings.TrimSpace(p.TunnelStep)
 			if tunnelStep != "" {
-				ep, ok := run.TunnelCoord.Lookup(tunnelStep, run.Params.SSHUser, r)
+				ep, ok := opts.TunnelCoord.Lookup(tunnelStep, opts.SSHUser, r)
 				if !ok {
 					res.Success = false
 					res.ErrMsg = fmt.Sprintf("active tunnel %q not found", tunnelStep)
@@ -90,10 +91,10 @@ func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
 
 			switch action {
 			case "query":
-				dbRes, err := postgres.Query(ctx, run.Params.Pools, dsn, p.SQL, args, postgres.QueryOpts{
+				dbRes, err := postgres.Query(ctx, opts.Pools, dsn, p.SQL, args, postgres.QueryOpts{
 					Timeout:  timeout,
 					HostName: r.Name,
-					DryRun:   !run.Params.Execute,
+					DryRun:   !opts.Execute,
 				})
 				if err != nil {
 					res.Success = false
@@ -107,11 +108,11 @@ func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
 				}
 
 			case "exec":
-				dbRes, err := postgres.Exec(ctx, run.Params.Pools, dsn, p.SQL, args, postgres.ExecOpts{
+				dbRes, err := postgres.Exec(ctx, opts.Pools, dsn, p.SQL, args, postgres.ExecOpts{
 					Timeout:  timeout,
 					Readonly: readonly,
 					HostName: r.Name,
-					DryRun:   !run.Params.Execute,
+					DryRun:   !opts.Execute,
 				})
 				if err != nil {
 					res.Success = false
@@ -127,19 +128,19 @@ func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
 				var files []string
 				if len(p.Files) > 0 {
 					for _, f := range p.Files {
-						files = append(files, filepath.Join(run.Params.RecipeDir, f))
+						files = append(files, filepath.Join(opts.RecipeDir, f))
 					}
 				}
 				migrationsDir := ""
 				if p.MigrationsDir != "" {
-					migrationsDir = filepath.Join(run.Params.RecipeDir, p.MigrationsDir)
+					migrationsDir = filepath.Join(opts.RecipeDir, p.MigrationsDir)
 				}
 
-				dbRes, err := postgres.Migrate(ctx, run.Params.Pools, dsn, migrationsDir, files, postgres.MigrateOpts{
+				dbRes, err := postgres.Migrate(ctx, opts.Pools, dsn, migrationsDir, files, postgres.MigrateOpts{
 					Timeout:  timeout,
 					Readonly: readonly,
 					HostName: r.Name,
-					DryRun:   !run.Params.Execute,
+					DryRun:   !opts.Execute,
 				})
 				if err != nil {
 					res.Success = false
@@ -159,15 +160,15 @@ func (e *PostgresExecutor) ExecuteStream(sc *StepContext) error {
 
 	for _, target := range targets {
 		res := execOne(target)
-		if res.Success && p.Output != "" && run.OutputCapture != nil {
-			run.OutputCapture.Set(p.Output, res.Output)
+		if res.Success && p.Output != "" && opts.OutputCapture != nil {
+			opts.OutputCapture.Set(p.Output, res.Output)
 		}
 		ch <- res
 	}
 	return nil
 }
 
-func resolvePostgresDSN(ctx context.Context, run *CueRun, step cuetry.Step, ref string) (string, error) {
+func resolvePostgresDSN(ctx context.Context, opts ExecutionOptions, step cuetry.Step, ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return "", fmt.Errorf("dsn_secret is required")
@@ -179,8 +180,8 @@ func resolvePostgresDSN(ctx context.Context, run *CueRun, step cuetry.Step, ref 
 		if step.Base().Secrets != nil {
 			v, ok = step.Base().Secrets[ref]
 		}
-		if !ok && run.Params.Recipe.Defaults != nil && run.Params.Recipe.Defaults.Secrets != nil {
-			v, ok = run.Params.Recipe.Defaults.Secrets[ref]
+		if !ok && opts.Recipe.Defaults != nil && opts.Recipe.Defaults.Secrets != nil {
+			v, ok = opts.Recipe.Defaults.Secrets[ref]
 		}
 		if !ok {
 			return "", fmt.Errorf("unknown secrets key %q", ref)
@@ -190,8 +191,8 @@ func resolvePostgresDSN(ctx context.Context, run *CueRun, step cuetry.Step, ref 
 	if !strings.HasPrefix(secureRef, "secure:v1:") {
 		return "", fmt.Errorf("secrets key %q must reference secure:v1", ref)
 	}
-	if run.Params.SecretResolver == nil {
+	if opts.SecretResolver == nil {
 		return "", fmt.Errorf("secret resolver not configured")
 	}
-	return run.Params.SecretResolver.Resolve(ctx, secureRef)
+	return opts.SecretResolver.Resolve(ctx, secureRef)
 }

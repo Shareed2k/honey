@@ -1,8 +1,8 @@
 // webui/src/RecipesTab/index.tsx
-import { useCallback, useState } from 'react';
-import { Steps, message } from 'antd';
+import { useCallback, useState, Suspense, lazy } from 'react';
+import { Steps, message, Modal, Button } from 'antd';
 import type { HostRecord } from '../HostPicker';
-import { parseDiskRecipe } from '../api/recipes';
+import { parseDiskRecipe, fetchRecipeContent } from '../api/recipes';
 import { type ParsedRecipe, type RecentRunEntry } from '../api/types/recipes';
 import { reconcileHosts } from '../hostReconcile';
 import { SessionReplayModal } from '../SessionReplayModal';
@@ -13,30 +13,72 @@ import { StepRun } from './StepRun';
 import { saveDraft } from './drafts';
 import type { Draft, WizardStep } from './types';
 import { WizardProvider, useWizard } from './WizardContext';
+import { useRecipeAssist } from '../contexts/RecipeAssistContext';
+import { useHostSelection } from '../contexts/HostSelectionContext';
+import { useAppContext } from '../contexts/AppContext';
 import './recipes-tab.css';
 
-type Props = {
-  records: HostRecord[];
-  selectedRecords: HostRecord[];
-  onSelectedRecordsChange: (h: HostRecord[]) => void;
-  onViewSource: (path: string, name: string) => void;
-  onAiAssist: (path: string, name: string) => void;
-  sessionRecordingAvailable: boolean;
-  terminalAssistAvailable: boolean;
-};
+const HighlightedCode = lazy(async () => import('../HighlightedCode').then((m) => ({ default: m.HighlightedCode })));
 
-function RecipesTabInner(props: Props) {
+function detectCodeLanguage(fileName: string): 'cue' | 'yaml' {
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.endsWith('.yaml') || lowerName.endsWith('.yml')) {
+    return 'yaml';
+  }
+  return 'cue';
+}
+
+function CodeLoadingFallback({ code }: { code: string }) {
+  return (
+    <pre
+      style={{
+        margin: 0,
+        fontSize: '0.78rem',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        overflow: 'auto',
+        padding: '0.65rem',
+        border: '1px solid #2a3140',
+        borderRadius: 6,
+        background: '#0f1115',
+      }}
+    >
+      {code}
+    </pre>
+  );
+}
+
+function RecipesTabInner() {
   const { state, dispatch } = useWizard();
+  const { records, setSelectedKeys } = useHostSelection();
+  const { meta } = useAppContext();
+  const { openRecipeAssist } = useRecipeAssist();
   const [hostReconcileNote, setHostReconcileNote] = useState<string | null>(null);
   const [replayRecord, setReplayRecord] = useState<HostRecord | null>(null);
   const [replayFileName, setReplayFileName] = useState<string | null>(null);
+  const [recipePreview, setRecipePreview] = useState<{ title: string; content: string } | null>(null);
+
+  const openRecipePreview = async (path: string, name: string) => {
+    setRecipePreview({ title: name, content: 'Loading…' });
+    try {
+      const content = await fetchRecipeContent(path);
+      setRecipePreview({ title: name, content });
+    } catch (e) {
+      setRecipePreview({
+        title: name,
+        content: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
 
   const setHosts = useCallback(
     (h: HostRecord[]) => {
       dispatch({ type: 'SET_HOSTS', payload: h });
-      props.onSelectedRecordsChange(h);
+      const next: Record<string, boolean> = {};
+      for (const host of h) next[recordKey(host)] = true;
+      setSelectedKeys(next);
     },
-    [props, dispatch],
+    [setSelectedKeys, dispatch],
   );
 
   function go(step: WizardStep) {
@@ -75,7 +117,7 @@ function RecipesTabInner(props: Props) {
     if (!r.hosts?.length) {
       return;
     }
-    const { matched, missing, total } = reconcileHosts(r.hosts, props.records);
+    const { matched, missing, total } = reconcileHosts(r.hosts, records);
     setHosts(matched);
     if (missing > 0) {
       setHostReconcileNote(`${matched.length} of ${total} hosts still in inventory; ${missing} missing.`);
@@ -145,7 +187,7 @@ function RecipesTabInner(props: Props) {
 
       {state.step === 1 ? (
         <StepHosts
-          records={props.records}
+          records={records}
           onHostsChange={setHosts}
           onNext={() => go(2)}
           reconcileNote={hostReconcileNote}
@@ -154,22 +196,22 @@ function RecipesTabInner(props: Props) {
 
       {state.step === 2 ? (
         <StepRecipe
-          sessionRecordingAvailable={props.sessionRecordingAvailable}
+          sessionRecordingAvailable={!!meta?.session_recording_available}
           onBack={() => go(1)}
           onPickDisk={pickDisk}
           onPickDraft={pickDraft}
           onPickRecent={pickRecent}
           onReplay={openReplay}
           onRerunSameHosts={rerunSameHosts}
-          onViewSource={props.onViewSource}
-          onAiAssist={props.onAiAssist}
+          onViewSource={openRecipePreview}
+          onAiAssist={openRecipeAssist}
         />
       ) : null}
 
       {state.step === 3 && state.edits && state.baseRecipe ? (
         <StepPlan
           onSaveAsDraft={onSaveAsDraft}
-          sessionRecordingAvailable={props.sessionRecordingAvailable}
+          sessionRecordingAvailable={!!meta?.session_recording_available}
           onBack={() => go(2)}
           onExecute={() => go(4)}
         />
@@ -177,7 +219,7 @@ function RecipesTabInner(props: Props) {
 
       {state.step === 4 && state.edits ? (
         <StepRun
-          sessionRecordingAvailable={props.sessionRecordingAvailable}
+          sessionRecordingAvailable={!!meta?.session_recording_available}
           onViewRecording={(fileName) => {
             setReplayRecord({
               provider: 'mixed',
@@ -198,21 +240,40 @@ function RecipesTabInner(props: Props) {
         <SessionReplayModal
           record={replayRecord}
           recordings={[{ file_name: replayFileName, modified_unix_ms: 0, size_bytes: 0 }]}
-          assistAvailable={props.terminalAssistAvailable}
+          assistAvailable={!!meta?.terminal_assist_available}
           onClose={() => {
             setReplayRecord(null);
             setReplayFileName(null);
           }}
         />
       ) : null}
+
+      <Modal maskClosable={false} open={!!recipePreview}
+        title={recipePreview?.title}
+        onCancel={() => setRecipePreview(null)}
+        footer={<Button onClick={() => setRecipePreview(null)}>Close</Button>}
+        width="min(720px, 96vw)"
+        styles={{ body: { maxHeight: '80vh', overflow: 'auto', padding: 0 } }}
+      >
+        {recipePreview && (
+          <Suspense fallback={<CodeLoadingFallback code={recipePreview.content} />}>
+            <HighlightedCode
+              className="recipe-preview-code"
+              code={recipePreview.content}
+              language={detectCodeLanguage(recipePreview.title)}
+            />
+          </Suspense>
+        )}
+      </Modal>
     </div>
   );
 }
 
-export function RecipesTab(props: Props) {
+export function RecipesTab() {
+  const { selectedRecords } = useHostSelection();
   return (
-    <WizardProvider initialHosts={props.selectedRecords}>
-      <RecipesTabInner {...props} />
+    <WizardProvider initialHosts={selectedRecords}>
+      <RecipesTabInner />
     </WizardProvider>
   );
 }

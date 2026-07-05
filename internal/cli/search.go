@@ -55,7 +55,7 @@ func addSearchCoreFlags(cmd *cobra.Command) {
 	cmd.Flags().StringArrayVar(&flagFilters, "filter", nil, "Post-discovery filter (repeatable: group:web, var:service=nginx)")
 	cmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
 
-	getSearchRegistry().RegisterAllProviderFlags(cmd)
+	GetSearchRegistry().RegisterAllProviderFlags(cmd)
 }
 
 // runSearchCore runs the same search pipeline as search (flags, config, cache,
@@ -106,7 +106,7 @@ func runSearchCore(cmd *cobra.Command, queryArgs []string) ([]hosts.Record, stri
 		}
 	}
 
-	provs := getSearchRegistry().BuildProviders(nil)
+	provs := GetSearchRegistry().BuildProviders(nil)
 	wantBackends := hosts.ParseBackendNames(flagBackends)
 	if len(wantBackends) > 0 {
 		provs = hosts.FilterBackendsByNames(provs, wantBackends)

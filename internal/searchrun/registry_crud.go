@@ -1,6 +1,8 @@
 package searchrun
 
 import (
+	"sync"
+
 	"charm.land/huh/v2"
 )
 
@@ -22,20 +24,31 @@ type ProviderCRUD interface {
 	Delete(idx int) error
 }
 
-var crudHandlers []ProviderCRUD
+var (
+	crudMu       sync.RWMutex
+	crudHandlers []ProviderCRUD
+)
 
 // RegisterCRUD registers a ProviderCRUD implementation.
 func RegisterCRUD(c ProviderCRUD) {
+	crudMu.Lock()
+	defer crudMu.Unlock()
 	crudHandlers = append(crudHandlers, c)
 }
 
-// CRUDHandlers returns all registered ProviderCRUD implementations.
+// CRUDHandlers returns a snapshot of all registered ProviderCRUD implementations.
 func CRUDHandlers() []ProviderCRUD {
-	return crudHandlers
+	crudMu.RLock()
+	defer crudMu.RUnlock()
+	out := make([]ProviderCRUD, len(crudHandlers))
+	copy(out, crudHandlers)
+	return out
 }
 
 // CRUDHandler returns a specific ProviderCRUD implementation by ID.
 func CRUDHandler(id string) ProviderCRUD {
+	crudMu.RLock()
+	defer crudMu.RUnlock()
 	for _, c := range crudHandlers {
 		if c.ID() == id {
 			return c

@@ -48,14 +48,13 @@ func TestCueRecipeSSHPostHostResult_CheckCmd(t *testing.T) {
 			CheckCmd: "test -f /etc/ready",
 		},
 	}
-	run := &CueRun{}
-	post := CueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
+	post := CueRecipeSSHPostHostResult(context.TODO(), ExecutionOptions{}, 0, cuetry.KindCommand, step, false)
 
 	resChecked := HostExecResult{
 		Output:  "HONEY_CHECK_CMD_OK",
 		Success: true,
 	}
-	post(nil, hosts.Record{Name: "h1"}, &resChecked)
+	post(nil, TargetContext{Record: hosts.Record{Name: "h1"}}, &resChecked)
 
 	if resChecked.Changed {
 		t.Error("expected resChecked.Changed to be false when CheckCmd passes")
@@ -68,7 +67,7 @@ func TestCueRecipeSSHPostHostResult_CheckCmd(t *testing.T) {
 		Output:  "some regular output",
 		Success: true,
 	}
-	post(nil, hosts.Record{Name: "h1"}, &resMutated)
+	post(nil, TargetContext{Record: hosts.Record{Name: "h1"}}, &resMutated)
 
 	if !resMutated.Changed {
 		t.Error("expected resMutated.Changed to be true when main command executes")
@@ -392,10 +391,10 @@ func TestCueRecipeSSHPostHostResult_changedWhenFailedWhen(t *testing.T) {
 			NotifyHandler: []string{"restart"},
 		},
 	}
-	post := CueRecipeSSHPostHostResult(context.TODO(), run, 0, cuetry.KindCommand, step, false)
+	post := CueRecipeSSHPostHostResult(context.TODO(), ExecutionOptions{}, 0, cuetry.KindCommand, step, false)
 	res := &HostExecResult{Success: true, Output: "bad", ExitCode: 0}
 
-	post(context.TODO(), hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}, res)
+	post(context.TODO(), TargetContext{Record: hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}}, res)
 
 	if res.Success || res.ExitCode == 0 || !strings.Contains(res.ErrMsg, "failed_when") {
 		t.Fatalf("result override failed: %+v", res)

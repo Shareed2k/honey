@@ -15,15 +15,18 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/shareed2k/honey/internal/engine"
-
 	lru "github.com/hashicorp/golang-lru/v2"
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/approval"
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
+	plugincache "github.com/shareed2k/honey/internal/plugincache"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/proxy"
@@ -32,7 +35,6 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
 	"github.com/shareed2k/honey/internal/webauthn"
-	"go.uber.org/zap"
 )
 
 // Options configures the embedded web server.
@@ -59,6 +61,10 @@ type Options struct {
 	AllowLogsCommand   bool
 	OnReady            func() // called after the listener is bound, before serving
 
+	// AuditSink receives one event per security-relevant action (approval decisions,
+	// recipe runs). nil is replaced with a no-op sink in NewServer.
+	AuditSink audit.Sink
+
 	// JWTPubKey, when non-nil, enables Ed25519 JWT identity resolution: a valid
 	// bearer JWT's subject claim becomes the request actor. nil disables JWT.
 	JWTPubKey ed25519.PublicKey
@@ -74,6 +80,11 @@ type Options struct {
 	// WebAuthn, when non-nil, enables passkey biometric step-up for
 	// require_biometric verdicts and the /api/v1/webauthn/* endpoints.
 	WebAuthn *webauthn.Manager
+
+	// WebhookRatePerSecond and WebhookBurst control the per-app-name rate limit on
+	// unauthenticated webhook endpoints. Defaults: 10 req/s, burst 20.
+	WebhookRatePerSecond float64
+	WebhookBurst         int
 }
 
 // Server is the honey web UI HTTP server.
@@ -87,7 +98,7 @@ type Server struct {
 	pgPools  *postgres.PoolManager
 
 	webhookQueue    queue.Queue
-	plugins         *pluginCache
+	plugins         *plugincache.Cache
 	scheduleManager *scheduler.Manager
 
 	assistModelsMu  sync.Mutex
@@ -106,6 +117,15 @@ type Server struct {
 
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
+
+	recipesAPI *RecipesAPI
+
+	commandRunner *engine.CommandRunner
+
+	// deviceCA + enroll back the mTLS device-enrollment endpoints. Both are nil
+	// when no state dir is available (enrollment disabled).
+	deviceCA *DeviceCA
+	enroll   *enrollStore
 }
 
 // NewServer builds handlers with the given auth token.
@@ -118,6 +138,19 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	if opts.Approvals == nil {
 		opts.Approvals = approval.NewStore(24 * time.Hour)
+	}
+	if opts.AuditSink == nil {
+		if opts.Config != nil && opts.Config.Audit.Enabled {
+			path := opts.Config.Audit.EffectivePath()
+			if s, err := audit.NewFileSink(path); err != nil {
+				zap.L().Warn("audit: failed to open log file", zap.String("path", path), zap.Error(err))
+				opts.AuditSink = audit.NewNoopSink()
+			} else {
+				opts.AuditSink = s
+			}
+		} else {
+			opts.AuditSink = audit.NewNoopSink()
+		}
 	}
 	if opts.ExecRegistry != nil {
 		opts.ExecRegistry.Reconfigure(opts.Config)
@@ -132,7 +165,7 @@ func NewServer(opts Options) (*Server, error) {
 	}
 
 	pgPools := postgres.NewPoolManager()
-	pc := newPluginCache(opts.Config)
+	pc := plugincache.New(opts.Config)
 	s := &Server{
 		opts:                  opts,
 		metrics:               opts.Metrics,
@@ -146,6 +179,12 @@ func NewServer(opts Options) (*Server, error) {
 		fileClientCache:       engine.NewClientCache(),
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
+		commandRunner: engine.NewCommandRunner(engine.CommandRunnerOptions{
+			ExecRegistry:   opts.ExecRegistry,
+			SearchRegistry: opts.SearchRegistry,
+			Metrics:        opts.Metrics,
+			RecordDir:      opts.RecordDir,
+		}),
 	}
 	if opts.Config != nil {
 		schedMgr, err := scheduler.New(scheduler.Options{
@@ -168,6 +207,16 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
+
+	// Device mTLS enrollment: load-or-create a device CA under the state dir.
+	// Non-fatal — endpoints report 503 when unavailable.
+	if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
+		if ca, caErr := LoadOrCreateDeviceCA(stateDir); caErr == nil {
+			s.deviceCA = ca
+			s.enroll = newEnrollStore()
+		}
+	}
+
 	if err := s.routes(); err != nil {
 		return nil, err
 	}
@@ -175,7 +224,8 @@ func NewServer(opts Options) (*Server, error) {
 }
 
 func (s *Server) routes() error {
-	recipesAPI := NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache, s.recipeValidationCache, s.recipeGraphCache)
+	s.recipesAPI = NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache, s.recipeValidationCache, s.recipeGraphCache)
+	recipesAPI := s.recipesAPI
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -221,6 +271,11 @@ func (s *Server) routes() error {
 			fr.Post("/remote/list", s.handleFilesRemoteList)
 			fr.Post("/copy", s.handleFilesCopy)
 			fr.Post("/agent-transfer", s.handleFilesAgentTransfer)
+			fr.Post("/remote/stat", s.handleFilesRemoteStat)
+			fr.Post("/remote/mkdir", s.handleFilesRemoteMkdir)
+			fr.Post("/remote/remove", s.handleFilesRemoteRemove)
+			fr.Post("/remote/upload", s.handleFilesRemoteUpload)
+			fr.Get("/remote/download", s.handleFilesRemoteDownload)
 		})
 
 		r.Route("/recordings", func(rcr chi.Router) {
@@ -243,6 +298,8 @@ func (s *Server) routes() error {
 		r.Post("/terminal-assist", s.handleTerminalAssist)
 		r.Get("/terminal-assist/models", s.handleTerminalAssistModels)
 		r.Post("/pve-qemu-vnc-offer", s.handlePveQemuVncOffer)
+		r.Get("/ws/tunnel", s.handleWebTunnel)
+		r.Get("/ws/exec", s.handleWebExec)
 
 		r.Post("/agent", s.handleAgent)
 		r.Get("/apps", s.handleAppsList)
@@ -270,10 +327,23 @@ func (s *Server) routes() error {
 
 		// Webhook results need auth
 		r.Get("/webhooks/results/{id}", recipesAPI.handleRecipeWebhookResult)
+
+		// Webhook debugging (web UI, authenticated): test-send + delivery inspection.
+		r.Post("/webhooks/{app_name}/{webhook_name}/debug", recipesAPI.handleWebhookDebug)
+		r.Get("/webhooks/{app_name}/{webhook_name}/deliveries", recipesAPI.handleWebhookDeliveries)
+
+		// Device mTLS enrollment: mint a one-time code (operator) + list issued devices.
+		r.Post("/devices/enroll-code", s.handleMintEnrollCode)
+		r.Get("/devices", s.handleListDevices)
 	})
 
+	// Device enrollment is authenticated by the one-time code, not the session
+	// token, so it mounts outside the main auth group.
+	s.router.Post("/api/v1/devices/enroll", s.handleDeviceEnroll)
+
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
-	s.router.Post("/api/v1/webhooks/{app_name}/{webhook_name}", recipesAPI.handleRecipeWebhook)
+	s.router.With(recipesAPI.webhookRateLimit).
+		Post("/api/v1/webhooks/{app_name}/{webhook_name}", recipesAPI.handleRecipeWebhook)
 
 	s.router.Get("/ws/ssh", s.handleWebSSH)
 	s.router.Get("/ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)

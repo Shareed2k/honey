@@ -1,16 +1,21 @@
 package webserver
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // PromptUploadResponse is returned by POST /api/v1/recipes/prompts/upload.
@@ -57,7 +62,7 @@ func (api *RecipesAPI) handleRecipesPromptsUpload(w http.ResponseWriter, r *http
 	}
 	localPath := filepath.Clean(filepath.Join(tmpDir, base))
 
-	out, err := os.Create(localPath) // #nosec G304 -- localPath is securely joined in a temporary directory
+	out, err := safepath.Create(localPath)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -121,7 +126,7 @@ func (api *RecipesAPI) handleRecipesPromptsChoices(w http.ResponseWriter, r *htt
 		return
 	}
 
-	resp, err := http.Get(req.URL) // #nosec G107
+	resp, err := ssrfSafeGet(r.Context(), req.URL)
 	if err != nil {
 		httpError(w, fmt.Errorf("fetch %s failed: %w", req.URL, err), http.StatusBadGateway)
 		return
@@ -131,4 +136,52 @@ func (api *RecipesAPI) handleRecipesPromptsChoices(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// ssrfSafeGet fetches rawURL with SSRF protection: only http/https, and the
+// connection is refused when the resolved address is a loopback / private /
+// link-local / unspecified IP. The validated IP is dialed directly to avoid a
+// re-resolution TOCTOU, and this check runs on every hop (incl. redirects).
+func ssrfSafeGet(ctx context.Context, rawURL string) (*http.Response, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported url scheme %q", u.Scheme)
+	}
+
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	guardedDial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, serr := net.SplitHostPort(addr)
+		if serr != nil {
+			return nil, serr
+		}
+		ips, rerr := net.DefaultResolver.LookupIP(ctx, "ip", host)
+		if rerr != nil {
+			return nil, rerr
+		}
+		for _, ip := range ips {
+			if ipDisallowed(ip) {
+				return nil, fmt.Errorf("blocked non-public address %s", ip)
+			}
+		}
+		// Dial the validated IP directly (no second resolution).
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+	}
+
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{DialContext: guardedDial},
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(httpReq)
+}
+
+func ipDisallowed(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }

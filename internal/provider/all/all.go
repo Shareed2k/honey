@@ -7,6 +7,7 @@ import (
 	"github.com/shareed2k/honey/internal/provider/consulprovider"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 	"github.com/shareed2k/honey/internal/provider/gcp"
+	"github.com/shareed2k/honey/internal/provider/honeyprovider"
 	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 	"github.com/shareed2k/honey/internal/provider/localprovider"
 	"github.com/shareed2k/honey/internal/provider/proxmoxprovider"
@@ -102,6 +103,18 @@ func (c configAdapter) SetTrueNASBackends(b []config.TrueNASBackend) {
 	config.Get().Backends.TrueNAS = b
 }
 
+func (c configAdapter) HoneyBackends() []config.HoneyBackend {
+	return config.Get().Backends.Honey
+}
+
+func (c configAdapter) HoneyBackendSlicePtr() *[]config.HoneyBackend {
+	return &config.Get().Backends.Honey
+}
+
+func (c configAdapter) SetHoneyBackends(b []config.HoneyBackend) {
+	config.Get().Backends.Honey = b
+}
+
 func (c configAdapter) DockerDiscover() config.DockerDiscover {
 	return config.Get().Defaults.DockerDiscover
 }
@@ -115,6 +128,7 @@ func Factories(deps Deps) []searchrun.ProviderFactory {
 		consulprovider.NewFactory(adapter),
 		dockerprovider.NewFactory(deps.DockerInteractive, adapter),
 		gcp.NewFactory(adapter),
+		honeyprovider.NewFactory(adapter),
 		k8sprovider.NewFactory(deps.K8sInteractive, adapter),
 		localprovider.NewFactory(adapter),
 		proxmoxprovider.NewFactory(adapter),

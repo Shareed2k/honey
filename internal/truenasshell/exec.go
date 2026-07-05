@@ -31,7 +31,7 @@ type shellRead struct {
 }
 
 // RunRemoteCommand runs one non-interactive shell command over an API shell session.
-func RunRemoteCommand(ctx context.Context, b truenasprovider.TrueNASBackendRuntime, rec hosts.Record, remoteCmd string) (output []byte, exitCode int, err error) {
+func RunRemoteCommand(ctx context.Context, b truenasprovider.TrueNASBackendRuntime, rec hosts.Record, remoteCmd string, maxOutputBytes int) (output []byte, exitCode int, err error) {
 	remoteCmd = strings.TrimSpace(remoteCmd)
 	if remoteCmd == "" {
 		return nil, 0, nil
@@ -48,7 +48,7 @@ func RunRemoteCommand(ctx context.Context, b truenasprovider.TrueNASBackendRunti
 	}
 	defer func() { _ = sess.Close() }()
 
-	return execOverAPIShell(overall, sess, remoteCmd)
+	return execOverAPIShell(overall, sess, remoteCmd, maxOutputBytes)
 }
 
 const dumbPipeAgentPython = `
@@ -70,7 +70,7 @@ for line in sys.stdin:
 `
 
 // execOverAPIShell establishes a dumb pipe session over the PTY.
-func execOverAPIShell(ctx context.Context, sess *Session, remoteCmd string) ([]byte, int, error) {
+func execOverAPIShell(ctx context.Context, sess *Session, remoteCmd string, maxOutputBytes int) ([]byte, int, error) {
 	ch, readerDone := startShellReader(ctx, sess)
 	defer func() {
 		_ = sess.Close()
@@ -100,7 +100,7 @@ func execOverAPIShell(ctx context.Context, sess *Session, remoteCmd string) ([]b
 		return nil, -1, fmt.Errorf("truenas shell write command: %w", err)
 	}
 
-	return readAgentResponse(ctx, ch, defaultExecIdle)
+	return readAgentResponse(ctx, ch, defaultExecIdle, maxOutputBytes)
 }
 
 func shellSingleQuoted(s string) string {
@@ -112,7 +112,7 @@ type agentResponse struct {
 	OutB64 string `json:"out_b64"`
 }
 
-func readAgentResponse(ctx context.Context, ch <-chan shellRead, idleTimeout time.Duration) ([]byte, int, error) {
+func readAgentResponse(ctx context.Context, ch <-chan shellRead, idleTimeout time.Duration, maxOutputBytes int) ([]byte, int, error) {
 	var buf bytes.Buffer
 	idle := time.NewTimer(idleTimeout)
 	defer idle.Stop()
@@ -150,8 +150,12 @@ func readAgentResponse(ctx context.Context, ch <-chan shellRead, idleTimeout tim
 				var res agentResponse
 				if err := json.Unmarshal([]byte(line), &res); err == nil {
 					outBytes, _ := base64.StdEncoding.DecodeString(res.OutB64)
-					if len(outBytes) > maxRemoteCommandOutput {
-						outBytes = append(outBytes[:maxRemoteCommandOutput], []byte("\n…(truncated)")...)
+					limit := maxOutputBytes
+					if limit == 0 {
+						limit = maxRemoteCommandOutput
+					}
+					if limit > 0 && len(outBytes) > limit {
+						outBytes = append(outBytes[:limit], []byte("\n…(truncated)")...)
 					}
 					return outBytes, res.Code, nil
 				}

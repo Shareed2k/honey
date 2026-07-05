@@ -188,19 +188,36 @@ func runCueRecipeStep(out io.Writer, recipe cuetry.Recipe, recipeDir string, rec
 		PluginMgr:      pluginMgr,
 	}}
 
-	sc := &StepContext{
-		Ctx:     context.Background(),
-		Run:     run,
-		Out:     out,
-		Targets: targets,
+	var targetCtxs []TargetContext
+	for _, t := range targets {
+		// Just provide empty env for dry run if not doing full resolution?
+		// Wait, `StepEnv` can be called here too for dry run.
+		env, _ := run.StepEnv(context.Background(), step.Base(), &t, false, true) // dryRun = true
+		targetCtxs = append(targetCtxs, TargetContext{Record: t, Env: env})
+	}
+
+	req := ExecutionRequest{
+		Targets: targetCtxs,
 		Index:   i,
 		Step:    step,
 		Kind:    kind,
 	}
 
+	opts := ExecutionOptions{
+		Execute:        execute,
+		Recipe:         recipe,
+		RecipeDir:      recipeDir,
+		SSHUser:        sshUser,
+		CLIEnv:         cliEnv,
+		SecretResolver: run.Params.SecretResolver,
+		PluginMgr:      run.Params.PluginMgr,
+		ConfigPath:     configPath,
+		Pools:          run.Params.Pools,
+	}
+
 	exec, err := GetStepExecutor(kind)
 	if err == nil {
-		return exec.ExecuteDryRun(sc)
+		return exec.ExecuteDryRun(context.Background(), req, opts, out)
 	}
 
 	return fmt.Errorf("step %d: unsupported step kind for dry run: %q", i, kind)

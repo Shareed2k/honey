@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -86,7 +87,7 @@ func startPostgres(t *testing.T) string {
 			tcpostgres.WithUsername("test"),
 			tcpostgres.WithPassword("test"),
 			testcontainers.WithWaitStrategy(
-				wait.ForListeningPort("5432/tcp").WithStartupTimeout(60*time.Second),
+				wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(60*time.Second),
 			),
 		)
 		if err != nil {
@@ -183,9 +184,10 @@ func startOpenSearch(t *testing.T) string {
 			Image:        "opensearchproject/opensearch:2",
 			ExposedPorts: []string{"9200/tcp"},
 			Env: map[string]string{
-				"discovery.type":                    "single-node",
-				"OPENSEARCH_INITIAL_ADMIN_PASSWORD": "Qx7#nBm2pLv!",
-				"OPENSEARCH_JAVA_OPTS":              "-Xms512m -Xmx512m",
+				"discovery.type":                         "single-node",
+				"OPENSEARCH_INITIAL_ADMIN_PASSWORD":      "Qx7#nBm2pLv!",
+				"OPENSEARCH_JAVA_OPTS":                   "-Xms512m -Xmx512m",
+				"DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI": "true",
 			},
 			WaitingFor: wait.ForHTTP("/").WithPort("9200/tcp").
 				WithTLS(true, insecureTLS).
@@ -272,10 +274,11 @@ func startSSH(t *testing.T) (host string, port int, keyFile string) {
 			Image:        "lscr.io/linuxserver/openssh-server:latest",
 			ExposedPorts: []string{"2222/tcp"},
 			Env: map[string]string{
-				"PUID":       "1000",
-				"PGID":       "1000",
-				"PUBLIC_KEY": authorizedKey,
-				"USER_NAME":  "testuser",
+				"PUID":        "1000",
+				"PGID":        "1000",
+				"PUBLIC_KEY":  authorizedKey,
+				"USER_NAME":   "testuser",
+				"SUDO_ACCESS": "true",
 			},
 			WaitingFor: wait.ForListeningPort("2222/tcp").WithStartupTimeout(120 * time.Second),
 		}
@@ -324,6 +327,33 @@ func (c *testSSHClient) Run(cmd string) ([]byte, error) {
 	return sess.Output(cmd)
 }
 
+// RunContext mirrors sshclient.HoneyClient.RunContext: it aborts the in-flight
+// command (session close) when ctx is cancelled/timed out, so the engine's
+// per-host timeout + cancellation paths are exercised end-to-end in tests.
+func (c *testSSHClient) RunContext(ctx context.Context, cmd string) ([]byte, error) {
+	sess, err := c.c.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	type result struct {
+		out []byte
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		out, runErr := sess.CombinedOutput(cmd)
+		ch <- result{out: out, err: runErr}
+	}()
+	select {
+	case <-ctx.Done():
+		_ = sess.Close()
+		return nil, ctx.Err()
+	case r := <-ch:
+		_ = sess.Close()
+		return r.out, r.err
+	}
+}
+
 func (c *testSSHClient) RunWithStreams(cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	sess, err := c.c.NewSession()
 	if err != nil {
@@ -353,14 +383,18 @@ func (c *testSSHClient) Upload(localPath, remotePath string) error {
 		return err
 	}
 
-	out, err := sftpClient.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	out, err := sftpClient.Create(remotePath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
 	_, err = io.Copy(out, in)
-	return err
+	if err != nil {
+		return err
+	}
+	// Close forces the flush in pkg/sftp
+	return out.Close()
 }
 func (c *testSSHClient) Download(remotePath, localPath string) error {
 	sftpClient, err := sftp.NewClient(c.c)
@@ -384,18 +418,56 @@ func (c *testSSHClient) Download(remotePath, localPath string) error {
 	_, err = io.Copy(dst, src)
 	return err
 }
-func (c *testSSHClient) ListRemoteDir(_ string) ([]hostexec.RemoteFileEntry, error) {
-	return nil, fmt.Errorf("not implemented")
+func (c *testSSHClient) ListRemoteDir(path string) ([]hostexec.RemoteFileEntry, error) {
+	out, err := c.Run(fmt.Sprintf("ls -1 %s", path))
+	if err != nil {
+		return nil, err
+	}
+	var res []hostexec.RemoteFileEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		res = append(res, hostexec.RemoteFileEntry{
+			Name:  line,
+			Path:  path + "/" + line,
+			IsDir: false,
+		})
+	}
+	return res, nil
 }
 
-func (c *testSSHClient) StatRemote(_ string) (hostexec.RemoteFileEntry, error) {
-	return hostexec.RemoteFileEntry{}, fmt.Errorf("not implemented")
+func (c *testSSHClient) StatRemote(path string) (hostexec.RemoteFileEntry, error) {
+	out, err := c.Run(fmt.Sprintf("stat -c '%%F %%s' %s", path))
+	if err != nil {
+		return hostexec.RemoteFileEntry{}, err
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(string(out)), " ", 2)
+	isDir := parts[0] == "directory"
+	var size int64
+	if len(parts) > 1 {
+		size, _ = strconv.ParseInt(parts[1], 10, 64)
+	}
+
+	return hostexec.RemoteFileEntry{
+		Name:  filepath.Base(path),
+		Path:  path,
+		IsDir: isDir,
+		Size:  size,
+	}, nil
 }
 
-func (c *testSSHClient) MkdirAllRemote(_ string) error { return fmt.Errorf("not implemented") }
+func (c *testSSHClient) MkdirAllRemote(path string) error {
+	_, err := c.Run("mkdir -p " + path)
+	return err
+}
 
-func (c *testSSHClient) RemoveRemote(_ string, _ bool) error { return fmt.Errorf("not implemented") }
-func (c *testSSHClient) Close() error                        { return c.c.Close() }
+func (c *testSSHClient) RemoveRemote(path string, _ bool) error {
+	_, err := c.Run("rm -rf " + path)
+	return err
+}
+func (c *testSSHClient) Close() error { return c.c.Close() }
 
 // dialSSHTestContainer dials the test SSH container with InsecureIgnoreHostKey.
 func dialSSHTestContainer(user, containerHost string, containerPort int, keyFile string) (*gossh.Client, error) {
@@ -632,7 +704,8 @@ func (e *testExecutor) RunTunnel(ctx context.Context, user string, r hosts.Recor
 }
 
 func (e *testExecutor) DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
-	return nil, fmt.Errorf("not implemented")
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", address)
 }
 
 func (c *testSSHClient) SupportsKVTunnel() bool {

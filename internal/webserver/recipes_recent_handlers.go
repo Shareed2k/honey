@@ -12,6 +12,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 type recipeMetaEvent struct {
@@ -114,7 +115,7 @@ func (api *RecipesAPI) handleRecipesRecentRuns(w http.ResponseWriter, r *http.Re
 // readRecipeMeta scans the first ~10 lines of the recording file for a
 // recipe-meta event and returns the parsed payload.
 func readRecipeMeta(path string) (recipeMetaPayload, bool) {
-	f, err := os.Open(path) // #nosec G304 -- path comes from os.ReadDir on a server-configured dir
+	f, err := safepath.Open(path)
 	if err != nil {
 		return recipeMetaPayload{}, false
 	}
@@ -144,7 +145,7 @@ func isEdited(meta recipeMetaPayload) bool {
 	if meta.RecipePath == "" {
 		return true
 	}
-	b, err := os.ReadFile(meta.RecipePath) // #nosec G304 -- path comes from a recording we wrote
+	b, err := safepath.ReadFile(meta.RecipePath)
 	if err != nil {
 		return true
 	}

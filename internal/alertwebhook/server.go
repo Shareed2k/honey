@@ -194,7 +194,11 @@ func (s *Server) investigate(ctx context.Context, alert amtemplate.Alert) {
 		recordDir = strings.TrimSpace(s.fileCfg.Defaults.RecordDir)
 	}
 
-	results, _ := engine.ExecuteSSHParallel("", records.Records, func(_ hosts.Record) string { return cmd }, 8, nil)
+	var targetCtxs []engine.TargetContext
+	for _, r := range records.Records {
+		targetCtxs = append(targetCtxs, engine.TargetContext{Record: r})
+	}
+	results, _ := engine.ExecuteSSHParallel("", targetCtxs, func(_ hosts.Record) string { return cmd }, 8, nil)
 	// Build notification body.
 	var sb strings.Builder
 	_, _ = fmt.Fprintf(&sb, "Alert: %s\nHost query: %s\n\n", alert.Labels["alertname"], hostQuery)

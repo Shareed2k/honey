@@ -21,7 +21,6 @@ import (
 
 // Environment variables that activate OPA authorization and actor identity.
 const (
-	policyDirEnv      = "HONEY_POLICY_DIR"      // dir of .rego files; enables the OPA gates
 	jwtPublicKeyEnv   = "HONEY_JWT_PUBLIC_KEY"  // base64 Ed25519 public key; enables JWT identity
 	trustedProxiesEnv = "HONEY_TRUSTED_PROXIES" // CSV of CIDRs/IPs trusted to assert X-Honey-User
 	webauthnRPIDEnv   = "HONEY_WEBAUTHN_RPID"   // relying-party id; enables passkey biometric step-up
@@ -45,14 +44,14 @@ type webAuthConfig struct {
 func resolveWebAuthConfig(ctx context.Context, file *config.File) (webAuthConfig, error) {
 	var cfg webAuthConfig
 
-	if dir := strings.TrimSpace(os.Getenv(policyDirEnv)); dir != "" {
+	if dir := config.ResolvePolicyDir(file); dir != "" {
 		data, err := inventoryData(file)
 		if err != nil {
-			return cfg, fmt.Errorf("%s: inventory data: %w", policyDirEnv, err)
+			return cfg, fmt.Errorf("policy_dir: inventory data: %w", err)
 		}
 		enf, err := policy.New(ctx, dir, data)
 		if err != nil {
-			return cfg, fmt.Errorf("%s: %w", policyDirEnv, err)
+			return cfg, fmt.Errorf("policy_dir: %w", err)
 		}
 		cfg.enforcer = enf
 		zap.L().Info("OPA policy enabled", zap.String("dir", dir), zap.Bool("inventory", data != nil))

@@ -38,6 +38,43 @@ type FilesCopyRequest struct {
 	RemotePath string       `json:"remote_path"`
 }
 
+// FilesRemoteStatRequest is the JSON body for stating a remote file over SSH.
+type FilesRemoteStatRequest struct {
+	SSHUser string       `json:"ssh_user"`
+	Record  hosts.Record `json:"record"`
+	Path    string       `json:"path"`
+}
+
+// FilesRemoteMkdirRequest is the JSON body for creating a remote directory over SSH.
+type FilesRemoteMkdirRequest struct {
+	SSHUser string       `json:"ssh_user"`
+	Record  hosts.Record `json:"record"`
+	Path    string       `json:"path"`
+}
+
+// FilesRemoteRemoveRequest is the JSON body for removing a remote file/directory over SSH.
+type FilesRemoteRemoveRequest struct {
+	SSHUser   string       `json:"ssh_user"`
+	Record    hosts.Record `json:"record"`
+	Path      string       `json:"path"`
+	Recursive bool         `json:"recursive"`
+}
+
+// FilesRemoteStatResponse is the JSON body for remote stat results.
+type FilesRemoteStatResponse struct {
+	Entry engine.RemoteFileEntry `json:"entry"`
+}
+
+// FilesRemoteMkdirResponse is the JSON body for remote mkdir results.
+type FilesRemoteMkdirResponse struct {
+	Success bool `json:"success"`
+}
+
+// FilesRemoteRemoveResponse is the JSON body for remote remove results.
+type FilesRemoteRemoveResponse struct {
+	Success bool `json:"success"`
+}
+
 // FilesAgentTransferRequest is the JSON body for agent-mediated file transfer.
 type FilesAgentTransferRequest struct {
 	SSHUser         string                   `json:"ssh_user"`
@@ -201,7 +238,7 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 	var copyErr error
 	switch strings.TrimSpace(req.Direction) {
 	case "local_to_remote":
-		st, stErr := os.Stat(localAbs) // #nosec G304 -- localAbs is validated under configured root.
+		st, stErr := safepath.Stat(localAbs)
 		if stErr != nil {
 			httpError(w, fmt.Errorf("local path stat: %w", stErr), http.StatusBadRequest)
 			return
@@ -360,4 +397,109 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(FilesAgentTransferResponse{Events: events})
+}
+
+// handleFilesRemoteStat stats a file or directory on a remote host over SSH/SFTP.
+// @Summary Stat remote file
+// @Tags files
+// @Accept json
+// @Produce json
+// @Param body body FilesRemoteStatRequest true "ssh_user, record, path"
+// @Success 200 {object} FilesRemoteStatResponse
+// @Failure 400 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Router /api/v1/files/remote/stat [post]
+// @Security BearerAuth
+func (s *Server) handleFilesRemoteStat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req FilesRemoteStatRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
+		return
+	}
+	user := s.sshUser(req.SSHUser)
+	if !req.Record.IsConnectable() {
+		httpError(w, fmt.Errorf("record is not connectable"), http.StatusBadRequest)
+		return
+	}
+	entry, err := ui.RemoteStat(user, req.Record, req.Path, s.fileClientCache)
+	if err != nil {
+		httpError(w, err, http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(FilesRemoteStatResponse{Entry: entry})
+}
+
+// handleFilesRemoteMkdir creates a directory on a remote host over SSH/SFTP.
+// @Summary Mkdir remote directory
+// @Tags files
+// @Accept json
+// @Produce json
+// @Param body body FilesRemoteMkdirRequest true "ssh_user, record, path"
+// @Success 200 {object} FilesRemoteMkdirResponse
+// @Failure 400 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Router /api/v1/files/remote/mkdir [post]
+// @Security BearerAuth
+func (s *Server) handleFilesRemoteMkdir(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req FilesRemoteMkdirRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
+		return
+	}
+	user := s.sshUser(req.SSHUser)
+	if !req.Record.IsConnectable() {
+		httpError(w, fmt.Errorf("record is not connectable"), http.StatusBadRequest)
+		return
+	}
+	err := ui.RemoteMkdirAll(user, req.Record, req.Path, s.fileClientCache)
+	if err != nil {
+		httpError(w, err, http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(FilesRemoteMkdirResponse{Success: true})
+}
+
+// handleFilesRemoteRemove removes a file or directory on a remote host over SSH/SFTP.
+// @Summary Remove remote file
+// @Tags files
+// @Accept json
+// @Produce json
+// @Param body body FilesRemoteRemoveRequest true "ssh_user, record, path, recursive"
+// @Success 200 {object} FilesRemoteRemoveResponse
+// @Failure 400 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Router /api/v1/files/remote/remove [post]
+// @Security BearerAuth
+func (s *Server) handleFilesRemoteRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req FilesRemoteRemoveRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
+		return
+	}
+	user := s.sshUser(req.SSHUser)
+	if !req.Record.IsConnectable() {
+		httpError(w, fmt.Errorf("record is not connectable"), http.StatusBadRequest)
+		return
+	}
+	err := ui.RemoteRemove(user, req.Record, req.Path, req.Recursive, s.fileClientCache)
+	if err != nil {
+		httpError(w, err, http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(FilesRemoteRemoveResponse{Success: true})
 }

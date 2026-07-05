@@ -44,10 +44,18 @@ The plugin is installed to <plugins-dir>/<plugin-id>/.
 	RunE: runPluginsInstall,
 }
 
+var pluginsInspectCmd = &cobra.Command{
+	Use:   "inspect <plugin-id>",
+	Short: "Show manifest, capabilities, and effective network policy for a plugin",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runPluginsInspect,
+}
+
 func init() {
 	rootCmd.AddCommand(pluginsCmd)
 	pluginsCmd.AddCommand(pluginsListCmd)
 	pluginsCmd.AddCommand(pluginsInstallCmd)
+	pluginsCmd.AddCommand(pluginsInspectCmd)
 
 	pluginsInstallCmd.Flags().BoolVarP(&pluginsInstallForce, "force", "f", false, "Overwrite existing plugin")
 	pluginsInstallCmd.Flags().StringVar(&pluginsInstallDir, "dir", "", "Override plugins directory (default: from config or ~/.config/honey/plugins)")
@@ -70,6 +78,80 @@ func runPluginsList(cmd *cobra.Command, _ []string) error {
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetIndent("", "  ")
 	return enc.Encode(list)
+}
+
+func runPluginsInspect(cmd *cobra.Command, args []string) error {
+	id := strings.TrimSpace(args[0])
+	mgr, err := plugins.Open(context.Background(), resolvedCfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = mgr.Close() }()
+
+	var found *plugins.Info
+	for _, p := range mgr.List() {
+		p := p
+		if p.ID == id {
+			found = &p
+			break
+		}
+	}
+	if found == nil {
+		return fmt.Errorf("plugin %q not found (is it installed and plugins.enabled: true?)", id)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Plugin:       %s\n", found.ID)
+	fmt.Fprintf(out, "Version:      %s\n", found.Version)
+	fmt.Fprintf(out, "Path:         %s\n", found.Path)
+	fmt.Fprintf(out, "Capabilities: %s\n", strings.Join(found.Capabilities, ", "))
+
+	fmt.Fprintln(out, "\nNetwork policy:")
+	effectiveDeny := resolvedCfg == nil || resolvedCfg.Plugins.WithDefaults().NetworkDeny
+	if effectiveDeny {
+		if len(found.AllowedHosts) > 0 {
+			fmt.Fprintf(out, "  network_deny: true  (override: allowed_hosts %v)\n", found.AllowedHosts)
+		} else {
+			fmt.Fprintln(out, "  network_deny: true  ✓ no outbound network access")
+		}
+	} else {
+		if len(found.AllowedHosts) > 0 {
+			fmt.Fprintf(out, "  network_deny: false, allowed_hosts: %v\n", found.AllowedHosts)
+		} else {
+			fmt.Fprintln(out, "  network_deny: false, allowed_hosts: (unrestricted) ⚠")
+		}
+	}
+
+	fmt.Fprintln(out, "\nCapabilities granted:")
+	type grant struct {
+		label string
+		value bool
+	}
+	grants := []grant{
+		{"allow_host_exec", found.AllowHostExec},
+		{"allow_remote_exec", found.AllowRemoteExec},
+		{"allow_sftp", found.AllowSFTP},
+		{"allow_postgres", found.AllowPostgres},
+		{"allow_kv", found.AllowKV},
+		{"allow_template_render", found.AllowTemplateRender},
+	}
+	for _, g := range grants {
+		if g.value {
+			fmt.Fprintf(out, "  %-22s true  ⚠\n", g.label+":")
+		} else {
+			fmt.Fprintf(out, "  %-22s false ✓\n", g.label+":")
+		}
+	}
+	if len(found.AllowedPaths) > 0 {
+		fmt.Fprintln(out, "\nAllowed paths (guest → host):")
+		for guest, host := range found.AllowedPaths {
+			fmt.Fprintf(out, "  %s → %s\n", guest, host)
+		}
+	}
+	if len(found.AllowedEnv) > 0 {
+		fmt.Fprintf(out, "\nAllowed env vars: %s\n", strings.Join(found.AllowedEnv, ", "))
+	}
+	return nil
 }
 
 func runPluginsInstall(cmd *cobra.Command, args []string) error {

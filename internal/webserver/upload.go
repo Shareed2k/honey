@@ -12,6 +12,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 // UploadResponse is the non-stream JSON body for POST /api/v1/upload.
@@ -80,7 +81,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		base = filepath.Base(hdr.Filename)
 	}
 	localPath := filepath.Clean(filepath.Join(tmpDir, base))
-	out, err := os.Create(localPath) // #nosec G304 -- localPath is securely joined in a temporary directory
+	out, err := safepath.Create(localPath)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -112,7 +113,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := engine.ExecuteSFTPUploadParallel(user, []hosts.Record{rec}, localPath, meta.RemotePath, 1)
+	results, err := engine.ExecuteSFTPUploadParallel(user, []engine.TargetContext{{Record: rec}}, localPath, meta.RemotePath, 1)
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return

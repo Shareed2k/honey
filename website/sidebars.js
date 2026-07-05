@@ -18,6 +18,7 @@ const sidebars = {
     'command-risk',
     'cue-recipes',
     'plugins',
+    'vulnerability-management',
     'plugins-development',
     'add-new-backend',
     'anomaly-detection',

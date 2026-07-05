@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
@@ -36,17 +37,17 @@ func riskGateDisabled() bool {
 // a clear reason in this non-interactive path (the approval flow is a later phase).
 // Returns the allowed targets and skip results for denied ones — mirroring
 // filterTargetsByPolicy so denied hosts stay visible in the run output.
-func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpreter string, targets []hosts.Record) (allowed []hosts.Record, skipped []HostExecResult, err error) {
+func gateCommandRisk(ctx context.Context, opts ExecutionOptions, kind, rawCommand, interpreter string, targets []TargetContext) (allowed []TargetContext, skipped []HostExecResult, err error) {
 	if riskGateDisabled() || strings.TrimSpace(rawCommand) == "" {
 		return targets, nil, nil
 	}
 
 	analysis := commandrisk.AnalyzeStep(rawCommand, interpreter)
-	enforcer := run.Params.Enforcer
-	actor := actorOrAPI(run.Params.ActorID)
+	enforcer := opts.Enforcer
+	actor := actorOrAPI(opts.ActorID)
 
 	for _, t := range targets {
-		reason, denied, evalErr := commandRiskDecision(ctx, enforcer, actor, kind, rawCommand, analysis, run, t)
+		reason, denied, evalErr := commandRiskDecision(ctx, enforcer, actor, kind, rawCommand, analysis, opts, t.Record)
 		if evalErr != nil {
 			return nil, nil, evalErr
 		}
@@ -54,23 +55,39 @@ func gateCommandRisk(ctx context.Context, run *CueRun, kind, rawCommand, interpr
 			allowed = append(allowed, t)
 			continue
 		}
-		sk := WhenSkippedResult(t)
+		sk := WhenSkippedResult(t.Record)
 		sk.Output = "(blocked: " + reason + ")"
 		skipped = append(skipped, sk)
 	}
 	return allowed, skipped, nil
 }
 
-// commandRiskDecision returns (reason, denied, err) for one target. Built-in
-// critical signals deny first; otherwise the OPA enforcer (if any) decides.
-func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, kind, rawCommand string, analysis commandrisk.Analysis, run *CueRun, t hosts.Record) (string, bool, error) {
-	if crit := analysis.FirstCritical(); crit != nil {
-		return "command risk: " + crit.Reason, true, nil
-	}
-	if enforcer == nil {
-		return "", false, nil
-	}
+// RiskStepFilter wraps gateCommandRisk as a StepFilter so the risk gate
+// participates in the same pipeline interface as policyStepFilter and whenStepFilter.
+type RiskStepFilter struct {
+	opts        ExecutionOptions
+	kind        string
+	rawCommand  string
+	interpreter string
+}
 
+// NewRiskStepFilter returns a StepFilter that gates targets via the command
+// risk analysis (built-in critical signals + OPA command_exec decision).
+func NewRiskStepFilter(opts ExecutionOptions, kind, rawCommand, interpreter string) *RiskStepFilter {
+	return &RiskStepFilter{opts: opts, kind: kind, rawCommand: rawCommand, interpreter: interpreter}
+}
+
+// Filter applies the command risk gate to the given targets.
+func (f *RiskStepFilter) Filter(ctx context.Context, targets []TargetContext) ([]TargetContext, []HostExecResult, error) {
+	return gateCommandRisk(ctx, f.opts, f.kind, f.rawCommand, f.interpreter, targets)
+}
+
+// commandRiskDecision returns (reason, denied, err) for one target. Built-in
+// critical signals deny first; otherwise the OPA enforcer (if any) decides. The
+// shared decision logic lives in cmdgate.Decide so the engine, web API, and MCP
+// server all gate exec identically; this function only builds the recipe-context
+// policy input.
+func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, kind, rawCommand string, analysis commandrisk.Analysis, opts ExecutionOptions, t hosts.Record) (string, bool, error) {
 	input := map[string]any{
 		"action": "command_exec",
 		"actor":  actor,
@@ -86,28 +103,18 @@ func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, 
 			"provider":  t.Provider,
 			"env":       t.Meta["env"],
 			"groups":    t.Groups,
-			"host_vars": hostVarsForPolicy(t, run.Params.Inventory),
+			"host_vars": hostVarsForPolicy(t, opts.Inventory),
 		},
 		"execution": map[string]any{
-			"recipe":  run.Params.Recipe.Name,
-			"dry_run": !run.Params.Execute,
+			"recipe":  opts.Recipe.Name,
+			"dry_run": !opts.Execute,
 			"step":    kind,
 		},
 	}
 
-	d, err := enforcer.Evaluate(ctx, input)
+	reason, denied, err := cmdgate.Decide(ctx, enforcer, analysis, input)
 	if err != nil {
 		return "", false, fmt.Errorf("command risk policy: %w", err)
 	}
-	if d.Allow && d.Decision != "require_approval" && d.Decision != "require_biometric" && d.Decision != "deny" {
-		return "", false, nil
-	}
-	reason := d.DenyReason
-	if reason == "" {
-		reason = "denied by policy"
-	}
-	if len(d.Requires) > 0 {
-		reason += " (requires: " + strings.Join(d.Requires, ", ") + ")"
-	}
-	return reason, true, nil
+	return reason, denied, nil
 }

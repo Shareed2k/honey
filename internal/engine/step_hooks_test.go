@@ -47,13 +47,11 @@ func TestRunCueStepHooks_defaultWhereRemote(t *testing.T) {
 
 	rec := hosts.Record{Name: "h1", PrimaryIP: "1.2.3.4"}
 	cache.Clients()[SSHClientCacheKey("root", rec)] = client
-	run := &CueRun{
+	opts := ExecutionOptions{
 		TriggeredHandlers: map[string]bool{},
-		Params: CueRecipeRunParams{
-			Recipe:  cuetry.Recipe{Name: "hook-default"},
-			SSHUser: "root",
-		},
-		Cache: cache,
+		Recipe:            cuetry.Recipe{Name: "hook-default"},
+		SSHUser:           "root",
+		Cache:             cache,
 	}
 	step := &cuetry.CommandStep{
 		StepBase: cuetry.StepBase{
@@ -66,7 +64,7 @@ func TestRunCueStepHooks_defaultWhereRemote(t *testing.T) {
 	}
 	res := &HostExecResult{Success: true}
 
-	RunCueStepHooks(context.Background(), run, 0, cuetry.KindCommand, step, rec, res, false)
+	RunCueStepHooks(context.Background(), opts, 0, cuetry.KindCommand, step, rec, TargetContext{Record: rec}, res, false)
 
 	if false && (command == "" || !strings.Contains(command, "echo hook")) {
 		t.Fatalf("remote hook command = %q", command)

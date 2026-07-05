@@ -60,6 +60,31 @@ func NewLSHDDetector() LSHDDetector {
 	return d
 }
 
+var dpPool = sync.Pool{
+	New: func() any {
+		buf := make([]int, 2048) // Preallocate a decent size
+		return &buf
+	},
+}
+
+func getDPBuffer(size int) []int {
+	bufPtr := dpPool.Get().(*[]int)
+	buf := *bufPtr
+	if cap(buf) < size {
+		buf = make([]int, size)
+	} else {
+		buf = buf[:size]
+		for i := range buf {
+			buf[i] = 0
+		}
+	}
+	return buf
+}
+
+func putDPBuffer(buf []int) {
+	dpPool.Put(&buf)
+}
+
 var _ LSHDDetector = (*lshdDetector)(nil)
 
 var tokenRegexp = regexp.MustCompile(`[a-zA-Z0-9_\-%]+|[^a-zA-Z0-9_\-%\s]`)
@@ -205,21 +230,25 @@ func (d *lshdDetector) Template(line string) (string, error) {
 func alignTemplates(temp []string, tokens []string) []string {
 	m := len(temp)
 	n := len(tokens)
-	dp := make([][]int, m+1)
-	for i := range dp {
-		dp[i] = make([]int, n+1)
-	}
+
+	// Optimization: 1D flat slice for DP matrix to minimize allocations
+	cols := n + 1
+	dpSize := (m + 1) * cols
+	dp := getDPBuffer(dpSize)
+	defer putDPBuffer(dp)
+
 	for i := 1; i <= m; i++ {
 		for j := 1; j <= n; j++ {
 			if temp[i-1] == tokens[j-1] {
-				dp[i][j] = dp[i-1][j-1] + 1
+				dp[i*cols+j] = dp[(i-1)*cols+(j-1)] + 1
 			} else {
-				dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+				dp[i*cols+j] = max(dp[(i-1)*cols+j], dp[i*cols+(j-1)])
 			}
 		}
 	}
 
-	var aligned []string
+	// Preallocate aligned with max possible length
+	aligned := make([]string, 0, m+n)
 	i, j := m, n
 	for i > 0 || j > 0 {
 		switch {
@@ -227,7 +256,7 @@ func alignTemplates(temp []string, tokens []string) []string {
 			aligned = append(aligned, temp[i-1])
 			i--
 			j--
-		case j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]):
+		case j > 0 && (i == 0 || dp[i*cols+(j-1)] >= dp[(i-1)*cols+j]):
 			aligned = append(aligned, "<*>")
 			j--
 		default:
@@ -242,7 +271,7 @@ func alignTemplates(temp []string, tokens []string) []string {
 	}
 
 	// Collapse consecutive "<*>"
-	var collapsed []string
+	collapsed := make([]string, 0, len(aligned))
 	for _, tok := range aligned {
 		if tok == "<*>" {
 			if len(collapsed) > 0 && collapsed[len(collapsed)-1] == "<*>" {
@@ -259,18 +288,28 @@ func alignTemplates(temp []string, tokens []string) []string {
 func lcsLength(a, b []string) int {
 	m := len(a)
 	n := len(b)
-	dp := make([][]int, m+1)
-	for i := range dp {
-		dp[i] = make([]int, n+1)
+	if m == 0 || n == 0 {
+		return 0
 	}
+
+	// Optimization: Use a single flat slice for two rows to minimize allocations.
+	dpSize := 2 * (n + 1)
+	dp := getDPBuffer(dpSize)
+	defer putDPBuffer(dp)
+
+	prev := dp[:n+1]
+	curr := dp[n+1:]
+
 	for i := 1; i <= m; i++ {
 		for j := 1; j <= n; j++ {
 			if a[i-1] == b[j-1] {
-				dp[i][j] = dp[i-1][j-1] + 1
+				curr[j] = prev[j-1] + 1
 			} else {
-				dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+				curr[j] = max(prev[j], curr[j-1])
 			}
 		}
+		prev, curr = curr, prev
 	}
-	return dp[m][n]
+	// The result is in prev because of the swap at the end of the final iteration
+	return prev[n]
 }

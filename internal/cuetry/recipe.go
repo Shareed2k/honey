@@ -310,6 +310,25 @@ const schemaSource = `
 	type?: "linear" | "graph"
 	webhooks?:  {[string]: #Webhook}
 	schedules?: {[string]: #Schedule}
+	notification?: close({
+		email?: close({
+			send_on?: close({
+				success?: bool
+				failure?: bool
+			})
+			on_success?: close({
+				from: string
+				to: [...string]
+				prefix?: string
+			})
+			on_failure?: close({
+				from: string
+				to: [...string]
+				prefix?: string
+				attach_logs?: bool
+			})
+		})
+	})
 	defaults?: close({
 		run_as?: string
 		env?: {[string]: string}

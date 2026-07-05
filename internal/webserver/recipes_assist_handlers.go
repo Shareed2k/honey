@@ -173,6 +173,7 @@ func (api *RecipesAPI) handleRecipesAssist(w http.ResponseWriter, r *http.Reques
 				SSHUser:          api.sshUser(body.SSHUser),
 				ActorID:          actorFromCtx(r.Context()),
 				AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath),
+				PluginPolicy:     engine.LifecycleShared,
 			})
 			if runErr != nil {
 				planNote = fmt.Sprintf("Dry-run error: %v\n--- Plan output ---\n%s", runErr, clipRunesForRecipeAssist(plan, maxRecipeAssistPlanRunes))

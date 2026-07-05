@@ -14,6 +14,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/safepath"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -184,7 +185,7 @@ func StreamLogs(ctx context.Context, user string, records []hosts.Record, opts L
 
 	var fbw *feedbackWriter
 	if opts.AnomalyFeedbackFile != "" {
-		f, err := os.OpenFile(opts.AnomalyFeedbackFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304
+		f, err := safepath.OpenFile(opts.AnomalyFeedbackFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			return fmt.Errorf("feedback file: %w", err)
 		}

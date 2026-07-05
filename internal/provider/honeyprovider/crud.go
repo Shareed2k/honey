@@ -1,0 +1,107 @@
+package honeyprovider
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+
+	"charm.land/huh/v2"
+	"github.com/shareed2k/honey/internal/config"
+)
+
+type honeyCRUD struct {
+	cfg ConfigProvider
+}
+
+func (c honeyCRUD) ID() string   { return "honey" }
+func (c honeyCRUD) Name() string { return "Honey" }
+
+func (c honeyCRUD) ListOptions() []huh.Option[string] {
+	opts := make([]huh.Option[string], 0, len(c.cfg.HoneyBackends()))
+	for i, b := range c.cfg.HoneyBackends() {
+		opts = append(opts, huh.NewOption(fmt.Sprintf("Honey: %s (%s)", b.Name, b.URL), fmt.Sprintf("honey:%d", i)))
+	}
+	return opts
+}
+
+func (c honeyCRUD) Add() error {
+	var name, serverURL, token string
+	var insecure bool
+
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().Title("Backend name").Value(&name).Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return fmt.Errorf("name cannot be empty")
+				}
+				return nil
+			}),
+			huh.NewInput().Title("Honey server URL").Value(&serverURL).Validate(func(s string) error {
+				u, err := url.Parse(s)
+				if err != nil || u.Scheme == "" || u.Host == "" {
+					return fmt.Errorf("must be a valid URL")
+				}
+				return nil
+			}),
+			huh.NewInput().Title("Auth token (optional)").Value(&token),
+			huh.NewConfirm().Title("Insecure TLS?").Value(&insecure),
+		),
+	).Run(); err != nil {
+		return err
+	}
+
+	c.cfg.SetHoneyBackends(append(c.cfg.HoneyBackends(), config.HoneyBackend{
+		Name:     name,
+		URL:      serverURL,
+		Token:    token,
+		Insecure: insecure,
+	}))
+	return nil
+}
+
+func (c honeyCRUD) Edit(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.HoneyBackends()) {
+		return fmt.Errorf("index out of bounds")
+	}
+	b := c.cfg.HoneyBackends()[idx]
+
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().Title("Backend name").Value(&b.Name).Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return fmt.Errorf("name cannot be empty")
+				}
+				return nil
+			}),
+			huh.NewInput().Title("Honey server URL").Value(&b.URL).Validate(func(s string) error {
+				u, err := url.Parse(s)
+				if err != nil || u.Scheme == "" || u.Host == "" {
+					return fmt.Errorf("must be a valid URL")
+				}
+				return nil
+			}),
+			huh.NewInput().Title("Auth token (optional)").Value(&b.Token),
+			huh.NewConfirm().Title("Insecure TLS?").Value(&b.Insecure),
+		),
+	).Run(); err != nil {
+		return err
+	}
+
+	backends := c.cfg.HoneyBackends()
+	newBackends := append([]config.HoneyBackend(nil), backends...)
+	newBackends[idx] = b
+	c.cfg.SetHoneyBackends(newBackends)
+	return nil
+}
+
+func (c honeyCRUD) Delete(idx int) error {
+	if idx < 0 || idx >= len(c.cfg.HoneyBackends()) {
+		return fmt.Errorf("index out of bounds")
+	}
+	backends := c.cfg.HoneyBackends()
+	newBackends := make([]config.HoneyBackend, 0, len(backends)-1)
+	newBackends = append(newBackends, backends[:idx]...)
+	newBackends = append(newBackends, backends[idx+1:]...)
+	c.cfg.SetHoneyBackends(newBackends)
+	return nil
+}

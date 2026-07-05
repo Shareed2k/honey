@@ -18,7 +18,10 @@ const (
 	maxSecretRefDisplayRunes = 120
 )
 
-var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var (
+	envNamePattern     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	envSanitizePattern = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+)
 
 // ValidateRecipeEnvMap checks every key/value pair for safe use in POSIX export assignments.
 func ValidateRecipeEnvMap(m map[string]string) error {
@@ -210,7 +213,7 @@ func ParseEnvKeyValuePairs(pairs []string) (map[string]string, error) {
 }
 
 func sanitizeEnvKey(k string) string {
-	return regexp.MustCompile(`[^a-zA-Z0-9_]`).ReplaceAllString(strings.ToUpper(k), "_")
+	return envSanitizePattern.ReplaceAllString(strings.ToUpper(k), "_")
 }
 
 func appendHostEnvVars(dst map[string]string, r *hosts.Record) {

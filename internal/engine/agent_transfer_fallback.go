@@ -5,13 +5,15 @@
 package engine
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
-	"github.com/shareed2k/honey/internal/transferagent/presign"
 	"go.uber.org/zap"
+
+	"github.com/shareed2k/honey/internal/transferagent/presign"
 )
 
 type remoteCmdRunner interface {
@@ -54,51 +56,76 @@ func minifyPythonScript(code string) string {
 	return strings.Join(lines, "\n")
 }
 
+// encodeScriptParams marshals the dynamic values as JSON and base64-encodes
+// them. The base64 alphabet contains no quote characters, so the blob is safe
+// to embed inside both the Python single-quoted literal that decodes it and the
+// outer shell single-quoted wrapper — untrusted paths/URLs/headers can never
+// break out of either layer.
+func encodeScriptParams(params map[string]any) string {
+	blob, _ := json.Marshal(params)
+	return base64.StdEncoding.EncodeToString(blob)
+}
+
 func buildPythonSinglePutScript(pythonBin, srcPath string, u presign.SignedURL, size int64) string {
-	headersJSON, _ := json.Marshal(u.Headers)
+	b64 := encodeScriptParams(map[string]any{
+		"src":     srcPath,
+		"url":     u.URL,
+		"size":    size,
+		"headers": u.Headers,
+	})
 	code := fmt.Sprintf(`
-import urllib.request, json
-with open('%s', 'rb') as f:
-    req = urllib.request.Request('%s', data=f, method='PUT')
-    req.add_header('Content-Length', '%d')
-    headers = json.loads('%s') or {}
-    for k, v in headers.items():
+import urllib.request, json, base64
+p = json.loads(base64.b64decode('%s').decode())
+with open(p['src'], 'rb') as f:
+    req = urllib.request.Request(p['url'], data=f, method='PUT')
+    req.add_header('Content-Length', str(p['size']))
+    for k, v in (p['headers'] or {}).items():
         req.add_header(k, v)
     with urllib.request.urlopen(req) as resp:
         pass
-`, ShellSingleQuote(srcPath), u.URL, size, string(headersJSON))
+`, b64)
 	return fmt.Sprintf("%s -c '%s'", pythonBin, ShellSingleQuote(minifyPythonScript(code)))
 }
 
 func buildPythonDownloadScript(pythonBin, dstPath string, u presign.SignedURL) string {
+	b64 := encodeScriptParams(map[string]any{
+		"dst": dstPath,
+		"url": u.URL,
+	})
 	code := fmt.Sprintf(`
-import urllib.request, shutil, os
-os.makedirs(os.path.dirname('%s') or '.', exist_ok=True)
-with urllib.request.urlopen('%s') as r, open('%s', 'wb') as f:
+import urllib.request, shutil, os, json, base64
+p = json.loads(base64.b64decode('%s').decode())
+os.makedirs(os.path.dirname(p['dst']) or '.', exist_ok=True)
+with urllib.request.urlopen(p['url']) as r, open(p['dst'], 'wb') as f:
     shutil.copyfileobj(r, f)
-`, ShellSingleQuote(dstPath), u.URL, ShellSingleQuote(dstPath))
+`, b64)
 	return fmt.Sprintf("%s -c '%s'", pythonBin, ShellSingleQuote(minifyPythonScript(code)))
 }
 
 func buildPythonMultipartScript(pythonBin, srcPath string, partSize int64, parts []presign.SignedURL) string {
-	urlsJSON, _ := json.Marshal(parts)
+	b64 := encodeScriptParams(map[string]any{
+		"src":       srcPath,
+		"part_size": partSize,
+		"parts":     parts,
+	})
 	code := fmt.Sprintf(`
-import sys, urllib.request, json, mmap
-urls = json.loads('%s')
-part_size = %d
-with open('%s', 'rb') as f:
+import sys, urllib.request, json, base64, mmap
+p = json.loads(base64.b64decode('%s').decode())
+urls = p['parts']
+part_size = p['part_size']
+with open(p['src'], 'rb') as f:
     mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-    for i, p in enumerate(urls):
-        u = p['URL']
+    for i, pt in enumerate(urls):
+        u = pt['URL']
         start = i * part_size
         end = min(start + part_size, len(mm))
         req = urllib.request.Request(u, data=memoryview(mm)[start:end], method='PUT')
-        for k, v in p.get('Headers', {}).items():
+        for k, v in pt.get('Headers', {}).items():
             req.add_header(k, v)
         with urllib.request.urlopen(req) as resp:
             etag = resp.headers.get('ETag', '').replace('"', '')
             print(f"PART {i+1} {etag}")
-`, string(urlsJSON), partSize, ShellSingleQuote(srcPath))
+`, b64)
 	return fmt.Sprintf("%s -c '%s'", pythonBin, ShellSingleQuote(minifyPythonScript(code)))
 }
 

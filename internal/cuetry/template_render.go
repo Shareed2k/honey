@@ -1,13 +1,13 @@
 package cuetry
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
 	"text/template"
 
 	sprig "github.com/go-task/slim-sprig/v3"
+	"github.com/shareed2k/honey/internal/jsonutil"
 )
 
 // RenderTemplateOpts configures a template render.
@@ -132,6 +132,24 @@ func templateJoin(sep string, list any) string {
 			parts = append(parts, fmt.Sprint(item))
 		}
 		return strings.Join(parts, sep)
+	case []int:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			parts = append(parts, fmt.Sprint(item))
+		}
+		return strings.Join(parts, sep)
+	case []int64:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			parts = append(parts, fmt.Sprint(item))
+		}
+		return strings.Join(parts, sep)
+	case []float64:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			parts = append(parts, fmt.Sprint(item))
+		}
+		return strings.Join(parts, sep)
 	default:
 		rv := reflect.ValueOf(list)
 		if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
@@ -157,6 +175,18 @@ func templateCount(v any) int {
 	case []string:
 		return len(x)
 	case map[string]any:
+		return len(x)
+	case map[string]string:
+		return len(x)
+	case []int:
+		return len(x)
+	case []int64:
+		return len(x)
+	case []float64:
+		return len(x)
+	case []bool:
+		return len(x)
+	case []map[string]any:
 		return len(x)
 	default:
 		rv := reflect.ValueOf(v)
@@ -189,6 +219,18 @@ func templateEmpty(v any) bool {
 		return len(x) == 0
 	case map[string]any:
 		return len(x) == 0
+	case map[string]string:
+		return len(x) == 0
+	case []int:
+		return len(x) == 0
+	case []int64:
+		return len(x) == 0
+	case []float64:
+		return len(x) == 0
+	case []bool:
+		return len(x) == 0
+	case []map[string]any:
+		return len(x) == 0
 	default:
 		rv := reflect.ValueOf(v)
 		switch rv.Kind() {
@@ -208,7 +250,7 @@ func templateDefault(def, val any) any {
 }
 
 func templateToJSON(v any) string {
-	b, err := json.Marshal(v)
+	b, err := jsonutil.Marshal(v)
 	if err != nil {
 		return ""
 	}

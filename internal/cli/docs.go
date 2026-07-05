@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 )
@@ -40,7 +41,7 @@ var docsCmd = &cobra.Command{
 			for _, e := range entries {
 				if strings.HasSuffix(e.Name(), ".md") {
 					path := filepath.Clean(filepath.Join(dir, filepath.Base(e.Name())))
-					b, _ := os.ReadFile(path) // #nosec G304 -- path is securely joined with a safe base name
+					b, _ := safepath.ReadFile(path)
 
 					// Escape < and > to prevent Docusaurus from interpreting them as JSX tags
 					content := strings.ReplaceAll(string(b), "<", "&lt;")

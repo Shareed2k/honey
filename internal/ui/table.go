@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -238,13 +239,9 @@ func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{})
 			}
 		}
 
-		// Sort labels manually
-		for i := 0; i < len(labels)-1; i++ {
-			for j := i + 1; j < len(labels); j++ {
-				if labels[i] > labels[j] {
-					labels[i], labels[j] = labels[j], labels[i]
-				}
-			}
+		// Sort labels using standard library
+		if len(labels) > 0 {
+			slices.Sort(labels)
 		}
 
 		if tagsStr, ok := r.Meta["tags"]; ok && tagsStr != "" {
@@ -252,14 +249,9 @@ func rowsFromRecs(recs []hosts.Record, visible []int, selected map[int]struct{})
 			for i := range tags {
 				tags[i] = strings.TrimSpace(tags[i])
 			}
-			// Sort tags manually
-			for i := 0; i < len(tags)-1; i++ {
-				for j := i + 1; j < len(tags); j++ {
-					if tags[i] > tags[j] {
-						tags[i], tags[j] = tags[j], tags[i]
-					}
-				}
-			}
+			// Sort tags using standard library
+			slices.Sort(tags)
+
 			if len(labels) > 0 {
 				labels = append(tags, labels...)
 			} else {
@@ -1314,10 +1306,10 @@ type streamDoneMsg struct{}
 
 func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts.Record, cmdLine, targetNote string) tea.Cmd {
 	return func() tea.Msg {
-		var jobs []hosts.Record
+		var jobs []engine.TargetContext
 		for _, r := range targets {
 			if isExecutableHost(r) {
-				jobs = append(jobs, r)
+				jobs = append(jobs, engine.TargetContext{Record: r})
 			}
 		}
 
@@ -1333,15 +1325,16 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 
 		go func() {
 			defer close(ch)
-			cmdFunc := func(r hosts.Record, _ map[string]string) string {
+			cmdFunc := func(tc engine.TargetContext, _ map[string]string) string {
+				r := tc.Record
 				// Inject host variables even for direct UI commands
 				env, err := cuetry.EffectiveEnvHostOnly(&r)
 				if err != nil {
-					return fmt.Sprintf("echo 'env err: %s'", err.Error())
+					return "echo " + engine.ShellSingleQuoted("env err: "+err.Error())
 				}
 				remoteCmd, err := cuetry.ShellExportPrefixForRemote(env, cmdLine)
 				if err != nil {
-					return fmt.Sprintf("echo 'export err: %s'", err.Error())
+					return "echo " + engine.ShellSingleQuoted("export err: "+err.Error())
 				}
 				return remoteCmd
 			}

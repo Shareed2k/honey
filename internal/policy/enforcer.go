@@ -13,6 +13,8 @@ import (
 
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/open-policy-agent/opa/v1/storage/inmem"
+
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 //go:embed policies/*.rego
@@ -141,9 +143,7 @@ func loadDir(dir string) (map[string]string, error) {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".rego" {
 			continue
 		}
-		// #nosec G304 -- dir is operator-set config (HONEY_POLICY_DIR); e.Name()
-		// is a single DirEntry component from ReadDir, so no traversal is possible.
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		b, err := safepath.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("policy: read %q: %w", e.Name(), err)
 		}

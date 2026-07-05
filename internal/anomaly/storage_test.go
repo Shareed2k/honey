@@ -34,7 +34,6 @@ func TestBatchStorageDeduplicationAndBatching(t *testing.T) {
 	mock := &mockStorage{}
 	// Batch size of 3, timeout of 50ms
 	batch := NewBatchStorage(mock, 3, 50*time.Millisecond)
-	defer batch.Close()
 
 	ctx := context.Background()
 
@@ -77,8 +76,11 @@ func TestBatchStorageDeduplicationAndBatching(t *testing.T) {
 		t.Fatalf("write failed: %v", err)
 	}
 
-	// Wait more than 50ms for the background ticker to flush the two unique records (Write 1 and Write 3)
-	time.Sleep(100 * time.Millisecond)
+	// Close flushes remaining records and blocks until the worker goroutine exits.
+	// Reading mock.written after this is race-free: all writes happen-before wg.Wait().
+	if err := batch.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 
 	if len(mock.written) != 2 {
 		t.Errorf("expected 2 unique records written to mock storage, got %d", len(mock.written))

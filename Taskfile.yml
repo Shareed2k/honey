@@ -23,7 +23,7 @@ tasks:
   golint:
     desc: Run golangci-lint
     cmds:
-      - go tool golangci-lint run
+      - go tool golangci-lint run --timeout=15m
       
   govulncheck:
     desc: Run govulncheck
@@ -73,7 +73,7 @@ tasks:
     desc: Build all plugin modules as WASM binaries
     cmds:
       - |
-        for dir in bash shell copy template file service postgres sqlite rclone helm; do
+        for dir in bash shell copy template file service postgres sqlite rclone helm cve-scanner js; do
           echo "building plugins/$dir"
           if [ "$dir" = "sqlite" ]; then
             (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -tags sqlite3_dotlk -buildmode=c-shared -o plugin.wasm .)

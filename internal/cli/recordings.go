@@ -11,6 +11,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/shareed2k/honey/internal/safepath"
+
 	"github.com/shareed2k/honey/internal/aichat"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/jsonutil"
@@ -62,7 +64,7 @@ var recordingsExportCmd = &cobra.Command{
 		}
 		w := os.Stdout
 		if flagExportOutput != "" {
-			f, err := os.Create(flagExportOutput) // #nosec G304
+			f, err := safepath.Create(flagExportOutput)
 			if err != nil {
 				return err
 			}

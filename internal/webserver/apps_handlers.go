@@ -92,7 +92,11 @@ func (s *Server) handleAppsList(w http.ResponseWriter, _ *http.Request) {
 	}
 	appsOut := make(map[string]apps.AppConfig, len(s.opts.Config.Apps))
 	for name, app := range s.opts.Config.Apps {
-		appsOut[name] = sanitizeAppForAPI(app)
+		app = sanitizeAppForAPI(app)
+		if app.Type == apps.AppTypeRecipe && s.recipesAPI != nil {
+			app.Webhooks = s.recipesAPI.recipeWebhookNames(app)
+		}
+		appsOut[name] = app
 	}
 
 	w.Header().Set("Content-Type", "application/json")

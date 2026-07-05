@@ -11,13 +11,27 @@ webui/node_modules/
 contrib/ansible/inventory_plugins/__pycache__
 
 # Brainstorming visual-companion artifacts (per-session mockups)
-.superpowers/
+.superpowers
 
 *.wasm
 *.wasm.gz
 
 models
 runtime
+/honey
 honey
 .env
 .claude/*
+
+*/*.aar
+android/app/libs/*.aar
+android/app/libs/*.jar
+android/.kotlin
+android/.claude
+android/.idea
+android/.gradle
+
+.idea
+.claude
+android/app/src/main/assets/honey-arm64
+android/app/src/main/assets/honey-amd64

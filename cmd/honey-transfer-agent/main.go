@@ -18,9 +18,10 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/shareed2k/honey/internal/safepath"
 
 	cloudstorage "cloud.google.com/go/storage"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -129,7 +130,7 @@ func runKeygen(a transferArgs) error {
 	kid := hex.EncodeToString(kidBytes)
 	keyFile := path.Join(dir, "honey-transfer-agent-"+kid+".pem")
 	pemData := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER})
-	if err := os.WriteFile(filepath.Clean(keyFile), pemData, 0o600); err != nil { // #nosec G304
+	if err := safepath.WriteFile(keyFile, pemData, 0o600); err != nil {
 		return err
 	}
 	jwk := jose.JSONWebKey{
@@ -166,7 +167,7 @@ func loadPrivateKey(pathValue string) (*ecdsa.PrivateKey, error) {
 	if err := require(pathValue, "key_file"); err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(filepath.Clean(pathValue)) // #nosec G304
+	raw, err := safepath.ReadFile(pathValue)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +289,7 @@ func (c *awsClient) ProbeWrite(ctx context.Context, a transferArgs) error {
 }
 
 func (c *awsClient) Upload(ctx context.Context, a transferArgs) error {
-	f, err := os.Open(filepath.Clean(a.Path)) // #nosec G304
+	f, err := safepath.Open(a.Path)
 	if err != nil {
 		return err
 	}
@@ -302,15 +303,15 @@ func (c *awsClient) Upload(ctx context.Context, a transferArgs) error {
 }
 
 func (c *awsClient) Download(ctx context.Context, a transferArgs) error {
-	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(a.Bucket), Key: aws.String(a.Object)})
+	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(a.Bucket),
+		Key:    aws.String(a.Object),
+	})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = out.Body.Close() }()
-	if err := os.MkdirAll(filepath.Dir(a.Path), 0o750); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(filepath.Clean(a.Path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304
+	f, err := safepath.Create(a.Path)
 	if err != nil {
 		return err
 	}
@@ -369,7 +370,7 @@ func (c *gcpClient) ProbeWrite(ctx context.Context, a transferArgs) error {
 }
 
 func (c *gcpClient) Upload(ctx context.Context, a transferArgs) error {
-	f, err := os.Open(filepath.Clean(a.Path)) // #nosec G304
+	f, err := safepath.Open(a.Path)
 	if err != nil {
 		return err
 	}
@@ -388,10 +389,7 @@ func (c *gcpClient) Download(ctx context.Context, a transferArgs) error {
 		return err
 	}
 	defer func() { _ = r.Close() }()
-	if err := os.MkdirAll(filepath.Dir(a.Path), 0o750); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(filepath.Clean(a.Path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304
+	f, err := safepath.Create(a.Path)
 	if err != nil {
 		return err
 	}
@@ -540,7 +538,7 @@ func runChecksum(a transferArgs) error {
 	if err := require(a.Path, "path"); err != nil {
 		return err
 	}
-	f, err := os.Open(filepath.Clean(a.Path)) // #nosec G304 -- path provided by caller.
+	f, err := safepath.Open(a.Path)
 	if err != nil {
 		return err
 	}

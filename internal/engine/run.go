@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -125,24 +126,26 @@ func (run *CueRun) GatherFacts(ctx context.Context) {
 	}
 	zap.L().Debug("gathering host facts")
 	encodedScript := base64.StdEncoding.EncodeToString([]byte(factsScript))
-	cmdFunc := func(_ hosts.Record, _ map[string]string) string {
+	cmdFunc := func(_ TargetContext, _ map[string]string) string {
 		return fmt.Sprintf("echo %s | base64 -d | sh", encodedScript)
 	}
-	var targets []hosts.Record
+	var targetRecs []hosts.Record
 	for _, r := range run.Params.Records {
 		if strings.TrimSpace(r.PrimaryIP) != "" || (r.Provider == "k8s" && r.Meta["kind"] == "pod") {
-			targets = append(targets, r)
+			targetRecs = append(targetRecs, r)
 		}
 	}
-	if len(targets) == 0 {
+	if len(targetRecs) == 0 {
 		return
 	}
-	ch := make(chan HostExecResult, len(targets))
+	ch := make(chan HostExecResult, len(targetRecs))
 
-	targets = CueApplyRecipeSSHDialOptions(run.Params.Recipe, nil, targets)
+	targetRecs = CueApplyRecipeSSHDialOptions(run.Params.Recipe, nil, targetRecs)
 
-	for _, r := range targets {
+	var targets []TargetContext
+	for _, r := range targetRecs {
 		run.Facts[r.Name] = cuetry.DefaultFacts()
+		targets = append(targets, TargetContext{Record: r}) // no env needed for facts gathering
 	}
 
 	err := StreamSSHParallel(ctx, run.Params.SSHUser, targets, false, cmdFunc, ch, BatchOptions{
@@ -188,25 +191,70 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		return fmt.Errorf("execute step: %w", err)
 	}
 
-	sc := &StepContext{
-		Ctx:        ctx,
-		Run:        run,
-		Targets:    targets,
+	var targetCtxs []TargetContext
+	for _, t := range targets {
+		env, err := run.StepEnv(ctx, step.Base(), &t, true, false)
+		if err != nil {
+			// If env resolution fails, we report an error for this host immediately.
+			ch <- HostExecResult{
+				Name:      t.Name,
+				IP:        t.PrimaryIP,
+				Provider:  t.Provider,
+				StepIndex: i,
+				StepID:    step.Base().ID,
+				StepKind:  kind,
+				Success:   false,
+				ErrMsg:    fmt.Sprintf("resolve env: %v", err),
+			}
+			continue
+		}
+		targetCtxs = append(targetCtxs, TargetContext{Record: t, Env: env})
+	}
+
+	if len(targetCtxs) == 0 && len(targets) > 0 {
+		// All targets failed env resolution
+		return nil
+	}
+
+	req := ExecutionRequest{
+		Targets:    targetCtxs,
 		Index:      i,
 		Step:       step,
 		Kind:       kind,
 		RetryCfg:   retryCfg,
 		AttemptMax: attemptMax,
-		ResultCh:   ch,
 		History:    history,
 	}
 
+	opts := ExecutionOptions{
+		Execute:           run.Params.Execute,
+		Recipe:            run.Params.Recipe,
+		RecipeDir:         run.Params.RecipeDir,
+		SSHUser:           run.Params.SSHUser,
+		CLIEnv:            run.Params.CLIEnv,
+		SecretResolver:    run.Params.SecretResolver,
+		PluginMgr:         run.Params.PluginMgr,
+		Obs:               run.Params.Obs,
+		Cache:             run.Cache,
+		RecipeKV:          run.RecipeKV,
+		ConfigPath:        run.Params.ConfigPath,
+		Enforcer:          run.Params.Enforcer,
+		Inventory:         run.Params.Inventory,
+		CmdTimeout:        run.Params.CmdTimeout,
+		Reg:               run.Params.Reg,
+		Pools:             run.Params.Pools,
+		Records:           run.Params.Records,
+		OutputStore:       run.OutputStore,
+		OutputCapture:     run.OutputCapture,
+		Facts:             run.Facts,
+		TriggeredHandlers: run.TriggeredHandlers,
+	}
+
 	proxyCh := make(chan HostExecResult)
-	sc.ResultCh = proxyCh
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- exec.ExecuteStream(sc)
+		errCh <- exec.ExecuteStream(ctx, req, opts, proxyCh)
 		close(proxyCh)
 	}()
 
@@ -225,39 +273,62 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 // ones (so they remain visible in the run output). A nil enforcer admits every
 // host unchanged.
 func filterTargetsByPolicy(ctx context.Context, run *CueRun, kind string, targets []hosts.Record) ([]hosts.Record, []HostExecResult, error) {
-	if run.Params.Enforcer == nil {
+	if run.Params.Enforcer == nil || len(targets) == 0 {
 		return targets, nil, nil
 	}
 	actor := actorOrAPI(run.Params.ActorID)
-	var (
-		kept    []hosts.Record
-		skipped []HostExecResult
-	)
-	for _, t := range targets {
-		d, err := run.Params.Enforcer.Evaluate(ctx, map[string]any{
-			"action":    "step_execute",
-			"actor":     actor,
-			"step_kind": kind,
-			"host":      t.Name,
-			"host_meta": t.Meta,
-			"host_vars": hostVarsForPolicy(t, run.Params.Inventory),
+
+	kept := make([]hosts.Record, len(targets))
+	skipped := make([]HostExecResult, len(targets))
+	keepFlags := make([]bool, len(targets))
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(16) // Concurrency limit for OPA evaluation to prevent overwhelming the engine
+
+	for i, t := range targets {
+		i, t := i, t
+		g.Go(func() error {
+			d, err := run.Params.Enforcer.Evaluate(gCtx, map[string]any{
+				"action":    "step_execute",
+				"actor":     actor,
+				"step_kind": kind,
+				"host":      t.Name,
+				"host_meta": t.Meta,
+				"host_vars": hostVarsForPolicy(t, run.Params.Inventory),
+			})
+			if err != nil {
+				return fmt.Errorf("policy evaluation for host %s: %w", t.Name, err)
+			}
+			if d.Allow {
+				kept[i] = t
+				keepFlags[i] = true
+			} else {
+				sk := WhenSkippedResult(t)
+				reason := d.DenyReason
+				if reason == "" {
+					reason = "policy"
+				}
+				sk.Output = "(skipped: " + reason + ")"
+				skipped[i] = sk
+			}
+			return nil
 		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("policy evaluation: %w", err)
-		}
-		if d.Allow {
-			kept = append(kept, t)
-			continue
-		}
-		sk := WhenSkippedResult(t)
-		reason := d.DenyReason
-		if reason == "" {
-			reason = "policy"
-		}
-		sk.Output = "(skipped: " + reason + ")"
-		skipped = append(skipped, sk)
 	}
-	return kept, skipped, nil
+
+	if err := g.Wait(); err != nil {
+		return nil, nil, err
+	}
+
+	var finalKept []hosts.Record
+	var finalSkipped []HostExecResult
+	for i := range targets {
+		if keepFlags[i] {
+			finalKept = append(finalKept, kept[i])
+		} else {
+			finalSkipped = append(finalSkipped, skipped[i])
+		}
+	}
+	return finalKept, finalSkipped, nil
 }
 
 // hostVarsForPolicy resolves a host's effective inventory vars (global + matching
@@ -387,6 +458,12 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	for i, ws := range p.Recipe.Steps {
 		step := ws.Step
 
+		// Stop running further steps once the run is cancelled / timed out.
+		if err := ctx.Err(); err != nil {
+			runErr = err
+			return err
+		}
+
 		rows, err := StreamCueRecipeStep(ctx, run, i, step, history, out)
 		if len(rows) > 0 {
 			history = append(history, rows)
@@ -487,14 +564,15 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 	}
 	targets = CueApplyRecipeSSHDialOptions(run.Params.Recipe, RemoteOpts(step), targets)
 
-	// OPA host-list filtering: drop targets this actor may not run this step on.
-	targets, policySkipped, err := filterTargetsByPolicy(ctx, run, kind, targets)
+	// Apply pre-dispatch filters (policy gate → when clause) in sequence.
+	// Skips accumulate and are emitted uniformly below.
+	targets, allSkipped, err := newStepFilterPipelineForRun(run, kind, step).Apply(ctx, targets)
 	if err != nil {
 		return nil, fmt.Errorf("step %d: %w", i, err)
 	}
 
 	if strings.TrimSpace(step.Base().Loop) != "" || step.Base().LoopFrom != nil {
-		for _, sk := range policySkipped {
+		for _, sk := range allSkipped {
 			res := sk
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 			out <- res
@@ -502,16 +580,7 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 		return StreamCueLoopStep(ctx, run, i, step, targets, history, out)
 	}
 
-	kv := KvReaderFromCoordinator(run.RecipeKV)
-	var whenSkipped []HostExecResult
-	if strings.TrimSpace(step.Base().When) != "" {
-		targets, whenSkipped, err = FilterTargetsByWhen(ctx, run.Params.Recipe, step, targets, run.OutputStore, run.Params.SecretResolver, kv, run.Params.CLIEnv, run.Params.Execute)
-		if err != nil {
-			return nil, fmt.Errorf("step %d: %w", i, err)
-		}
-	}
-	// Policy-denied hosts flow through the same skip-emit path as when-skips.
-	whenSkipped = append(policySkipped, whenSkipped...)
+	whenSkipped := allSkipped
 
 	ch := make(chan HostExecResult, len(targets))
 	done := make(chan struct{})

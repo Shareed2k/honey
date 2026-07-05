@@ -79,5 +79,5 @@ func init() {
 	proxyTCPCmd.Flags().StringVar(&flagProviders, "provider", "", "Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)")
 	proxyTCPCmd.Flags().StringVar(&flagBackends, "backends", "", "Comma-separated backend names (YAML backends.*.name); only those entries run")
 	proxyTCPCmd.Flags().StringVar(&flagSSHUser, "ssh-user", "", "Default SSH user for connect actions (defaults to config or OS user)")
-	getSearchRegistry().RegisterAllProviderFlags(proxyTCPCmd)
+	GetSearchRegistry().RegisterAllProviderFlags(proxyTCPCmd)
 }

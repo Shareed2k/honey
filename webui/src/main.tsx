@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ConfigProvider, theme } from 'antd';
 import { App } from './App';
+import { RootProvider } from './contexts';
 import '@xterm/xterm/css/xterm.css';
 import './app.css';
 
@@ -20,7 +21,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         },
       }}
     >
-      <App />
+      <RootProvider>
+        <App />
+      </RootProvider>
     </ConfigProvider>
   </React.StrictMode>,
 );

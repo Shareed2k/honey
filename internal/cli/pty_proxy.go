@@ -91,12 +91,12 @@ func loadHostexecFromHoneyConfig(explicit string) error {
 		return err
 	}
 	if cfgPath == "" {
-		getSearchRegistry().ReconfigureFromConfig()
+		GetSearchRegistry().ReconfigureFromConfig()
 		return nil
 	}
 	if _, err := config.Load(cfgPath); err != nil {
 		return err
 	}
-	getSearchRegistry().ReconfigureFromConfig()
+	GetSearchRegistry().ReconfigureFromConfig()
 	return nil
 }

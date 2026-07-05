@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -69,8 +71,8 @@ func SummarizeAgentTransferEvents(events []AgentTransferEvent) string {
 }
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *AgentTransferExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, records, sshUser, configPath, i, step := sc.Out, sc.Run.Params.Records, sc.Run.Params.SSHUser, sc.Run.Params.ConfigPath, sc.Index, sc.Step
+func (e *AgentTransferExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, records, sshUser, configPath, i, step := out, opts.Records, opts.SSHUser, opts.ConfigPath, req.Index, req.Step
 
 	ats, _ := step.(*cuetry.AgentTransferStep)
 	if ats == nil || ats.AgentTransfer == nil {
@@ -123,9 +125,9 @@ func (e *AgentTransferExecutor) ExecuteDryRun(sc *StepContext) error {
 }
 
 // ExecuteStream streams the step execution.
-func (e *AgentTransferExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, i, step, ch := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.ResultCh
-	records, sshUser, configPath, cache := sc.Run.Params.Records, sc.Run.Params.SSHUser, sc.Run.Params.ConfigPath, sc.Run.Cache
+func (e *AgentTransferExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	i, step, ch := req.Index, req.Step, resCh
+	records, sshUser, configPath, cache := opts.Records, opts.SSHUser, opts.ConfigPath, opts.Cache
 
 	ats, _ := step.(*cuetry.AgentTransferStep)
 	if ats == nil || ats.AgentTransfer == nil {
@@ -156,8 +158,8 @@ func (e *AgentTransferExecutor) ExecuteStream(sc *StepContext) error {
 	dst := dstHosts[0]
 
 	stepStart := time.Now()
-	kv := KvReaderFromCoordinator(run.RecipeKV)
-	ok, err := EvalAgentTransferWhen(ctx, run.Params.Recipe, step, src, dst, run.OutputStore, run.Params.SecretResolver, kv, run.Params.CLIEnv, run.Params.Execute)
+	kv := KvReaderFromCoordinator(opts.RecipeKV)
+	ok, err := EvalAgentTransferWhen(ctx, opts.Recipe, step, src, dst, opts.OutputStore, opts.SecretResolver, kv, opts.CLIEnv, opts.Execute)
 	if err != nil {
 		return fmt.Errorf("step %d: %w", i, err)
 	}
@@ -166,7 +168,7 @@ func (e *AgentTransferExecutor) ExecuteStream(sc *StepContext) error {
 		res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 		AnnotateCueStepResult(&res, i, step, cuetry.KindAgentTransfer)
 		ch <- res
-		ObserveRecipeStep(run.Params.Obs, cuetry.KindAgentTransfer, stepStart, []HostExecResult{res}, 1)
+		ObserveRecipeStep(opts.Obs, cuetry.KindAgentTransfer, stepStart, []HostExecResult{res}, 1)
 		return nil
 	}
 	cloud := AgentTransferCloudFromRecipe(at.Cloud)

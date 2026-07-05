@@ -14,6 +14,7 @@ import (
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
+	"golang.org/x/sync/semaphore"
 )
 
 // StreamCueStepTunnel ...
@@ -25,26 +26,32 @@ func init() {
 type TunnelExecutor struct{}
 
 // ExecuteStream streams the step execution.
-func (e *TunnelExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *TunnelExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	stepIdx, step, targets, ch, retryCfg, attemptMax := req.Index, req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	if _, ok := step.(*cuetry.TunnelStep); !ok {
 		return fmt.Errorf("internal tunnel step")
 	}
-	maxConc := RecipeHostMaxConc(step, run.Params.Recipe.Defaults)
+	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
 	if maxConc <= 0 {
 		maxConc = 8
 	}
-	sem := make(chan struct{}, maxConc)
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
+	sem := semaphore.NewWeighted(int64(maxConc))
 	var wg sync.WaitGroup
 	for _, target := range targets {
 		target := target
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			if err := sem.Acquire(ctx, 1); err != nil {
+				ch <- HostExecResult{Name: target.Record.Name, IP: target.Record.PrimaryIP, Provider: target.Record.Provider, Success: false, ErrMsg: err.Error()}
+				return
+			}
+			defer sem.Release(1)
 			outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
-				return runCueTunnelOnHost(ctx, step, target, run.Params.SSHUser, stepIdx, run.Cache, run.TunnelCoord, run.Params.Execute)
+				return runCueTunnelOnHost(ctx, step, target.Record, opts.SSHUser, stepIdx, opts.Cache, opts.TunnelCoord, opts.Execute)
 			})
 			RecordMaxAttempts(attemptMax, outcome.Attempts)
 			ch <- outcome.Result
@@ -295,13 +302,13 @@ func tunnelDryRunJSON(t *cuetry.RecipeStepTunnel) string {
 }
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *TunnelExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Index, sc.Step, sc.Targets
+func (e *TunnelExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, recipe, i, step, targets := out, opts.Recipe, req.Index, req.Step, req.Targets
 	WriteCueStepNotifyDryLine(out, step)
 	WriteCueStepRetryDryLine(out, i, cuetry.EffectiveRetry(step.Base(), recipe.Defaults))
 	for _, target := range targets {
 		_, _ = fmt.Fprintf(out, "step %d: kind=tunnel name=%q %s mode=%s output=%s\n",
-			i, target.Name, FormatTargetForDryRun(target), cuetry.EffectiveTunnelMode(tunnelOf(step)), tunnelDryRunJSON(tunnelOf(step)))
+			i, target.Record.Name, FormatTargetForDryRun(target.Record), cuetry.EffectiveTunnelMode(tunnelOf(step)), tunnelDryRunJSON(tunnelOf(step)))
 	}
 	return nil
 }

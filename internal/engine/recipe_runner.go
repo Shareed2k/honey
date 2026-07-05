@@ -10,12 +10,16 @@ import (
 	"github.com/shareed2k/honey/internal/approval"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
+	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/plugincache"
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
+	"github.com/shareed2k/honey/internal/searchrun"
+	"go.uber.org/zap"
 )
 
 // RecipeMetaHostLimit caps how many host records are copied into a recording's
@@ -25,28 +29,21 @@ const RecipeMetaHostLimit = 200
 // recipeRunChannelCap is the buffer size for streaming host-exec results.
 const recipeRunChannelCap = 4096
 
-// PluginProvider supplies a plugin manager for one recipe run plus a release
-// func the runner calls when the run completes. Implementations differ in
-// lifecycle: a shared, ref-counted cache (reuse, no close) for the synchronous
-// request path; a fresh manager opened and closed per run for async paths.
-type PluginProvider interface {
-	Borrow() (*plugins.Manager, func())
-}
-
 // RunnerOptions configures a RecipeRunner. All fields are injected at
 // construction; the runner creates none of its own dependencies.
 type RunnerOptions struct {
-	ConfigPath   string
-	Config       *config.File
-	ExecRegistry hostexec.Registry
-	Metrics      metrics.Observer
-	Pools        *postgres.PoolManager
-	Cache        *ClientCache // optional shared SSH client cache; nil = per-run cache
-	Plugins      PluginProvider
-	RecordDir    string            // "" disables session recording
-	Enforcer     *policy.Enforcer  // optional OPA admission gate; nil = allow all
-	Approvals    *approval.Store   // optional pending-approval store; nil = require_approval hard-denies
-	Biometric    BiometricVerifier // optional WebAuthn token verifier; nil = require_biometric hard-denies
+	ConfigPath     string
+	Config         *config.File
+	ExecRegistry   hostexec.Registry
+	SearchRegistry *searchrun.Registry // required for host resolution
+	Metrics        metrics.Observer
+	Pools          *postgres.PoolManager
+	Cache          *ClientCache       // optional shared SSH client cache; nil = per-run cache
+	PluginCache    *plugincache.Cache // optional shared plugin manager; nil = fresh manager per run
+	RecordDir      string             // "" disables session recording
+	Enforcer       *policy.Enforcer   // optional OPA admission gate; nil = allow all
+	Approvals      *approval.Store    // optional pending-approval store; nil = require_approval hard-denies
+	Biometric      BiometricVerifier  // optional WebAuthn token verifier; nil = require_biometric hard-denies
 }
 
 // BiometricVerifier verifies a biometric step-up token for an actor. Implemented
@@ -67,6 +64,17 @@ func NewRecipeRunner(opts RunnerOptions) *RecipeRunner {
 	return &RecipeRunner{opts: opts}
 }
 
+// PluginLifecycle defines how the plugin manager is managed during a run.
+// PluginLifecycle defines how the plugin manager is handled for a run.
+type PluginLifecycle string
+
+const (
+	// LifecycleShared uses a shared plugin cache.
+	LifecycleShared PluginLifecycle = "shared"
+	// LifecycleFresh creates a fresh plugin manager for the run.
+	LifecycleFresh PluginLifecycle = "fresh"
+)
+
 // RunRequest is the high-level input: what recipe to run, against which hosts,
 // with what env. The recipe is already parsed because parsing is caller-specific
 // (webserver path/content resolution, webhook auth lookup, scheduler schedules).
@@ -74,7 +82,8 @@ type RunRequest struct {
 	Recipe           cuetry.Recipe
 	RecipeSourcePath string
 	RecipeDir        string
-	Records          []hosts.Record
+	Target           *hostapi.SearchHostsInput
+	Records          []hosts.Record // bypasses Target resolution if populated
 	SSHUser          string
 	// ActorID is the caller identity (JWT subject or trusted-proxy header),
 	// used as OPA policy input. Empty resolves to "api" downstream.
@@ -89,21 +98,95 @@ type RunRequest struct {
 	AISystemPrompt string
 	RecordSession  bool
 	RecordLabel    string
+	// CmdTimeout bounds each per-host remote command; 0 = no timeout.
+	CmdTimeout time.Duration
 	// Recorder, when non-nil, is used as-is and NOT closed by the runner (the
 	// caller owns its lifecycle — needed by the async webhook, which must know
 	// the recording ID before deferred execution). When nil and RecordSession
 	// is true, the runner opens and closes its own recorder.
 	Recorder *SessionRecorder
+
+	PluginPolicy PluginLifecycle
+}
+
+// resolveTargets resolves hosts via SearchHosts if req.Records is empty and req.Target is provided.
+func (r *RecipeRunner) resolveTargets(ctx context.Context, req *RunRequest) error {
+	if len(req.Records) > 0 || req.Target == nil {
+		return nil
+	}
+	if r.opts.SearchRegistry == nil {
+		return fmt.Errorf("SearchRegistry is required for target resolution")
+	}
+	out, err := hostapi.SearchHosts(ctx, req.Target, r.opts.ExecRegistry, r.opts.SearchRegistry)
+	if err != nil {
+		return fmt.Errorf("search hosts: %w", err)
+	}
+	if len(out.Records) == 0 {
+		return fmt.Errorf("no target hosts found")
+	}
+	req.Records = out.Records
+	return nil
+}
+
+// borrowPluginManager borrows or opens a plugin manager for one Recipe run.
+// The returned release function must be called after the run finishes.
+func (r *RecipeRunner) borrowPluginManager(ctx context.Context, req RunRequest) (*plugins.Manager, func(), error) {
+	if req.PluginPolicy == LifecycleShared && r.opts.PluginCache != nil {
+		mgr, release := r.opts.PluginCache.Borrow()
+		if mgr == nil {
+			return nil, nil, fmt.Errorf("failed to borrow shared plugin manager")
+		}
+		return mgr, release, nil
+	}
+
+	mgr, err := plugins.Open(ctx, r.opts.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("plugin open: %w", err)
+	}
+	return mgr, func() { _ = mgr.Close() }, nil
+}
+
+// withPluginManager borrows or opens a plugin manager, yields it to fn, and ensures
+// it is released or closed afterwards.
+func (r *RecipeRunner) withPluginManager(ctx context.Context, req RunRequest, fn func(*plugins.Manager) error) error {
+	mgr, release, err := r.borrowPluginManager(ctx, req)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	return fn(mgr)
+}
+
+// openRunRecorder returns the caller-provided recorder, or opens one owned by
+// the runner when session recording is requested. owned reports whether the
+// caller must close it.
+func (r *RecipeRunner) openRunRecorder(req RunRequest) (*SessionRecorder, bool, error) {
+	if req.Recorder != nil {
+		return req.Recorder, false, nil
+	}
+	if !req.RecordSession || strings.TrimSpace(r.opts.RecordDir) == "" {
+		return nil, false, nil
+	}
+	label := strings.TrimSpace(req.RecordLabel)
+	if label == "" {
+		label = "recipe-run"
+	}
+	rec, err := NewBatchSessionRecorder(r.opts.RecordDir, label, req.SSHUser, len(req.Records))
+	if err != nil {
+		return nil, false, fmt.Errorf("session recorder: %w", err)
+	}
+	return rec, true, nil
 }
 
 // DryRun validates prompts and produces the recipe plan via the executor-based
 // dry-run (each step's ExecuteDryRun), matching what a live run would attempt.
 // When RecordSession is set (and no recorder is injected), it records the plan
-// into a fresh recording. The borrowed plugin manager is always released before
-// returning.
+// into a fresh recording.
 func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, error) {
-	mgr, release := r.opts.Plugins.Borrow()
-	defer release()
+	if err := r.resolveTargets(ctx, &req); err != nil {
+		return "", err
+	}
 
 	validatedEnv, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env)
 	if err != nil {
@@ -111,23 +194,30 @@ func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, erro
 	}
 	req.Env = validatedEnv
 
-	params, err := r.buildRunParams(req, mgr)
+	var plan string
+	err = r.withPluginManager(ctx, req, func(mgr *plugins.Manager) error {
+		params, err := r.buildRunParams(req, mgr)
+		if err != nil {
+			return err
+		}
+		params.Execute = false // dry-run: render the plan, do not run steps
+
+		var buf bytes.Buffer
+		if runErr := RunCueRecipeSteps(ctx, &buf, params, nil); runErr != nil {
+			return runErr
+		}
+		plan = buf.String()
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	params.Execute = false // dry-run: render the plan, do not run steps
 
-	var buf bytes.Buffer
-	if runErr := RunCueRecipeSteps(ctx, &buf, params, nil); runErr != nil {
-		return "", runErr
-	}
-	plan := buf.String()
-
-	rec, ownRec, err := r.acquireRecorder(req)
+	rec, closeRec, err := r.openRunRecorder(req)
 	if err != nil {
 		return "", err
 	}
-	if ownRec {
+	if closeRec {
 		defer func() { _ = rec.Close() }()
 	}
 	if rec != nil {
@@ -140,24 +230,6 @@ func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, erro
 	}
 
 	return plan, nil
-}
-
-// acquireRecorder returns the recorder to use for a run. When req.Recorder is
-// set, it is returned with ownRec=false (caller closes). Otherwise, when
-// RecordSession is set and RecordDir is configured, a fresh recorder is opened
-// with ownRec=true (runner closes). Returns (nil, false, nil) when no recording.
-func (r *RecipeRunner) acquireRecorder(req RunRequest) (rec *SessionRecorder, ownRec bool, err error) {
-	if req.Recorder != nil {
-		return req.Recorder, false, nil
-	}
-	if !req.RecordSession || strings.TrimSpace(r.opts.RecordDir) == "" {
-		return nil, false, nil
-	}
-	rec, err = NewBatchSessionRecorder(r.opts.RecordDir, req.RecordLabel, req.SSHUser, len(req.Records))
-	if err != nil {
-		return nil, false, err
-	}
-	return rec, true, nil
 }
 
 // recordRecipeMeta writes the recipe-meta event. plan may be "" (computed by
@@ -212,6 +284,7 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 		Cache:          r.opts.Cache,
 		Enforcer:       r.opts.Enforcer,
 		Inventory:      invFromConfig(r.opts.Config),
+		CmdTimeout:     req.CmdTimeout,
 	}, nil
 }
 
@@ -333,21 +406,27 @@ func hostNames(records []hosts.Record) []string {
 // target hosts. Pre-flight errors (prompt validation, secret resolver, recorder
 // creation) are returned synchronously. Once execution starts, run errors arrive
 // on the channel as a synthetic failed HostExecResult. The runner owns the
-// plugin-release and (when not injected) recorder-close lifecycle, completing
+// recorder-close lifecycle (when not injected), completing
 // when the returned channel closes.
 func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan HostExecResult, error) {
+	if err := r.resolveTargets(ctx, &req); err != nil {
+		return nil, err
+	}
+
 	if err := r.admitRecipe(ctx, req); err != nil {
 		return nil, err
 	}
 
-	mgr, release := r.opts.Plugins.Borrow()
-
 	validatedEnv, err := cuetry.ValidateAndApplyPromptDefaults(req.Recipe.PromptDefs(), req.Env)
 	if err != nil {
-		release()
 		return nil, err
 	}
 	req.Env = validatedEnv
+
+	mgr, release, err := r.borrowPluginManager(ctx, req)
+	if err != nil {
+		return nil, err
+	}
 
 	params, err := r.buildRunParams(req, mgr)
 	if err != nil {
@@ -355,20 +434,20 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 		return nil, err
 	}
 
-	rec, ownRec, err := r.acquireRecorder(req)
+	rec, closeRec, err := r.openRunRecorder(req)
 	if err != nil {
 		release()
 		return nil, err
 	}
-	if ownRec {
+	if rec != nil {
 		r.recordRecipeMeta(rec, req, "")
 	}
 
 	ch := make(chan HostExecResult, recipeRunChannelCap)
 	go func() {
+		defer release()
 		defer func() {
-			release()
-			if ownRec && rec != nil {
+			if closeRec {
 				_ = rec.Close()
 			}
 			close(ch) // last: consumers unblock only after cleanup
@@ -414,10 +493,20 @@ func (r *RecipeRunner) ExecuteAndWait(ctx context.Context, req RunRequest) error
 		return err
 	}
 	var runErr error
+	var results []HostExecResult
 	for res := range ch {
+		results = append(results, res)
 		if res.Provider == "engine" && res.Name == "recipe-run" && !res.Success {
 			runErr = fmt.Errorf("recipe run failed: %s", res.ErrMsg)
 		}
 	}
+
+	if r.opts.Config != nil && r.opts.Config.SMTP != nil {
+		smtp := r.opts.Config.SMTP
+		zap.L().Info("ExecuteAndWait initializing RunReporter", zap.String("host", smtp.Host), zap.Int("port", smtp.Port))
+		reporter := NewRunReporter(smtp.Host, smtp.Port, smtp.Username, smtp.Password)
+		reporter.Report(ctx, req.Recipe, results, runErr)
+	}
+
 	return runErr
 }

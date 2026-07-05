@@ -71,15 +71,15 @@ func New(opts Options) (*Manager, error) {
 
 	m := &Manager{opts: opts}
 	m.runner = engine.NewRecipeRunner(engine.RunnerOptions{
-		ConfigPath:   opts.ConfigPath,
-		Config:       opts.Config,
-		ExecRegistry: opts.ExecRegistry,
-		Metrics:      opts.Metrics,
-		Pools:        opts.Pools,
-		Cache:        opts.Cache,
-		Plugins:      openClosePlugins{cfg: opts.Config},
-		RecordDir:    opts.RecordDir,
-		Enforcer:     opts.Enforcer,
+		ConfigPath:     opts.ConfigPath,
+		Config:         opts.Config,
+		ExecRegistry:   opts.ExecRegistry,
+		Metrics:        opts.Metrics,
+		Pools:          opts.Pools,
+		Cache:          opts.Cache,
+		RecordDir:      opts.RecordDir,
+		Enforcer:       opts.Enforcer,
+		SearchRegistry: opts.SearchRegistry,
 	})
 	m.register()
 	return m, nil
@@ -252,19 +252,11 @@ func (m *Manager) executeSchedule(
 		searchIn.NameRegex = app.TargetRegex
 	}
 
-	searchOut, err := hostapi.SearchHosts(ctx, searchIn, m.opts.ExecRegistry, m.opts.SearchRegistry)
-	if err != nil {
-		return fmt.Errorf("search hosts: %w", err)
-	}
-	if len(searchOut.Records) == 0 {
-		return fmt.Errorf("no target hosts found for app %q", appName)
-	}
-
 	// Merge schedule-level env on top of any global defaults; validate prompts up
 	// front so a missing required prompt fails the tick before it is queued.
 	cliEnv := make(map[string]string, len(sched.Env))
 	maps.Copy(cliEnv, sched.Env)
-	cliEnv, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), cliEnv)
+	cliEnv, err := cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), cliEnv)
 	if err != nil {
 		return fmt.Errorf("prompt validation: %w", err)
 	}
@@ -278,27 +270,55 @@ func (m *Manager) executeSchedule(
 		Recipe:           recipe,
 		RecipeSourcePath: recipePath,
 		RecipeDir:        filepath.Dir(recipePath),
-		Records:          searchOut.Records,
+		Target:           searchIn,
 		SSHUser:          sshUser,
 		ActorID:          "cron:" + appName,
 		Env:              cliEnv,
 		AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath),
-		RecordSession:    strings.TrimSpace(m.opts.RecordDir) != "",
-		RecordLabel:      fmt.Sprintf("cron-%s-%s", appName, scheduleName),
+		PluginPolicy:     engine.LifecycleFresh,
 	}
 
 	// Detach from the per-tick gronx context so the queued run is not cancelled
 	// when the task function returns (gronx cancels tick contexts).
 	runCtx := context.WithoutCancel(ctx)
 
-	// The runner owns the plugin and recorder lifecycle for the whole run.
+	// The runner owns the plugin and target-resolution lifecycle for the whole run.
 	run := func() {
+		if strings.TrimSpace(m.opts.RecordDir) != "" {
+			// Pre-resolve target hosts manually ONLY for the recorder count, since the runner handles target resolution.
+			// Actually, if we don't know the count, we can just let the runner handle it.
+			// Wait, the recorder needs to know the number of hosts. Let's resolve here to get the count.
+			searchOut, err := hostapi.SearchHosts(context.Background(), searchIn, m.opts.ExecRegistry, m.opts.SearchRegistry)
+			if err != nil {
+				zap.L().Error("scheduler: failed to search hosts for recorder", zap.Error(err))
+				return
+			}
+			if len(searchOut.Records) == 0 {
+				zap.L().Warn("scheduler: no target hosts found", zap.String("app", appName))
+				return
+			}
+			req.Records = searchOut.Records // populate it so runner skips search
+
+			var rec *engine.SessionRecorder
+			rec, err = engine.NewBatchSessionRecorder(m.opts.RecordDir, fmt.Sprintf("cron-%s-%s", appName, scheduleName), sshUser, len(searchOut.Records))
+			if err != nil {
+				zap.L().Error("scheduler: failed to create recorder", zap.Error(err))
+				return
+			}
+			defer func() { _ = rec.Close() }()
+
+			req.Recorder = rec
+		}
+
 		if rerr := m.runner.ExecuteAndWait(runCtx, req); rerr != nil {
 			zap.L().Error("scheduler: recipe execution failed",
 				zap.String("app", appName),
 				zap.String("schedule", scheduleName),
 				zap.Error(rerr),
 			)
+			if req.Recorder != nil {
+				req.Recorder.RecordError(rerr)
+			}
 		}
 	}
 

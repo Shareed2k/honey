@@ -16,7 +16,6 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
@@ -32,13 +31,14 @@ func init() {
 type DockerExecutor struct{}
 
 // ExecuteStream streams the step execution.
-func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *DockerExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	step, targets, ch, retryCfg, attemptMax := req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	ds, _ := step.(*cuetry.DockerStep)
 	if ds == nil || ds.Docker == nil {
 		return fmt.Errorf("internal: docker step missing docker field")
 	}
-	execOne := func(r hosts.Record) HostExecResult {
+	execOne := func(tc TargetContext) HostExecResult {
+		r := tc.Record
 		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
 			res := HostExecResult{
 				Name:     r.Name,
@@ -62,11 +62,11 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 					mCli, err = client.New(client.FromEnv)
 				}
 			} else {
-				sshUser := run.Params.SSHUser
+				sshUser := opts.SSHUser
 				if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
 					sshUser = u
 				}
-				honeyClient, dialErr := run.Cache.GetOrDial(sshUser, r)
+				honeyClient, dialErr := opts.Cache.GetOrDial(sshUser, r)
 				if dialErr != nil {
 					res.Success = false
 					res.ErrMsg = fmt.Sprintf("ssh dial error: %s", dialErr.Error())
@@ -92,7 +92,7 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 				bc := dockerprovider.BackendConfig{
 					SSHUser: sshUser,
 					Socket:  socketPath,
-					RunAs:   cuetry.EffectiveRunAs(step.Base(), run.Params.Recipe.Defaults),
+					RunAs:   cuetry.EffectiveRunAs(step.Base(), opts.Recipe.Defaults),
 				}
 				opts := dockerprovider.APIClientOptions{
 					SSHUser:     sshUser,
@@ -110,7 +110,7 @@ func (e *DockerExecutor) ExecuteStream(sc *StepContext) error {
 			}
 			defer mCli.Close()
 
-			outputStr, execErr := executeDockerSDKAction(ctx, mCli, ds.Docker, run.Params.RecipeDir)
+			outputStr, execErr := executeDockerSDKAction(ctx, mCli, ds.Docker, opts.RecipeDir)
 			if execErr != nil {
 				res.Success = false
 				res.ErrMsg = execErr.Error()
@@ -182,7 +182,9 @@ func executeDockerBuild(ctx context.Context, cli *client.Client, b *cuetry.Docke
 }
 
 func executeDockerPush(ctx context.Context, cli *client.Client, p *cuetry.DockerPush) (string, error) {
-	resp, err := cli.ImagePush(ctx, p.Image, client.ImagePushOptions{})
+	resp, err := cli.ImagePush(ctx, p.Image, client.ImagePushOptions{
+		RegistryAuth: "e30=", // base64 of "{}"
+	})
 	if err != nil {
 		return "", err
 	}
@@ -348,8 +350,8 @@ func dockerStdCopy(dstout, dsterr io.Writer, src io.Reader) error {
 }
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *DockerExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, recipe, i, step, targets := sc.Out, sc.Run.Params.Recipe, sc.Index, sc.Step, sc.Targets
+func (e *DockerExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, recipe, i, step, targets := out, opts.Recipe, req.Index, req.Step, req.Targets
 	runAs := cuetry.EffectiveRunAs(step.Base(), recipe.Defaults)
 	ds, _ := step.(*cuetry.DockerStep)
 	action := ""
@@ -358,7 +360,7 @@ func (e *DockerExecutor) ExecuteDryRun(sc *StepContext) error {
 	}
 	for _, target := range targets {
 		_, _ = fmt.Fprintf(out, "step %d: kind=docker action=%q name=%q %s provider=%s run_as=%q\n",
-			i, action, target.Name, FormatTargetForDryRun(target), target.Provider, runAs)
+			i, action, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, runAs)
 	}
 	return nil
 }

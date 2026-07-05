@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -19,8 +20,8 @@ func init() {
 type AIExecutor struct{}
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *AIExecutor) ExecuteDryRun(sc *StepContext) error {
-	out, execute, i, step := sc.Out, sc.Run.Params.Execute, sc.Index, sc.Step
+func (e *AIExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, opts ExecutionOptions, out io.Writer) error {
+	out, execute, i, step := out, opts.Execute, req.Index, req.Step
 	if execute {
 		return nil
 	}
@@ -62,12 +63,12 @@ func (e *AIExecutor) ExecuteDryRun(sc *StepContext) error {
 }
 
 // ExecuteStream streams the step execution.
-func (e *AIExecutor) ExecuteStream(sc *StepContext) error {
-	ctx, run, i, step, history, aiSystemPrompt, out := sc.Ctx, sc.Run, sc.Index, sc.Step, sc.History, sc.Run.Params.AISystemPrompt, sc.ResultCh
+func (e *AIExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	i, step, history, aiSystemPrompt, out := req.Index, req.Step, req.History, opts.AISystemPrompt, resCh
 
 	stepStart := time.Now()
-	kv := KvReaderFromCoordinator(run.RecipeKV)
-	ok, whenErr := EvalAIStepWhen(ctx, run.Params.Recipe, step, run.OutputStore, run.Params.SecretResolver, kv, run.Params.CLIEnv, run.Params.Execute)
+	kv := KvReaderFromCoordinator(opts.RecipeKV)
+	ok, whenErr := EvalAIStepWhen(ctx, opts.Recipe, step, opts.OutputStore, opts.SecretResolver, kv, opts.CLIEnv, opts.Execute)
 	if whenErr != nil {
 		return whenErr
 	}
@@ -81,14 +82,14 @@ func (e *AIExecutor) ExecuteStream(sc *StepContext) error {
 		}
 		AnnotateCueStepResult(&res, i, step, cuetry.KindAI)
 		out <- res
-		ObserveRecipeStep(run.Params.Obs, cuetry.KindAI, stepStart, []HostExecResult{res}, 1)
+		ObserveRecipeStep(opts.Obs, cuetry.KindAI, stepStart, []HostExecResult{res}, 1)
 		return nil
 	}
 
-	res := RunCueStepAIExecute(ctx, run.Params.Recipe, i, step, history, aiSystemPrompt)
+	res := RunCueStepAIExecute(ctx, opts.Recipe, i, step, history, aiSystemPrompt)
 	AnnotateCueStepResult(&res, i, step, cuetry.KindAI)
 	out <- res
-	ObserveRecipeStep(run.Params.Obs, cuetry.KindAI, stepStart, []HostExecResult{res}, 1)
+	ObserveRecipeStep(opts.Obs, cuetry.KindAI, stepStart, []HostExecResult{res}, 1)
 
 	if !res.Success {
 		return fmt.Errorf("%s", res.ErrMsg)

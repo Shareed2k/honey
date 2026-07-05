@@ -36,6 +36,7 @@ type Manifest struct {
 	AllowedEnv           []string          `yaml:"allowed_env,omitempty"`
 	AllowedHosts         []string          `yaml:"allowed_hosts,omitempty"`
 	AllowedPaths         map[string]string `yaml:"allowed_paths,omitempty"`
+	Config               map[string]string `yaml:"config,omitempty"`
 	MaxHTTPResponseBytes int64             `yaml:"max_http_response_bytes,omitempty"`
 	Order                int               `yaml:"order,omitempty"`
 }

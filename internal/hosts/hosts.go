@@ -26,6 +26,7 @@ type Query struct {
 	NameSubstring string
 	NameRegex     string
 	Providers     []string // e.g. gcp, aws, k8s, consul — empty means all
+	Backends      []string // e.g. aws:dev, gcp:prod — empty means all
 }
 
 // MatchesName applies NameSubstring, NameRegex, or accepts all if both empty.
@@ -71,15 +72,16 @@ func toLowerASCII(s string) string {
 
 // Record is a normalized host across cloud providers.
 type Record struct {
-	Provider  string                    `json:"provider"`
-	Name      string                    `json:"name"`
-	PrimaryIP string                    `json:"primary_ip"`
-	ExtraIPs  []string                  `json:"extra_ips,omitempty"`
-	Zone      string                    `json:"zone,omitempty"`
-	Region    string                    `json:"region,omitempty"`
-	Meta      map[string]string         `json:"meta,omitempty"`
-	Vars      map[string]InventoryValue `json:"vars,omitempty"`
-	Groups    []string                  `json:"groups,omitempty"`
+	Provider     string                    `json:"provider"`
+	Name         string                    `json:"name"`
+	PrimaryIP    string                    `json:"primary_ip"`
+	ExtraIPs     []string                  `json:"extra_ips,omitempty"`
+	Zone         string                    `json:"zone,omitempty"`
+	Region       string                    `json:"region,omitempty"`
+	Meta         map[string]string         `json:"meta,omitempty"`
+	Vars         map[string]InventoryValue `json:"vars,omitempty"`
+	Groups       []string                  `json:"groups,omitempty"`
+	Capabilities []string                  `json:"capabilities,omitempty"`
 }
 
 // DedupeKey returns a stable key for deduplication.
@@ -139,6 +141,22 @@ func (r Record) IsConnectable() bool {
 		return true
 	}
 	return r.Provider == "k8s" && strings.EqualFold(strings.TrimSpace(r.Meta["kind"]), "pod")
+}
+
+// DeriveCapabilities returns connection protocols available for this host,
+// derived from provider and meta. Order is stable: ssh, docker_exec, truenas_api.
+func (r Record) DeriveCapabilities() []string {
+	caps := []string{}
+	if r.IsConnectable() {
+		caps = append(caps, "ssh")
+	}
+	if r.IsDocker() {
+		caps = append(caps, "docker_exec")
+	}
+	if r.IsTrueNASAPIShell() {
+		caps = append(caps, "truenas_api")
+	}
+	return caps
 }
 
 // ExternalIP returns the VM's public/out-of-VPC address when present.

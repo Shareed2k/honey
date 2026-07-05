@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"context"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -10,14 +11,25 @@ import (
 	"github.com/go-chi/chi/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jellydator/ttlcache/v3"
+	wrate "github.com/webriots/rate"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/metrics"
+	plugincache "github.com/shareed2k/honey/internal/plugincache"
 	"github.com/shareed2k/honey/internal/postgres"
 	"github.com/shareed2k/honey/internal/queue"
 )
+
+// recipeRunnerIface abstracts the execution layer so tests can inject a fake runner
+// without spinning up SSH connections.
+type recipeRunnerIface interface {
+	DryRun(ctx context.Context, req engine.RunRequest) (string, error)
+	Execute(ctx context.Context, req engine.RunRequest) (<-chan engine.HostExecResult, error)
+	ExecuteAndWait(ctx context.Context, req engine.RunRequest) error
+	AssessCommandRisk(ctx context.Context, req engine.RunRequest) []engine.StepRisk
+}
 
 // AIAssistant abstracts the AI-related functionality required by recipe generation and assistance.
 type AIAssistant interface {
@@ -33,18 +45,18 @@ type RecipesAPI struct {
 	webhookQueue          queue.Queue
 	pgPools               *postgres.PoolManager
 	ai                    AIAssistant
-	plugins               *pluginCache
+	plugins               *plugincache.Cache
 	sshCache              *engine.ClientCache
 	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
 	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
-	runner                *engine.RecipeRunner
+	runner                recipeRunnerIface
 
 	webhookDedupCache *ttlcache.Cache[string, string]
 	webhookDedupMu    sync.Mutex
-}
 
-// *pluginCache must satisfy engine.PluginProvider so the runner can borrow it.
-var _ engine.PluginProvider = (*pluginCache)(nil)
+	webhookRL      *wrate.TokenBucketLimiter
+	webhookCapture *webhookCaptureStore
+}
 
 // NewRecipesAPI creates a new isolated router and handler set for Recipes.
 func NewRecipesAPI(
@@ -53,12 +65,12 @@ func NewRecipesAPI(
 	webhookQueue queue.Queue,
 	pgPools *postgres.PoolManager,
 	ai AIAssistant,
-	plugins *pluginCache,
+	plugins *plugincache.Cache,
 	sshCache *engine.ClientCache,
 	valCache *lru.Cache[string, *ValidateContentResponse],
 	graphCache *lru.Cache[string, *cuetry.RecipeGraphPlan],
 ) *RecipesAPI {
-	dedupCache := ttlcache.New[string, string](
+	dedupCache := ttlcache.New(
 		ttlcache.WithTTL[string, string](24*time.Hour),
 		ttlcache.WithDisableTouchOnHit[string, string](),
 	)
@@ -75,23 +87,38 @@ func NewRecipesAPI(
 		recipeValidationCache: valCache,
 		recipeGraphCache:      graphCache,
 		webhookDedupCache:     dedupCache,
+		webhookCapture:        newWebhookCaptureStore(),
 	}
+	rps := opts.WebhookRatePerSecond
+	if rps <= 0 {
+		rps = 10
+	}
+	burst := opts.WebhookBurst
+	if burst <= 0 {
+		burst = 20
+	}
+	rl, err := wrate.NewTokenBucketLimiter(1024, uint8(burst), rps, time.Second)
+	if err != nil {
+		panic("webhook rate limiter: " + err.Error())
+	}
+	api.webhookRL = rl
 	var biometric engine.BiometricVerifier
 	if opts.WebAuthn != nil {
 		biometric = opts.WebAuthn
 	}
 	api.runner = engine.NewRecipeRunner(engine.RunnerOptions{
-		ConfigPath:   opts.ConfigPath,
-		Config:       opts.Config,
-		ExecRegistry: opts.ExecRegistry,
-		Metrics:      metrics,
-		Pools:        pgPools,
-		Cache:        sshCache,
-		Plugins:      plugins,
-		RecordDir:    opts.RecordDir,
-		Enforcer:     opts.Enforcer,
-		Approvals:    opts.Approvals,
-		Biometric:    biometric,
+		ConfigPath:     opts.ConfigPath,
+		Config:         opts.Config,
+		ExecRegistry:   opts.ExecRegistry,
+		Metrics:        metrics,
+		Pools:          pgPools,
+		Cache:          sshCache,
+		RecordDir:      opts.RecordDir,
+		Enforcer:       opts.Enforcer,
+		Approvals:      opts.Approvals,
+		Biometric:      biometric,
+		SearchRegistry: opts.SearchRegistry,
+		PluginCache:    plugins,
 	})
 	return api
 }
@@ -150,6 +177,22 @@ func (api *RecipesAPI) sshUser(requested string) string {
 		}
 	}
 	return user
+}
+
+func (api *RecipesAPI) webhookAllow(appName string) bool {
+	return api.webhookRL.TakeToken([]byte(appName))
+}
+
+// webhookRateLimit enforces the per-app webhook token bucket as HTTP middleware.
+// Relies on chi having populated the {app_name} route param before it runs.
+func (api *RecipesAPI) webhookRateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !api.webhookAllow(chi.URLParam(r, "app_name")) {
+			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (api *RecipesAPI) allowedRecipePathSet() map[string]struct{} {

@@ -3,13 +3,14 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/policy"
+	"github.com/shareed2k/honey/internal/safepath"
 )
 
 func init() {
@@ -21,30 +22,30 @@ func init() {
 type OPAExecutor struct{}
 
 // ExecuteDryRun writes the step plan line without compiling or evaluating.
-func (e *OPAExecutor) ExecuteDryRun(sc *StepContext) error {
+func (e *OPAExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, _ ExecutionOptions, out io.Writer) error {
 	policyRef := ""
-	if step, ok := sc.Step.(*cuetry.OPAStep); ok && step.OPA != nil {
+	if step, ok := req.Step.(*cuetry.OPAStep); ok && step.OPA != nil {
 		policyRef = step.OPA.Policy
 	}
-	_, _ = fmt.Fprintf(sc.Out,
+	_, _ = fmt.Fprintf(out,
 		"step %d: kind=opa target=local policy=%q (evaluates rego; fails the step on deny)\n",
-		sc.Index, policyRef)
-	WriteCueStepNotifyDryLine(sc.Out, sc.Step)
+		req.Index, policyRef)
+	WriteCueStepNotifyDryLine(out, req.Step)
 	return nil
 }
 
 // ExecuteStream compiles and evaluates the policy, emitting one result.
-func (e *OPAExecutor) ExecuteStream(sc *StepContext) error {
+func (e *OPAExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
 	stepStart := time.Now()
-	step, ok := sc.Step.(*cuetry.OPAStep)
+	step, ok := req.Step.(*cuetry.OPAStep)
 	if !ok || step.OPA == nil {
-		return fmt.Errorf("opa: internal step type %T", sc.Step)
+		return fmt.Errorf("opa: internal step type %T", req.Step)
 	}
 
-	res := e.evaluate(sc.Ctx, sc.Run, step)
-	AnnotateCueStepResult(&res, sc.Index, sc.Step, cuetry.KindOPA)
-	sc.ResultCh <- res
-	ObserveRecipeStep(sc.Run.Params.Obs, cuetry.KindOPA, stepStart, []HostExecResult{res}, 1)
+	res := e.evaluate(ctx, opts, step)
+	AnnotateCueStepResult(&res, req.Index, req.Step, cuetry.KindOPA)
+	resCh <- res
+	ObserveRecipeStep(opts.Obs, cuetry.KindOPA, stepStart, []HostExecResult{res}, 1)
 
 	if !res.Success {
 		return fmt.Errorf("%s", res.ErrMsg)
@@ -54,18 +55,16 @@ func (e *OPAExecutor) ExecuteStream(sc *StepContext) error {
 
 // evaluate loads the policy file (relative to the recipe dir), builds the input
 // document (actor + recipe + author-supplied keys), and returns a result.
-func (e *OPAExecutor) evaluate(ctx context.Context, run *CueRun, step *cuetry.OPAStep) HostExecResult {
+func (e *OPAExecutor) evaluate(ctx context.Context, opts ExecutionOptions, step *cuetry.OPAStep) HostExecResult {
 	fail := func(format string, args ...any) HostExecResult {
 		return HostExecResult{Name: "opa", Provider: "local", IP: "-", Success: false, ErrMsg: fmt.Sprintf(format, args...)}
 	}
 
 	policyPath := step.OPA.Policy
 	if !filepath.IsAbs(policyPath) {
-		policyPath = filepath.Join(run.Params.RecipeDir, policyPath)
+		policyPath = filepath.Join(opts.RecipeDir, policyPath)
 	}
-	// #nosec G304 -- policy path is recipe-author controlled and resolved within
-	// the recipe directory; recipes are already trusted code in this engine.
-	src, err := os.ReadFile(policyPath)
+	src, err := safepath.ReadFile(policyPath)
 	if err != nil {
 		return fail("read policy %q: %v", step.OPA.Policy, err)
 	}
@@ -75,13 +74,13 @@ func (e *OPAExecutor) evaluate(ctx context.Context, run *CueRun, step *cuetry.OP
 		return fail("compile policy: %v", err)
 	}
 
-	actor := run.Params.ActorID
+	actor := opts.ActorID
 	if actor == "" {
 		actor = "api"
 	}
 	input := map[string]any{
 		"actor":  actor,
-		"recipe": run.Params.Recipe.Name,
+		"recipe": opts.Recipe.Name,
 	}
 	maps.Copy(input, step.OPA.Input)
 

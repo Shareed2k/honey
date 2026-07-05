@@ -3,91 +3,25 @@ import { Button, Input, List, Spin, Alert, Card, Tag, Typography, Select } from 
 import { SendOutlined, StopOutlined } from '@ant-design/icons';
 import { HttpAgent } from '@ag-ui/client';
 import type { AgentSubscriber, ToolCall, Message, Tool } from '@ag-ui/client';
-import { apiHeaders, apiPost, apiGet } from '../api/core';
-import type { HostRecord } from '../HostPicker';
+import { apiHeaders, apiGet } from '../api/core';
+import { useAppContext } from '../contexts/AppContext';
+import { agentToolRegistry } from '../agent';
 
 const AiMarkdown = lazy(async () => import('../AiMarkdown').then((m) => ({ default: m.AiMarkdown })));
 
 const { Text } = Typography;
 
-const TOOLS: Tool[] = [
-  {
-    name: 'list_backends',
-    description: 'List all available infrastructure providers and backend names from the configuration file.',
-    parameters: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'search_hosts',
-    description: 'Search infrastructure hosts by name, provider, or backend.',
-    parameters: {
-      type: 'object',
-      properties: { 
-        name: { type: 'string', description: 'Substring to match against host names.' },
-        providers: { type: 'string', description: 'Comma-separated list of providers (e.g. docker,aws,proxmox).' },
-        backends: { type: 'string', description: 'Comma-separated list of backend names.' },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'validate_recipe',
-    description: 'Validate a Honey CUE recipe.',
-    parameters: {
-      type: 'object',
-      properties: { recipe_content_raw: { type: 'string' } },
-      required: ['recipe_content_raw'],
-    },
-  },
-] as unknown[]; // cast to any to bypass TS error if Tool expects OpenAI format
+const TOOLS: Tool[] = agentToolRegistry.getTools() as unknown[]; // cast to any to bypass TS error if Tool expects OpenAI format
 
 async function executeTool(tc: ToolCall): Promise<string> {
   const args = JSON.parse(tc.function.arguments ?? '{}');
   const toolName = tc.function.name.replace(/^default_api:/, '');
-  
-  if (toolName === 'list_backends') {
-    const res = await apiGet('/api/v1/backends');
-    if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        return `Failed to list backends: ${j.error || res.statusText}`;
-    }
-    const data = await res.json() as { backends?: { kind: string; name: string; hint: string }[] };
-    const backends = data.backends || [];
-    if (!backends.length) return 'No backends found in configuration.';
-    return backends.map(b => `- Provider: ${b.kind} | Backend: ${b.name} | Hint: ${b.hint}`).join('\n');
-  }
-
-  if (toolName === 'search_hosts') {
-    const reqBody: Record<string, unknown> = { name: args.name ?? '' };
-    if (args.providers) reqBody.providers = args.providers;
-    if (args.backends) reqBody.backends = args.backends;
-    
-    const res = await apiPost('/api/v1/search', reqBody);
-    if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        return `Failed to search: ${j.error || res.statusText}`;
-    }
-    const data = await res.json() as { records?: HostRecord[] };
-    const hosts = data.records || [];
-    if (!hosts.length) return 'No hosts found.';
-    return hosts.map((h: HostRecord) => `${h.name} (${h.primary_ip}, ${h.provider})`).join('\n');
-  }
-  if (toolName === 'validate_recipe') {
-    const res = await apiPost('/api/v1/recipes/validate-content', { recipe_content_raw: args.recipe_content_raw });
-    if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        return `Failed to validate: ${j.error || res.statusText}`;
-    }
-    const data = await res.json() as { errors?: string[] };
-    return data.errors?.length ? `Errors:\n${data.errors.join('\n')}` : 'Recipe is valid.';
-  }
-  return `Unknown tool: ${toolName}`;
+  return agentToolRegistry.execute(toolName, args, {});
 }
 
-export function AgentTab({ assistAvailable }: { assistAvailable: boolean }) {
+export function AgentTab() {
+  const { meta } = useAppContext();
+  const assistAvailable = !!meta?.terminal_assist_available;
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);

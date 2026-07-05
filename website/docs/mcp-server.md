@@ -7,11 +7,11 @@ title: MCP Server
 
 ## Tools
 
-| Tool | Purpose |
-|------|---------|
-| `search_hosts` | Same parallel search as `honey search`; input fields mirror CLI flags (snake_case JSON). Optional `overrides` map for per-request provider settings. |
-| `list_backends` | Returns configured backends from YAML (`kind`, `name`, `hint`). Requires a resolvable config file. |
-| `exec_on_host` | Run a shell command on a host via SSH using its IP or hostname directly. Use `primary_ip` from a `search_hosts` result. |
+| Tool | Risk | Purpose |
+|------|------|---------|
+| `search_hosts` | read-only | Same parallel search as `honey search`; input fields mirror CLI flags (snake_case JSON). Optional `overrides` map for per-request provider settings. |
+| `list_backends` | read-only | Returns configured backends from YAML (`kind`, `name`, `hint`). Requires a resolvable config file. |
+| `exec_on_host` | **destructive** | Run a shell command on a host via SSH. Gated by the command-risk engine + OPA policy (see below). Use `primary_ip` from a `search_hosts` result. |
 
 ## Cursor
 
@@ -170,6 +170,27 @@ Output:
   ]
 }
 ```
+
+#### Command gating (secure by default)
+
+`exec_on_host` runs every command through the same gate as the CLI/web/recipe
+paths before any SSH connection:
+
+- **Command-risk engine** (always on): deterministic static analysis denies
+  critical commands — `mkfs`, `dd` to a block device, recursive `chmod`/`chown`
+  of system paths, `curl | sh`, fork bombs. This holds even with no policy
+  configured, so an AI agent cannot drive a destructive command to a host. The
+  LLM is advisory-only and cannot override a deny.
+- **OPA policy** (opt-in): set `HONEY_POLICY_DIR` to a directory of `.rego`
+  files. The MCP path evaluates the `mcp_exec` action; a `deny`,
+  `require_approval`, or `require_biometric` verdict refuses the call (there is
+  no interactive approval over stdio MCP — the command is blocked with the
+  reason).
+
+A blocked call returns an error result like `blocked: command risk: filesystem
+creation destroys existing data` and performs no SSH. The escape hatch
+`HONEY_RISK_DISABLE=1` bypasses the gate for trusted automation (not
+recommended for AI clients).
 
 ---
 

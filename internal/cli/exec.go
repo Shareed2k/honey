@@ -18,15 +18,16 @@ import (
 const timeoutMissingMarker = "__HONEY_TIMEOUT_MISSING__"
 
 var (
-	flagExecParallel int
-	flagExecRetry    int
-	flagExecTimeout  time.Duration
-	flagExecRunAs    string
-	flagExecShell    string
-	flagExecQuiet    bool
-	flagExecOutput   string
-	flagExecCheck    bool
-	flagExecShellchk bool
+	flagExecParallel       int
+	flagExecRetry          int
+	flagExecTimeout        time.Duration
+	flagExecRunAs          string
+	flagExecShell          string
+	flagExecQuiet          bool
+	flagExecOutput         string
+	flagExecCheck          bool
+	flagExecShellchk       bool
+	flagExecMaxOutputBytes int
 )
 
 var execCmd = &cobra.Command{
@@ -62,6 +63,7 @@ func init() {
 	execCmd.Flags().StringVarP(&flagExecOutput, "output", "o", "text", "Output format: text or json")
 	execCmd.Flags().BoolVar(&flagExecCheck, "check", false, "Analyze command risk and print the decision without executing")
 	execCmd.Flags().BoolVar(&flagExecShellchk, "shellcheck", false, "With --check, also run shellcheck if installed")
+	execCmd.Flags().IntVar(&flagExecMaxOutputBytes, "max-output-bytes", -1, "Limit output capture per host (bytes). Default is -1 (unlimited). 0 uses the 6000-byte legacy default")
 }
 
 func validateExecFlags() error {
@@ -87,9 +89,10 @@ func printExecResult(res engine.HostExecResult) {
 	prefix := fmt.Sprintf("[%s/%s/%s]", res.Provider, res.Name, strings.TrimSpace(res.IP))
 	output := strings.TrimSpace(res.Output)
 	if res.Success {
-		fmt.Fprintf(os.Stdout, "%s ok\n", prefix)
+		fmt.Fprintf(os.Stderr, "%s ok\n", prefix)
 		if !flagExecQuiet && output != "" {
-			fmt.Fprintf(os.Stdout, "%s stdout:\n%s\n", prefix, output)
+			fmt.Fprintf(os.Stderr, "%s stdout:\n", prefix)
+			fmt.Fprintf(os.Stdout, "%s\n", output)
 		}
 		return
 	}
@@ -101,12 +104,13 @@ func printExecResult(res engine.HostExecResult) {
 		errMsg = "remote host missing `timeout` command (install coreutils or set --timeout=0)"
 	}
 	if res.ExitCode != 0 {
-		fmt.Fprintf(os.Stdout, "%s fail exit=%d err=%s\n", prefix, res.ExitCode, errMsg)
+		fmt.Fprintf(os.Stderr, "%s fail exit=%d err=%s\n", prefix, res.ExitCode, errMsg)
 	} else {
-		fmt.Fprintf(os.Stdout, "%s fail err=%s\n", prefix, errMsg)
+		fmt.Fprintf(os.Stderr, "%s fail err=%s\n", prefix, errMsg)
 	}
 	if !flagExecQuiet && output != "" {
-		fmt.Fprintf(os.Stdout, "%s stdout:\n%s\n", prefix, output)
+		fmt.Fprintf(os.Stderr, "%s stdout:\n", prefix)
+		fmt.Fprintf(os.Stdout, "%s\n", output)
 	}
 }
 
@@ -159,18 +163,23 @@ func runExec(cmd *cobra.Command, args []string) error {
 		retryCfg = cuetry.RecipeStepRetry{Attempts: flagExecRetry, DelayMS: 1000, MaxDelayMS: 30000, Backoff: "fixed"}
 	}
 
+	tcJobs := make([]engine.TargetContext, 0, len(jobs))
+	for _, j := range jobs {
+		tcJobs = append(tcJobs, engine.TargetContext{Record: j})
+	}
 	out := make(chan engine.HostExecResult, len(jobs))
 	go func() {
 		defer close(out)
 		_ = engine.StreamSSHParallel(
-			context.Background(), sshUser, jobs, false,
-			func(_ hosts.Record, _ map[string]string) string { return finalCmd },
+			context.Background(), sshUser, tcJobs, false,
+			func(_ engine.TargetContext, _ map[string]string) string { return finalCmd },
 			out, engine.BatchOptions{
-				MaxConc:    flagExecParallel,
-				Cache:      clientCache,
-				RetryCfg:   retryCfg,
-				AttemptMax: new(atomic.Int32),
-				Reg:        reg,
+				MaxConc:        flagExecParallel,
+				Cache:          clientCache,
+				RetryCfg:       retryCfg,
+				AttemptMax:     new(atomic.Int32),
+				Reg:            reg,
+				MaxOutputBytes: flagExecMaxOutputBytes,
 			},
 		)
 	}()
@@ -199,9 +208,6 @@ func runExec(cmd *cobra.Command, args []string) error {
 
 	if failures > 0 {
 		return fmt.Errorf("exec completed with failures: %d/%d failed", failures, total)
-	}
-	if flagExecOutput == "text" {
-		fmt.Fprintf(os.Stdout, "exec completed: %d/%d succeeded\n", total-failures, total)
 	}
 	return nil
 }

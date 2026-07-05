@@ -28,6 +28,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"golang.org/x/sync/semaphore"
 	memorycache "k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -129,30 +130,36 @@ func init() {
 type K8sExecutor struct{}
 
 // ExecuteDryRun executes a dry run of the step.
-func (e *K8sExecutor) ExecuteDryRun(_ *StepContext) error {
+func (e *K8sExecutor) ExecuteDryRun(_ context.Context, _ ExecutionRequest, _ ExecutionOptions, _ io.Writer) error {
 	return nil
 }
 
 // ExecuteStream streams the step execution.
-func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
-	run, ctx, stepIdx, step, targets, ch, retryCfg, attemptMax := sc.Run, sc.Ctx, sc.Index, sc.Step, sc.Targets, sc.ResultCh, sc.RetryCfg, sc.AttemptMax
+func (e *K8sExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	stepIdx, step, targets, ch, retryCfg, attemptMax := req.Index, req.Step, req.Targets, resCh, req.RetryCfg, req.AttemptMax
 	if _, ok := step.(*cuetry.K8sStep); !ok {
 		return fmt.Errorf("internal: k8s step missing k8s field")
 	}
-	maxConc := RecipeHostMaxConc(step, run.Params.Recipe.Defaults)
+	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
 	if maxConc <= 0 {
 		maxConc = 8
 	}
-	sem := make(chan struct{}, maxConc)
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
+	sem := semaphore.NewWeighted(int64(maxConc))
 	var wg sync.WaitGroup
 	for _, target := range targets {
 		target := target
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			res := runK8sActionOnHost(ctx, run, stepIdx, step, target, retryCfg, attemptMax)
+			if err := sem.Acquire(ctx, 1); err != nil {
+				ch <- HostExecResult{Name: target.Record.Name, IP: target.Record.PrimaryIP, Provider: target.Record.Provider, Success: false, ErrMsg: err.Error()}
+				return
+			}
+			defer sem.Release(1)
+			res := runK8sActionOnHost(ctx, opts, stepIdx, step, target, retryCfg, attemptMax)
 			ch <- res
 		}()
 	}
@@ -162,13 +169,14 @@ func (e *K8sExecutor) ExecuteStream(sc *StepContext) error {
 
 func runK8sActionOnHost(
 	ctx context.Context,
-	run *CueRun,
+	opts ExecutionOptions,
 	stepIdx int,
 	step cuetry.Step,
-	target hosts.Record,
+	tc TargetContext,
 	retryCfg cuetry.RecipeStepRetry,
 	attemptMax *atomic.Int32,
 ) HostExecResult {
+	target := tc.Record
 	res := HostExecResult{
 		Name:     target.Name,
 		IP:       target.PrimaryIP,
@@ -188,12 +196,8 @@ func runK8sActionOnHost(
 		return res
 	}
 
-	// Resolve env once for ${VAR} expansion in manifest and other action fields.
-	stepEnv, err := run.StepEnv(ctx, step.Base(), &target, run.Params.Execute, !run.Params.Execute)
-	if err != nil {
-		res.ErrMsg = fmt.Errorf("k8s step env: %w", err).Error()
-		return res
-	}
+	// Use pre-resolved env for ${VAR} expansion in manifest and other action fields.
+	stepEnv := tc.Env
 
 	var output string
 	outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
@@ -230,11 +234,11 @@ func runK8sActionOnHost(
 	RecordMaxAttempts(attemptMax, outcome.Attempts)
 	res = outcome.Result
 
-	if res.Success && strings.TrimSpace(k.Output) != "" && run.OutputCapture != nil {
-		run.OutputCapture.Set(strings.TrimSpace(k.Output), res.Output)
+	if res.Success && strings.TrimSpace(k.Output) != "" && opts.OutputCapture != nil {
+		opts.OutputCapture.Set(strings.TrimSpace(k.Output), res.Output)
 	}
 
-	RunCueStepHooks(ctx, run, stepIdx, cuetry.KindK8s, step, target, &res, false)
+	RunCueStepHooks(ctx, opts, stepIdx, cuetry.KindK8s, step, target, tc, &res, false)
 	return res
 }
 

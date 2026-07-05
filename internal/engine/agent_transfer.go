@@ -15,6 +15,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/safepath"
 	"github.com/shareed2k/honey/internal/transferagent/presign"
 	"go.uber.org/zap"
 )
@@ -134,7 +135,7 @@ func remoteAgentPath(remoteDir string) string {
 }
 
 func fileSHA256(pathValue string) (string, error) {
-	f, err := os.Open(pathValue) // #nosec G304 -- local path is resolved by server.
+	f, err := safepath.Open(pathValue)
 	if err != nil {
 		return "", err
 	}

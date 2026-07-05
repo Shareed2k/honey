@@ -17,6 +17,8 @@ import { autocompletion, type Completion, type CompletionContext } from '@codemi
 import { Alert, Button, Card, Descriptions, Input, Modal, Pagination, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { ParameterPromptModal } from '../RecipeStudio/ParameterPromptModal';
+import { WebhookDebugModal } from './WebhookDebugModal';
+import { useHostSelection } from '../contexts/HostSelectionContext';
 import './apps-tab.css';
 
 type CatalogTree = {
@@ -81,7 +83,8 @@ function catalogCompletionSource(options: Completion[]) {
   };
 }
 
-export function AppsTab({ sshUser, providers, backends }: { sshUser: string, providers: string[], backends: string[] }) {
+export function AppsTab() {
+  const { sshUser, selectedProviders: providers, selectedBackends: backends } = useHostSelection();
   const [apps, setApps] = useState<{ [key: string]: AppConfig }>({});
   const [sessions, setSessions] = useState<ProxySession[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +104,7 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
   const [appFilter, setAppFilter] = useState('');
   const [appTypeFilter, setAppTypeFilter] = useState<string>('all');
+  const [webhookApp, setWebhookApp] = useState<AppConfig | null>(null);
   const [appPage, setAppPage] = useState(1);
   const APP_PAGE_SIZE = 12;
   const [sessionFilter, setSessionFilter] = useState('');
@@ -538,6 +542,9 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
                           Start {app.type.toUpperCase()}
                         </Button>
                       )}
+                      {app.type === 'recipe' && (app.webhooks?.length ?? 0) > 0 && (
+                        <Button onClick={() => setWebhookApp(app)}>Debug Webhooks</Button>
+                      )}
                     </Space>
                   </Card>
                 );
@@ -820,6 +827,12 @@ export function AppsTab({ sshUser, providers, backends }: { sshUser: string, pro
           }}
         />
       )}
+
+      <WebhookDebugModal
+        app={webhookApp}
+        open={!!webhookApp}
+        onClose={() => setWebhookApp(null)}
+      />
     </div>
   );
 }
