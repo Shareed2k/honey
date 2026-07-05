@@ -9,7 +9,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.4
 	cloud.google.com/go/compute v1.64.0
 	cloud.google.com/go/storage v1.63.0
-	cuelang.org/go v0.16.1
+	cuelang.org/go v0.17.0
 	filippo.io/age v1.3.1
 	github.com/ClickHouse/clickhouse-go/v2 v2.47.0
 	github.com/Telmate/proxmox-api-go v0.0.0-20260616195456-628d6065017a
@@ -520,7 +520,7 @@ require (
 	github.com/technoweenie/multipartstreamer v1.0.1 // indirect
 	github.com/tetafro/godot v1.5.6 // indirect
 	github.com/tetratelabs/wabin v0.0.0-20230304001439-f6f874872834 // indirect
-	github.com/tetratelabs/wazero v1.11.0 // indirect
+	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/tidwall/jsonc v0.3.3 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
