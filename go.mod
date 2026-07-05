@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/huh/v2 v2.0.3
-	charm.land/lipgloss/v2 v2.0.4
+	charm.land/lipgloss/v2 v2.0.5
 	cloud.google.com/go/compute v1.64.0
 	cloud.google.com/go/storage v1.63.0
 	cuelang.org/go v0.17.0
