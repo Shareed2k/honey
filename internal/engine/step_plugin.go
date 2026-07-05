@@ -14,6 +14,7 @@ import (
 	"github.com/shareed2k/honey/internal/plugins"
 	"github.com/shareed2k/honey/internal/stepkv"
 	"go.uber.org/zap"
+	"golang.org/x/sync/semaphore"
 )
 
 // StreamCueStepPlugin ...
@@ -38,16 +39,25 @@ func (e *PluginExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest
 	if pl == nil {
 		return fmt.Errorf("internal plugin step")
 	}
-	maxConc := clampConcurrency(RecipeHostMaxConc(step, opts.Recipe.Defaults), 8)
-	sem := make(chan struct{}, maxConc)
+	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
+	sem := semaphore.NewWeighted(int64(maxConc))
 	var wg sync.WaitGroup
 	for _, target := range targets {
 		target := target
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			if err := sem.Acquire(ctx, 1); err != nil {
+				ch <- HostExecResult{Name: target.Record.Name, IP: target.Record.PrimaryIP, Provider: target.Record.Provider, Success: false, ErrMsg: err.Error()}
+				return
+			}
+			defer sem.Release(1)
 			res := runCuePluginOnHost(ctx, opts, stepIdx, kind, step, target, retryCfg, attemptMax)
 			ch <- res
 		}()

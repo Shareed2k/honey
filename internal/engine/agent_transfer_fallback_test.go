@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -135,6 +136,39 @@ func TestBuildMultipartScript(t *testing.T) {
 	}
 	if !strings.Contains(pyScript, "memoryview") {
 		t.Fatal("missing python memoryview implementation")
+	}
+}
+
+// TestBuildPythonScript_QuoteInjectionSafe verifies untrusted paths/URLs are
+// base64-encoded into the Python script rather than interpolated raw, so a
+// single quote cannot break out of the Python literal (or the outer shell wrap).
+func TestBuildPythonScript_QuoteInjectionSafe(t *testing.T) {
+	evilPath := `/data/o'brien; rm -rf /.bin`
+	u := presign.SignedURL{Method: "PUT", URL: "https://bucket/key?sig='or'1=1"}
+
+	single := buildSinglePutScript("python3", evilPath, u, 42)
+	multi := buildMultipartScript("python", evilPath, 1<<20, []presign.SignedURL{u})
+
+	for name, script := range map[string]string{"single": single, "multi": multi} {
+		if !strings.Contains(script, "base64.b64decode(") {
+			t.Fatalf("%s: expected base64 decode in script:\n%s", name, script)
+		}
+		if strings.Contains(script, "o'brien") {
+			t.Fatalf("%s: raw srcPath leaked into script (injection):\n%s", name, script)
+		}
+		if strings.Contains(script, "'or'1=1") {
+			t.Fatalf("%s: raw URL leaked into script (injection):\n%s", name, script)
+		}
+	}
+
+	// The encoder must round-trip the untrusted values intact.
+	b64 := encodeScriptParams(map[string]any{"src": evilPath, "url": u.URL})
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if !strings.Contains(string(raw), evilPath) || !strings.Contains(string(raw), u.URL) {
+		t.Fatalf("encoder dropped values: %s", raw)
 	}
 }
 

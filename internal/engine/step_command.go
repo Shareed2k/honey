@@ -84,11 +84,11 @@ func (e *CommandExecutor) ExecuteStream(ctx context.Context, req ExecutionReques
 		}
 		inner, err := cuetry.ShellExportPrefixForRemote(env, combined)
 		if err != nil {
-			return fmt.Sprintf("echo 'export err: %s'", err.Error())
+			return "echo " + ShellSingleQuoted("export err: "+err.Error())
 		}
 		remoteCmd, err := cuetry.WrapRemoteShell(runAs, inner)
 		if err != nil {
-			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
+			return "echo " + ShellSingleQuoted("wrap err: "+err.Error())
 		}
 		return remoteCmd
 	}
@@ -265,7 +265,7 @@ func (e *ScriptExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest
 		maps.Copy(env, kv)
 		remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, env, ss.Interpreter)
 		if err != nil {
-			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
+			return "echo " + ShellSingleQuoted("wrap err: "+err.Error())
 		}
 		finalCmd := remoteCmd
 		if b.CheckCmd != "" {

@@ -184,9 +184,10 @@ func startOpenSearch(t *testing.T) string {
 			Image:        "opensearchproject/opensearch:2",
 			ExposedPorts: []string{"9200/tcp"},
 			Env: map[string]string{
-				"discovery.type":                    "single-node",
-				"OPENSEARCH_INITIAL_ADMIN_PASSWORD": "Qx7#nBm2pLv!",
-				"OPENSEARCH_JAVA_OPTS":              "-Xms512m -Xmx512m",
+				"discovery.type":                         "single-node",
+				"OPENSEARCH_INITIAL_ADMIN_PASSWORD":      "Qx7#nBm2pLv!",
+				"OPENSEARCH_JAVA_OPTS":                   "-Xms512m -Xmx512m",
+				"DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI": "true",
 			},
 			WaitingFor: wait.ForHTTP("/").WithPort("9200/tcp").
 				WithTLS(true, insecureTLS).
@@ -441,7 +442,7 @@ func (c *testSSHClient) StatRemote(path string) (hostexec.RemoteFileEntry, error
 	if err != nil {
 		return hostexec.RemoteFileEntry{}, err
 	}
-	
+
 	parts := strings.SplitN(strings.TrimSpace(string(out)), " ", 2)
 	isDir := parts[0] == "directory"
 	var size int64
@@ -466,7 +467,7 @@ func (c *testSSHClient) RemoveRemote(path string, _ bool) error {
 	_, err := c.Run("rm -rf " + path)
 	return err
 }
-func (c *testSSHClient) Close() error                        { return c.c.Close() }
+func (c *testSSHClient) Close() error { return c.c.Close() }
 
 // dialSSHTestContainer dials the test SSH container with InsecureIgnoreHostKey.
 func dialSSHTestContainer(user, containerHost string, containerPort int, keyFile string) (*gossh.Client, error) {

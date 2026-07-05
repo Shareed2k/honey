@@ -174,11 +174,11 @@ func runCueStepHookRemote(ctx context.Context, opts ExecutionOptions, stepNo int
 		}
 		inner, err := cuetry.ShellExportPrefixForRemote(env, strings.TrimSpace(hook.Command))
 		if err != nil {
-			return fmt.Sprintf("echo 'export err: %s'", err.Error())
+			return "echo " + ShellSingleQuoted("export err: "+err.Error())
 		}
 		remoteCmd, err := cuetry.WrapRemoteShell(runAs, inner)
 		if err != nil {
-			return fmt.Sprintf("echo 'wrap err: %s'", err.Error())
+			return "echo " + ShellSingleQuoted("wrap err: "+err.Error())
 		}
 		return remoteCmd
 	}

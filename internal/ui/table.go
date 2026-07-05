@@ -1330,11 +1330,11 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 				// Inject host variables even for direct UI commands
 				env, err := cuetry.EffectiveEnvHostOnly(&r)
 				if err != nil {
-					return fmt.Sprintf("echo 'env err: %s'", err.Error())
+					return "echo " + engine.ShellSingleQuoted("env err: "+err.Error())
 				}
 				remoteCmd, err := cuetry.ShellExportPrefixForRemote(env, cmdLine)
 				if err != nil {
-					return fmt.Sprintf("echo 'export err: %s'", err.Error())
+					return "echo " + engine.ShellSingleQuoted("export err: "+err.Error())
 				}
 				return remoteCmd
 			}

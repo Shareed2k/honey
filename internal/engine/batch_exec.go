@@ -21,6 +21,7 @@ import (
 	"github.com/shareed2k/honey/internal/truenasshell"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sync/semaphore"
 )
 
 // SSHRemoteCmdFunc builds the remote shell string. kv is nil when kv_tunnel is disabled; otherwise it contains
@@ -35,33 +36,31 @@ const (
 )
 
 // maxConcurrencyCap bounds worker-pool concurrency so a misconfigured or
-// oversized value cannot request an unbounded channel allocation
-// (CodeQL go/uncontrolled-allocation-size).
+// oversized recipe value cannot spawn an unreasonable number of simultaneous
+// workers. Concurrency is gated by a weighted semaphore, so the cap limits
+// concurrent work rather than any allocation.
 const maxConcurrencyCap = 512
 
-// clampConcurrency returns a worker count in [1, maxConcurrencyCap], falling
-// back to def when n <= 0.
-func clampConcurrency(n, def int) int {
-	if n <= 0 {
-		n = def
-	}
-	if n > maxConcurrencyCap {
-		n = maxConcurrencyCap
-	}
-	return n
-}
-
-// StreamParallel executes a generic job list concurrently with a bounded waitgroup.
+// StreamParallel executes a generic job list concurrently with a bounded semaphore.
 func StreamParallel[T any](jobs []T, maxConc int, worker func(T)) {
-	maxConc = clampConcurrency(maxConc, 8)
-	sem := make(chan struct{}, maxConc)
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
+	sem := semaphore.NewWeighted(int64(maxConc))
 	var wg sync.WaitGroup
 	for i := range jobs {
 		wg.Add(1)
 		go func(job T) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			// context.Background never cancels, so Acquire blocks until a slot
+			// frees — a 1:1 match for the previous unconditional channel send.
+			if err := sem.Acquire(context.Background(), 1); err != nil {
+				return
+			}
+			defer sem.Release(1)
 			worker(job)
 		}(jobs[i])
 	}
