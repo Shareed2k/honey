@@ -35,25 +35,19 @@ const (
 )
 
 // maxConcurrencyCap bounds worker-pool concurrency so a misconfigured or
-// oversized value cannot request an unbounded channel allocation
-// (CodeQL go/uncontrolled-allocation-size).
+// oversized value cannot request an unbounded channel allocation. The bound is
+// applied inline at each make site so CodeQL (go/uncontrolled-allocation-size)
+// sees it locally.
 const maxConcurrencyCap = 512
-
-// clampConcurrency returns a worker count in [1, maxConcurrencyCap], falling
-// back to def when n <= 0.
-func clampConcurrency(n, def int) int {
-	if n <= 0 {
-		n = def
-	}
-	if n > maxConcurrencyCap {
-		n = maxConcurrencyCap
-	}
-	return n
-}
 
 // StreamParallel executes a generic job list concurrently with a bounded waitgroup.
 func StreamParallel[T any](jobs []T, maxConc int, worker func(T)) {
-	maxConc = clampConcurrency(maxConc, 8)
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	for i := range jobs {

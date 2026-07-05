@@ -86,7 +86,12 @@ func newScriptContentRunner(user, scriptContent, fileExtension string, opts Scri
 }
 
 func (sr *scriptRunner) stream(ctx context.Context, recs []TargetContext, maxConc int, out chan<- HostExecResult, post SSHPostHostResultFunc, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) {
-	maxConc = clampConcurrency(maxConc, defaultSSHBatchConcurrency)
+	if maxConc <= 0 {
+		maxConc = defaultSSHBatchConcurrency
+	}
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	for i := range recs {

@@ -139,7 +139,13 @@ func (e *K8sExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, o
 	if _, ok := step.(*cuetry.K8sStep); !ok {
 		return fmt.Errorf("internal: k8s step missing k8s field")
 	}
-	maxConc := clampConcurrency(RecipeHostMaxConc(step, opts.Recipe.Defaults), 8)
+	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	for _, target := range targets {

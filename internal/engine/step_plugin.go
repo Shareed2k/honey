@@ -38,7 +38,13 @@ func (e *PluginExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest
 	if pl == nil {
 		return fmt.Errorf("internal plugin step")
 	}
-	maxConc := clampConcurrency(RecipeHostMaxConc(step, opts.Recipe.Defaults), 8)
+	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	for _, target := range targets {

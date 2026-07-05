@@ -31,3 +31,16 @@ query-filters:
   # traverse; the zip-slip reports are false positives.
   - exclude:
       id: go/zipslip
+
+  # The recipe-prompt-choices endpoint fetches an operator-supplied URL by design
+  # (recipes_prompts_handlers.go). ssrfSafeGet blocks loopback/private/link-local/
+  # unspecified addresses at dial time — a barrier CodeQL's request-forgery query
+  # does not model — so the report is a false positive.
+  - exclude:
+      id: go/request-forgery
+
+  # TerminalModal invokes a per-tab close callback it registered itself, looked up
+  # from a Map keyed by an app-generated (crypto.randomUUID) tab id. There is no
+  # user-controlled method name, so this dynamic-call report is a false positive.
+  - exclude:
+      id: js/unvalidated-dynamic-method-call
