@@ -58,7 +58,10 @@ func (p *Proxmox) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, er
 		if err := tokenID.Parse(p.TokenID); err != nil {
 			return nil, fmt.Errorf("proxmox token id %s: %w", p.TokenID, err)
 		}
-		c.SetAPIToken(tokenID, proxmox.ApiTokenSecret(p.TokenSecret))
+		c.SetAPIToken(proxmox.ApiToken{
+			ID:     tokenID,
+			Secret: proxmox.ApiTokenSecret(p.TokenSecret),
+		})
 	case p.User != "":
 		if err := c.Login(ctx, p.User, p.Password, ""); err != nil {
 			return nil, fmt.Errorf("proxmox login %s: %w", p.URL, err)
