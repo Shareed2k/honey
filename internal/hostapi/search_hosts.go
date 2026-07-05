@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -97,7 +98,23 @@ func SearchHosts(ctx context.Context, in *SearchHostsInput, reg hostexec.Registr
 	if cfg != nil {
 		cacheDir = cfg.Defaults.CacheDir
 	}
-	recs, err := searchrun.RunSearch(ctx, q, provs, cacheDir, searchrun.DefaultCacheTTL, in.NoCache, in.Refresh)
+
+	cacheTTL := searchrun.DefaultCacheTTL
+	if in.CacheTTL != "" {
+		d, err := time.ParseDuration(in.CacheTTL)
+		if err != nil {
+			return out, fmt.Errorf("invalid cache_ttl: %w", err)
+		}
+		cacheTTL = d
+	} else if cfg != nil {
+		if d, ok, err := cfg.Defaults.DefaultsCacheTTL(); err != nil {
+			return out, fmt.Errorf("defaults.cache_ttl: %w", err)
+		} else if ok {
+			cacheTTL = d
+		}
+	}
+
+	recs, err := searchrun.RunSearch(ctx, q, provs, cacheDir, cacheTTL, in.NoCache, in.Refresh)
 	if err != nil {
 		return out, err
 	}

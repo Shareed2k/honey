@@ -345,6 +345,16 @@ func (s *Server) routes() error {
 	s.router.With(recipesAPI.webhookRateLimit).
 		Post("/api/v1/webhooks/{app_name}/{webhook_name}", recipesAPI.handleRecipeWebhook)
 
+	s.router.Get("/ip", s.handleIP)
+	s.router.Get("/ip/", s.handleIP)
+	s.router.Get("/ip.json", s.handleIP)
+	s.router.Get("/ip/backend/{name}", s.handleIP)
+	s.router.Get("/ip/backend/{name}/", s.handleIP)
+	s.router.Get("/ip/backend/{name}.json", s.handleIP)
+	s.router.Get("/ip/provider/{name}", s.handleIP)
+	s.router.Get("/ip/provider/{name}/", s.handleIP)
+	s.router.Get("/ip/provider/{name}.json", s.handleIP)
+
 	s.router.Get("/ws/ssh", s.handleWebSSH)
 	s.router.Get("/ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
 

@@ -24,7 +24,10 @@ func dialTelmate(ctx context.Context, b ProxmoxBackendRuntime) (*proxmox.Client,
 		if err := tokenID.Parse(b.TokenID); err != nil {
 			return nil, fmt.Errorf("proxmox token id: %w", err)
 		}
-		c.SetAPIToken(tokenID, proxmox.ApiTokenSecret(b.TokenSec))
+		c.SetAPIToken(proxmox.ApiToken{
+			ID:     tokenID,
+			Secret: proxmox.ApiTokenSecret(b.TokenSec),
+		})
 	case strings.TrimSpace(b.User) != "":
 		if err := c.Login(ctx, b.User, b.Password, ""); err != nil {
 			return nil, fmt.Errorf("proxmox login: %w", err)
