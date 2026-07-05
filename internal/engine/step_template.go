@@ -9,6 +9,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
+	"golang.org/x/sync/semaphore"
 )
 
 func runCueStepTemplateOnHost(
@@ -141,8 +142,14 @@ func (e *TemplateExecutor) ExecuteStream(ctx context.Context, req ExecutionReque
 		return nil
 	}
 
-	maxConc := clampConcurrency(RecipeHostMaxConc(step, opts.Recipe.Defaults), 8)
-	sem := make(chan struct{}, maxConc)
+	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
+	if maxConc <= 0 {
+		maxConc = 8
+	}
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
+	sem := semaphore.NewWeighted(int64(maxConc))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var stepErr error
@@ -152,8 +159,16 @@ func (e *TemplateExecutor) ExecuteStream(ctx context.Context, req ExecutionReque
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			if err := sem.Acquire(ctx, 1); err != nil {
+				mu.Lock()
+				stepErr = err
+				mu.Unlock()
+				if ch != nil {
+					ch <- HostExecResult{Name: target.Record.Name, IP: target.Record.PrimaryIP, Provider: target.Record.Provider, Success: false, ErrMsg: err.Error()}
+				}
+				return
+			}
+			defer sem.Release(1)
 
 			res := runCueStepTemplateOnHost(
 				ctx,

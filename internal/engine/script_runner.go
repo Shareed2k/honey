@@ -14,6 +14,7 @@ import (
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/metrics"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sync/semaphore"
 )
 
 // ScriptUploadRunOptions controls upload/chmod/execute script runs.
@@ -86,19 +87,23 @@ func newScriptContentRunner(user, scriptContent, fileExtension string, opts Scri
 }
 
 func (sr *scriptRunner) stream(ctx context.Context, recs []TargetContext, maxConc int, out chan<- HostExecResult, post SSHPostHostResultFunc, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) {
-	maxConc = clampConcurrency(maxConc, defaultSSHBatchConcurrency)
-	sem := make(chan struct{}, maxConc)
+	if maxConc <= 0 {
+		maxConc = defaultSSHBatchConcurrency
+	}
+	if maxConc > maxConcurrencyCap {
+		maxConc = maxConcurrencyCap
+	}
+	sem := semaphore.NewWeighted(int64(maxConc))
 	var wg sync.WaitGroup
 	for i := range recs {
 		wg.Add(1)
 		go func(tc TargetContext) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			if ctx.Err() != nil {
+			if err := sem.Acquire(ctx, 1); err != nil {
 				out <- HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider, Success: false, ErrMsg: "cancelled"}
 				return
 			}
+			defer sem.Release(1)
 			outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
 				return sr.runHost(ctx, tc)
 			})
