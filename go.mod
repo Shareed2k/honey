@@ -65,7 +65,7 @@ require (
 	github.com/ncruces/go-sqlite3 v0.35.1
 	github.com/nikoksr/notify v1.5.0
 	github.com/olekukonko/tablewriter v1.1.4
-	github.com/open-policy-agent/opa v1.18.0
+	github.com/open-policy-agent/opa v1.18.2
 	github.com/opensearch-project/opensearch-go/v2 v2.3.0
 	github.com/panjf2000/ants/v2 v2.12.1
 	github.com/pkg/sftp v1.13.10
