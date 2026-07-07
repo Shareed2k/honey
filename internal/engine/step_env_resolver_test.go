@@ -76,7 +76,7 @@ func TestRunEnvResolver_Resolve_propagatesError(t *testing.T) {
 	resolver := &runEnvResolver{run: run}
 
 	step := &cuetry.StepBase{
-		Secrets: map[string]string{"MY_SECRET": "vault://my/path"},
+		Secrets: map[string]cuetry.RecipeSecret{"MY_SECRET": {Ref: "vault://my/path"}},
 	}
 	target := &hosts.Record{Name: "host-b"}
 

@@ -159,7 +159,8 @@ func writeAuditExport(w io.Writer, events []audit.Event, format string) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "TIME\tACTOR\tSOURCE\tACTION\tTARGET\tDECISION\tRISK")
 		for _, e := range events {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(
+				tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				e.Time.Format(time.RFC3339),
 				e.Actor, e.Source, e.Action, e.Target, e.Decision, e.Risk,
 			)

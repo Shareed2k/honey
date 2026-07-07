@@ -240,11 +240,11 @@ func MergeRecipeSecretRefs(defaults *cuetry.RecipeDefaults, step cuetry.Step) ma
 	out := make(map[string]string)
 	if defaults != nil {
 		for k, v := range defaults.Secrets {
-			out[k] = v
+			out[k] = v.StringRef()
 		}
 	}
 	for k, v := range step.Base().Secrets {
-		out[k] = v
+		out[k] = v.StringRef()
 	}
 	return out
 }

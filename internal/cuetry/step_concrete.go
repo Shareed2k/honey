@@ -553,6 +553,124 @@ func (s *OPAStep) Validate(vc StepValidateCtx) error {
 var _ Step = (*OPAStep)(nil)
 
 // ---------------------------------------------------------------------------
+// package
+// ---------------------------------------------------------------------------
+
+// PackageStep manages system packages.
+type PackageStep struct {
+	StepBase
+	RemoteExec
+	Package *RecipeStepPackage `json:"package,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *PackageStep) Kind() string { return KindPackage }
+
+// Clone returns a deep copy of the step.
+func (s *PackageStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields.
+func (s *PackageStep) Validate(vc StepValidateCtx) error {
+	if s.Package == nil {
+		return fmt.Errorf("cuetry: steps[%d].package is required", vc.Index)
+	}
+	if s.Package.Name == "" {
+		return fmt.Errorf("cuetry: steps[%d].package.name is required", vc.Index)
+	}
+	switch s.Package.State {
+	case "present", "absent", "latest":
+	default:
+		return fmt.Errorf("cuetry: steps[%d].package.state must be present, absent, or latest", vc.Index)
+	}
+	return nil
+}
+
+var _ RemoteStep = (*PackageStep)(nil)
+
+// ---------------------------------------------------------------------------
+// service
+// ---------------------------------------------------------------------------
+
+// ServiceStep manages system services.
+type ServiceStep struct {
+	StepBase
+	RemoteExec
+	Service *RecipeStepService `json:"service,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *ServiceStep) Kind() string { return KindService }
+
+// Clone returns a deep copy of the step.
+func (s *ServiceStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields.
+func (s *ServiceStep) Validate(vc StepValidateCtx) error {
+	if s.Service == nil {
+		return fmt.Errorf("cuetry: steps[%d].service is required", vc.Index)
+	}
+	if s.Service.Name == "" {
+		return fmt.Errorf("cuetry: steps[%d].service.name is required", vc.Index)
+	}
+	switch s.Service.State {
+	case "started", "stopped", "restarted", "reloaded", "status":
+	default:
+		return fmt.Errorf("cuetry: steps[%d].service.state must be started, stopped, restarted, reloaded, or status", vc.Index)
+	}
+	return nil
+}
+
+var _ RemoteStep = (*ServiceStep)(nil)
+
+// ---------------------------------------------------------------------------
+// aws
+// ---------------------------------------------------------------------------
+
+// AwsStep interacts with AWS APIs.
+type AwsStep struct {
+	StepBase
+	Aws *RecipeStepAws `json:"aws,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *AwsStep) Kind() string { return KindAws }
+
+// Clone returns a deep copy of the step.
+func (s *AwsStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields.
+func (s *AwsStep) Validate(vc StepValidateCtx) error {
+	if s.Aws == nil {
+		return fmt.Errorf("cuetry: steps[%d].aws is required", vc.Index)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// gcp
+// ---------------------------------------------------------------------------
+
+// GcpStep interacts with GCP APIs.
+type GcpStep struct {
+	StepBase
+	Gcp *RecipeStepGcp `json:"gcp,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *GcpStep) Kind() string { return KindGcp }
+
+// Clone returns a deep copy of the step.
+func (s *GcpStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields.
+func (s *GcpStep) Validate(vc StepValidateCtx) error {
+	if s.Gcp == nil {
+		return fmt.Errorf("cuetry: steps[%d].gcp is required", vc.Index)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // registration
 // ---------------------------------------------------------------------------
 
@@ -568,6 +686,10 @@ func init() {
 	RegisterStep(KindDocker, []string{"docker"}, func() Step { return &DockerStep{} })
 	RegisterStep(KindOpensearch, []string{"opensearch"}, func() Step { return &OpensearchStep{} })
 	RegisterStep(KindPostgres, []string{"postgres"}, func() Step { return &PostgresStep{} })
+	RegisterStep(KindPackage, []string{"package"}, func() Step { return &PackageStep{} })
+	RegisterStep(KindService, []string{"service"}, func() Step { return &ServiceStep{} })
+	RegisterStep(KindAws, []string{"aws"}, func() Step { return &AwsStep{} })
+	RegisterStep(KindGcp, []string{"gcp"}, func() Step { return &GcpStep{} })
 	RegisterStep(KindRecipe, []string{"recipe"}, func() Step { return &RecipeStep{} })
 	RegisterStep(KindAgentTransfer, []string{"agent_transfer"}, func() Step { return &AgentTransferStep{} })
 	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })

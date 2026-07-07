@@ -137,3 +137,57 @@ func TestFormatGraphWavesText(t *testing.T) {
 		t.Fatalf("%q", text)
 	}
 }
+
+func TestBuildStepGraph_rescue(t *testing.T) {
+	t.Parallel()
+	steps := wrapAll(
+		&CommandStep{StepBase: StepBase{ID: "fetch", Host: "*", Rescue: []string{"cleanup"}}, Command: "fetch"},
+		&CommandStep{StepBase: StepBase{ID: "cleanup", Host: "*"}, Command: "cleanup"},
+	)
+
+	r := Recipe{
+		Name:  "g",
+		Type:  "graph",
+		Steps: steps,
+	}
+
+	err := ValidateRecipeGraph(r)
+	if err != nil {
+		t.Fatalf("expected valid rescue, got %v", err)
+	}
+
+	stepsInvalid := wrapAll(
+		&CommandStep{StepBase: StepBase{ID: "fetch", Host: "*", Rescue: []string{"unknown"}}, Command: "fetch"},
+	)
+	rInvalid := Recipe{
+		Name:  "g",
+		Type:  "graph",
+		Steps: stepsInvalid,
+	}
+	err = ValidateRecipeGraph(rInvalid)
+	if err == nil || !strings.Contains(err.Error(), "unknown step id") {
+		t.Fatalf("expected unknown rescue step error, got %v", err)
+	}
+}
+
+func TestBuildStepGraph_triggerRule(t *testing.T) {
+	t.Parallel()
+	steps := wrapAll(
+		&CommandStep{StepBase: StepBase{ID: "fetch", Host: "*"}, Command: "fetch"},
+		&CommandStep{StepBase: StepBase{ID: "a", Host: "*", Depends: []string{"fetch"}, TriggerRule: "one_failed"}, Command: "a"},
+		&CommandStep{StepBase: StepBase{ID: "b", Host: "*", Depends: []string{"fetch"}, TriggerRule: "all_done"}, Command: "b"},
+		&CommandStep{StepBase: StepBase{ID: "invalid", Host: "*", Depends: []string{"fetch"}, TriggerRule: "unknown"}, Command: "v"},
+	)
+
+	// Since ValidateRecipeGraph tests this normally, let's create a recipe
+	r := Recipe{
+		Name:  "g",
+		Type:  "graph",
+		Steps: steps,
+	}
+
+	err := ValidateRecipeGraph(r)
+	if err == nil || !strings.Contains(err.Error(), "invalid trigger_rule") {
+		t.Fatalf("expected trigger_rule error, got %v", err)
+	}
+}

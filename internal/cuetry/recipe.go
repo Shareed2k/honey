@@ -47,6 +47,8 @@ const schemaSource = `
 #Step: close({
 	id?:      string
 	depends?: [...string]
+	trigger_rule?: "all_success" | "one_failed" | "all_done"
+	rescue?:  [...string]
 	matrix?: {[string]: [...string]}
 	assert?: [...{
 		regex?: string
@@ -240,6 +242,18 @@ const schemaSource = `
 		body?:      {...}
 		output?:    string
 	})
+	aws?: close({
+		service:   string
+		operation: string
+		params?:   {...}
+		output?:   string
+	})
+	gcp?: close({
+		service:   string
+		operation: string
+		params?:   {...}
+		output?:   string
+	})
 	postgres?: close({
 		dsn_secret:      string
 		action:          "query" | "exec" | "migrate"
@@ -256,6 +270,15 @@ const schemaSource = `
 		migrations_dir?: string
 		files?:          [...string]
 		output?:         string
+	})
+	package?: close({
+		name:  string
+		state: "present" | "absent" | "latest"
+	})
+	service?: close({
+		name:    string
+		state:   "started" | "stopped" | "restarted" | "reloaded" | "status"
+		enabled?: bool
 	})
 	recipe?: close({
 		path:     string
@@ -290,6 +313,7 @@ const schemaSource = `
 		step:    string
 		extract: string
 	})
+	reduce?:        string
 	notify_handler?: [...string]
 })
 #Webhook: close({

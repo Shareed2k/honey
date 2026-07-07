@@ -37,6 +37,7 @@ type scheduleTestFactory struct {
 func (f scheduleTestFactory) FromConfig(_ searchrun.ProviderOverrides) []hosts.Backend {
 	return []hosts.Backend{scheduleTestProvider{rec: f.rec}}
 }
+
 func (f scheduleTestFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend {
 	return scheduleTestProvider{rec: f.rec}
 }

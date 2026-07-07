@@ -577,7 +577,19 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 			out <- res
 		}
-		return StreamCueLoopStep(ctx, run, i, step, targets, history, out)
+		loopRes, loopErr := StreamCueLoopStep(ctx, run, i, step, targets, history, out)
+		if reduceName := step.Base().Reduce; reduceName != "" && run.OutputCapture != nil {
+			var collected []string
+			for _, row := range loopRes {
+				if row.Success && !row.Skipped {
+					collected = append(collected, row.Output)
+				}
+			}
+			if b, marshalErr := json.Marshal(collected); marshalErr == nil {
+				run.OutputCapture.Set(reduceName, string(b))
+			}
+		}
+		return loopRes, loopErr
 	}
 
 	whenSkipped := allSkipped
@@ -624,6 +636,17 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 				run.OutputCapture.Set(name, row.Output)
 				break
 			}
+		}
+	}
+	if reduceName := step.Base().Reduce; reduceName != "" && run.OutputCapture != nil {
+		var collected []string
+		for _, row := range stepResults {
+			if row.Success && !row.Skipped {
+				collected = append(collected, row.Output)
+			}
+		}
+		if b, err := json.Marshal(collected); err == nil {
+			run.OutputCapture.Set(reduceName, string(b))
 		}
 	}
 	maxAttempts := int(attemptMax.Load())

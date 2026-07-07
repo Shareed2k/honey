@@ -71,12 +71,12 @@ func TestRecipeE2E_PluginCVEScanner(t *testing.T) {
 	}
 
 	rec := hosts.CloneWithMetaSSHPort(hosts.Record{Provider: "test", Name: "ssh-test", PrimaryIP: sshH}, sshP)
-	
+
 	// Create a fake trivial vulnerability database mock or run a dummy command
 	// For E2E we'll just run auto installer that fails download or does a dry-run style command.
 	// Since we are running in an alpine-based SSH container, we can run "scan" and see it inject the logic
 	// The SSH container used in tests/integration/containers.go is typically alpine.
-	
+
 	cueContent := `
 recipe: {
 	name: "test-cve-scanner"
@@ -126,7 +126,7 @@ recipe: {
 	}
 
 	require.Len(t, results, 1)
-	
+
 	t.Logf("OUTPUT: %q", results[0].Output)
 	assert.True(t, results[0].Success)
 	assert.Contains(t, results[0].Output, `"scanner":"trivy"`)

@@ -47,6 +47,10 @@ const (
 	KindDocker        = "docker"
 	KindOpensearch    = "opensearch"
 	KindPostgres      = "postgres"
+	KindPackage       = "package"
+	KindService       = "service"
+	KindAws           = "aws"
+	KindGcp           = "gcp"
 	KindRecipe        = "recipe"
 	KindOPA           = "opa"
 )
@@ -65,29 +69,32 @@ type StepValidateCtx struct {
 // StepBase holds the cross-cutting fields shared by every step kind. It is embedded
 // (anonymously) by each concrete step, so these fields flatten into the step's JSON.
 type StepBase struct {
-	ID            string              `json:"id,omitempty"`
-	Depends       []string            `json:"depends,omitempty"`
-	Host          string              `json:"host" jsonschema:"default=*"`
-	Env           map[string]string   `json:"env,omitempty"`
-	Secrets       map[string]string   `json:"secrets,omitempty"`
-	EnvFrom       []EnvFromRef        `json:"env_from,omitempty"`
-	RunAs         string              `json:"run_as,omitempty"`
-	When          string              `json:"when,omitempty"`
-	ChangedWhen   string              `json:"changed_when,omitempty"`
-	FailedWhen    string              `json:"failed_when,omitempty"`
-	Retry         *RecipeStepRetry    `json:"retry,omitempty"`
-	Timeout       string              `json:"timeout,omitempty"`
-	IgnoreErrors  bool                `json:"ignore_errors,omitempty" jsonschema:"default=false"`
-	CheckCmd      string              `json:"check_cmd,omitempty"`
-	Output        string              `json:"output,omitempty"`
-	Loop          string              `json:"loop,omitempty"`
-	LoopFrom      *RecipeLoop         `json:"loop_from,omitempty"`
-	Notify        *RecipeNotify       `json:"notify,omitempty"`
-	Hooks         *RecipeStepHooks    `json:"hooks,omitempty"`
-	NotifyHandler []string            `json:"notify_handler,omitempty"`
-	KVTunnel      *bool               `json:"kv_tunnel,omitempty" jsonschema:"default=false"`
-	Matrix        map[string][]string `json:"matrix,omitempty"`
-	Assert        []Assertion         `json:"assert,omitempty"`
+	ID            string                  `json:"id,omitempty"`
+	Depends       []string                `json:"depends,omitempty"`
+	Host          string                  `json:"host" jsonschema:"default=*"`
+	Env           map[string]string       `json:"env,omitempty"`
+	Secrets       map[string]RecipeSecret `json:"secrets,omitempty"`
+	EnvFrom       []EnvFromRef            `json:"env_from,omitempty"`
+	RunAs         string                  `json:"run_as,omitempty"`
+	When          string                  `json:"when,omitempty"`
+	ChangedWhen   string                  `json:"changed_when,omitempty"`
+	FailedWhen    string                  `json:"failed_when,omitempty"`
+	Retry         *RecipeStepRetry        `json:"retry,omitempty"`
+	Timeout       string                  `json:"timeout,omitempty"`
+	IgnoreErrors  bool                    `json:"ignore_errors,omitempty" jsonschema:"default=false"`
+	CheckCmd      string                  `json:"check_cmd,omitempty"`
+	Output        string                  `json:"output,omitempty"`
+	Loop          string                  `json:"loop,omitempty"`
+	LoopFrom      *RecipeLoop             `json:"loop_from,omitempty"`
+	Reduce        string                  `json:"reduce,omitempty"`
+	Notify        *RecipeNotify           `json:"notify,omitempty"`
+	Hooks         *RecipeStepHooks        `json:"hooks,omitempty"`
+	NotifyHandler []string                `json:"notify_handler,omitempty"`
+	KVTunnel      *bool                   `json:"kv_tunnel,omitempty" jsonschema:"default=false"`
+	Matrix        map[string][]string     `json:"matrix,omitempty"`
+	Assert        []Assertion             `json:"assert,omitempty"`
+	TriggerRule   string                  `json:"trigger_rule,omitempty" jsonschema:"default=all_success"`
+	Rescue        []string                `json:"rescue,omitempty"`
 }
 
 // Base lets a *StepBase (and thus every embedding step) satisfy the shared part of Step.

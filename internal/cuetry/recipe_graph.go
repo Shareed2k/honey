@@ -100,6 +100,40 @@ func BuildStepGraph(steps []StepWrapper) (*StepGraph, error) {
 	if nonAI == 0 {
 		return nil, fmt.Errorf("cuetry: graph recipe requires at least one non-ai step")
 	}
+
+	// Validate rescue references
+	for i, w := range steps {
+		for _, res := range w.Step.Base().Rescue {
+			res = strings.TrimSpace(res)
+			if res == "" {
+				return nil, fmt.Errorf("cuetry: steps[%d].rescue contains empty id", i)
+			}
+			j, ok := sg.IDToIndex[res]
+			if !ok {
+				return nil, fmt.Errorf("cuetry: steps[%d].rescue references unknown step id %q", i, res)
+			}
+			if j == i {
+				return nil, fmt.Errorf("cuetry: steps[%d].rescue must not reference itself", i)
+			}
+
+			// Implicitly make the rescue step depend on the failing step
+			// so it doesn't execute before it.
+			alreadyDepends := false
+			for _, d := range steps[j].Step.Base().Depends {
+				if d == sg.IndexToID[i] {
+					alreadyDepends = true
+					break
+				}
+			}
+			if !alreadyDepends {
+				sg.Depends[j] = append(sg.Depends[j], i)
+				sg.Children[i] = append(sg.Children[i], j)
+			}
+
+			// Note: At execution time, the engine must check if j was triggered by a rescue.
+		}
+	}
+
 	if sg.AIIndex >= 0 {
 		for i, w := range steps {
 			for _, dep := range w.Step.Base().Depends {
@@ -203,6 +237,9 @@ func ValidateRecipeGraph(r Recipe) error {
 			if len(b.EnvFrom) > 0 {
 				return fmt.Errorf("cuetry: steps[%d].env_from is only allowed when recipe.type is \"graph\"", i)
 			}
+			if b.TriggerRule != "" && b.TriggerRule != "all_success" {
+				return fmt.Errorf("cuetry: steps[%d].trigger_rule is only allowed when recipe.type is \"graph\"", i)
+			}
 		}
 		return nil
 	case ExecutionModeGraph:
@@ -230,6 +267,12 @@ func ValidateRecipeGraph(r Recipe) error {
 			}
 			if err := validateStepWhen(i, ExecutionModeGraph, b, sg); err != nil {
 				return err
+			}
+			switch b.TriggerRule {
+			case "", "all_success", "one_failed", "all_done":
+				// valid
+			default:
+				return fmt.Errorf("cuetry: steps[%d] invalid trigger_rule %q", i, b.TriggerRule)
 			}
 		}
 		return nil

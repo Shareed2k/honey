@@ -11,9 +11,9 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/honeyprovider"
+	"github.com/shareed2k/honey/internal/provider/localprovider"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/webserver"
-	"github.com/shareed2k/honey/internal/provider/localprovider"
 )
 
 func TestHoneyProviderE2E_Files(t *testing.T) {

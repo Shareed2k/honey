@@ -173,7 +173,7 @@ func TestEffectiveEnvForRun_resolvesSecureV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	step := &StepBase{Secrets: map[string]string{"TOKEN": ref}}
+	step := &StepBase{Secrets: map[string]RecipeSecret{"TOKEN": {Ref: ref}}}
 	got, err := EffectiveEnvForRun(context.Background(), true, res, step, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
