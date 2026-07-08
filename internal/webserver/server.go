@@ -15,13 +15,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/approval"
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -115,9 +113,6 @@ type Server struct {
 	pveQemuVncMu   sync.Mutex
 	pveQemuVncByID map[string]pveQemuVncOfferSession
 
-	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
-	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
-
 	recipesAPI *RecipesAPI
 
 	commandRunner *engine.CommandRunner
@@ -156,9 +151,6 @@ func NewServer(opts Options) (*Server, error) {
 		opts.ExecRegistry.Reconfigure(opts.Config)
 	}
 
-	valCache, _ := lru.New[string, *ValidateContentResponse](50)
-	graphCache, _ := lru.New[string, *cuetry.RecipeGraphPlan](50)
-
 	q, err := queue.NewAntsQueue(50)
 	if err != nil {
 		return nil, fmt.Errorf("init webhook queue: %w", err)
@@ -167,18 +159,16 @@ func NewServer(opts Options) (*Server, error) {
 	pgPools := postgres.NewPoolManager()
 	pc := plugincache.New(opts.Config)
 	s := &Server{
-		opts:                  opts,
-		metrics:               opts.Metrics,
-		router:                chi.NewRouter(),
-		assistRL:              newSlidingRL(),
-		tunnels:               newTunnelManager(),
-		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
-		pgPools:               pgPools,
-		webhookQueue:          q,
-		plugins:               pc,
-		fileClientCache:       engine.NewClientCache(),
-		recipeValidationCache: valCache,
-		recipeGraphCache:      graphCache,
+		opts:            opts,
+		metrics:         opts.Metrics,
+		router:          chi.NewRouter(),
+		assistRL:        newSlidingRL(),
+		tunnels:         newTunnelManager(),
+		proxy:           proxy.NewManager(proxy.NewLogger(zap.L())),
+		pgPools:         pgPools,
+		webhookQueue:    q,
+		plugins:         pc,
+		fileClientCache: engine.NewClientCache(),
 		commandRunner: engine.NewCommandRunner(engine.CommandRunnerOptions{
 			ExecRegistry:   opts.ExecRegistry,
 			SearchRegistry: opts.SearchRegistry,
@@ -224,7 +214,7 @@ func NewServer(opts Options) (*Server, error) {
 }
 
 func (s *Server) routes() error {
-	s.recipesAPI = NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache, s.recipeValidationCache, s.recipeGraphCache)
+	s.recipesAPI = NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache)
 	recipesAPI := s.recipesAPI
 
 	s.router.Route("/api/v1", func(r chi.Router) {

@@ -51,7 +51,7 @@ func runAlertServe(cmd *cobra.Command, _ []string) error {
 		whCfg.Port = 9095
 	}
 
-	srv, err := alertwebhook.New(whCfg, cfg, resolvedCfgPath)
+	srv, err := alertwebhook.New(whCfg, cfg, resolvedCfgPath, GetSearchRegistry())
 	if err != nil {
 		return fmt.Errorf("alert webhook: %w", err)
 	}

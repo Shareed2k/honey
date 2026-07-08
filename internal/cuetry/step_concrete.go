@@ -79,7 +79,10 @@ func (s *PutStep) Kind() string { return KindPut }
 func (s *PutStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *PutStep) Validate(_ StepValidateCtx) error {
+func (s *PutStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on put steps is not supported", vc.Index)
+	}
 	if s.Put == nil {
 		return fmt.Errorf("put step requires a file transfer")
 	}
@@ -102,7 +105,10 @@ func (s *GetStep) Kind() string { return KindGet }
 func (s *GetStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *GetStep) Validate(_ StepValidateCtx) error {
+func (s *GetStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on get steps is not supported", vc.Index)
+	}
 	if s.Get == nil {
 		return fmt.Errorf("get step requires a file transfer")
 	}
@@ -164,6 +170,9 @@ func (s *TunnelStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *TunnelStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on tunnel steps is not supported", i)
+	}
 	if s.Tunnel == nil {
 		return fmt.Errorf("cuetry: steps[%d]: internal tunnel step", i)
 	}
@@ -232,7 +241,10 @@ func (s *K8sStep) Kind() string { return KindK8s }
 func (s *K8sStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *K8sStep) Validate(_ StepValidateCtx) error {
+func (s *K8sStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on k8s steps is not supported", vc.Index)
+	}
 	if s.K8s == nil {
 		return fmt.Errorf("k8s step requires a k8s block")
 	}
@@ -278,7 +290,10 @@ func (s *OpensearchStep) Kind() string { return KindOpensearch }
 func (s *OpensearchStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *OpensearchStep) Validate(_ StepValidateCtx) error {
+func (s *OpensearchStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on opensearch steps is not supported", vc.Index)
+	}
 	if s.Opensearch == nil {
 		return fmt.Errorf("opensearch step requires an opensearch block")
 	}
@@ -301,7 +316,10 @@ func (s *PostgresStep) Kind() string { return KindPostgres }
 func (s *PostgresStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *PostgresStep) Validate(_ StepValidateCtx) error {
+func (s *PostgresStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on postgres steps is not supported", vc.Index)
+	}
 	if s.Postgres == nil {
 		return fmt.Errorf("postgres step requires a postgres block")
 	}
@@ -341,7 +359,10 @@ func (s *RecipeStep) Clone() Step {
 }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *RecipeStep) Validate(_ StepValidateCtx) error {
+func (s *RecipeStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on recipe steps is not supported", vc.Index)
+	}
 	if s.Recipe == nil {
 		return fmt.Errorf("recipe step requires a recipe block")
 	}
@@ -373,6 +394,12 @@ func (s *AgentTransferStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); r
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *AgentTransferStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on agent_transfer steps is not supported", i)
+	}
+	if len(s.Env) > 0 {
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for agent_transfer steps", i)
+	}
 	at := s.AgentTransfer
 	if at == nil {
 		return fmt.Errorf("cuetry: steps[%d]: internal agent_transfer", i)
@@ -437,6 +464,9 @@ func (s *TemplateStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *TemplateStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on template steps is not supported", i)
+	}
 	// host: a render step with empty host is allowed (defaults applied later).
 	if strings.TrimSpace(s.Host) != "" || strings.TrimSpace(s.Render) == "" {
 		if err := ValidateHostField(s.Host); err != nil {
@@ -486,6 +516,12 @@ func (s *AIStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *AIStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on ai steps is not supported", i)
+	}
+	if len(s.Env) > 0 {
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for ai steps", i)
+	}
 	if vc.Mode == ExecutionModeLinear && i != vc.NumSteps-1 {
 		return fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
 	}

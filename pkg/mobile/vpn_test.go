@@ -1,8 +1,7 @@
-//go:build ignore
-
 package mobile
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -113,6 +112,44 @@ func TestResolveExit_DirectIP(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStartVPN_InvalidFD(t *testing.T) {
+	cb := &fakeVPNCallback{}
+	err := StartVPN(-1, `{}`, cb)
+	if err == nil {
+		t.Fatal("expected error for invalid fd, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid tun fd") {
+		t.Errorf("expected 'invalid tun fd', got %v", err)
+	}
+	if len(cb.states) == 0 || cb.states[0] != "error" {
+		t.Errorf("expected state 'error', got %v", cb.states)
+	}
+}
+
+func TestEmitState(t *testing.T) {
+	cb := &fakeVPNCallback{}
+	emitState(cb, "test-state")
+	if len(cb.states) == 0 || cb.states[0] != "test-state" {
+		t.Errorf("expected test-state, got %v", cb.states)
+	}
+
+	// Ensure nil callback doesn't panic
+	emitState(nil, "test")
+}
+
+func TestPumpStats(_ *testing.T) {
+	cb := &fakeVPNCallback{}
+	ctx, cancel := context.WithCancel(context.Background())
+	// cancel immediately so it exits right after first tick or without tick
+	cancel()
+
+	pumpStats(ctx, cb)
+	// should not block
+
+	// Test nil cb
+	pumpStats(ctx, nil)
 }
 
 // TestResolveExit_DirectIPSkipsSearch proves the IP path bypasses inventory: an

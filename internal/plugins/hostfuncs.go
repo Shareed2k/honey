@@ -28,8 +28,49 @@ const (
 	defaultHostExecMS = 30000
 )
 
+// registerHostFunc appends a PTR-in/I64-out Extism host function to *fns when
+// enabled is true. Every capability-gated host function this package registers
+// shares this exact shape (only the callback body differs per capability) —
+// concentrating it here removes the copy-pasted registration wiring previously
+// repeated at every "if m.AllowX { fns = append(...) }" call site.
+func registerHostFunc(fns *[]extism.HostFunction, enabled bool, name string, cb extism.HostFunctionStackCallback) {
+	if !enabled {
+		return
+	}
+	*fns = append(*fns, extism.NewHostFunctionWithStack(
+		name, cb,
+		[]extism.ValueType{extism.ValueTypePTR},
+		[]extism.ValueType{extism.ValueTypeI64},
+	))
+}
+
+// getEnvCallback returns the get_env host function body, permitting only the
+// env var names present in allowed.
+func getEnvCallback(allowed map[string]struct{}) extism.HostFunctionStackCallback {
+	return func(_ context.Context, p *extism.CurrentPlugin, stack []uint64) {
+		key, err := p.ReadString(stack[0])
+		if err != nil {
+			stack[0] = 0
+			return
+		}
+		if _, ok := allowed[key]; !ok {
+			stack[0] = 0
+			return
+		}
+		val := os.Getenv(key)
+		off, err := p.WriteString(val)
+		if err != nil {
+			stack[0] = 0
+			return
+		}
+		stack[0] = off
+	}
+}
+
 func hostFunctions(m Manifest, pluginTimeoutMS int) []extism.HostFunction {
 	var fns []extism.HostFunction
+	// log_info/log_warn are always registered (no capability gate) and return
+	// nothing, so they don't fit registerHostFunc's PTR-in/I64-out shape.
 	fns = append(fns, extism.NewHostFunctionWithStack(
 		"log_info",
 		func(_ context.Context, p *extism.CurrentPlugin, stack []uint64) {
@@ -54,122 +95,30 @@ func hostFunctions(m Manifest, pluginTimeoutMS int) []extism.HostFunction {
 		[]extism.ValueType{extism.ValueTypePTR},
 		[]extism.ValueType{},
 	))
+
 	allowed := make(map[string]struct{}, len(m.AllowedEnv))
 	for _, k := range m.AllowedEnv {
-		k = strings.TrimSpace(k)
-		if k != "" {
+		if k = strings.TrimSpace(k); k != "" {
 			allowed[k] = struct{}{}
 		}
 	}
-	if len(allowed) > 0 {
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"get_env",
-			func(_ context.Context, p *extism.CurrentPlugin, stack []uint64) {
-				key, err := p.ReadString(stack[0])
-				if err != nil {
-					stack[0] = 0
-					return
-				}
-				if _, ok := allowed[key]; !ok {
-					stack[0] = 0
-					return
-				}
-				val := os.Getenv(key)
-				off, err := p.WriteString(val)
-				if err != nil {
-					stack[0] = 0
-					return
-				}
-				stack[0] = off
-			},
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
+	registerHostFunc(&fns, len(allowed) > 0, "get_env", getEnvCallback(allowed))
+	registerHostFunc(&fns, m.AllowK8sHTTP, "k8s_http", k8sHTTPCallback(m.ID))
+
+	maxTimeout := pluginTimeoutMS
+	if maxTimeout <= 0 {
+		maxTimeout = defaultHostExecMS
 	}
-	if m.AllowK8sHTTP {
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"k8s_http",
-			k8sHTTPCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-	}
-	if m.AllowHostExec {
-		maxTimeout := pluginTimeoutMS
-		if maxTimeout <= 0 {
-			maxTimeout = defaultHostExecMS
-		}
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"host_exec",
-			hostExecCallback(m.ID, maxTimeout),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-	}
-	if m.AllowKV {
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"kv",
-			kvCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-	}
-	if m.AllowRemoteExec {
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"remote_exec",
-			remoteExecCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-	}
-	if m.AllowSFTP {
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"remote_upload",
-			remoteUploadCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"remote_download",
-			remoteDownloadCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"remote_stat",
-			remoteStatCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-	}
-	if m.AllowTemplateRender {
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"template_render",
-			templateRenderCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-	}
-	if m.AllowPostgres {
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"postgres_query",
-			postgresQueryCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"postgres_exec",
-			postgresExecCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-		fns = append(fns, extism.NewHostFunctionWithStack(
-			"postgres_migrate",
-			postgresMigrateCallback(m.ID),
-			[]extism.ValueType{extism.ValueTypePTR},
-			[]extism.ValueType{extism.ValueTypeI64},
-		))
-	}
+	registerHostFunc(&fns, m.AllowHostExec, "host_exec", hostExecCallback(m.ID, maxTimeout))
+	registerHostFunc(&fns, m.AllowKV, "kv", kvCallback(m.ID))
+	registerHostFunc(&fns, m.AllowRemoteExec, "remote_exec", remoteExecCallback(m.ID))
+	registerHostFunc(&fns, m.AllowSFTP, "remote_upload", remoteUploadCallback(m.ID))
+	registerHostFunc(&fns, m.AllowSFTP, "remote_download", remoteDownloadCallback(m.ID))
+	registerHostFunc(&fns, m.AllowSFTP, "remote_stat", remoteStatCallback(m.ID))
+	registerHostFunc(&fns, m.AllowTemplateRender, "template_render", templateRenderCallback(m.ID))
+	registerHostFunc(&fns, m.AllowPostgres, "postgres_query", postgresQueryCallback(m.ID))
+	registerHostFunc(&fns, m.AllowPostgres, "postgres_exec", postgresExecCallback(m.ID))
+	registerHostFunc(&fns, m.AllowPostgres, "postgres_migrate", postgresMigrateCallback(m.ID))
 	return fns
 }
 

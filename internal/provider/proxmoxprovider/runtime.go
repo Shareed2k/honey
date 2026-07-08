@@ -2,9 +2,9 @@ package proxmoxprovider
 
 import (
 	"strings"
-	"sync"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/provider/backendruntime"
 )
 
 // ProxmoxExecMode controls how honey runs commands against Proxmox guests.
@@ -31,19 +31,15 @@ type ProxmoxBackendRuntime struct {
 	Insecure bool
 }
 
-var (
-	rtMu        sync.RWMutex
-	proxmoxBack []ProxmoxBackendRuntime
-)
+var rtReg = backendruntime.New(func(b ProxmoxBackendRuntime) string { return b.Name })
 
 func reconfigureProxmox() {
 	cfg := config.Get()
-	rtMu.Lock()
-	defer rtMu.Unlock()
-	proxmoxBack = proxmoxBack[:0]
 	if cfg == nil {
+		rtReg.Reconfigure(nil)
 		return
 	}
+	items := make([]ProxmoxBackendRuntime, 0, len(cfg.Backends.Proxmox))
 	for _, e := range cfg.Backends.Proxmox {
 		mode := ProxmoxExecMode(strings.ToLower(e.ExecMode))
 		switch mode {
@@ -51,7 +47,7 @@ func reconfigureProxmox() {
 		default:
 			mode = ProxmoxExecSSH
 		}
-		proxmoxBack = append(proxmoxBack, ProxmoxBackendRuntime{
+		items = append(items, ProxmoxBackendRuntime{
 			Name:     e.Name,
 			ExecMode: mode,
 			URL:      e.URL,
@@ -62,23 +58,10 @@ func reconfigureProxmox() {
 			Insecure: e.Insecure,
 		})
 	}
+	rtReg.Reconfigure(items)
 }
 
 // BackendByName returns API runtime config for a named Proxmox backend (empty name matches first entry).
 func BackendByName(name string) (ProxmoxBackendRuntime, bool) {
-	rtMu.RLock()
-	defer rtMu.RUnlock()
-	name = strings.TrimSpace(name)
-	if len(proxmoxBack) == 0 {
-		return ProxmoxBackendRuntime{}, false
-	}
-	if name == "" {
-		return proxmoxBack[0], true
-	}
-	for _, b := range proxmoxBack {
-		if b.Name == name {
-			return b, true
-		}
-	}
-	return ProxmoxBackendRuntime{}, false
+	return rtReg.ByName(name)
 }
