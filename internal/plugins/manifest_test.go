@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadManifest(t *testing.T) {
@@ -32,6 +33,147 @@ secret_ref_prefixes:
 	}
 	if len(m.SecretRefPrefixes) != 1 || m.SecretRefPrefixes[0] != "echo:" {
 		t.Fatalf("prefixes=%v", m.SecretRefPrefixes)
+	}
+}
+
+func TestLoadManifest_DockerRuntime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plugin.yaml")
+	const yaml = `id: trivy
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "aquasec/trivy:0.72.0"
+  pull_policy: always
+  restart:
+    max_backoff: 45s
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := loadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.effectiveRuntime() != "docker" {
+		t.Fatalf("runtime=%q", m.effectiveRuntime())
+	}
+	if m.Docker == nil || m.Docker.Image != "aquasec/trivy:0.72.0" {
+		t.Fatalf("docker=%+v", m.Docker)
+	}
+	if m.Docker.effectivePullPolicy() != "always" {
+		t.Fatalf("pull_policy=%q", m.Docker.effectivePullPolicy())
+	}
+	backoff, err := m.Docker.effectiveMaxBackoff()
+	if err != nil || backoff != 45*time.Second {
+		t.Fatalf("max_backoff=%v err=%v", backoff, err)
+	}
+}
+
+func TestLoadManifest_DefaultRuntimeIsWasm(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plugin.yaml")
+	if err := os.WriteFile(path, []byte("id: echo\nversion: \"0.1.0\"\ncapabilities:\n  - cue_transform\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := loadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.effectiveRuntime() != "wasm" {
+		t.Fatalf("runtime=%q want wasm default", m.effectiveRuntime())
+	}
+}
+
+func TestLoadManifest_DockerRuntimeDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plugin.yaml")
+	const yaml = `id: trivy
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "aquasec/trivy:0.72.0"
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := loadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Docker.effectivePullPolicy() != "if_not_present" {
+		t.Fatalf("pull_policy=%q want if_not_present default", m.Docker.effectivePullPolicy())
+	}
+	backoff, err := m.Docker.effectiveMaxBackoff()
+	if err != nil || backoff != 30*time.Second {
+		t.Fatalf("max_backoff=%v err=%v want 30s default", backoff, err)
+	}
+}
+
+func TestLoadManifest_DockerRuntimeMissingImageFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plugin.yaml")
+	const yaml = `id: trivy
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadManifest(path); err == nil {
+		t.Fatal("expected error for runtime: docker with no docker.image")
+	}
+}
+
+func TestLoadManifest_DockerRuntimeVolumes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plugin.yaml")
+	const yaml = `id: ffmpeg
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "linuxserver/ffmpeg:latest"
+  volumes:
+    - "/var/honey/media:/data:rw"
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := loadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Docker.Volumes) != 1 || m.Docker.Volumes[0] != "/var/honey/media:/data:rw" {
+		t.Fatalf("volumes=%v", m.Docker.Volumes)
+	}
+}
+
+func TestLoadManifest_DockerRuntimeInvalidVolumeFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plugin.yaml")
+	const yaml = `id: ffmpeg
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "linuxserver/ffmpeg:latest"
+  volumes:
+    - "not-a-valid-bind-spec"
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadManifest(path); err == nil {
+		t.Fatal("expected error for a volume entry missing host:container syntax")
 	}
 }
 

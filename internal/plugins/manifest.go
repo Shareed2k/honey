@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -39,6 +40,8 @@ type Manifest struct {
 	Config               map[string]string `yaml:"config,omitempty"`
 	MaxHTTPResponseBytes int64             `yaml:"max_http_response_bytes,omitempty"`
 	Order                int               `yaml:"order,omitempty"`
+	Runtime              string            `yaml:"runtime,omitempty"` // "wasm" (default) or "docker"
+	Docker               *DockerRuntime    `yaml:"docker,omitempty"`
 }
 
 func (m Manifest) hasCapability(name string) bool {
@@ -48,6 +51,64 @@ func (m Manifest) hasCapability(name string) bool {
 		}
 	}
 	return false
+}
+
+// DockerRuntime configures a runtime: docker plugin's container.
+type DockerRuntime struct {
+	Image      string              `yaml:"image"`
+	PullPolicy string              `yaml:"pull_policy,omitempty"` // "if_not_present" (default) or "always"
+	Restart    DockerRestartConfig `yaml:"restart,omitempty"`
+	// Volumes are static bind mounts, Docker syntax ("host_path:container_path[:ro|rw]"),
+	// same format container.HostConfig.Binds already takes. For plugins that need file
+	// I/O (e.g. ffmpeg reading/writing files) under one predictable host root — not
+	// per-call dynamic mounts.
+	Volumes []string `yaml:"volumes,omitempty"`
+}
+
+// DockerRestartConfig tunes auto-restart of a crashed plugin container.
+type DockerRestartConfig struct {
+	MaxBackoff string `yaml:"max_backoff,omitempty"` // duration string, default "30s"
+}
+
+// effectiveRuntime returns the plugin's runtime, defaulting to "wasm".
+func (m Manifest) effectiveRuntime() string {
+	r := strings.TrimSpace(m.Runtime)
+	if r == "" {
+		return "wasm"
+	}
+	return r
+}
+
+// effectivePullPolicy defaults to "if_not_present".
+func (d DockerRuntime) effectivePullPolicy() string {
+	p := strings.TrimSpace(d.PullPolicy)
+	if p == "" {
+		return "if_not_present"
+	}
+	return p
+}
+
+// effectiveMaxBackoff defaults to 30s.
+func (d DockerRuntime) effectiveMaxBackoff() (time.Duration, error) {
+	s := strings.TrimSpace(d.Restart.MaxBackoff)
+	if s == "" {
+		return 30 * time.Second, nil
+	}
+	return time.ParseDuration(s)
+}
+
+func isValidBindSpec(v string) bool {
+	parts := strings.Split(v, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return false
+	}
+	if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return false
+	}
+	if len(parts) == 3 && parts[2] != "ro" && parts[2] != "rw" {
+		return false
+	}
+	return true
 }
 
 func loadManifest(path string) (Manifest, error) {
@@ -65,6 +126,16 @@ func loadManifest(path string) (Manifest, error) {
 	}
 	if len(m.Capabilities) == 0 {
 		return m, fmt.Errorf("manifest %s: capabilities is required", path)
+	}
+	if m.effectiveRuntime() == "docker" {
+		if m.Docker == nil || strings.TrimSpace(m.Docker.Image) == "" {
+			return m, fmt.Errorf("manifest %s: runtime: docker requires docker.image", path)
+		}
+		for _, v := range m.Docker.Volumes {
+			if !isValidBindSpec(v) {
+				return m, fmt.Errorf("manifest %s: invalid docker.volumes entry %q (want \"host_path:container_path[:ro|rw]\")", path, v)
+			}
+		}
 	}
 	return m, nil
 }
