@@ -64,7 +64,7 @@ func TestRunArgv_EnvSetOnChildProcess(t *testing.T) {
 }
 
 func TestRunArgv_EnvNotSetWithoutRequest(t *testing.T) {
-	resp := runArgv(apiv1.ExecRequest{Argv: []string{"sh", "-c", "echo -n \"[$UNSET_TEST_VAR]\""}})
+	resp := runArgv(apiv1.ExecRequest{Argv: []string{"sh", "-c", "printf '[%s]' \"$UNSET_TEST_VAR\""}})
 	if resp.Output != "[]" {
 		t.Fatalf("output=%q want [] — no stray env leakage for an unrequested var", resp.Output)
 	}
