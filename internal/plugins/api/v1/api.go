@@ -237,3 +237,34 @@ type PostgresOutput struct {
 	Stdout       string           `json:"stdout,omitempty"`
 	Error        string           `json:"error,omitempty"`
 }
+
+// ExecRequest is the shared contract a docker-runtime plugin's dockerTransport
+// (internal/plugins/docker_transport.go) POSTs to honey-plugin-init: a
+// fully-resolved argv (already mapped from the step's config via plugin.cue
+// on the honey-process side — honey-plugin-init has no knowledge of CUE,
+// config, or plugin manifests, only this shape).
+//
+// Env carries this call's resolved per-action env (plugin.cue's action.env,
+// itself evaluated from the recipe step's config/secrets) — set only on the
+// exec'd child process's environment, not the container's own. This is how a
+// per-recipe secret (e.g. a DB password) reaches the process without
+// appearing in Argv, where it would be visible via `ps`/`/proc/<pid>/cmdline`
+// inside the container. Distinct from the manifest's static allowed_env
+// (Task 7's resolveAllowedEnv), which is fixed at container-create time from
+// honey's own process environment and can't carry a per-call value.
+type ExecRequest struct {
+	Argv  []string          `json:"argv"`
+	Env   map[string]string `json:"env,omitempty"`
+	Stdin []byte            `json:"stdin,omitempty"`
+}
+
+// ExecResponse reports what happened running an ExecRequest's argv. Error is
+// set only for shim-level failures (empty argv, exec.LookPath failure); a
+// nonzero ExitCode from a binary that ran fine is NOT an Error — the caller
+// (dockerTransport) decides what a nonzero exit means for that action.
+type ExecResponse struct {
+	Output   string `json:"output,omitempty"`
+	Stderr   string `json:"stderr,omitempty"`
+	ExitCode int    `json:"exit_code"`
+	Error    string `json:"error,omitempty"`
+}
