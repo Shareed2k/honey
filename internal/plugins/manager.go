@@ -51,8 +51,8 @@ type loadedPlugin struct {
 	effectivePaths map[string]string
 	dir            string
 	wasm           []byte
-	plugin         *extism.Plugin
-	callMu         sync.Mutex // extism.Plugin is not safe for concurrent CallWithContext
+	transport      pluginTransport
+	callMu         sync.Mutex // neither extism.Plugin nor dockerTransport is safe for concurrent calls
 }
 
 func clonePathMap(m map[string]string) map[string]string {
@@ -170,7 +170,7 @@ func loadPluginDir(ctx context.Context, dir string, cfg config.PluginsEffective)
 		effectivePaths: paths,
 		dir:            dir,
 		wasm:           wasm,
-		plugin:         plug,
+		transport:      &extismTransport{plugin: plug},
 	}, nil
 }
 
@@ -296,7 +296,7 @@ func (m *Manager) Call(ctx context.Context, pluginID, export string, in, out any
 	}
 	lp.callMu.Lock()
 	defer lp.callMu.Unlock()
-	exit, outBytes, err := lp.plugin.CallWithContext(callCtx, export, inBytes)
+	exit, outBytes, err := lp.transport.CallRaw(callCtx, export, inBytes)
 	if err != nil {
 		return fmt.Errorf("plugins: %s.%s: %w", pluginID, export, err)
 	}
@@ -353,8 +353,8 @@ func (m *Manager) Close() error {
 	defer m.mu.Unlock()
 	var first error
 	for _, p := range m.plugins {
-		if p.plugin != nil {
-			if err := p.plugin.Close(context.Background()); err != nil && first == nil {
+		if p.transport != nil {
+			if err := p.transport.Close(context.Background()); err != nil && first == nil {
 				first = err
 			}
 		}
