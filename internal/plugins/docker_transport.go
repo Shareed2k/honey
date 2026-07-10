@@ -48,7 +48,7 @@ type dockerTransport struct {
 	cli        *client.Client
 	cue        *pluginCue
 	httpClient *http.Client
-	createCfg  dockerTransportConfig //nolint:unused // read by Task 6's restart logic (not yet wired into Manager on this branch)
+	createCfg  dockerTransportConfig
 
 	mu          sync.RWMutex
 	containerID string
@@ -84,8 +84,6 @@ func (t *dockerTransport) currentAddr() string {
 }
 
 // dockerTransportConfig holds everything needed to create+start the container.
-//
-//nolint:unused // constructed by Task 7's Manager wiring, not yet landed on this branch
 type dockerTransportConfig struct {
 	Image              string
 	PullPolicy         string // "if_not_present" or "always"
@@ -96,7 +94,6 @@ type dockerTransportConfig struct {
 	Volumes            []string          // static bind mounts from manifest.Docker.Volumes, Docker bind syntax
 }
 
-//nolint:unused // called by Task 7's Manager wiring, not yet landed on this branch
 func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*dockerTransport, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
@@ -135,8 +132,6 @@ func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*docker
 // createAndStart pulls (if needed), creates, starts a plugin container and
 // waits for honey-plugin-init inside it to become reachable. Shared by
 // newDockerTransport (initial start) and docker_restart.go's recreate loop.
-//
-//nolint:unused // called by newDockerTransport and reused by Task 6's restart logic, not yet landed on this branch
 func createAndStart(ctx context.Context, cli *client.Client, cfg dockerTransportConfig) (containerID, addr string, err error) {
 	if cfg.PullPolicy == "always" {
 		if pullErr := pullImage(ctx, cli, cfg.Image); pullErr != nil {
@@ -251,7 +246,6 @@ func envSlice(env map[string]string) []string {
 	return out
 }
 
-//nolint:unused // called by createAndStart, which is wired in by Task 7 (not yet landed on this branch)
 func pullImage(ctx context.Context, cli *client.Client, image string) error {
 	rc, err := cli.ImagePull(ctx, image, client.ImagePullOptions{})
 	if err != nil {
@@ -267,8 +261,6 @@ func pullImage(ctx context.Context, cli *client.Client, image string) error {
 // the deadline elapses. The retry-loop logic itself is in pollUntilReady
 // (Docker-free, unit-tested directly); this function is just the
 // Docker-specific "how do I check" glue.
-//
-//nolint:unused // called by createAndStart, which is wired in by Task 7 (not yet landed on this branch)
 func waitForReady(ctx context.Context, cli *client.Client, containerID string) (string, error) {
 	var addr string
 	checkFn := func() bool {
@@ -313,7 +305,6 @@ func pollUntilReady(ctx context.Context, deadline time.Time, checkFn func() bool
 	}
 }
 
-//nolint:unused // called by waitForReady, which is wired in by Task 7 (not yet landed on this branch)
 func pingReady(ctx context.Context, addr string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/healthz", nil)
 	if err != nil {

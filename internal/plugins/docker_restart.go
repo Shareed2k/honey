@@ -15,8 +15,6 @@ type createAndStartFunc func(ctx context.Context) (containerID, addr string, err
 
 // startWatching spawns the crash-watch goroutine. Called once from
 // newDockerTransport after the initial container is up.
-//
-//nolint:unused // called by newDockerTransport, which is wired in by Task 7 (not yet landed on this branch)
 func (t *dockerTransport) startWatching(ctx context.Context) {
 	t.mu.Lock()
 	if t.stopWatch == nil {
@@ -26,7 +24,6 @@ func (t *dockerTransport) startWatching(ctx context.Context) {
 	go t.watchLoop(ctx)
 }
 
-//nolint:unused // called by startWatching's goroutine, which is wired in by Task 7 (not yet landed on this branch)
 func (t *dockerTransport) watchLoop(ctx context.Context) {
 	for {
 		t.mu.RLock()
