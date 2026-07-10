@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	containertypes "github.com/moby/moby/api/types/container"
@@ -31,8 +32,30 @@ type dockerTransport struct {
 	httpClient *http.Client
 	createCfg  dockerTransportConfig //nolint:unused // read by Task 6's restart logic (not yet wired into Manager on this branch)
 
+	mu          sync.RWMutex
 	containerID string
 	addr        string // http://<ip>:49094
+	restarting  bool
+
+	stopWatch chan struct{}
+}
+
+func (t *dockerTransport) setRestarting(v bool) {
+	t.mu.Lock()
+	t.restarting = v
+	t.mu.Unlock()
+}
+
+func (t *dockerTransport) isRestarting() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.restarting
+}
+
+func (t *dockerTransport) currentAddr() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.addr
 }
 
 // dockerTransportConfig holds everything needed to create+start the container.
@@ -66,14 +89,16 @@ func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*docker
 		return nil, err
 	}
 
-	return &dockerTransport{
+	dt := &dockerTransport{
 		cli:         cli,
 		cue:         pc,
 		httpClient:  &http.Client{},
 		createCfg:   cfg,
 		containerID: containerID,
 		addr:        addr,
-	}, nil
+	}
+	dt.startWatching(ctx)
+	return dt, nil
 }
 
 // createAndStart pulls (if needed), creates, starts a plugin container and
@@ -237,6 +262,10 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 			return 0, nil, fmt.Errorf("plugins: decode call input: %w", err)
 		}
 	}
+	if t.isRestarting() {
+		return 0, nil, fmt.Errorf("plugins: container restarting, retry")
+	}
+
 	action, err := t.cue.evalAction(export, config)
 	if err != nil {
 		return 0, nil, err
@@ -246,7 +275,7 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 	if err != nil {
 		return 0, nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.addr+"/call", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.currentAddr()+"/call", bytes.NewReader(reqBody))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -289,12 +318,20 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 	return 0, envelope, nil
 }
 
-// Close stops and removes the container.
+// Close stops the crash-watcher (so a deliberate shutdown doesn't trigger a
+// spurious restart), then stops and removes the container.
 func (t *dockerTransport) Close(ctx context.Context) error {
+	t.mu.Lock()
+	if t.stopWatch != nil {
+		close(t.stopWatch)
+	}
+	id := t.containerID
+	t.mu.Unlock()
+
 	defer t.cli.Close()
-	if _, err := t.cli.ContainerStop(ctx, t.containerID, client.ContainerStopOptions{}); err != nil {
+	if _, err := t.cli.ContainerStop(ctx, id, client.ContainerStopOptions{}); err != nil {
 		return err
 	}
-	_, err := t.cli.ContainerRemove(ctx, t.containerID, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true})
+	_, err := t.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true})
 	return err
 }
