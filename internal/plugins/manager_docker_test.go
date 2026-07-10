@@ -60,6 +60,47 @@ func TestManagerCall_NonZeroExitPrefersPluginErrorText(t *testing.T) {
 	}
 }
 
+// TestManagerCall_ExecuteStepNonZeroExitDoesNotBecomeError closes the loop
+// between "dockerTransport.CallRaw is correct in isolation" and "the fix
+// actually works end-to-end through Manager.Call" — the code path that
+// actually decides whether a nonzero exit becomes an error or clean data.
+// CallRaw's execute_step path deliberately reports a normal, expected step
+// failure (the exec'd program ran and exited nonzero) as exit=0/err=nil with
+// an apiv1.ExecuteStepOutput{Success:false, ...} envelope in outBytes, so
+// that Manager.Call decodes it straight into the caller's *out instead of
+// treating it as a failed call. This test wires that exact shape into a fake
+// transport (same fakeTransport seam TestManagerCall_NonZeroExitPrefersPluginErrorText
+// uses) and drives it through the real Manager.Call, not CallRaw directly.
+func TestManagerCall_ExecuteStepNonZeroExitDoesNotBecomeError(t *testing.T) {
+	stepOut := apiv1.ExecuteStepOutput{Success: false, ExitCode: 7, Stderr: "boom", Err: "boom"}
+	outBytes, err := json.Marshal(stepOut)
+	if err != nil {
+		t.Fatalf("marshal ExecuteStepOutput: %v", err)
+	}
+
+	m := &Manager{
+		enabled: true,
+		byID: map[string]*loadedPlugin{
+			"fake": {
+				manifest:  Manifest{ID: "fake"},
+				transport: fakeTransport{exit: 0, outBytes: outBytes},
+			},
+		},
+	}
+
+	in := apiv1.ExecuteStepInput{Action: "broken", Config: []byte("{}")}
+	var out apiv1.ExecuteStepOutput
+	if callErr := m.Call(context.Background(), "fake", "execute_step", in, &out); callErr != nil {
+		t.Fatalf("Manager.Call: %v (expected nil — exit=0 with ExecuteStepOutput data must not become an error)", callErr)
+	}
+	if out.Success {
+		t.Fatal("out.Success=true want false")
+	}
+	if out.ExitCode != 7 {
+		t.Fatalf("out.ExitCode=%d want 7", out.ExitCode)
+	}
+}
+
 func TestLoadPluginDir_DockerRuntimeMissingCueFile(t *testing.T) {
 	dir := t.TempDir()
 	const yaml = `id: trivy
