@@ -3,8 +3,11 @@ package plugins
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/moby/moby/client"
 
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 )
@@ -66,5 +69,71 @@ func TestDockerTransport_Restart_RetriesUntilSuccess(t *testing.T) {
 	}
 	if dt.isRestarting() {
 		t.Fatal("expected restarting=false after successful restart")
+	}
+}
+
+// TestDockerTransport_Close_CancelsInProgressRestartBackoff proves that
+// Close interrupts an in-progress restart backoff loop via the transport's
+// own internally-derived context (dt.cancel), even when the caller's
+// original context (simulated here by context.Background()) is never
+// cancelled on its own. Before the fix, Close only closed stopWatch — which
+// watchLoop's idle select observes, but restart's backoff.Retry does not —
+// so a crash-triggered restart with a never-cancelled caller ctx would
+// retry forever, uninterrupted by Close.
+func TestDockerTransport_Close_CancelsInProgressRestartBackoff(t *testing.T) {
+	dt := newTestDockerTransport(t, "http://old-addr.invalid", testDockerCueSource)
+	dt.createCfg.MaxBackoff = 5 * time.Millisecond
+
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	dt.cli = cli
+	dt.containerID = "docker-transport-close-test-nonexistent"
+	dt.stopWatch = make(chan struct{})
+
+	// Simulate newDockerTransport's wiring: the transport owns its own
+	// cancellable context, derived from (but independent of) whatever
+	// context the caller passed in at construction — which in production
+	// may be context.Background() and thus never cancel on its own.
+	callerCtx := context.Background()
+	internalCtx, cancel := context.WithCancel(callerCtx)
+	dt.cancel = cancel
+
+	// A plain fakeContainerRestarter's attempts counter isn't safe to read
+	// from the test goroutine while restart's goroutine is concurrently
+	// writing it (that fixture is only ever used synchronously elsewhere),
+	// so this test tracks attempts with its own atomic counter instead.
+	var attempts atomic.Int64
+	createFn := func(context.Context) (string, string, error) {
+		attempts.Add(1)
+		return "", "", errors.New("simulated create failure")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		dt.restart(internalCtx, createFn)
+		close(done)
+	}()
+
+	// Give the backoff loop a moment to actually get into a retry cycle
+	// before we call Close.
+	time.Sleep(30 * time.Millisecond)
+	if attempts.Load() == 0 {
+		t.Fatal("expected at least one restart attempt to have happened before Close")
+	}
+
+	// Close is expected to fail (there's no real container/daemon backing
+	// this test) — that's fine, we only care that it unblocks the
+	// in-progress restart below, which it must do regardless of its own
+	// return value.
+	_ = dt.Close(context.Background())
+
+	select {
+	case <-done:
+		// restart() returned promptly because Close cancelled the
+		// transport's derived context — the fix under test.
+	case <-time.After(2 * time.Second):
+		t.Fatal("restart() backoff loop did not stop within 2s of Close() being called, even though the caller's own context was never cancelled")
 	}
 }

@@ -300,12 +300,12 @@ func (m *Manager) Call(ctx context.Context, pluginID, export string, in, out any
 	if err != nil {
 		return fmt.Errorf("plugins: %s.%s: %w", pluginID, export, err)
 	}
+	var pe apiv1.PluginError
+	if jsonErr := json.Unmarshal(outBytes, &pe); jsonErr == nil && strings.TrimSpace(pe.Error) != "" {
+		return fmt.Errorf("plugins: %s.%s: %s", pluginID, export, pe.Error)
+	}
 	if exit != 0 {
 		return fmt.Errorf("plugins: %s.%s: plugin returned exit code %d", pluginID, export, exit)
-	}
-	var pe apiv1.PluginError
-	if err := json.Unmarshal(outBytes, &pe); err == nil && strings.TrimSpace(pe.Error) != "" {
-		return fmt.Errorf("plugins: %s.%s: %s", pluginID, export, pe.Error)
 	}
 	if out == nil {
 		return nil

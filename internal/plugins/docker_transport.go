@@ -38,6 +38,13 @@ type dockerTransport struct {
 	restarting  bool
 
 	stopWatch chan struct{}
+
+	// cancel cancels the transport's own internally-derived context (see
+	// newDockerTransport), independent of whatever ctx the caller passed in
+	// at construction time. Close calls it so an in-progress restart backoff
+	// (docker_restart.go) is interrupted even if the caller's context (e.g.
+	// context.Background()) never gets cancelled on its own.
+	cancel context.CancelFunc
 }
 
 func (t *dockerTransport) setRestarting(v bool) {
@@ -89,6 +96,11 @@ func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*docker
 		return nil, err
 	}
 
+	// internalCtx is derived from the caller's ctx but owned by the
+	// transport itself: Close cancels it directly (see Close below) so the
+	// watch/restart lifecycle can always be interrupted, regardless of
+	// whether the caller's own ctx ever gets cancelled.
+	internalCtx, cancel := context.WithCancel(ctx)
 	dt := &dockerTransport{
 		cli:         cli,
 		cue:         pc,
@@ -96,8 +108,9 @@ func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*docker
 		createCfg:   cfg,
 		containerID: containerID,
 		addr:        addr,
+		cancel:      cancel,
 	}
-	dt.startWatching(ctx)
+	dt.startWatching(internalCtx)
 	return dt, nil
 }
 
@@ -319,7 +332,11 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 }
 
 // Close stops the crash-watcher (so a deliberate shutdown doesn't trigger a
-// spurious restart), then stops and removes the container.
+// spurious restart), then stops and removes the container. It also cancels
+// the transport's internally-derived context so that any restart backoff
+// currently in progress (docker_restart.go) is interrupted immediately —
+// closing stopWatch alone only unblocks watchLoop's idle select, not a
+// backoff.Retry call already underway inside restart.
 func (t *dockerTransport) Close(ctx context.Context) error {
 	t.mu.Lock()
 	if t.stopWatch != nil {
@@ -327,6 +344,10 @@ func (t *dockerTransport) Close(ctx context.Context) error {
 	}
 	id := t.containerID
 	t.mu.Unlock()
+
+	if t.cancel != nil {
+		t.cancel()
+	}
 
 	defer t.cli.Close()
 	if _, err := t.cli.ContainerStop(ctx, id, client.ContainerStopOptions{}); err != nil {
