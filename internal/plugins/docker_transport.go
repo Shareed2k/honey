@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	containertypes "github.com/moby/moby/api/types/container"
+	networktypes "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
@@ -22,6 +24,20 @@ const (
 	pluginInitContainerPort = 49094
 	pluginInitBindPath      = "/honey-plugin-init"
 )
+
+// pluginInitPort is pluginInitContainerPort/tcp as a network.Port, used both
+// to expose the container port and to look up its published host-side
+// binding. Published to an ephemeral 127.0.0.1 host port (see createAndStart
+// and waitForReady) rather than dialed directly by container IP: a
+// container's Docker-bridge IP is only host-routable when the Docker daemon
+// runs natively on the host's own network stack (plain Linux). On any
+// VM-backed setup (Docker Desktop, Colima, Lima, ...) — common on macOS/
+// Windows dev machines and confirmed on this session's own Colima-backed
+// host — that bridge subnet has no route from outside the VM, so dialing the
+// container's internal IP hangs until the caller's context deadline.
+// Publishing the port and dialing loopback works uniformly across all of
+// these.
+var pluginInitPort = networktypes.MustParsePort(fmt.Sprintf("%d/tcp", pluginInitContainerPort))
 
 // dockerTransport runs a plugin as a long-lived Docker container (for the
 // Manager's process lifetime — not one container per call), reached over
@@ -127,12 +143,16 @@ func createAndStart(ctx context.Context, cli *client.Client, cfg dockerTransport
 	}
 
 	containerCfg := &containertypes.Config{
-		Image:      cfg.Image,
-		Entrypoint: []string{pluginInitBindPath},
-		Env:        envSlice(cfg.Env),
+		Image:        cfg.Image,
+		Entrypoint:   []string{pluginInitBindPath},
+		Env:          envSlice(cfg.Env),
+		ExposedPorts: networktypes.PortSet{pluginInitPort: struct{}{}},
 	}
 	hostCfg := &containertypes.HostConfig{
 		Binds: buildBinds(cfg.PluginInitHostPath, cfg.Volumes),
+		PortBindings: networktypes.PortMap{
+			pluginInitPort: {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: ""}},
+		},
 	}
 	createOpts := client.ContainerCreateOptions{Config: containerCfg, HostConfig: hostCfg}
 
@@ -197,10 +217,11 @@ func pullImage(ctx context.Context, cli *client.Client, image string) error {
 	return err
 }
 
-// waitForReady polls the container's assigned IP and dials honey-plugin-init
-// until it accepts a connection or the deadline elapses. The retry-loop
-// logic itself is in pollUntilReady (Docker-free, unit-tested directly);
-// this function is just the Docker-specific "how do I check" glue.
+// waitForReady polls the container's published host port (see pluginInitPort)
+// and dials honey-plugin-init over loopback until it accepts a connection or
+// the deadline elapses. The retry-loop logic itself is in pollUntilReady
+// (Docker-free, unit-tested directly); this function is just the
+// Docker-specific "how do I check" glue.
 //
 //nolint:unused // called by createAndStart, which is wired in by Task 7 (not yet landed on this branch)
 func waitForReady(ctx context.Context, cli *client.Client, containerID string) (string, error) {
@@ -210,13 +231,11 @@ func waitForReady(ctx context.Context, cli *client.Client, containerID string) (
 		if err != nil || inspect.Container.NetworkSettings == nil {
 			return false
 		}
-		for _, netSettings := range inspect.Container.NetworkSettings.Networks {
-			if netSettings.IPAddress.IsValid() {
-				candidate := fmt.Sprintf("http://%s:%d", netSettings.IPAddress.String(), pluginInitContainerPort)
-				if pingReady(ctx, candidate) {
-					addr = candidate
-					return true
-				}
+		for _, binding := range inspect.Container.NetworkSettings.Ports[pluginInitPort] {
+			candidate := fmt.Sprintf("http://127.0.0.1:%s", binding.HostPort)
+			if pingReady(ctx, candidate) {
+				addr = candidate
+				return true
 			}
 		}
 		return false

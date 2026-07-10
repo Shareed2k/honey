@@ -140,6 +140,13 @@ func loadManifest(path string) (Manifest, error) {
 	return m, nil
 }
 
+// discoverPluginDirs finds candidate plugin directories under root: any
+// immediate subdirectory containing a plugin.yaml. It does not require
+// plugin.wasm — runtime: docker plugins have no wasm module, only a
+// plugin.yaml + plugin.cue. Runtime-specific required files (plugin.wasm for
+// wasm, plugin.cue for docker) are validated later in loadPluginDir's
+// dispatch, where a missing file surfaces as a clear load error instead of a
+// silent skip.
 func discoverPluginDirs(root string) ([]string, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -155,11 +162,8 @@ func discoverPluginDirs(root string) ([]string, error) {
 		}
 		dir := filepath.Join(root, e.Name())
 		manifestPath := filepath.Join(dir, "plugin.yaml")
-		wasmPath := filepath.Join(dir, "plugin.wasm")
 		if st, err := os.Stat(manifestPath); err == nil && !st.IsDir() {
-			if st2, err2 := os.Stat(wasmPath); err2 == nil && !st2.IsDir() {
-				dirs = append(dirs, dir)
-			}
+			dirs = append(dirs, dir)
 		}
 	}
 	return dirs, nil
