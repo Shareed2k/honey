@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moby/moby/client"
-
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 )
 
@@ -73,24 +71,27 @@ func TestDockerTransport_Restart_RetriesUntilSuccess(t *testing.T) {
 }
 
 // TestDockerTransport_Close_CancelsInProgressRestartBackoff proves that
-// Close interrupts an in-progress restart backoff loop via the transport's
-// own internally-derived context (dt.cancel), even when the caller's
-// original context (simulated here by context.Background()) is never
-// cancelled on its own. Before the fix, Close only closed stopWatch — which
-// watchLoop's idle select observes, but restart's backoff.Retry does not —
-// so a crash-triggered restart with a never-cancelled caller ctx would
-// retry forever, uninterrupted by Close.
+// cancelling the transport's own internally-derived context (dt.cancel,
+// wired up in newDockerTransport and invoked by Close) interrupts an
+// in-progress restart backoff loop, even when the caller's original context
+// (simulated here by context.Background()) is never cancelled on its own.
+// Before the fix, Close only closed stopWatch — which watchLoop's idle
+// select observes, but restart's backoff.Retry does not — so a
+// crash-triggered restart with a never-cancelled caller ctx would retry
+// forever, uninterrupted by Close.
+//
+// This test exercises the cancellation mechanism itself (internalCtx ->
+// watchLoop -> restart -> backoff.Retry) by calling dt.cancel() directly,
+// deliberately not calling dt.Close(). dt has no real *client.Client here on
+// purpose: internal/plugins's unit suite must have zero real-Docker-daemon
+// dependency, and Close's t.cli.ContainerStop/ContainerRemove calls are
+// unbounded real network I/O unrelated to what this test is proving — if
+// DOCKER_HOST pointed at an unreachable endpoint in some environment, that
+// path could hang far longer than this test's bound and make the failure
+// about the wrong thing.
 func TestDockerTransport_Close_CancelsInProgressRestartBackoff(t *testing.T) {
 	dt := newTestDockerTransport(t, "http://old-addr.invalid", testDockerCueSource)
 	dt.createCfg.MaxBackoff = 5 * time.Millisecond
-
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		t.Fatalf("client.New: %v", err)
-	}
-	dt.cli = cli
-	dt.containerID = "docker-transport-close-test-nonexistent"
-	dt.stopWatch = make(chan struct{})
 
 	// Simulate newDockerTransport's wiring: the transport owns its own
 	// cancellable context, derived from (but independent of) whatever
@@ -117,23 +118,21 @@ func TestDockerTransport_Close_CancelsInProgressRestartBackoff(t *testing.T) {
 	}()
 
 	// Give the backoff loop a moment to actually get into a retry cycle
-	// before we call Close.
+	// before we cancel.
 	time.Sleep(30 * time.Millisecond)
 	if attempts.Load() == 0 {
-		t.Fatal("expected at least one restart attempt to have happened before Close")
+		t.Fatal("expected at least one restart attempt to have happened before cancelling")
 	}
 
-	// Close is expected to fail (there's no real container/daemon backing
-	// this test) — that's fine, we only care that it unblocks the
-	// in-progress restart below, which it must do regardless of its own
-	// return value.
-	_ = dt.Close(context.Background())
+	// This is exactly what the fixed Close does: cancel the transport's own
+	// derived context (dt.cancel), independent of the caller's ctx.
+	dt.cancel()
 
 	select {
 	case <-done:
-		// restart() returned promptly because Close cancelled the
-		// transport's derived context — the fix under test.
+		// restart() returned promptly because cancelling the transport's
+		// derived context unblocked backoff.Retry — the fix under test.
 	case <-time.After(2 * time.Second):
-		t.Fatal("restart() backoff loop did not stop within 2s of Close() being called, even though the caller's own context was never cancelled")
+		t.Fatal("restart() backoff loop did not stop within 2s of cancelling dt's derived context, even though the caller's own context was never cancelled")
 	}
 }
