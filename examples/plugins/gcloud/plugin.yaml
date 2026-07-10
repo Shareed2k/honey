@@ -1,0 +1,12 @@
+id: gcloud
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+allowed_env:
+  - CLOUDSDK_CORE_PROJECT
+  - GOOGLE_APPLICATION_CREDENTIALS
+docker:
+  image: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+  volumes:
+    - "~/.config/gcloud:/root/.config/gcloud:ro"
