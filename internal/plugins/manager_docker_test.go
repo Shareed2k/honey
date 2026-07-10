@@ -3,6 +3,8 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,5 +57,58 @@ func TestManagerCall_NonZeroExitPrefersPluginErrorText(t *testing.T) {
 	}
 	if strings.Contains(callErr.Error(), "exit code") {
 		t.Fatalf("error=%q should not fall back to generic exit-code message when PluginError.Error is present", callErr.Error())
+	}
+}
+
+func TestLoadPluginDir_DockerRuntimeMissingCueFile(t *testing.T) {
+	dir := t.TempDir()
+	const yaml = `id: trivy
+version: "0.1.0"
+runtime: docker
+docker:
+  image: "aquasec/trivy:0.72.0"
+`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Intentionally no plugin.cue written.
+	_, err := loadPluginDir(t.Context(), dir, PluginsFromConfig(nil))
+	if err == nil {
+		t.Fatal("expected error when runtime: docker plugin is missing plugin.cue")
+	}
+}
+
+func TestLocatePluginInitBinary_EnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	fakeBinary := filepath.Join(dir, "honey-plugin-init")
+	if err := os.WriteFile(fakeBinary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HONEY_PLUGIN_INIT_PATH", fakeBinary)
+
+	got, err := locatePluginInitBinary()
+	if err != nil {
+		t.Fatalf("locatePluginInitBinary: %v", err)
+	}
+	if got != fakeBinary {
+		t.Fatalf("got=%q want=%q", got, fakeBinary)
+	}
+}
+
+func TestResolveAllowedEnv_ResolvesSetVarsOmitsUnset(t *testing.T) {
+	t.Setenv("HONEY_TEST_ALLOWED_ENV_VAR", "value1")
+	got := resolveAllowedEnv([]string{"HONEY_TEST_ALLOWED_ENV_VAR", "HONEY_TEST_DEFINITELY_UNSET_VAR", ""})
+	want := map[string]string{"HONEY_TEST_ALLOWED_ENV_VAR": "value1"}
+	if len(got) != len(want) || got["HONEY_TEST_ALLOWED_ENV_VAR"] != "value1" {
+		t.Fatalf("resolveAllowedEnv=%v want=%v", got, want)
+	}
+}
+
+func TestLocatePluginInitBinary_MissingFailsClearly(t *testing.T) {
+	t.Setenv("HONEY_PLUGIN_INIT_PATH", "")
+	// Without the env override, this falls back to a path next to the test
+	// binary itself, which won't have honey-plugin-init sitting next to it.
+	if _, err := locatePluginInitBinary(); err == nil {
+		t.Fatal("expected error when honey-plugin-init isn't found anywhere")
 	}
 }
