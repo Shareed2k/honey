@@ -62,32 +62,35 @@ func (c *fakeFailingHostClient) Close() error {
 func TestEmailNotificationE2E(t *testing.T) {
 	ctx := context.Background()
 
-	// Spin up Mailhog to catch SMTP traffic and verify it via HTTP API
+	// Spin up Mailpit to catch SMTP traffic and verify it via HTTP API.
+	// mailhog/mailhog is amd64-only and abandoned (no arm64 image, no qemu
+	// emulation on arm64 Docker hosts like Colima); mailpit is its actively
+	// maintained, natively multi-arch, SMTP/port-compatible successor.
 	reqContainer := testcontainers.ContainerRequest{
-		Image:        "mailhog/mailhog:latest",
+		Image:        "axllent/mailpit:latest",
 		ExposedPorts: []string{"1025/tcp", "8025/tcp"},
 		WaitingFor:   wait.ForHTTP("/").WithPort("8025/tcp"),
 	}
-	mailhogC, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+	mailpitC, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: reqContainer,
 		Started:          true,
 	})
 	if err != nil {
-		t.Fatalf("failed to start mailhog: %v", err)
+		t.Fatalf("failed to start mailpit: %v", err)
 	}
-	defer mailhogC.Terminate(ctx)
+	defer mailpitC.Terminate(ctx)
 
-	host, err := mailhogC.Host(ctx)
+	host, err := mailpitC.Host(ctx)
 	if err != nil {
-		t.Fatalf("failed to get mailhog host: %v", err)
+		t.Fatalf("failed to get mailpit host: %v", err)
 	}
-	smtpPort, err := mailhogC.MappedPort(ctx, "1025")
+	smtpPort, err := mailpitC.MappedPort(ctx, "1025")
 	if err != nil {
-		t.Fatalf("failed to get mailhog smtp port: %v", err)
+		t.Fatalf("failed to get mailpit smtp port: %v", err)
 	}
-	httpPort, err := mailhogC.MappedPort(ctx, "8025")
+	httpPort, err := mailpitC.MappedPort(ctx, "8025")
 	if err != nil {
-		t.Fatalf("failed to get mailhog http port: %v", err)
+		t.Fatalf("failed to get mailpit http port: %v", err)
 	}
 
 	tmpDir := t.TempDir()
@@ -172,75 +175,103 @@ recipe: {
 		t.Fatalf("expected recipe to succeed, got %v", err)
 	}
 
-	// Poll Mailhog API to verify the email arrived
-	apiURL := "http://" + host + ":" + httpPort.Port() + "/api/v2/messages"
-	t.Logf("SMTP Host: %s, Port: %d, API: %s", host, portInt, apiURL)
+	// Poll Mailpit's API to verify the email arrived.
+	baseURL := "http://" + host + ":" + httpPort.Port()
+	t.Logf("SMTP Host: %s, Port: %d, API: %s", host, portInt, baseURL)
 	deadline := time.Now().Add(5 * time.Second)
 	var foundEmail bool
 
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(apiURL)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-
-			var result struct {
-				Count int `json:"count"`
-				Items []struct {
-					Content struct {
-						Body string `json:"Body"`
-					} `json:"Content"`
-				} `json:"items"`
-			}
-
-			if json.Unmarshal(body, &result) == nil && result.Count > 0 {
-				emailBody := result.Items[0].Content.Body
-				t.Logf("Got email body: %s", emailBody)
-				if strings.Contains(emailBody, "test-email-notifications") && strings.Contains(emailBody, "SUCCEEDED") {
-					foundEmail = true
-					break
-				}
-			} else {
-				t.Logf("Mailhog count: %d, body: %s", result.Count, string(body))
+		if body, ok := fetchMailpitBody(t, baseURL); ok {
+			t.Logf("Got email body: %s", body)
+			if strings.Contains(body, "test-email-notifications") && strings.Contains(body, "SUCCEEDED") {
+				foundEmail = true
+				break
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	if !foundEmail {
-		t.Fatal("timed out waiting for correct email notification to be sent and received by Mailhog")
+		t.Fatal("timed out waiting for correct email notification to be sent and received by Mailpit")
 	}
+}
+
+// fetchMailpitBody lists Mailpit's most recent message and fetches its full
+// plain-text body. Mailpit's list endpoint only exposes a truncated Snippet,
+// so the full Text body is fetched from the per-message endpoint instead.
+func fetchMailpitBody(t *testing.T, baseURL string) (string, bool) {
+	t.Helper()
+
+	listResp, err := http.Get(baseURL + "/api/v1/messages")
+	if err != nil || listResp.StatusCode != http.StatusOK {
+		if listResp != nil {
+			listResp.Body.Close()
+		}
+		return "", false
+	}
+	listBody, _ := io.ReadAll(listResp.Body)
+	listResp.Body.Close()
+
+	var list struct {
+		Count    int `json:"count"`
+		Messages []struct {
+			ID string `json:"ID"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(listBody, &list) != nil || list.Count == 0 {
+		return "", false
+	}
+
+	msgResp, err := http.Get(baseURL + "/api/v1/message/" + list.Messages[0].ID)
+	if err != nil || msgResp.StatusCode != http.StatusOK {
+		if msgResp != nil {
+			msgResp.Body.Close()
+		}
+		return "", false
+	}
+	msgBody, _ := io.ReadAll(msgResp.Body)
+	msgResp.Body.Close()
+
+	var msg struct {
+		Text string `json:"Text"`
+	}
+	if json.Unmarshal(msgBody, &msg) != nil {
+		return "", false
+	}
+	return msg.Text, true
 }
 
 func TestEmailNotificationFailureE2E(t *testing.T) {
 	ctx := context.Background()
 
-	// Spin up Mailhog to catch SMTP traffic and verify it via HTTP API
+	// Spin up Mailpit to catch SMTP traffic and verify it via HTTP API (see
+	// TestEmailNotificationE2E for why mailhog/mailhog was replaced).
 	reqContainer := testcontainers.ContainerRequest{
-		Image:        "mailhog/mailhog:latest",
+		Image:        "axllent/mailpit:latest",
 		ExposedPorts: []string{"1025/tcp", "8025/tcp"},
 		WaitingFor:   wait.ForHTTP("/").WithPort("8025/tcp"),
 	}
-	mailhogC, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+	mailpitC, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: reqContainer,
 		Started:          true,
 	})
 	if err != nil {
-		t.Fatalf("failed to start mailhog: %v", err)
+		t.Fatalf("failed to start mailpit: %v", err)
 	}
-	defer mailhogC.Terminate(ctx)
+	defer mailpitC.Terminate(ctx)
 
-	host, err := mailhogC.Host(ctx)
+	host, err := mailpitC.Host(ctx)
 	if err != nil {
-		t.Fatalf("failed to get mailhog host: %v", err)
+		t.Fatalf("failed to get mailpit host: %v", err)
 	}
-	smtpPort, err := mailhogC.MappedPort(ctx, "1025")
+	smtpPort, err := mailpitC.MappedPort(ctx, "1025")
 	if err != nil {
-		t.Fatalf("failed to get mailhog smtp port: %v", err)
+		t.Fatalf("failed to get mailpit smtp port: %v", err)
 	}
-	httpPort, err := mailhogC.MappedPort(ctx, "8025")
+	httpPort, err := mailpitC.MappedPort(ctx, "8025")
 	if err != nil {
-		t.Fatalf("failed to get mailhog http port: %v", err)
+		t.Fatalf("failed to get mailpit http port: %v", err)
 	}
 
 	tmpDir := t.TempDir()
@@ -308,39 +339,23 @@ recipe: {
 
 	_ = runner.ExecuteAndWait(ctx, req)
 
-	// Poll Mailhog API to verify the email arrived
-	apiURL := "http://" + host + ":" + httpPort.Port() + "/api/v2/messages"
+	// Poll Mailpit's API to verify the email arrived.
+	baseURL := "http://" + host + ":" + httpPort.Port()
 	deadline := time.Now().Add(5 * time.Second)
 	var foundEmail bool
 
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(apiURL)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-
-			var result struct {
-				Count int `json:"count"`
-				Items []struct {
-					Content struct {
-						Body string `json:"Body"`
-					} `json:"Content"`
-				} `json:"items"`
-			}
-
-			if json.Unmarshal(body, &result) == nil && result.Count > 0 {
-				emailBody := result.Items[0].Content.Body
-				t.Logf("Got failure email body: %s", emailBody)
-				if strings.Contains(emailBody, "test-email-failure-notifications") && strings.Contains(emailBody, "FAILED") && strings.Contains(emailBody, "test-email-error-output") {
-					foundEmail = true
-					break
-				}
+		if body, ok := fetchMailpitBody(t, baseURL); ok {
+			t.Logf("Got failure email body: %s", body)
+			if strings.Contains(body, "test-email-failure-notifications") && strings.Contains(body, "FAILED") && strings.Contains(body, "test-email-error-output") {
+				foundEmail = true
+				break
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	if !foundEmail {
-		t.Fatal("timed out waiting for correct failure email notification to be sent and received by Mailhog")
+		t.Fatal("timed out waiting for correct failure email notification to be sent and received by Mailpit")
 	}
 }
