@@ -126,6 +126,107 @@ func TestDockerPlugin_LoadAndCall(t *testing.T) {
 	}
 }
 
+// writeFfmpegPlugin writes a runtime: docker plugin bundle whose two actions
+// (generate, probe) exec ffmpeg/ffprobe directly inside a linuxserver/ffmpeg
+// container, with hostVolumeDir bind-mounted at /data so a file written by
+// one action's argv is visible to another action's argv in a later call.
+//
+// argv[0] for each action is the ffmpeg/ffprobe binary's absolute path
+// (/usr/local/bin/ffmpeg, /usr/local/bin/ffprobe), not "ffmpeg"/"ffprobe":
+// createAndStart (docker_transport.go) always overrides the container's
+// Entrypoint with honey-plugin-init, and honey-plugin-init execs argv[0]
+// directly (see cmd/honey-plugin-init/main.go's runArgv) rather than through
+// the image's own entrypoint/shell, so the image's default ffmpeg-wrapping
+// ENTRYPOINT (/ffmpegwrapper.sh, confirmed via `docker inspect`) never runs.
+func writeFfmpegPlugin(t *testing.T, hostVolumeDir string) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "ffmpeg-e2e")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := fmt.Sprintf(`id: ffmpeg-e2e
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "linuxserver/ffmpeg:latest"
+  pull_policy: if_not_present
+  volumes:
+    - "%s:/data:rw"
+`, hostVolumeDir)
+	if err := os.WriteFile(filepath.Join(dir, "plugin.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const cue = `
+actions: generate: {
+	#Config: { output: string }
+	argv: ["/usr/local/bin/ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=blue:size=64x64:d=1", config.output]
+	output_format: "text"
+}
+actions: probe: {
+	#Config: { input: string }
+	argv: ["/usr/local/bin/ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", config.input]
+	output_format: "json"
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.cue"), []byte(cue), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// TestDockerPlugin_FfmpegGenerateAndProbe proves a real, non-trivial
+// multi-action docker-runtime plugin works end-to-end: one action generates a
+// tiny synthetic video clip with ffmpeg, a second action inspects that same
+// file with ffprobe, and docker.volumes is what makes the file written by
+// the first call visible to the second — both calls land on the same
+// long-lived plugin container (dockerTransport is created once per
+// LoadFromDir and reused across Manager.Call invocations), so the bind mount
+// only needs to be consistent within that one container's view of /data, not
+// necessarily visible back on the test-runner host (on a VM-backed Docker
+// setup — Docker Desktop/Colima/Lima — a t.TempDir() host path outside the
+// VM's shared mount range is silently backed by a VM-local directory instead
+// of erroring; that's fine here since both actions only ever read/write
+// through the container's own /data view of it).
+func TestDockerPlugin_FfmpegGenerateAndProbe(t *testing.T) {
+	buildPluginInitForTest(t)
+	hostVolumeDir := t.TempDir()
+	dir := writeFfmpegPlugin(t, hostVolumeDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	mgr, err := plugins.LoadFromDir(ctx, dir)
+	if err != nil {
+		t.Fatalf("LoadFromDir: %v", err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.Call(ctx, "ffmpeg-e2e", "generate", map[string]any{"output": "/data/clip.mp4"}, nil); err != nil {
+		t.Fatalf("Call generate: %v", err)
+	}
+
+	var probe struct {
+		Format struct {
+			Filename string `json:"filename"`
+			Duration string `json:"duration"`
+			Size     string `json:"size"`
+		} `json:"format"`
+	}
+	if err := mgr.Call(ctx, "ffmpeg-e2e", "probe", map[string]any{"input": "/data/clip.mp4"}, &probe); err != nil {
+		t.Fatalf("Call probe: %v", err)
+	}
+
+	if probe.Format.Duration == "" {
+		t.Fatalf("ffprobe output missing format.duration, got %+v", probe)
+	}
+	if probe.Format.Filename != "/data/clip.mp4" {
+		t.Fatalf("format.filename = %q, want /data/clip.mp4", probe.Format.Filename)
+	}
+}
+
 func TestDockerPlugin_NonZeroExitSurfacesAsError(t *testing.T) {
 	buildPluginInitForTest(t)
 	dir := writeDockerPlugin(t, "busybox:latest")

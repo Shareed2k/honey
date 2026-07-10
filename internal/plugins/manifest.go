@@ -148,7 +148,7 @@ func loadManifest(path string) (Manifest, error) {
 // dispatch, where a missing file surfaces as a clear load error instead of a
 // silent skip.
 func discoverPluginDirs(root string) ([]string, error) {
-	entries, err := os.ReadDir(root)
+	entries, err := safepath.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -162,7 +162,7 @@ func discoverPluginDirs(root string) ([]string, error) {
 		}
 		dir := filepath.Join(root, e.Name())
 		manifestPath := filepath.Join(dir, "plugin.yaml")
-		if st, err := os.Stat(manifestPath); err == nil && !st.IsDir() {
+		if st, err := safepath.Stat(manifestPath); err == nil && !st.IsDir() {
 			dirs = append(dirs, dir)
 		}
 	}
