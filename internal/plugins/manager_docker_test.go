@@ -64,6 +64,8 @@ func TestLoadPluginDir_DockerRuntimeMissingCueFile(t *testing.T) {
 	dir := t.TempDir()
 	const yaml = `id: trivy
 version: "0.1.0"
+capabilities:
+  - custom_step
 runtime: docker
 docker:
   image: "aquasec/trivy:0.72.0"
@@ -75,6 +77,9 @@ docker:
 	_, err := loadPluginDir(t.Context(), dir, PluginsFromConfig(nil))
 	if err == nil {
 		t.Fatal("expected error when runtime: docker plugin is missing plugin.cue")
+	}
+	if !strings.Contains(err.Error(), "plugin.cue") {
+		t.Fatalf("error=%q should originate from the plugin.cue read in loadDockerPluginDir, not from loadManifest's capabilities check", err.Error())
 	}
 }
 
