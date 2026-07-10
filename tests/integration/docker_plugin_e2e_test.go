@@ -40,7 +40,16 @@ func buildPluginInitForTest(t *testing.T) {
 	out := filepath.Join(dir, "honey-plugin-init")
 	cmd := exec.Command("go", "build", "-o", out, "./cmd/honey-plugin-init")
 	cmd.Dir = repoRoot(t)
-	cmd.Env = append(os.Environ(), "GOOS=linux")
+	// CGO_ENABLED=0 is forced explicitly, not left to Go's own
+	// cross-compile default: Taskfile.yml sets a global CGO_ENABLED=1 for
+	// every task (other tasks need it), which leaks into this process's
+	// inherited os.Environ() when run via `task test:integration` and
+	// forces cgo on for this GOOS=linux cross-compile — failing on macOS,
+	// which has no Linux cgo toolchain (runtime/cgo's own Linux-specific
+	// shims like setresgid/clearenv don't exist in the macOS SDK headers).
+	// Plain `go test` never hits this because nothing sets CGO_ENABLED
+	// there, so Go's cross-compile default (0) applies on its own.
+	cmd.Env = append(os.Environ(), "GOOS=linux", "CGO_ENABLED=0")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build honey-plugin-init: %v\n%s", err, output)
 	}
