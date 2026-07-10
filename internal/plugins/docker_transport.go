@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	containertypes "github.com/moby/moby/api/types/container"
 	networktypes "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"go.uber.org/zap"
 
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 )
@@ -168,14 +170,57 @@ func createAndStart(ctx context.Context, cli *client.Client, cfg dockerTransport
 	}
 
 	if _, startErr := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); startErr != nil {
-		return "", "", fmt.Errorf("plugins: start container %q: %w", resp.ID, startErr)
+		wrapped := fmt.Errorf("plugins: start container %q: %w", resp.ID, startErr)
+		return "", "", cleanupFailedContainer(ctx, cli, resp.ID, wrapped)
 	}
 
 	addr, err = waitForReady(ctx, cli, resp.ID)
 	if err != nil {
-		return "", "", err
+		return "", "", cleanupFailedContainer(ctx, cli, resp.ID, err)
 	}
 	return resp.ID, addr, nil
+}
+
+// containerRemover is the minimal subset of *client.Client that
+// cleanupFailedContainer and stopAndRemoveContainer need. *client.Client
+// satisfies this structurally, so production code passes it directly while
+// tests can fake just this one method without a real Docker daemon.
+type containerRemover interface {
+	ContainerRemove(ctx context.Context, containerID string, options client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
+}
+
+// containerStopper is the minimal subset of *client.Client that
+// stopAndRemoveContainer needs for its ContainerStop call.
+type containerStopper interface {
+	ContainerStop(ctx context.Context, containerID string, options client.ContainerStopOptions) (client.ContainerStopResult, error)
+}
+
+// cleanupFailedContainer removes a container that was just created but never
+// became usable (ContainerStart failed, or waitForReady timed out). Without
+// this, docker_restart.go's crash-restart loop — which retries a broken
+// plugin forever — leaks one container per failed attempt, unboundedly.
+// Removal is best-effort: a failure here is only logged, never returned, so
+// the caller always sees the ORIGINAL cause (why the container never came
+// up), not a removal failure that would mask it.
+func cleanupFailedContainer(ctx context.Context, cli containerRemover, containerID string, cause error) error {
+	if _, err := cli.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true}); err != nil {
+		zap.L().Warn("plugins: failed to remove container after failed start/ready",
+			zap.String("container_id", containerID), zap.Error(err))
+	}
+	return cause
+}
+
+// stopAndRemoveContainer stops then removes containerID, always attempting
+// removal even when ContainerStop fails or times out — ContainerRemove
+// already passes Force: true, so it can reap a container regardless of
+// whether it stopped cleanly. Skipping removal just because stop errored is
+// exactly what let Close leak containers before this fix. Both failures are
+// aggregated (via errors.Join, which yields nil when both are nil) so
+// neither is silently dropped.
+func stopAndRemoveContainer(ctx context.Context, stopper containerStopper, remover containerRemover, containerID string) error {
+	_, stopErr := stopper.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+	_, removeErr := remover.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true})
+	return errors.Join(stopErr, removeErr)
 }
 
 // buildBinds prepends the mandatory honey-plugin-init bind mount (read-only)
@@ -282,12 +327,42 @@ func pingReady(ctx context.Context, addr string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// CallRaw evaluates the action's plugin.cue argv/output_format against the
-// call's config, execs it inside the container via honey-plugin-init, and
-// translates the result into Manager.Call's expected envelope: exit==0 with
-// outBytes decodable as the caller's `out` type on success, or exit!=0 with
-// outBytes decodable as apiv1.PluginError on failure.
+// CallRaw dispatches on export to one of two calling conventions that
+// coexist by design:
+//
+//   - export == "execute_step": the real recipe-engine convention.
+//     Manager.ExecuteStep (step.go) always calls m.Call(ctx, pluginID,
+//     "execute_step", apiv1.ExecuteStepInput{...}, &out) — "execute_step" is
+//     a fixed export name, and the actual CUE action name plus its config
+//     live *inside* the marshaled ExecuteStepInput envelope in inBytes, not
+//     in export/inBytes directly. callExecuteStep decodes that envelope,
+//     evaluates the real action, and reports the result shaped as
+//     apiv1.ExecuteStepOutput — including turning a normal nonzero exec exit
+//     into ExecuteStepOutput{Success:false, ...} *data* (exit==0, err==nil)
+//     rather than a Go error, since "the step ran and failed" is an expected
+//     outcome the engine needs to see, not an aborted call.
+//   - anything else: the direct-call convention every existing docker-plugin
+//     test (and any other direct Manager.Call/plugins.LoadFromDir(...).Call
+//     caller) uses — export IS the CUE action name, inBytes IS the raw
+//     config map, and the result is shaped by the action's output_format
+//     (json passthrough or a {"output":...}-wrapped string), with a nonzero
+//     exec exit reported as an apiv1.PluginError. callDirect is byte-for-byte
+//     what CallRaw used to do before execute_step-envelope support existed.
+//
+// Both branches share execAction (evalAction against plugin.cue + POST to
+// honey-plugin-init over HTTP) since that part of the flow is identical.
 func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []byte) (int, []byte, error) {
+	if export == "execute_step" {
+		return t.callExecuteStep(ctx, inBytes)
+	}
+	return t.callDirect(ctx, export, inBytes)
+}
+
+// callDirect is the direct-call convention: export is the CUE action name,
+// inBytes is the raw config object. Unchanged from CallRaw's original
+// (pre-execute_step-envelope) behavior — every existing docker-plugin test
+// exercises this path and must keep passing unmodified.
+func (t *dockerTransport) callDirect(ctx context.Context, export string, inBytes []byte) (int, []byte, error) {
 	var config map[string]any
 	if len(inBytes) > 0 {
 		if err := json.Unmarshal(inBytes, &config); err != nil {
@@ -303,25 +378,9 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 		return 0, nil, err
 	}
 
-	reqBody, err := json.Marshal(apiv1.ExecRequest{Argv: action.Argv, Env: action.Env, Stdin: []byte(action.Stdin)})
+	callResp, err := t.execAction(ctx, export, action)
 	if err != nil {
 		return 0, nil, err
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.currentAddr()+"/call", bytes.NewReader(reqBody))
-	if err != nil {
-		return 0, nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := t.httpClient.Do(httpReq)
-	if err != nil {
-		return 0, nil, fmt.Errorf("plugins: call %s: %w", export, err)
-	}
-	defer httpResp.Body.Close()
-
-	var callResp apiv1.ExecResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&callResp); err != nil {
-		return 0, nil, fmt.Errorf("plugins: decode call response: %w", err)
 	}
 
 	if callResp.Error != "" {
@@ -329,11 +388,7 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 		return 1, envelope, nil
 	}
 	if callResp.ExitCode != 0 {
-		msg := callResp.Stderr
-		if msg == "" {
-			msg = fmt.Sprintf("exited with code %d", callResp.ExitCode)
-		}
-		envelope, _ := json.Marshal(apiv1.PluginError{Error: msg})
+		envelope, _ := json.Marshal(apiv1.PluginError{Error: nonZeroExitMessage(callResp)})
 		return callResp.ExitCode, envelope, nil
 	}
 
@@ -350,8 +405,140 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 	return 0, envelope, nil
 }
 
+// callExecuteStep is the recipe-engine convention: inBytes is a marshaled
+// apiv1.ExecuteStepInput envelope. The real action name and config live
+// inside it (stepIn.Action / stepIn.Config), not in the "execute_step"
+// export string itself. Reports success/failure/shim-error as
+// apiv1.ExecuteStepOutput or apiv1.PluginError per CallRaw's doc comment.
+func (t *dockerTransport) callExecuteStep(ctx context.Context, inBytes []byte) (int, []byte, error) {
+	var stepIn apiv1.ExecuteStepInput
+	if len(inBytes) > 0 {
+		if err := json.Unmarshal(inBytes, &stepIn); err != nil {
+			return 0, nil, fmt.Errorf("plugins: decode execute_step input: %w", err)
+		}
+	}
+	var config map[string]any
+	if len(stepIn.Config) > 0 {
+		if err := json.Unmarshal(stepIn.Config, &config); err != nil {
+			return 0, nil, fmt.Errorf("plugins: decode execute_step config: %w", err)
+		}
+	}
+	if config == nil {
+		config = map[string]any{}
+	}
+
+	if t.isRestarting() {
+		return 0, nil, fmt.Errorf("plugins: container restarting, retry")
+	}
+
+	action, err := t.cue.evalAction(stepIn.Action, config)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	callResp, err := t.execAction(ctx, stepIn.Action, action)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Shim-level failure (honey-plugin-init couldn't even exec the binary):
+	// genuinely infrastructure-level, unchanged from the direct-call
+	// convention — still becomes a Go error once Manager.Call sees the
+	// nonzero exit / decodable PluginError below.
+	if callResp.Error != "" {
+		envelope, _ := json.Marshal(apiv1.PluginError{Error: callResp.Error})
+		return 1, envelope, nil
+	}
+
+	// The exec'd program ran and exited nonzero: an expected, normal step
+	// failure. This must flow through as ExecuteStepOutput *data*
+	// (exit==0, err==nil) so Manager.Call decodes it cleanly into the
+	// caller's *apiv1.ExecuteStepOutput instead of returning a Go error for
+	// what may just be a plugin action legitimately failing on bad input.
+	if callResp.ExitCode != 0 {
+		out := apiv1.ExecuteStepOutput{
+			Success:  false,
+			ExitCode: callResp.ExitCode,
+			Stdout:   callResp.Output,
+			Stderr:   callResp.Stderr,
+			Err:      nonZeroExitMessage(callResp),
+		}
+		envelope, err := json.Marshal(out)
+		if err != nil {
+			return 0, nil, err
+		}
+		return 0, envelope, nil
+	}
+
+	// Success. output_format's only remaining job here is validating that a
+	// declared "json" action actually produced valid JSON — Stdout is always
+	// the plain string content of callResp.Output regardless of
+	// output_format, since ExecuteStepOutput.Stdout is a plain string field
+	// and can't have two wire shapes the way the direct-call convention's
+	// bare `out []byte` can. A declared-json action producing invalid JSON is
+	// a plugin-authoring bug, not step data, so — consistent with how the
+	// direct-call convention (callDirect, above) already reports this exact
+	// same validation failure — it's surfaced as a Go error from CallRaw
+	// itself rather than folded into ExecuteStepOutput.Err.
+	if action.OutputFormat == "json" && !json.Valid([]byte(callResp.Output)) {
+		return 0, nil, fmt.Errorf("plugins: action %q: output_format json but output isn't valid JSON: %s", stepIn.Action, callResp.Output)
+	}
+
+	out := apiv1.ExecuteStepOutput{
+		Success:  true,
+		ExitCode: 0,
+		Stdout:   callResp.Output,
+		Stderr:   callResp.Stderr,
+	}
+	envelope, err := json.Marshal(out)
+	if err != nil {
+		return 0, nil, err
+	}
+	return 0, envelope, nil
+}
+
+// execAction evaluates action's plugin.cue-derived argv/env/stdin, execs it
+// inside the container via honey-plugin-init, and returns the raw
+// apiv1.ExecResponse. Shared by callDirect and callExecuteStep, which each
+// interpret the response differently for their own calling convention.
+// exportForErr is used only to label the "call %s" wrapped error below.
+func (t *dockerTransport) execAction(ctx context.Context, exportForErr string, action actionResult) (apiv1.ExecResponse, error) {
+	reqBody, err := json.Marshal(apiv1.ExecRequest{Argv: action.Argv, Env: action.Env, Stdin: []byte(action.Stdin)})
+	if err != nil {
+		return apiv1.ExecResponse{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.currentAddr()+"/call", bytes.NewReader(reqBody))
+	if err != nil {
+		return apiv1.ExecResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	httpResp, err := t.httpClient.Do(httpReq)
+	if err != nil {
+		return apiv1.ExecResponse{}, fmt.Errorf("plugins: call %s: %w", exportForErr, err)
+	}
+	defer httpResp.Body.Close()
+
+	var callResp apiv1.ExecResponse
+	if err := json.NewDecoder(httpResp.Body).Decode(&callResp); err != nil {
+		return apiv1.ExecResponse{}, fmt.Errorf("plugins: decode call response: %w", err)
+	}
+	return callResp, nil
+}
+
+// nonZeroExitMessage picks the best available description of a nonzero exec
+// exit: the process's own stderr when it wrote any, else a generic fallback.
+func nonZeroExitMessage(resp apiv1.ExecResponse) string {
+	if resp.Stderr != "" {
+		return resp.Stderr
+	}
+	return fmt.Sprintf("exited with code %d", resp.ExitCode)
+}
+
 // Close stops the crash-watcher (so a deliberate shutdown doesn't trigger a
-// spurious restart), then stops and removes the container. It also cancels
+// spurious restart), then stops and removes the container — removal is
+// attempted even if stopping fails or times out (see stopAndRemoveContainer),
+// so a stop failure alone can no longer leak the container. It also cancels
 // the transport's internally-derived context so that any restart backoff
 // currently in progress (docker_restart.go) is interrupted immediately —
 // closing stopWatch alone only unblocks watchLoop's idle select, not a
@@ -369,9 +556,5 @@ func (t *dockerTransport) Close(ctx context.Context) error {
 	}
 
 	defer t.cli.Close()
-	if _, err := t.cli.ContainerStop(ctx, id, client.ContainerStopOptions{}); err != nil {
-		return err
-	}
-	_, err := t.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true})
-	return err
+	return stopAndRemoveContainer(ctx, t.cli, t.cli, id)
 }

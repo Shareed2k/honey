@@ -3,10 +3,14 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/moby/moby/client"
 
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 )
@@ -232,6 +236,184 @@ func TestDockerTransport_CallRaw_InvalidJSONOutputFormatFails(t *testing.T) {
 	}
 }
 
+// TestDockerTransport_CallRaw_ExecuteStepDecodesEnvelopeAndDispatchesAction
+// proves that when export=="execute_step" (the recipe engine's real calling
+// convention via Manager.ExecuteStep/step.go), CallRaw decodes inBytes as an
+// apiv1.ExecuteStepInput envelope and dispatches the *inner* Action/Config
+// against plugin.cue — not the literal string "execute_step" itself, which
+// would fail with "unknown action" since no docker plugin defines an action
+// named that.
+func TestDockerTransport_CallRaw_ExecuteStepDecodesEnvelopeAndDispatchesAction(t *testing.T) {
+	var gotReq apiv1.ExecRequest
+	srv := newFakePluginInitServer(t, func(req apiv1.ExecRequest) apiv1.ExecResponse {
+		gotReq = req
+		return apiv1.ExecResponse{Output: `{"vulnerabilities":[]}`, ExitCode: 0}
+	})
+	dt := newTestDockerTransport(t, srv.URL, testDockerCueSource)
+
+	cfgBytes, err := json.Marshal(map[string]any{"target": "nginx:latest"})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	stepIn := apiv1.ExecuteStepInput{
+		APIVersion: apiv1.APIVersion,
+		PluginID:   "trivy",
+		Action:     "scan",
+		Config:     cfgBytes,
+	}
+	inBytes, err := json.Marshal(stepIn)
+	if err != nil {
+		t.Fatalf("marshal ExecuteStepInput: %v", err)
+	}
+
+	exit, out, callErr := dt.CallRaw(context.Background(), "execute_step", inBytes)
+	if callErr != nil {
+		t.Fatalf("CallRaw: %v", callErr)
+	}
+	if exit != 0 {
+		t.Fatalf("exit=%d want 0", exit)
+	}
+
+	wantArgv := []string{"trivy", "image", "--format", "json", "nginx:latest"}
+	if len(gotReq.Argv) != len(wantArgv) {
+		t.Fatalf("argv=%v want %v", gotReq.Argv, wantArgv)
+	}
+	for i, a := range wantArgv {
+		if gotReq.Argv[i] != a {
+			t.Fatalf("argv=%v want %v", gotReq.Argv, wantArgv)
+		}
+	}
+
+	var stepOut apiv1.ExecuteStepOutput
+	if decErr := json.Unmarshal(out, &stepOut); decErr != nil {
+		t.Fatalf("decode ExecuteStepOutput: %v", decErr)
+	}
+	if !stepOut.Success {
+		t.Fatal("Success=false want true")
+	}
+}
+
+// TestDockerTransport_CallRaw_ExecuteStepNonZeroExitBecomesExecuteStepOutputNotError
+// proves that a normal, expected step failure (the exec'd program ran and
+// exited nonzero) flows through as ExecuteStepOutput{Success:false, ...}
+// data, not a Go error — Manager.Call needs err==nil and exit==0 here so it
+// decodes outBytes straight into the caller's *apiv1.ExecuteStepOutput
+// instead of aborting the call.
+func TestDockerTransport_CallRaw_ExecuteStepNonZeroExitBecomesExecuteStepOutputNotError(t *testing.T) {
+	srv := newFakePluginInitServer(t, func(_ apiv1.ExecRequest) apiv1.ExecResponse {
+		return apiv1.ExecResponse{Stderr: "boom", ExitCode: 7}
+	})
+	dt := newTestDockerTransport(t, srv.URL, testDockerCueSource)
+
+	stepIn := apiv1.ExecuteStepInput{Action: "broken", Config: []byte("{}")}
+	inBytes, err := json.Marshal(stepIn)
+	if err != nil {
+		t.Fatalf("marshal ExecuteStepInput: %v", err)
+	}
+
+	exit, out, callErr := dt.CallRaw(context.Background(), "execute_step", inBytes)
+	if callErr != nil {
+		t.Fatalf("CallRaw: %v", callErr)
+	}
+	if exit != 0 {
+		t.Fatalf("exit=%d want 0 (nonzero exec exit must not become a CallRaw-level failure)", exit)
+	}
+
+	var stepOut apiv1.ExecuteStepOutput
+	if decErr := json.Unmarshal(out, &stepOut); decErr != nil {
+		t.Fatalf("decode ExecuteStepOutput: %v", decErr)
+	}
+	if stepOut.Success {
+		t.Fatal("Success=true want false")
+	}
+	if stepOut.ExitCode != 7 {
+		t.Fatalf("ExitCode=%d want 7", stepOut.ExitCode)
+	}
+	if stepOut.Stderr != "boom" && stepOut.Err != "boom" {
+		t.Fatalf("expected stderr text %q in Stderr or Err, got Stderr=%q Err=%q", "boom", stepOut.Stderr, stepOut.Err)
+	}
+}
+
+// TestDockerTransport_CallRaw_ExecuteStepSuccessBuildsExecuteStepOutput proves
+// the success path builds a proper ExecuteStepOutput{Success:true, ...}
+// envelope rather than the direct-call convention's json-passthrough/
+// {"output":...}-wrapped shapes.
+func TestDockerTransport_CallRaw_ExecuteStepSuccessBuildsExecuteStepOutput(t *testing.T) {
+	srv := newFakePluginInitServer(t, func(_ apiv1.ExecRequest) apiv1.ExecResponse {
+		return apiv1.ExecResponse{Output: "connected", ExitCode: 0}
+	})
+	dt := newTestDockerTransport(t, srv.URL, testDockerCueSource)
+
+	cfgBytes, err := json.Marshal(map[string]any{"host": "db.internal", "password": "s3cr3t"})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	stepIn := apiv1.ExecuteStepInput{Action: "connect", Config: cfgBytes}
+	inBytes, err := json.Marshal(stepIn)
+	if err != nil {
+		t.Fatalf("marshal ExecuteStepInput: %v", err)
+	}
+
+	exit, out, callErr := dt.CallRaw(context.Background(), "execute_step", inBytes)
+	if callErr != nil {
+		t.Fatalf("CallRaw: %v", callErr)
+	}
+	if exit != 0 {
+		t.Fatalf("exit=%d want 0", exit)
+	}
+
+	var stepOut apiv1.ExecuteStepOutput
+	if decErr := json.Unmarshal(out, &stepOut); decErr != nil {
+		t.Fatalf("decode ExecuteStepOutput: %v", decErr)
+	}
+	if !stepOut.Success {
+		t.Fatal("Success=false want true")
+	}
+	if stepOut.Stdout != "connected" {
+		t.Fatalf("Stdout=%q want %q", stepOut.Stdout, "connected")
+	}
+}
+
+// TestDockerTransport_CallRaw_ExecuteStepShimErrorStillBecomesGoError proves
+// that a shim-level failure (honey-plugin-init itself couldn't even exec the
+// binary) is genuinely unchanged by the execute_step envelope handling: it
+// still returns a nonzero exit with a decodable apiv1.PluginError, exactly
+// like the pre-existing direct-call shim-error path
+// (TestDockerTransport_CallRaw_ShimErrorBecomesPluginError) — this is an
+// infrastructure failure, not step data, so it must keep surfacing as a Go
+// error once Manager.Call sees it.
+func TestDockerTransport_CallRaw_ExecuteStepShimErrorStillBecomesGoError(t *testing.T) {
+	srv := newFakePluginInitServer(t, func(_ apiv1.ExecRequest) apiv1.ExecResponse {
+		return apiv1.ExecResponse{Error: "exec: \"trivy\": executable file not found"}
+	})
+	dt := newTestDockerTransport(t, srv.URL, testDockerCueSource)
+
+	cfgBytes, err := json.Marshal(map[string]any{"target": "x"})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	stepIn := apiv1.ExecuteStepInput{Action: "scan", Config: cfgBytes}
+	inBytes, err := json.Marshal(stepIn)
+	if err != nil {
+		t.Fatalf("marshal ExecuteStepInput: %v", err)
+	}
+
+	exit, out, callErr := dt.CallRaw(context.Background(), "execute_step", inBytes)
+	if callErr != nil {
+		t.Fatalf("CallRaw: %v", callErr)
+	}
+	if exit == 0 {
+		t.Fatal("expected nonzero exit for a shim-level error")
+	}
+	var pe apiv1.PluginError
+	if decErr := json.Unmarshal(out, &pe); decErr != nil {
+		t.Fatalf("decode PluginError: %v", decErr)
+	}
+	if pe.Error == "" {
+		t.Fatal("expected PluginError.Error to be set")
+	}
+}
+
 func TestPollUntilReady_SucceedsWithinDeadline(t *testing.T) {
 	attempts := 0
 	checkFn := func() bool {
@@ -262,5 +444,125 @@ func TestPollUntilReady_RespectsContextCancellation(t *testing.T) {
 	err := pollUntilReady(ctx, time.Now().Add(time.Minute), checkFn)
 	if err == nil {
 		t.Fatal("expected error when context is already cancelled")
+	}
+}
+
+// fakeContainerRemover is a minimal containerRemover double so
+// cleanupFailedContainer's and stopAndRemoveContainer's ContainerRemove call
+// can be exercised without a real Docker daemon.
+type fakeContainerRemover struct {
+	removeErr    error
+	removeCalled bool
+	removedID    string
+}
+
+func (f *fakeContainerRemover) ContainerRemove(_ context.Context, containerID string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+	f.removeCalled = true
+	f.removedID = containerID
+	return client.ContainerRemoveResult{}, f.removeErr
+}
+
+// TestCleanupFailedContainer_RemovesContainerAndReturnsOriginalCause proves
+// createAndStart's failure-path cleanup (Fix C) actually calls ContainerRemove
+// for the container that was just created, and that on successful removal the
+// original cause (why ContainerStart/waitForReady failed) is what's returned
+// — this is the exact leak createAndStart used to have: docker_restart.go's
+// crash-restart loop retries a broken plugin forever, so skipping this
+// cleanup leaked one container per failed attempt, unboundedly.
+func TestCleanupFailedContainer_RemovesContainerAndReturnsOriginalCause(t *testing.T) {
+	remover := &fakeContainerRemover{}
+	cause := errors.New("start container: boom")
+
+	got := cleanupFailedContainer(context.Background(), remover, "container-123", cause)
+
+	if !remover.removeCalled {
+		t.Fatal("expected ContainerRemove to be called")
+	}
+	if remover.removedID != "container-123" {
+		t.Fatalf("removedID=%q want container-123", remover.removedID)
+	}
+	if !errors.Is(got, cause) {
+		t.Fatalf("got=%v want original cause %v", got, cause)
+	}
+}
+
+// TestCleanupFailedContainer_ReturnsOriginalCauseWhenRemovalItselfFails
+// proves removal is best-effort: if ContainerRemove itself fails, that
+// failure must not mask the original cause the caller actually needs to see.
+func TestCleanupFailedContainer_ReturnsOriginalCauseWhenRemovalItselfFails(t *testing.T) {
+	remover := &fakeContainerRemover{removeErr: errors.New("remove also failed")}
+	cause := errors.New("waitForReady: timeout")
+
+	got := cleanupFailedContainer(context.Background(), remover, "container-456", cause)
+
+	if !remover.removeCalled {
+		t.Fatal("expected ContainerRemove to be called")
+	}
+	if !errors.Is(got, cause) {
+		t.Fatalf("got=%v want original cause %v (removal failure must not mask it)", got, cause)
+	}
+	if strings.Contains(got.Error(), "remove also failed") {
+		t.Fatalf("got=%v should not surface the removal error to the caller", got)
+	}
+}
+
+// fakeStopRemoveClient is a minimal containerStopper+containerRemover double
+// so Close's stop-then-remove aggregation (Fix C) can be exercised without a
+// real Docker daemon.
+type fakeStopRemoveClient struct {
+	stopErr      error
+	removeErr    error
+	removeCalled bool
+}
+
+func (f *fakeStopRemoveClient) ContainerStop(context.Context, string, client.ContainerStopOptions) (client.ContainerStopResult, error) {
+	return client.ContainerStopResult{}, f.stopErr
+}
+
+func (f *fakeStopRemoveClient) ContainerRemove(_ context.Context, _ string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+	f.removeCalled = true
+	return client.ContainerRemoveResult{}, f.removeErr
+}
+
+// TestStopAndRemoveContainer_RemovesEvenWhenStopFails proves Close no longer
+// skips ContainerRemove just because ContainerStop returned an error (the
+// pre-fix behavior: an early return on ContainerStop's error left the
+// container never removed at all).
+func TestStopAndRemoveContainer_RemovesEvenWhenStopFails(t *testing.T) {
+	fake := &fakeStopRemoveClient{stopErr: errors.New("stop failed")}
+
+	err := stopAndRemoveContainer(context.Background(), fake, fake, "container-789")
+
+	if !fake.removeCalled {
+		t.Fatal("expected ContainerRemove to be called even though ContainerStop failed")
+	}
+	if err == nil || !strings.Contains(err.Error(), "stop failed") {
+		t.Fatalf("err=%v want it to report the stop failure", err)
+	}
+}
+
+// TestStopAndRemoveContainer_AggregatesBothErrors proves that when both
+// ContainerStop and ContainerRemove fail, neither failure is silently
+// dropped.
+func TestStopAndRemoveContainer_AggregatesBothErrors(t *testing.T) {
+	fake := &fakeStopRemoveClient{stopErr: errors.New("stop failed"), removeErr: errors.New("remove failed")}
+
+	err := stopAndRemoveContainer(context.Background(), fake, fake, "container-789")
+
+	if err == nil {
+		t.Fatal("expected an aggregated error")
+	}
+	if !strings.Contains(err.Error(), "stop failed") || !strings.Contains(err.Error(), "remove failed") {
+		t.Fatalf("err=%v want both failures present", err)
+	}
+}
+
+// TestStopAndRemoveContainer_NoErrorsReturnsNil proves the happy path returns
+// nil rather than a non-nil errors.Join wrapper around two nils.
+func TestStopAndRemoveContainer_NoErrorsReturnsNil(t *testing.T) {
+	fake := &fakeStopRemoveClient{}
+
+	if err := stopAndRemoveContainer(context.Background(), fake, fake, "container-789"); err != nil {
+		t.Fatalf("err=%v want nil", err)
 	}
 }
