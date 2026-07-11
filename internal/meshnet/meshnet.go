@@ -207,6 +207,13 @@ func teardown(h meshHost) error {
 // Stop shuts down the mesh Host (if one is running) and resets the
 // singleton so a subsequent Start genuinely re-initializes (calls newHost
 // again) rather than replaying a stale result.
+//
+// Stop does not wait for in-flight DialPeer/Listener callers to finish: a
+// concurrent call may observe the host mid-close and fail with an error —
+// the same contract as closing a net.Listener while Accept is blocked, or
+// an http.Transport mid-request. That failure is expected shutdown
+// behavior, not corruption, and callers that need a clean drain should
+// quiesce traffic before calling Stop.
 func Stop(_ context.Context) error {
 	mu.Lock()
 	defer mu.Unlock()
