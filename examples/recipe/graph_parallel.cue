@@ -31,7 +31,7 @@ recipe: {
 			id:      "summarize"
 			host:    "_"
 			depends: ["verify"]
-			ai: { prompt: "Summarize the run." }
+			summarize: { prompt: "Summarize the run." }
 		},
 	]
 }

@@ -1,15 +1,15 @@
-// Remote recipe: sample hosts then one terminal local AI summary (OpenAI-compatible API).
+// Remote recipe: sample hosts then one terminal local summarize summary (OpenAI-compatible API).
 //
-// The final `ai` step must be last, with host: "_". It runs in the honey process (not over SSH),
+// The final `summarize` step must be last, with host: "_". It runs in the honey process (not over SSH),
 // after all prior steps complete, sending their combined output to the model in one request.
 //
-// Prerequisites for --execute on the ai step:
+// Prerequisites for --execute on the summarize step:
 //   OPENAI_API_KEY (required)
 //   OPENAI_BASE_URL (optional; default OpenAI API)
 //   OPENAI_MODEL (optional if ai.model omitted)
 //
-// Optional honey YAML defaults.ai_system_prompt overrides the built-in system prompt; optional
-// recipe ai.system_prompt overrides both.
+// Optional honey YAML defaults.summarize_system_prompt overrides the built-in system prompt; optional
+// recipe summarize.system_prompt overrides both.
 //
 // Optional notify (after successful LLM): step-level `notify` block (presence enables it), e.g.
 //   notify: {}
@@ -31,7 +31,7 @@ recipe: {
 			host: "_"
 			// notify: {}
 			// notify: { notify_subject: "...", message: "...", services: { slack: {}, telegram: {} } }
-			ai: {
+			summarize: {
 				prompt: """
 Summarize the host listing in 3–5 bullet points. Note any missing output or failures.
 """

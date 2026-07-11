@@ -23,7 +23,7 @@ recipe: {
 			id:      "hardening-report"
 			host:    "_"
 			depends: ["check-ssh-root", "check-firewall"]
-			ai: {
+			summarize: {
 				prompt: """
 Analyze the SSH root login configurations and firewall statuses across all hosts.
 Flag any host where PermitRootLogin is 'yes' or where a firewall is inactive/missing.
