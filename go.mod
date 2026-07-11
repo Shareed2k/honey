@@ -63,6 +63,7 @@ require (
 	github.com/moby/moby/client v0.5.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/mr-karan/balance v0.0.0-20250317053523-d32c6ade6cf1
+	github.com/multiformats/go-multiaddr v0.16.0
 	github.com/ncruces/go-sqlite3 v0.35.1
 	github.com/nikoksr/notify v1.5.0
 	github.com/olekukonko/tablewriter v1.1.4
@@ -465,7 +466,6 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/multiformats/go-base32 v0.1.0 // indirect
 	github.com/multiformats/go-base36 v0.2.0 // indirect
-	github.com/multiformats/go-multiaddr v0.16.0 // indirect
 	github.com/multiformats/go-multiaddr-dns v0.4.1 // indirect
 	github.com/multiformats/go-multiaddr-fmt v0.1.0 // indirect
 	github.com/multiformats/go-multibase v0.2.0 // indirect
@@ -530,7 +530,7 @@ require (
 	github.com/quasilyte/regex/syntax v0.0.0-20210819130434-b3f0c404a727 // indirect
 	github.com/quasilyte/stdinfo v0.0.0-20220114132959-f7386bf02567 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/quic-go/webtransport-go v0.10.0 // indirect
 	github.com/raeperd/recvcheck v0.2.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
