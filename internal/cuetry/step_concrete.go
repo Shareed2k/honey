@@ -676,54 +676,6 @@ func (s *ServiceStep) Validate(vc StepValidateCtx) error {
 var _ RemoteStep = (*ServiceStep)(nil)
 
 // ---------------------------------------------------------------------------
-// aws
-// ---------------------------------------------------------------------------
-
-// AwsStep interacts with AWS APIs.
-type AwsStep struct {
-	StepBase
-	Aws *RecipeStepAws `json:"aws,omitempty"`
-}
-
-// Kind returns the step kind identifier.
-func (s *AwsStep) Kind() string { return KindAws }
-
-// Clone returns a deep copy of the step.
-func (s *AwsStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
-
-// Validate checks this step's kind-specific fields.
-func (s *AwsStep) Validate(vc StepValidateCtx) error {
-	if s.Aws == nil {
-		return fmt.Errorf("cuetry: steps[%d].aws is required", vc.Index)
-	}
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// gcp
-// ---------------------------------------------------------------------------
-
-// GcpStep interacts with GCP APIs.
-type GcpStep struct {
-	StepBase
-	Gcp *RecipeStepGcp `json:"gcp,omitempty"`
-}
-
-// Kind returns the step kind identifier.
-func (s *GcpStep) Kind() string { return KindGcp }
-
-// Clone returns a deep copy of the step.
-func (s *GcpStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
-
-// Validate checks this step's kind-specific fields.
-func (s *GcpStep) Validate(vc StepValidateCtx) error {
-	if s.Gcp == nil {
-		return fmt.Errorf("cuetry: steps[%d].gcp is required", vc.Index)
-	}
-	return nil
-}
-
-// ---------------------------------------------------------------------------
 // registration
 // ---------------------------------------------------------------------------
 
@@ -741,8 +693,6 @@ func init() {
 	RegisterStep(KindPostgres, []string{"postgres"}, func() Step { return &PostgresStep{} })
 	RegisterStep(KindPackage, []string{"package"}, func() Step { return &PackageStep{} })
 	RegisterStep(KindService, []string{"service"}, func() Step { return &ServiceStep{} })
-	RegisterStep(KindAws, []string{"aws"}, func() Step { return &AwsStep{} })
-	RegisterStep(KindGcp, []string{"gcp"}, func() Step { return &GcpStep{} })
 	RegisterStep(KindRecipe, []string{"recipe"}, func() Step { return &RecipeStep{} })
 	RegisterStep(KindAgentTransfer, []string{"agent_transfer"}, func() Step { return &AgentTransferStep{} })
 	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })

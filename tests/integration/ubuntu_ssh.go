@@ -84,9 +84,6 @@ RUN useradd -m -s /bin/bash testuser && echo "testuser ALL=(ALL) NOPASSWD:ALL" >
 RUN mkdir -p /home/testuser/.ssh && echo "%s" > /home/testuser/.ssh/authorized_keys && chown -R testuser:testuser /home/testuser/.ssh && chmod 700 /home/testuser/.ssh && chmod 600 /home/testuser/.ssh/authorized_keys
 # Remove systemctl to force the fallback to "service" wrapper
 RUN rm -f /bin/systemctl /usr/bin/systemctl
-# Mock aws and gcloud
-RUN echo '#!/bin/bash\necho "aws-mock $*"' > /usr/local/bin/aws && chmod +x /usr/local/bin/aws
-RUN echo '#!/bin/bash\necho "gcp-mock $*"' > /usr/local/bin/gcloud && chmod +x /usr/local/bin/gcloud
 CMD ["/usr/sbin/sshd", "-D"]
 `, strings.TrimSpace(authorizedKey))
 

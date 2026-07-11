@@ -15,7 +15,7 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-func TestRecipeE2E_CloudAndOS(t *testing.T) {
+func TestRecipeE2E_PackageService(t *testing.T) {
 	sshH, sshP, keyFile := startUbuntuSSH(t)
 
 	reg := &testRegistry{
@@ -26,7 +26,7 @@ func TestRecipeE2E_CloudAndOS(t *testing.T) {
 
 	cueContent := `
 recipe: {
-	name: "test-cloud-os"
+	name: "test-package-service"
 	type: "graph"
 	defaults: { run_as: "root" }
 	steps: [
@@ -52,18 +52,6 @@ recipe: {
 			host: "*"
 			depends: ["svc"]
 			command: "service cron status"
-		},
-		{
-			id: "aws_test"
-			host: "*"
-			depends: ["svc"]
-			aws: { service: "s3", operation: "ls", params: { bucket: "test-bucket" } }
-		},
-		{
-			id: "gcp_test"
-			host: "*"
-			depends: ["aws_test"]
-			gcp: { service: "compute", operation: "instances list", params: { project: "my-project" } }
 		}
 	]
 }
@@ -99,7 +87,7 @@ recipe: {
 		results = append(results, res)
 	}
 
-	require.Len(t, results, 6)
+	require.Len(t, results, 4)
 
 	var outputs []string
 	var stepIDs []string
@@ -123,8 +111,6 @@ recipe: {
 	require.Contains(t, getOutput("verify_pkg"), "jq") // jq --version
 	require.Contains(t, getOutput("svc"), "Starting periodic command scheduler") // fallback to service successful
 	require.Contains(t, getOutput("verify_svc"), "cron is running")              // service cron status
-	require.Contains(t, getOutput("aws_test"), "aws-mock s3 ls --bucket test-bucket")
-	require.Contains(t, getOutput("gcp_test"), "gcp-mock compute instances list --project my-project")
 }
 
 func TestRecipeE2E_Systemd(t *testing.T) {

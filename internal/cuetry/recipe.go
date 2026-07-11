@@ -245,18 +245,6 @@ const schemaSource = `
 		body?:      {...}
 		output?:    string
 	})
-	aws?: close({
-		service:   string
-		operation: string
-		params?:   {...}
-		output?:   string
-	})
-	gcp?: close({
-		service:   string
-		operation: string
-		params?:   {...}
-		output?:   string
-	})
 	postgres?: close({
 		dsn_secret:      string
 		action:          "query" | "exec" | "migrate"

@@ -49,8 +49,6 @@ const (
 	KindPostgres      = "postgres"
 	KindPackage       = "package"
 	KindService       = "service"
-	KindAws           = "aws"
-	KindGcp           = "gcp"
 	KindRecipe        = "recipe"
 	KindOPA           = "opa"
 )
