@@ -3,7 +3,12 @@ id: plugins
 title: Plugins
 ---
 
-Honey supports WASM plugins that extend [CUE recipes](./cue-recipes.md) with custom steps, secret backends, and log transforms. Plugins run locally on the operator's machine inside an [Extism](https://extism.org/) sandbox with explicit permission grants.
+Honey supports plugins that extend [CUE recipes](./cue-recipes.md) with custom steps, secret backends, and log transforms, in two runtimes:
+
+- **`wasm`** (default) — runs locally on the operator's machine inside an [Extism](https://extism.org/) sandbox with explicit permission grants.
+- **`docker`** — runs a real binary (`mongosh`, `aws`, `gcloud`, `duckdb`, `ffmpeg`, …) inside a container, for tools that can't reasonably be reimplemented or wrapped in WASM.
+
+See [Plugin development](./plugins-development.md) for the full schema of both.
 
 ## Enable plugins
 
@@ -63,6 +68,19 @@ Honey ships pre-built releases for the following plugins. Install any of them fr
 | `cve-scanner` | `custom_step` | Scan hosts for CVEs (grype/trivy) and apply security patches — see [Vulnerability & patch management](./vulnerability-management.md) |
 | `js` | `custom_step` | Run sandboxed JavaScript (goja) with a capability-gated host API (`host.remote_exec`, `kv`, `log`) |
 
+## Example Docker-runtime plugins
+
+No build step — just `plugin.yaml` (`runtime: docker`) + `plugin.cue` (actions/argv). See [`examples/plugins/`](https://github.com/shareed2k/honey/tree/main/examples/plugins):
+
+| Plugin | Image | Actions |
+|--------|-------|---------|
+| `mongodb` | `mongo:latest` | `query`, `eval` |
+| `duckdb` | `duckdb/duckdb:latest` | `query`, `export_parquet` |
+| `aws` | `amazon/aws-cli:latest` | `s3_ls`, `s3_cp`, `s3_rm`, `ec2_describe`, `ec2_start`, `ec2_stop` |
+| `gcloud` | `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` | `compute_list`, `compute_start`, `compute_stop`, `storage_ls`, `storage_cp`, `storage_rm` |
+
+`gcloud`'s image is **amd64-only** — fails with `exec format error` on Apple Silicon hosts unless your Docker daemon has qemu emulation registered. The other three are multi-arch.
+
 ## List installed plugins
 
 ```bash
@@ -82,7 +100,7 @@ cp plugin.yaml ~/.config/honey/plugins/myplugin/
 cp plugin.wasm ~/.config/honey/plugins/myplugin/
 ```
 
-The directory name does not need to match the plugin id — Honey reads `plugin.yaml` to discover the id. Each plugin directory must contain both `plugin.yaml` and `plugin.wasm`.
+The directory name does not need to match the plugin id — Honey reads `plugin.yaml` to discover the id. A `runtime: wasm` (default) plugin directory must contain `plugin.yaml` and `plugin.wasm`; a `runtime: docker` plugin directory must contain `plugin.yaml` and `plugin.cue` instead (no wasm module).
 
 ## Using plugins in recipes
 
@@ -93,8 +111,11 @@ recipe: {
   steps: [
     {
       host: "web-*"
-      plugin: "bash"
-      input: {script: "systemctl restart nginx"}
+      plugin: {
+        id:     "bash"
+        action: "run"
+        config: {script: "systemctl restart nginx"}
+      }
     }
   ]
 }

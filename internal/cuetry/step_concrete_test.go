@@ -83,3 +83,66 @@ func TestStepValidate_EnvUnsupportedKinds(t *testing.T) {
 		})
 	}
 }
+
+// TestPluginStepValidate_KVKey covers plugin.kv_key format checking, added
+// alongside the plugin/postgres kv_key precedent.
+func TestPluginStepValidate_KVKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		kvKey   string
+		wantErr bool
+	}{
+		{"empty is fine (kv_key optional)", "", false},
+		{"plain key ok", "stealth_fetch", false},
+		{"contains slash rejected", "bad/key", true},
+		{"too long rejected", strings.Repeat("k", 300), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &PluginStep{
+				StepBase: StepBase{Host: "*"},
+				Plugin:   &RecipeStepPlugin{ID: "duckdb", Action: "query", KVKey: tt.kvKey},
+			}
+			err := s.Validate(StepValidateCtx{Index: 0, NumSteps: 1})
+			if tt.wantErr && err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestCommandStepValidate_Templated covers the syntax-only template parse
+// check run when templated: true — catches malformed {{ }} at cue-validate
+// time rather than only at execute time.
+func TestCommandStepValidate_Templated(t *testing.T) {
+	tests := []struct {
+		name      string
+		command   string
+		templated bool
+		wantErr   bool
+	}{
+		{"not templated, malformed braces ignored", "echo {{ not a template", false, false},
+		{"templated, valid syntax", `echo {{ kvGet "key" }}`, true, false},
+		{"templated, unclosed action", "echo {{ .Bad ", true, true},
+		{"templated, unknown function", `echo {{ notAFunc "x" }}`, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &CommandStep{
+				StepBase:  StepBase{Host: "*"},
+				Command:   tt.command,
+				Templated: tt.templated,
+			}
+			err := s.Validate(StepValidateCtx{Index: 0, NumSteps: 1})
+			if tt.wantErr && err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}

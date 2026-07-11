@@ -1,16 +1,16 @@
 ---
-id: honey_plugins
-title: honey plugins
+id: honey_audit
+title: honey audit
 ---
 
-## honey plugins
+## honey audit
 
-Manage WASM plugins
+Inspect the audit log
 
 ### Options
 
 ```
-  -h, --help   help for plugins
+  -h, --help   help for audit
 ```
 
 ### Options inherited from parent commands
@@ -28,7 +28,6 @@ Manage WASM plugins
 ### SEE ALSO
 
 * [honey](honey.md)	 - DevOps tool to help find an instance in sea of clouds
-* [honey plugins inspect](honey_plugins_inspect.md)	 - Show manifest, capabilities, and effective network policy for a plugin
-* [honey plugins install](honey_plugins_install.md)	 - Install a plugin from a URL, archive, or local directory
-* [honey plugins list](honey_plugins_list.md)	 - Show plugin id, capabilities, and path
+* [honey audit export](honey_audit_export.md)	 - Print audit events as jsonl, table, or csv
+* [honey audit tail](honey_audit_tail.md)	 - Stream audit events in real time (like tail -f)
 

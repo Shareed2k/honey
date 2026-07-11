@@ -4,7 +4,7 @@ title: Honey Documentation
 slug: /
 ---
 
-Search **GCP**, **AWS**, **Kubernetes**, **Docker**, **Consul**, **Proxmox**, and **TrueNAS** instances in parallel, then SSH, `docker exec`, or run recipes against results via a TUI, web UI, or MCP server.
+Search **GCP**, **AWS**, **Kubernetes**, **Docker**, **Consul**, **Proxmox**, **TrueNAS**, static **local** hosts, and other **remote honey servers** in parallel, then SSH, `docker exec`, or run recipes against results via a TUI, web UI, or MCP server.
 
 ## Install
 
@@ -44,4 +44,9 @@ honey search --json --provider aws,k8s web
 - [CUE recipes](./cue-recipes.md)
 - [Anomaly Detection](./anomaly-detection.md)
 - [Plugin development](./plugins-development.md)
+- [Vulnerability & patch management](./vulnerability-management.md)
+- [Authorization](./authorization.md) — RBAC/OPA policy for exec, recipes, and the web UI
+- [Command Risk Engine](./command-risk.md) — deterministic risk analysis before a command runs
+- [Alert Investigation](./alert.md) — Alertmanager webhook receiver with auto-investigate
+- [Distributed Tracing](./tracing.md)
 - [Add a new backend](./add-new-backend.md)

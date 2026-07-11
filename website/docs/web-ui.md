@@ -28,6 +28,9 @@ Optional flags:
 | `--agent-bin` | Explicit path to the `honey-transfer-agent` binary (optional) |
 | `--agent-build-cache-dir` | Cache directory when the server auto-builds the transfer agent |
 | `--metrics-listen` | Optional loopback `host:port` for Prometheus **`GET /metrics`** (e.g. `127.0.0.1:9091`); disabled when unset |
+| `--allow-logs-command` | Allow callers to run arbitrary remote commands via the logs streaming endpoint (disabled by default) |
+| `--browser` | Open the web UI in the default browser on start (default `true`) |
+| `--no-auth` | Disable web UI token authentication entirely (also via `HONEY_WEB_NO_AUTH`) — only for trusted networks or behind an authenticating proxy |
 
 On startup, Honey prints the URL and auth hints on stderr:
 
@@ -66,9 +69,17 @@ scrape_configs:
 
 ### Authentication
 
-- **Default:** a random hex token is generated each run.
-- **Fixed token:** set `HONEY_WEB_TOKEN` in the environment before starting `honey web`.
+- **Default:** a random hex token is generated on first run and **persisted** to `<state-dir>/web_token`, so it stays stable across restarts (a bookmarked `?token=` URL keeps working).
+- **Fixed token:** set `HONEY_WEB_TOKEN` in the environment before starting `honey web` (takes precedence over the persisted token).
+- **Disable auth entirely:** `--no-auth` or `HONEY_WEB_NO_AUTH` — only for trusted networks or behind an authenticating proxy.
 - Pass the token as `?token=…`, or header `Authorization: Bearer <token>`, or `X-Honey-Token: <token>`.
+
+**Beyond the token**, honey supports additional identity/authorization layers on top of loopback binding:
+
+- **OPA policy enforcement** for web actions — see [Authorization](./authorization.md).
+- **JWT identity** via `HONEY_JWT_PUBLIC_KEY` (verifies a bearer JWT's claims as the acting identity, for policy `actor` resolution).
+- **Trusted-proxy identity headers** via `HONEY_TRUSTED_PROXIES` (accepts an identity header from a listed reverse-proxy IP instead of re-authenticating).
+- **WebAuthn / passkey step-up** via `HONEY_WEBAUTHN_RPID` — biometric confirmation for sensitive actions, with routes under `/api/v1/webauthn/*`.
 
 ## Features
 
@@ -305,12 +316,42 @@ Authenticate all routes below except static files: `Authorization: Bearer <token
 
 - `GET /api/v1/recordings` — list recordings when `--record-dir` is set.
 - `POST /api/v1/recordings/play` — fetch payload for replay.
+- `DELETE /api/v1/recordings/{file_name}` — delete a recording.
+- `POST /api/v1/recordings/summarize` — AI summary of a recording.
+- `GET /api/v1/recordings/{id}/failed-hosts` — hosts that failed in a recorded run.
 
 ### Terminal WebSocket and AI
 
 - `GET /ws/ssh?token=…` — browser terminal (not JSON).
 - `GET /api/v1/terminal-assist/models` — model IDs for Assist.
 - `POST /api/v1/terminal-assist` — **terminal assist** (requires key; JSON body: `user_prompt`, `scrollback`, optional `max_lines`, `model`).
+
+### Approvals and identity
+
+- `GET /api/v1/approvals`, `POST /api/v1/approvals/{id}` — list/decide pending OPA `require_approval` requests (see [Authorization](./authorization.md)).
+- `POST /api/v1/webauthn/register/begin`, `.../register/finish`, `.../assert/begin`, `.../assert/finish` — WebAuthn/passkey enrollment and step-up assertion.
+- `POST /api/v1/devices/enroll` — device mTLS credential enrollment.
+
+### Tunnels, snippets, ports, secrets
+
+- `GET /api/v1/tunnels`, `POST /api/v1/tunnels`, `DELETE /api/v1/tunnels/{id}`, `GET /api/v1/tunnels/{id}/logs` — tunnel session CRUD (backs recipe `tunnel:` steps opened from the UI).
+- `GET /api/v1/snippets`, `POST /api/v1/snippets`, `DELETE /api/v1/snippets/{id}` — saved command snippets.
+- `POST /api/v1/host-ports` — probe reachable ports on a host.
+- `POST /api/v1/secrets/encrypt`, `POST /api/v1/secrets/seal` — encrypt values for `secure:v1:` storage (backs `honey secrets seal`).
+
+### Scheduled jobs, webhooks, apps, generic agent
+
+- `GET /api/v1/schedules` — list recipe `schedules:` (cron) entries.
+- `POST /api/v1/webhooks/{app_name}/{webhook_name}` — recipe webhook trigger (see [Authorization — webhooks](./authorization.md)).
+- `GET /api/v1/apps` — list configured `apps.*` (TCP/HTTP proxy targets).
+- `POST /api/v1/agent` — generic agent-transfer control endpoint.
+- `GET /ws/tunnel`, `GET /ws/exec` — WebSocket variants of tunnel/exec for browser clients.
+- `GET /ws/pve-qemu-vnc`, `POST /api/v1/pve-qemu-vnc-offer` — Proxmox QEMU VNC console proxy.
+
+### Proxy sessions and lint
+
+- `GET /api/v1/proxy/sessions`, `POST /api/v1/proxy/start` — HTTP/TCP proxy session management for `apps.*`.
+- `POST /api/v1/lint` — YAML/CUE lint helper used by the raw config/recipe editors.
 
 ## Local UI development
 

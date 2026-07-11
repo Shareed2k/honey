@@ -141,6 +141,19 @@ func TestLocatePluginInitBinary_EnvOverride(t *testing.T) {
 	}
 }
 
+func TestLocatePluginInitBinary_EnvOverrideDirectoryFailsClearly(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HONEY_PLUGIN_INIT_PATH", dir)
+
+	_, err := locatePluginInitBinary()
+	if err == nil {
+		t.Fatal("expected error when HONEY_PLUGIN_INIT_PATH points at a directory")
+	}
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("error=%q should mention \"not a regular file\"", err.Error())
+	}
+}
+
 func TestResolveAllowedEnv_ResolvesSetVarsOmitsUnset(t *testing.T) {
 	t.Setenv("HONEY_TEST_ALLOWED_ENV_VAR", "value1")
 	got := resolveAllowedEnv([]string{"HONEY_TEST_ALLOWED_ENV_VAR", "HONEY_TEST_DEFINITELY_UNSET_VAR", ""})

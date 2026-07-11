@@ -14,8 +14,13 @@ type HostExecResult struct {
 	ExitCode      int
 	Output        string
 	OutputCapture string
-	ErrMsg        string
-	IsTransient   bool
+	// KVCaptureKey is set when a step wrote its output to the recipe KV store
+	// (e.g. plugin.kv_key) instead of a named output capture. Unlike
+	// OutputCapture, run.go's graph dispatch never overwrites this field, so
+	// it survives to CueRecipeDisplayOutput to suppress the raw dump.
+	KVCaptureKey string
+	ErrMsg       string
+	IsTransient  bool
 
 	StepIndex int    `json:",omitempty"`
 	StepID    string `json:",omitempty"`

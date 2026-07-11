@@ -349,11 +349,13 @@ func StepOutputName(s Step) string {
 	return ""
 }
 
-// RecipeStepPlugin configures a WASM custom_step plugin action.
+// RecipeStepPlugin configures a custom_step plugin action (wasm or docker runtime).
 type RecipeStepPlugin struct {
-	ID     string          `json:"id"`
-	Action string          `json:"action"`
-	Config json.RawMessage `json:"config,omitempty"`
+	ID           string          `json:"id"`
+	Action       string          `json:"action"`
+	Config       json.RawMessage `json:"config,omitempty"`
+	KVKey        string          `json:"kv_key,omitempty"`
+	KVKeyPerHost bool            `json:"kv_key_per_host,omitempty"`
 }
 
 // RecipeLoop configures dynamic runtime fan-out based on a previous step's captured output.

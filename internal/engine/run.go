@@ -811,6 +811,9 @@ func RecordGraphStepStdout(recipe cuetry.Recipe, step cuetry.Step, kind string, 
 
 // CueRecipeDisplayOutput ...
 func CueRecipeDisplayOutput(res HostExecResult) string {
+	if res.Success && res.KVCaptureKey != "" {
+		return "[stored in kv: " + res.KVCaptureKey + "]"
+	}
 	if res.Success && res.OutputCapture != "" {
 		return "[captured output: " + res.OutputCapture + "]"
 	}

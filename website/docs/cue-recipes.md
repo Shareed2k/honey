@@ -43,9 +43,9 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 
 | Kind | Remote? | Notes |
 |------|---------|-------|
-| `command` | SSH / k8s exec | Optional `env`, `secrets`, `hooks`, `kv_tunnel` |
-| `script` | SSH / k8s exec | Upload `local` → `remote`, then `sh <remote>` |
-| `plugin` | SSH / k8s exec | WASM custom step — [Plugin development](./plugins-development.md) |
+| `command` | SSH / k8s exec | Optional `env`, `secrets`, `hooks`, `kv_tunnel`, `templated` — [Templated command/script steps](#templated-commandscript-steps) |
+| `script` | SSH / k8s exec | Upload `local` → `remote`, then `sh <remote>`; optional `templated` |
+| `plugin` | SSH / k8s exec | Custom step (WASM or `runtime: docker`) — [Plugin development](./plugins-development.md), optional `kv_key`/`kv_key_per_host` |
 | `tunnel` | SSH / k8s / TrueNAS | Operator-side listen (local/remote/dynamic/UDP/tun) — [Tunnel steps](#tunnel-steps) |
 | `k8s` | Kubernetes API | Direct API calls: apply, delete, scale, rollout, get, exec, job — [Kubernetes steps](#kubernetes-steps) |
 | `put` / `get` | SFTP or k8s tar stream | Relative `local` paths from recipe directory |
@@ -811,6 +811,44 @@ By default, step hooks (`on_success` or `on_failure`) run as side-car post-facto
 **`template.output`** captures the rendered string under a named key. It is only supported on `host: "_"` (local steps). For per-host templates (`host: "*"`), omit `output` and pass the result downstream via `env_from[].from_output` instead.
 
 Example: [`template_kv.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/template_kv.cue).
+
+## Templated command/script steps
+
+`env_from` caps every value at **8192 bytes** (`command`/`script` steps only ever see prior-step data as `$VAR` shell env vars). For larger payloads — a fetched web page, a large query result — set **`templated: true`** on a `command` or `script` step instead: its body is rendered as a Go template *before* the step runs, with the same `kvGet`/`kvHas`/sprig functions `template:` steps use, plus two more:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `stepStdout "id"` | string | First non-empty stdout captured for a prior step id (any host) |
+| `stepStdoutLines "id"` | []string | Same, split into lines |
+| `outputStdout "name"` | string | Value captured by a `template.output`/`k8s.output`-style named capture |
+| `outputStdoutLines "name"` | []string | Same, split into lines |
+
+The template `Data` also exposes `.steps`, `.outputs`, and (for `command` steps only — see below) `.env`:
+
+```cue
+{
+  id:        "check-title"
+  host:      "*"
+  depends:   ["fetch-protected-site"]
+  templated: true
+  command: """
+    TITLE="{{ regexFind "(?i)<title>.*</title>" (kvGet "stealth_fetch" | fromJson).content }}"
+    echo "Fetched page: $TITLE"
+    if [ -z "$TITLE" ]; then
+      echo "no title found" >&2
+      exit 1
+    fi
+  """
+}
+```
+
+Pairs naturally with a plugin step's **`kv_key`** (see [Plugin development](./plugins-development.md#kv_key--kv_key_per_host)), which writes the plugin's stdout straight to the recipe KV store (65536-byte cap) instead of `env_from` — the pattern the example above uses (`kvGet "stealth_fetch" | fromJson` reads back a plugin's JSON output written via `plugin.kv_key: "stealth_fetch"`).
+
+Rules and caveats:
+
+- **`command` steps** get per-host `.env` (the same resolved env `$VAR` expansion already sees) in addition to `.steps`/`.outputs`/KV. **`script` steps** render the *local file's content* once, before it's uploaded to any host — since one file is shared across every target, `.env` is not available there, only `.steps`/`.outputs`/KV.
+- Template **syntax** is checked at `cue-validate` time (a malformed `{{ }}` fails validation immediately). The template is **not** actually rendered during a dry-run (`cue-exec` without `--execute`) — render-time data (KV values, prior-step stdout) is normally still empty before anything has actually run, so dry-run output shows the raw, unrendered body with a `templated=true` note instead of risking a spurious render error.
+- CUE **triple-quoted strings** (`"""..."""`) avoid having to escape embedded `"` inside template function calls like `kvGet "key"` — see the example above and [`examples/recipe/template_kv.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/template_kv.cue) for the escaping alternative.
 
 ## Related
 

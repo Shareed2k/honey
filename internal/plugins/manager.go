@@ -248,6 +248,9 @@ func resolveAllowedEnv(names []string) map[string]string {
 // binary), otherwise alongside the running honey executable.
 func locatePluginInitBinary() (string, error) {
 	if p := strings.TrimSpace(os.Getenv("HONEY_PLUGIN_INIT_PATH")); p != "" {
+		if err := validatePluginInitBinaryPath(p); err != nil {
+			return "", fmt.Errorf("plugins: HONEY_PLUGIN_INIT_PATH=%s: %w", p, err)
+		}
 		return p, nil
 	}
 	exe, err := os.Executable()
@@ -255,10 +258,26 @@ func locatePluginInitBinary() (string, error) {
 		return "", fmt.Errorf("plugins: locate honey-plugin-init: %w", err)
 	}
 	path := filepath.Join(filepath.Dir(exe), "honey-plugin-init")
-	if _, statErr := os.Stat(path); statErr != nil {
-		return "", fmt.Errorf("plugins: honey-plugin-init not found at %s (build it via `task build-honey-plugin-init` or set HONEY_PLUGIN_INIT_PATH): %w", path, statErr)
+	if err := validatePluginInitBinaryPath(path); err != nil {
+		return "", fmt.Errorf("plugins: honey-plugin-init not found at %s (build it via `task build-honey-plugin-init` or set HONEY_PLUGIN_INIT_PATH): %w", path, err)
 	}
 	return path, nil
+}
+
+// validatePluginInitBinaryPath rejects anything but a regular file — a
+// directory at this path would otherwise be bind-mounted straight into the
+// plugin container, where it fails only much later with a cryptic Docker/OCI
+// runtime error ("is a directory: permission denied") instead of a clear one
+// from honey itself.
+func validatePluginInitBinaryPath(path string) error {
+	info, err := safepath.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("path %q is not a regular file", path)
+	}
+	return nil
 }
 
 // Enabled reports whether plugins are turned on in config.

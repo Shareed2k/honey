@@ -508,6 +508,16 @@ func TestCueRecipeDisplayOutput_suppressesSuccessfulCapturedOutput(t *testing.T)
 			res:  HostExecResult{Success: true, Output: "hello"},
 			want: "hello",
 		},
+		{
+			name: "plugin kv_key capture prints a kv-specific note instead of the raw payload",
+			res:  HostExecResult{Success: true, Output: `{"content":"..."}`, KVCaptureKey: "stealth_fetch"},
+			want: "[stored in kv: stealth_fetch]",
+		},
+		{
+			name: "KVCaptureKey takes priority over OutputCapture when somehow both are set",
+			res:  HostExecResult{Success: true, Output: "x", KVCaptureKey: "stealth_fetch", OutputCapture: "RESULT"},
+			want: "[stored in kv: stealth_fetch]",
+		},
 	}
 
 	for _, tt := range tests {

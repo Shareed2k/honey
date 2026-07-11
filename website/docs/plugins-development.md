@@ -4,9 +4,12 @@ title: Plugin development
 slug: /plugins-development
 ---
 
-Honey can load **WASM plugins** ([Extism](https://extism.org/)) to extend recipes and secrets without recompiling the CLI. Plugins are optional and **off by default**.
+Honey can load plugins to extend recipes and secrets without recompiling the CLI, in two runtimes. Plugins are optional and **off by default**.
 
-Typical uses:
+- **`runtime: wasm`** (default) — a sandboxed [Extism](https://extism.org/) module. Covered in most of this page.
+- **`runtime: docker`** — execs a real binary (`mongosh`, `aws`, `gcloud`, `duckdb`, `ffmpeg`, …) inside a long-lived container. No WASM, no build step. See [Docker runtime plugins](#docker-runtime-plugins) below.
+
+Typical WASM uses:
 
 - Rewrite CUE recipe bytes before compile (`cue_transform`)
 - Custom per-host recipe steps (`plugin:` in CUE)
@@ -106,6 +109,27 @@ Recipe shape:
 ```
 
 See [CUE Recipes](./cue-recipes.md) for `host` matching and graph mode.
+
+### `kv_key` / `kv_key_per_host`
+
+Any plugin step (WASM or `runtime: docker`) can capture its raw stdout into the recipe KV store — the escape hatch for output too large for `env_from`'s 8192-byte cap (the KV store caps at 65536 bytes, rejecting rather than truncating an oversized value):
+
+```cue
+plugin: {
+  id:     "stealth_browser"
+  action: "fetch"
+  config: {url: "https://example.com"}
+  kv_key:         "stealth_fetch"  // recipe KV key
+  kv_key_per_host: false            // true suffixes the key with a sanitized host name
+}
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `kv_key` | _none_ | KV key the action's raw stdout is written to after a successful call. Omit to skip KV entirely (the common case). |
+| `kv_key_per_host` | `false` | Suffix the key with the target host's (sanitized) name, so parallel hosts don't overwrite each other's value |
+
+Written **only on a real `--execute` run** (dry-run never touches KV, consistent with plugins never really executing on dry-run) — right after the plugin call returns successfully, using its raw stdout, before it's combined with stderr for the step's own output. A downstream step reads it back with `{{ kvGet "stealth_fetch" }}` inside a [templated command/script step](./cue-recipes.md#templated-commandscript-steps), or the plain `kvGet`/`kvHas` template functions inside a `template:` step.
 
 ### `resolve_secret`
 
@@ -440,6 +464,129 @@ For simple one-off shell, prefer native `command` / `script` steps (no WASM). Us
 
 Use the [Extism Go PDK HTTP API](https://github.com/extism/go-pdk) (`pdk.NewHTTPRequest` / `Send`) against hosts in `allowed_hosts`. Other [Extism PDKs](https://extism.org/docs) work for non-Go languages.
 
+## Docker runtime plugins
+
+For tools better run as their real CLI/binary than reimplemented in WASM (`mongosh`, `aws`, `gcloud`, `duckdb`, `ffmpeg`, `psql`, …), set `runtime: docker` instead of shipping a `.wasm` module. No Go/WASM build step — a plugin is just `plugin.yaml` + `plugin.cue`.
+
+### Layout
+
+| File | Purpose |
+|------|---------|
+| `plugin.yaml` | Manifest: `id`, `capabilities`, `runtime: docker`, `docker: {...}` |
+| `plugin.cue` | Declares each action's `argv`, `#Config` schema, `output_format`, optional `env`/`stdin` |
+
+### Manifest fields (`docker:`)
+
+```yaml
+id: mongodb
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "mongo:latest"
+  pull_policy: if_not_present   # if_not_present (default) | always
+  restart:
+    max_backoff: 30s            # default 30s; unbounded retries, capped interval
+  volumes:
+    - "/var/honey/data:/data:rw"  # host_path:container_path[:ro|rw]
+```
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `docker.image` | _required_ | Image to run; pulled per `pull_policy` |
+| `docker.pull_policy` | `if_not_present` | `if_not_present` or `always` |
+| `docker.restart.max_backoff` | `30s` | Cap on exponential backoff between restart attempts after a crash — retries are unbounded, never permanently give up |
+| `docker.volumes` | _none_ | Static bind mounts (Docker `Binds` syntax); use for actions that read/write files across calls (e.g. `ffmpeg` writing then `ffprobe` reading the same file) |
+| `allowed_env` | _none_ | Same manifest field as WASM plugins, but for docker plugins these are passed straight into the container's environment at creation time — not gated behind a per-call host function |
+
+The container is created once when the plugin loads and stays up for the plugin's lifetime (like a WASM module instance) — not one container per call. If it crashes, honey restarts it automatically with exponential backoff (capped at `max_backoff`, retried forever).
+
+### `plugin.cue`
+
+One `actions: <name>: {...}` block per action:
+
+```cue
+actions: query: {
+	#Config: {
+		uri:        string
+		database:   string
+		collection: string
+		query:      string
+	}
+
+	argv: [
+		"mongosh",
+		config.uri,
+		"--quiet",
+		"--eval",
+		"EJSON.stringify(db.getSiblingDB('\(config.database)').getCollection('\(config.collection)').find(\(config.query)).toArray())"
+	]
+
+	output_format: "json"
+}
+```
+
+| Field | Required | Purpose |
+|-------|----------|---------|
+| `#Config` | recommended | CUE schema the recipe's `plugin.config` is validated against before every call |
+| `argv` | yes | Argv exec'd directly inside the container — **not** run through the image's own `ENTRYPOINT`/shell (see gotcha below) |
+| `output_format` | no (default `"text"`) | `"json"` decodes stdout as JSON for the step's captured output; `"text"` keeps it as a string |
+| `env` | no | Extra env vars for just this call, evaluated from `config` like `argv` — use for secrets (e.g. a resolved DB password) that shouldn't appear in `argv`/`ps`/`/proc/<pid>/cmdline` |
+| `stdin` | no | Text piped to the process's stdin, evaluated from `config` — use for request bodies (e.g. a JSON query DSL) that are awkward to shell-quote into `argv` |
+
+**Gotcha:** honey always overrides the container's `Entrypoint` with the `honey-plugin-init` shim, which execs `argv[0]` directly. If an image's default entrypoint does argument-wrapping (e.g. some `ffmpeg` images wrap `ffmpeg`/`ffprobe` in a shell script), use the binary's absolute path in `argv[0]` (check with `docker inspect <image>`) instead of relying on the image's own entrypoint behavior.
+
+### Packaging: `honey-plugin-init`
+
+Docker-runtime plugins bind-mount a small shim binary, `honey-plugin-init`, as the container's entrypoint (it execs `argv` and returns `{output, stderr, exit_code, error}` over a loopback HTTP call). It must exist **alongside the `honey` executable** — build it with:
+
+```bash
+task build-honey-plugin-init
+```
+
+Or point at a prebuilt binary with the `HONEY_PLUGIN_INIT_PATH` environment variable. Without one of these, loading a `runtime: docker` plugin fails with `honey-plugin-init not found at ... (build it via task build-honey-plugin-init or set HONEY_PLUGIN_INIT_PATH)`.
+
+### Known limitation: dry-run
+
+Unlike WASM plugins, `runtime: docker` actions currently always execute — `execute: false` (dry-run) and secrets-dry-run are not yet threaded through to the container call. Don't rely on dry-run to preview a docker-runtime plugin action's side effects; test against a disposable target first.
+
+### Examples
+
+[`examples/plugins/`](https://github.com/shareed2k/honey/tree/main/examples/plugins) ships four ready-to-copy docker-runtime plugins — no build step, just copy `plugin.yaml` + `plugin.cue` into your plugins directory:
+
+| Plugin | Image | Actions |
+|--------|-------|---------|
+| [`mongodb/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/mongodb) | `mongo:latest` | `query`, `eval` |
+| [`duckdb/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/duckdb) | `duckdb/duckdb:latest` | `query`, `export_parquet` |
+| [`aws/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/aws) | `amazon/aws-cli:latest` | `s3_ls`, `s3_cp`, `s3_rm`, `ec2_describe`, `ec2_start`, `ec2_stop` |
+| [`gcloud/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/gcloud) | `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` | `compute_list`, `compute_start`, `compute_stop`, `storage_ls`, `storage_cp`, `storage_rm` |
+
+`gcr.io/google.com/cloudsdktool/cloud-sdk:slim` is **amd64-only** (no arm64 manifest) — on an Apple Silicon host with a VM-backed Docker daemon (Colima, Docker Desktop) with no qemu emulation registered, it fails with `exec format error`. The other three images are multi-arch.
+
+```bash
+mkdir -p ~/.config/honey/plugins/mongodb
+cp examples/plugins/mongodb/plugin.yaml examples/plugins/mongodb/plugin.cue ~/.config/honey/plugins/mongodb/
+```
+
+Recipe usage is identical to WASM plugins — `plugin: { id, action, config }`:
+
+```cue
+{
+  host: "*"
+  plugin: {
+    id:     "mongodb"
+    action: "query"
+    config: {
+      uri:        "mongodb://db.internal:27017"
+      database:   "app"
+      collection: "users"
+      query:      "{}"
+    }
+  }
+}
+```
+
 ## Authoring in Go
 
 ### Project layout
@@ -588,6 +735,7 @@ The host calls `on_step_result` on the plugin with `phase`, host, and result pay
 - **`allowed_paths`** maps host filesystem into the guest; keep paths minimal.
 - Secret material from `resolve_secret` flows into recipe env like any other secret backend.
 - Use `plugins.allowlist` in production to load only known plugin ids.
+- **`runtime: docker`**: the container image is arbitrary — pin a digest or a trusted registry, since honey runs whatever `docker.image` says with no sandboxing beyond normal container isolation. `allowed_env` values are passed straight into the container at creation (unlike WASM's per-call gated `get_env`), so treat `docker.image` + `allowed_env` together as the plugin's full trust boundary.
 
 ## Related
 

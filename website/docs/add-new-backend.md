@@ -11,38 +11,67 @@ Use this guide when introducing a new provider/backend in honey.
 In `internal/config/config.go`:
 
 - define `type NewBackend struct { ... }`
-- add `Backends.NewBackend []NewBackend` with matching `yaml`/`json` tags
+- add a field to the `Backends` struct: `NewBackend []NewBackend` with matching `yaml`/`json` tags, e.g. `` `yaml:"newbackend" json:"newbackend" honey:"label=My Backend;order=70" validate:"dive" mod:"dive"` ``
 
 Use snake_case tags for YAML compatibility and add `honey` tags for schema metadata.
 
-Typical tag usage:
+Typical tag usage on each backend field:
 
-- on backend list field in `Backends`:
-  - `honey:"label=My Backend;order=60"`
-- on each backend field:
-  - `honey:"label=Token;secret"`
-  - `honey:"label=Mode;enum=nodes|pods;enum_as_warning;default=nodes"`
+- `honey:"label=Token;secret"`
+- `honey:"label=Mode;enum=nodes|pods;enum_as_warning;default=nodes"`
 
-## 2) Register provider and backend slice once
+## 2) Implement the provider factory
 
-In `internal/provider/<newbackend>/factory.go`, keep `searchrun.Register(...)` and implement:
+There is no `searchrun.Register(...)` function — a new backend is wired by explicit construction, following the pattern every existing provider uses (see `internal/provider/localprovider/factory.go` for the simplest real example).
+
+In `internal/provider/<newbackend>/factory.go`:
 
 ```go
-func (newbackendFactory) BackendKind() string { return "newbackend" }
-func (newbackendFactory) BackendSlicePtr(cfg *config.File) any { return &cfg.Backends.NewBackend }
+// ConfigProvider is the config dependency this provider needs — implemented
+// by configAdapter in internal/provider/all/all.go.
+type ConfigProvider interface {
+	NewBackends() []config.NewBackend
+	NewBackendSlicePtr() *[]config.NewBackend
+	SetNewBackends([]config.NewBackend)
+}
+
+func NewFactory(cfg ConfigProvider) searchrun.ProviderFactory {
+	searchrun.RegisterCRUD(newbackendCRUD{cfg: cfg}) // enables web CRUD for this backend kind
+	return newbackendFactory{cfg: cfg}
+}
+
+type newbackendFactory struct{ cfg ConfigProvider }
+
+// searchrun.ProviderFactory (required):
+func (f newbackendFactory) FromConfig(_ searchrun.ProviderOverrides) []hosts.Backend { /* ... */ }
+func (f newbackendFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend      { /* ... */ }
+func (f newbackendFactory) BackendRows() []config.BackendRow                        { /* ... */ }
+
+// searchrun.BackendConfigRegistry (required for web CRUD / schema to find this backend kind):
+func (f newbackendFactory) BackendKind() string { return "newbackend" }
+func (f newbackendFactory) BackendSlicePtr() any { return f.cfg.NewBackendSlicePtr() }
+
+var (
+	_ searchrun.ProviderFactory       = newbackendFactory{}
+	_ searchrun.BackendConfigRegistry = newbackendFactory{}
+)
 ```
 
-This is the single source of truth for backend-kind registration.  
-Web CRUD (`/api/v1/config/backends/...`) uses this central registry via `searchrun`.
+Then, in `internal/provider/all/all.go`:
 
-Also ensure package import is present in `internal/provider/all/all.go` so `init()` runs.
+1. Add `NewBackends()`, `NewBackendSlicePtr()`, and `SetNewBackends(...)` methods to `configAdapter`, each calling `config.Get()` (copy the `AWSBackends`/`AWSBackendSlicePtr`/`SetAWSBackends` trio as a template).
+2. Append `newbackend.NewFactory(adapter)` to the slice returned by `Factories(deps Deps)`.
+
+There is no blank-import/`init()` auto-registration to rely on — the factory only exists in the running binary once it's explicitly added to that slice.
 
 ## 3) Wire search/provider behavior
 
-Add provider implementation in `internal/provider/<newbackend>` and wire flags/defaults in `searchrun` paths as needed so:
+Implement `FromConfig`/`Default`/`BackendRows` in `internal/provider/<newbackend>` so:
 
 - `honey search --provider <newbackend>` works
 - `/api/v1/search` resolves this backend
+
+If the backend should support the Docker auto-discover second pass (see [Docker auto-discover](./docker-auto-discover.md)), add a `DockerDiscover config.DockerDiscover` field to `NewBackend` and wrap the returned backend with `searchrun.WithDockerDiscover(backend, searchrun.MergeDockerDiscover(f.cfg.DockerDiscover(), b.DockerDiscover))` — see `localprovider/factory.go` for the exact pattern.
 
 ## 4) Schema is generated from tags
 

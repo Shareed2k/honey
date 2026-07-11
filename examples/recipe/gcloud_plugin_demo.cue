@@ -1,14 +1,16 @@
 // Demo recipe for the gcloud Docker plugin.
 //
-//   honey cue-exec --execute examples/recipe/gcloud_plugin_demo.cue <search-filter>
+//   honey cue-exec --execute examples/recipe/gcloud_plugin_demo.cue
 //
-// Requires plugins.enabled: true and the gcloud plugin installed.
+// Requires plugins.enabled: true and the gcloud plugin installed. Steps
+// target host: "_" (local-only) — runtime: docker plugins always execute in
+// a container on the operator machine and never touch a target host, so no
+// search backend or matching host record is needed at all.
 recipe: {
 	name: "gcloud-plugin-demo"
 	steps: [
 		{
-			host: "localhost"
-			name: "list-compute-instances"
+			host: "_"
 			plugin: {
 				id:     "gcloud"
 				action: "compute_list"
@@ -17,11 +19,9 @@ recipe: {
 					zone:    "us-central1-a"
 				}
 			}
-			register: "gcp_data"
 		},
 		{
-			host: "localhost"
-			name: "list-storage-buckets"
+			host: "_"
 			plugin: {
 				id:     "gcloud"
 				action: "storage_ls"

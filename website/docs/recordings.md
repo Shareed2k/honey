@@ -147,6 +147,9 @@ API endpoints:
 
 - `GET /api/v1/recordings` — list available recordings
 - `POST /api/v1/recordings/play` — fetch payload for browser replay
+- `DELETE /api/v1/recordings/{file_name}` — delete a recording
+- `POST /api/v1/recordings/summarize` — AI summary of a recording
+- `GET /api/v1/recordings/{id}/failed-hosts` — hosts that failed in a recorded run
 
 ---
 

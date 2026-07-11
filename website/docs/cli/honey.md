@@ -29,11 +29,14 @@ Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox
 
 * [honey alert](honey_alert.md)	 - Alert investigation tools
 * [honey app](honey_app.md)	 - Manage and connect to application proxies
+* [honey audit](honey_audit.md)	 - Inspect the audit log
 * [honey backends](honey_backends.md)	 - List backends defined in the honey config file
 * [honey completion](honey_completion.md)	 - Generate the autocompletion script for the specified shell
 * [honey config](honey_config.md)	 - Manage honey configuration
 * [honey cue-exec](honey_cue-exec.md)	 - Resolve a CUE recipe against search results and optionally run steps over SSH
 * [honey cue-validate](honey_cue-validate.md)	 - Validate a CUE remote recipe (commands and/or SFTP put/get steps)
+* [honey device](honey_device.md)	 - Manage device mTLS enrollment
+* [honey doctor](honey_doctor.md)	 - Check honey installation health: config, plugins, OPA policy, SSH key, and more
 * [honey egress](honey_egress.md)	 - Route traffic through a honey host via SOCKS5 (VPN-like exit)
 * [honey exec](honey_exec.md)	 - Run a shell command on matching hosts in parallel
 * [honey inventory](honey_inventory.md)	 - Print Ansible-compatible JSON dynamic inventory from the same search as honey search

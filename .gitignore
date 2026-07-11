@@ -6,6 +6,7 @@ website/.npm-cache/
 website/.npm-tmp/
 
 docs/*
+dist/
 
 webui/node_modules/
 contrib/ansible/inventory_plugins/__pycache__

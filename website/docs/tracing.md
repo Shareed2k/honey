@@ -4,6 +4,10 @@ title: Distributed Tracing
 slug: /tracing
 ---
 
+:::warning Not currently wired into any CLI command
+`internal/engine.InitTracer` implements everything described on this page and is covered by its own unit test, but no command path (`cue-exec`, `web`, or otherwise) calls it. Setting `OTEL_EXPORTER_OTLP_ENDPOINT` and running `honey cue-exec` today produces **no traces** — `otel.Tracer("honey")` resolves to OpenTelemetry's default no-op provider. This page describes the intended design once a CLI entry point calls `InitTracer` at startup; treat it as a design reference, not a working feature, until that wiring lands.
+:::
+
 Honey supports **OpenTelemetry Distributed Tracing**, allowing you to visualize your recipe pipelines and host executions as flamegraphs in observability platforms like Jaeger, Grafana Tempo, or Honeycomb.
 
 Tracing provides immediate visibility into:

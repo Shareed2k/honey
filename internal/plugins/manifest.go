@@ -97,6 +97,26 @@ func (d DockerRuntime) effectiveMaxBackoff() (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
+// expandVolumeHostPath expands a leading "~" (bare or "~/...") in a
+// docker.volumes bind spec's host-path segment to the current user's home
+// directory. Docker's own API has no shell to do this — passed through
+// literally, "~/..." fails validation as an invalid *named volume* rather
+// than the host directory the manifest author meant.
+func expandVolumeHostPath(spec string) (string, error) {
+	hostPath, rest, ok := strings.Cut(spec, ":")
+	if !ok {
+		return spec, nil // malformed; isValidBindSpec reports it
+	}
+	if hostPath == "~" || strings.HasPrefix(hostPath, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand ~ in volume host path: %w", err)
+		}
+		hostPath = home + strings.TrimPrefix(hostPath, "~")
+	}
+	return hostPath + ":" + rest, nil
+}
+
 func isValidBindSpec(v string) bool {
 	parts := strings.Split(v, ":")
 	if len(parts) < 2 || len(parts) > 3 {
@@ -131,9 +151,14 @@ func loadManifest(path string) (Manifest, error) {
 		if m.Docker == nil || strings.TrimSpace(m.Docker.Image) == "" {
 			return m, fmt.Errorf("manifest %s: runtime: docker requires docker.image", path)
 		}
-		for _, v := range m.Docker.Volumes {
-			if !isValidBindSpec(v) {
-				return m, fmt.Errorf("manifest %s: invalid docker.volumes entry %q (want \"host_path:container_path[:ro|rw]\")", path, v)
+		for i, v := range m.Docker.Volumes {
+			expanded, err := expandVolumeHostPath(v)
+			if err != nil {
+				return m, fmt.Errorf("manifest %s: docker.volumes: %w", path, err)
+			}
+			m.Docker.Volumes[i] = expanded
+			if !isValidBindSpec(expanded) {
+				return m, fmt.Errorf("manifest %s: invalid docker.volumes entry %q (want \"host_path:container_path[:ro|rw]\")", path, expanded)
 			}
 		}
 	}

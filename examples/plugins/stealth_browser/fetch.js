@@ -13,7 +13,13 @@ if (!url) {
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     try {
-        await page.goto(url, { waitUntil: 'networkidle' });
+        // 'networkidle' waits for zero network activity for 500ms — sites
+        // with persistent background beacons/polling (common on
+        // bot-detection/analytics-heavy pages) never reach it and this
+        // reliably times out. 'domcontentloaded' fires once the DOM is
+        // parsed; the explicit waitForTimeout below still gives
+        // Cloudflare/Turnstile challenges time to resolve afterward.
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
         // Wait 5 seconds for Cloudflare/Turnstile challenges to resolve
         await page.waitForTimeout(5000); 
         

@@ -74,6 +74,7 @@ const schemaSource = `
 	run_as?:  string
 	command?: string
 	interpreter?: string
+	templated?: bool
 	render?:  string
 	put?: close({
 		local:  string
@@ -128,6 +129,8 @@ const schemaSource = `
 		id:     string
 		action: string
 		config?: {...}
+		kv_key?:         string
+		kv_key_per_host?: bool
 	})
 	tunnel?: close({
 		mode?: string

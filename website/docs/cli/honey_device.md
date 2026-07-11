@@ -1,16 +1,16 @@
 ---
-id: honey_plugins
-title: honey plugins
+id: honey_device
+title: honey device
 ---
 
-## honey plugins
+## honey device
 
-Manage WASM plugins
+Manage device mTLS enrollment
 
 ### Options
 
 ```
-  -h, --help   help for plugins
+  -h, --help   help for device
 ```
 
 ### Options inherited from parent commands
@@ -28,7 +28,5 @@ Manage WASM plugins
 ### SEE ALSO
 
 * [honey](honey.md)	 - DevOps tool to help find an instance in sea of clouds
-* [honey plugins inspect](honey_plugins_inspect.md)	 - Show manifest, capabilities, and effective network policy for a plugin
-* [honey plugins install](honey_plugins_install.md)	 - Install a plugin from a URL, archive, or local directory
-* [honey plugins list](honey_plugins_list.md)	 - Show plugin id, capabilities, and path
+* [honey device enroll-code](honey_device_enroll-code.md)	 - Mint a one-time device enrollment code and print a QR to scan from the app
 

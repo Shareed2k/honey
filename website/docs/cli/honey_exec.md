@@ -32,6 +32,7 @@ honey exec &lt;target&gt; &lt;command&gt; [flags]
       --aws-profile string            AWS shared config profile
       --aws-region string             AWS region (default: from profile/env)
       --backends string               Comma-separated backend names (YAML backends.*.name); only those entries run
+      --check                         Analyze command risk and print the decision without executing
       --consul-addr string            Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)
       --consul-datacenter string      Consul datacenter
       --consul-token string           Consul ACL token (or CONSUL_HTTP_TOKEN)
@@ -50,6 +51,7 @@ honey exec &lt;target&gt; &lt;command&gt; [flags]
       --k8s-mode string               Kubernetes search mode: nodes or pods (default "pods")
       --kube-context string           Kubernetes context override
       --kubeconfig string             Path to kubeconfig file
+      --max-output-bytes int          Limit output capture per host (bytes). Default is -1 (unlimited). 0 uses the 6000-byte legacy default (default -1)
       --name string                   Substring filter on instance/node/pod name (case-insensitive)
       --name-regex string             Regex filter on name (overrides --name substring)
   -o, --output string                 Output format: text or json (default "text")
@@ -65,6 +67,7 @@ honey exec &lt;target&gt; &lt;command&gt; [flags]
       --retry int                     Retry attempts per host (1 disables retries) (default 1)
       --run-as string                 Run command as this remote user via sudo -n
       --shell string                  Command shell: auto, sh, bash, raw, powershell (default "auto")
+      --shellcheck                    With --check, also run shellcheck if installed
       --ssh-user string               Default SSH user for connect actions (defaults to config or OS user)
       --timeout duration              Per-host command timeout (e.g. 10s, 2m); 0 disables
       --truenas-api-key string        TrueNAS API key (or TRUENAS_API_KEY)

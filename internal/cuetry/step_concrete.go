@@ -20,6 +20,7 @@ type CommandStep struct {
 	RemoteExec
 	Command     string `json:"command,omitempty"`
 	Interpreter string `json:"interpreter,omitempty"`
+	Templated   bool   `json:"templated,omitempty"`
 }
 
 // Kind returns the step kind identifier.
@@ -29,7 +30,14 @@ func (s *CommandStep) Kind() string { return KindCommand }
 func (s *CommandStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *CommandStep) Validate(_ StepValidateCtx) error { return nil }
+func (s *CommandStep) Validate(_ StepValidateCtx) error {
+	if s.Templated {
+		if err := validateTemplateSyntax(s.Command); err != nil {
+			return fmt.Errorf("command: %w", err)
+		}
+	}
+	return nil
+}
 
 var _ RemoteStep = (*CommandStep)(nil)
 
@@ -43,6 +51,7 @@ type ScriptStep struct {
 	RemoteExec
 	Script      *RecipeFileTransfer `json:"script,omitempty"`
 	Interpreter string              `json:"interpreter,omitempty"`
+	Templated   bool                `json:"templated,omitempty"`
 }
 
 // Kind returns the step kind identifier.
@@ -52,6 +61,9 @@ func (s *ScriptStep) Kind() string { return KindScript }
 func (s *ScriptStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
+// Templated is not syntax-checked here (unlike CommandStep): the rendered
+// body is the local script *file's content*, not a field available at
+// recipe-parse time — a bad template only surfaces at render/execute time.
 func (s *ScriptStep) Validate(_ StepValidateCtx) error {
 	if s.Script == nil {
 		return fmt.Errorf("script step requires a script file transfer")
@@ -144,6 +156,11 @@ func (s *PluginStep) Validate(_ StepValidateCtx) error {
 	}
 	if strings.TrimSpace(s.Plugin.Action) == "" {
 		return fmt.Errorf("plugin.action is required")
+	}
+	if key := strings.TrimSpace(s.Plugin.KVKey); key != "" {
+		if err := stepkvValidateKey(key); err != nil {
+			return fmt.Errorf("plugin.kv_key %q: %w", key, err)
+		}
 	}
 	return nil
 }

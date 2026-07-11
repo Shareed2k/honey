@@ -23,6 +23,7 @@ Use `honey search --provider <id>` to limit to one type. YAML backend lists use 
 | TrueNAS SCALE | `truenas` | [TrueNAS](/providers/truenas) |
 | Static hosts | `local` | [Local](/providers/local) |
 | Docker Engine | `docker` | [Docker](/providers/docker) |
+| Remote honey server | `honey` | [Honey](/providers/honey) |
 
 ## Config file
 

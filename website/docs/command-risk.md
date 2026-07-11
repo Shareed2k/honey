@@ -96,7 +96,8 @@ Python detectors:
 | `subprocess.run(["rm","-rf","/etc"])` | `DELETE_ROOT_PATH` | **critical** |
 | `shutil.rmtree("/")` | `PYTHON_RMTREE_SYSTEM_PATH` | **critical** |
 | `shutil.rmtree("/tmp/x")` | `PYTHON_RMTREE` | high |
-| `os.remove("/etc/passwd")` | `PYTHON_DELETE_SYSTEM_PATH` | **critical** |
+| `os.remove("/etc")` | `PYTHON_DELETE_SYSTEM_PATH` | **critical** |
+| `os.remove("/etc/passwd")` | `PYTHON_FILE_DELETE` (exact-path match only — a *file inside* a system dir is not flagged critical) | medium |
 | `open("/dev/sda","wb")` | `DD_WRITE_BLOCK_DEVICE` | **critical** |
 | `eval(user_input)` | `PYTHON_DYNAMIC_EXEC` | medium |
 | `os.system(cmd)` (runtime-built) | `PYTHON_DYNAMIC_SHELL_EXEC` | medium |
@@ -365,6 +366,10 @@ explanation}` for display only and is **excluded** from every allow/deny
 decision. The advisor is a pluggable seam (`Advisor` interface), so a future
 local ONNX / trained command-risk classifier can replace the LLM without
 changing callers.
+
+Currently only wired into **`honey exec --check`** — `cue-exec --check` and
+the web dry-run risk-assessment path don't attach an LLM advisory yet, even
+with `HONEY_RISK_LLM=1` set.
 
 ## In a recipe
 

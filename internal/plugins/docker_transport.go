@@ -63,6 +63,33 @@ type dockerTransport struct {
 	// (docker_restart.go) is interrupted even if the caller's context (e.g.
 	// context.Background()) never gets cancelled on its own.
 	cancel context.CancelFunc
+
+	// lifecycleCtx is the same internally-derived context as cancel guards,
+	// stored so ensureStarted can hand it to startWatching regardless of
+	// which per-call ctx triggered the first-use start — a per-call ctx is
+	// cancelled once that call returns, which would otherwise kill the
+	// crash-watch goroutine immediately after the very first call.
+	lifecycleCtx context.Context
+
+	// startMu guards lazy first-use startup: a plugin discovered on disk
+	// (manifest.yaml present) should not pull/create/start a container until
+	// a recipe actually calls it — many discovered plugins (e.g. the aws/
+	// gcloud/duckdb example plugins) are never referenced by a given run, and
+	// eagerly starting every one of them left stray running containers and
+	// required a reachable Docker daemon just to load plugins the run never
+	// touches. started stays false until the first successful ensureStarted.
+	startMu sync.Mutex
+	started bool
+
+	// onStarted is called once, after a successful first-use start, with the
+	// transport's lifecycleCtx — production always sets this to
+	// t.startWatching (newDockerTransport). A seam so unit tests can exercise
+	// ensureStarted's create/dedup/retry logic without spawning the real
+	// crash-watch goroutine, which calls the live Docker API and would
+	// violate this package's no-real-Docker-daemon unit test convention. Left
+	// nil, ensureStarted simply skips watching (used only by tests that
+	// construct a dockerTransport directly).
+	onStarted func(context.Context)
 }
 
 func (t *dockerTransport) setRestarting(v bool) {
@@ -94,6 +121,9 @@ type dockerTransportConfig struct {
 	Volumes            []string          // static bind mounts from manifest.Docker.Volumes, Docker bind syntax
 }
 
+// newDockerTransport validates the plugin's cue source and prepares a Docker
+// client, but does not pull/create/start a container — that's deferred to
+// ensureStarted on the transport's first real call (see dockerTransport.started).
 func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*dockerTransport, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
@@ -105,28 +135,50 @@ func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*docker
 		return nil, err
 	}
 
-	containerID, addr, err := createAndStart(ctx, cli, cfg)
-	if err != nil {
-		cli.Close()
-		return nil, err
-	}
-
 	// internalCtx is derived from the caller's ctx but owned by the
 	// transport itself: Close cancels it directly (see Close below) so the
 	// watch/restart lifecycle can always be interrupted, regardless of
 	// whether the caller's own ctx ever gets cancelled.
 	internalCtx, cancel := context.WithCancel(ctx)
 	dt := &dockerTransport{
-		cli:         cli,
-		cue:         pc,
-		httpClient:  &http.Client{},
-		createCfg:   cfg,
-		containerID: containerID,
-		addr:        addr,
-		cancel:      cancel,
+		cli:          cli,
+		cue:          pc,
+		httpClient:   &http.Client{},
+		createCfg:    cfg,
+		cancel:       cancel,
+		lifecycleCtx: internalCtx,
 	}
-	dt.startWatching(internalCtx)
+	dt.onStarted = dt.startWatching
 	return dt, nil
+}
+
+// ensureStarted pulls/creates/starts the plugin's container on first use and
+// begins crash-watching it. A no-op on every call after the first successful
+// start. createFn is a seam so tests can exercise this without a real Docker
+// daemon; production callers always pass a closure over createAndStart.
+// startMu (not the RWMutex guarding containerID/addr) serializes this so
+// concurrent first calls to the same plugin don't race to create two
+// containers — a failed attempt is not remembered, so the next call retries
+// rather than permanently wedging the plugin on a transient daemon hiccup.
+func (t *dockerTransport) ensureStarted(ctx context.Context, createFn createAndStartFunc) error {
+	t.startMu.Lock()
+	defer t.startMu.Unlock()
+	if t.started {
+		return nil
+	}
+	containerID, addr, err := createFn(ctx)
+	if err != nil {
+		return err
+	}
+	t.mu.Lock()
+	t.containerID = containerID
+	t.addr = addr
+	t.mu.Unlock()
+	if t.onStarted != nil {
+		t.onStarted(t.lifecycleCtx)
+	}
+	t.started = true
+	return nil
 }
 
 // createAndStart pulls (if needed), creates, starts a plugin container and
@@ -343,6 +395,11 @@ func pingReady(ctx context.Context, addr string) bool {
 // Both branches share execAction (evalAction against plugin.cue + POST to
 // honey-plugin-init over HTTP) since that part of the flow is identical.
 func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []byte) (int, []byte, error) {
+	if err := t.ensureStarted(ctx, func(ctx context.Context) (string, string, error) {
+		return createAndStart(ctx, t.cli, t.createCfg)
+	}); err != nil {
+		return 0, nil, fmt.Errorf("plugins: start container on first use: %w", err)
+	}
 	if export == "execute_step" {
 		return t.callExecuteStep(ctx, inBytes)
 	}
@@ -535,6 +592,10 @@ func nonZeroExitMessage(resp apiv1.ExecResponse) string {
 // closing stopWatch alone only unblocks watchLoop's idle select, not a
 // backoff.Retry call already underway inside restart.
 func (t *dockerTransport) Close(ctx context.Context) error {
+	t.startMu.Lock()
+	started := t.started
+	t.startMu.Unlock()
+
 	t.mu.Lock()
 	if t.stopWatch != nil {
 		close(t.stopWatch)
@@ -547,5 +608,10 @@ func (t *dockerTransport) Close(ctx context.Context) error {
 	}
 
 	defer t.cli.Close()
+	if !started {
+		// Never called: no container was ever created, so there's nothing
+		// to stop/remove.
+		return nil
+	}
 	return stopAndRemoveContainer(ctx, t.cli, t.cli, id)
 }

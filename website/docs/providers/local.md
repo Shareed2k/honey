@@ -40,7 +40,7 @@ backends:
 | `name` (backend) | Yes |
 | `hosts[].name` | Yes |
 | `hosts[].primary_ip` | Yes |
-| `hosts[].extra_ips`, `zone`, `region`, `meta` | No |
+| `hosts[].extra_ips`, `zone`, `region`, `meta`, `ssh_user` | No |
 
 Optional per-backend **`docker_discover`** (SSH to each host and list containers).
 

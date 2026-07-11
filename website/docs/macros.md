@@ -8,6 +8,9 @@ Honey macros let you define reusable named operations in a **honeyfile** manifes
 ## Quick start
 
 ```bash
+# Scaffold a starter honeyfile.yaml in the current directory
+honey macros init
+
 # List macros in the nearest honeyfile.yaml
 honey macros --list
 
@@ -19,7 +22,14 @@ honey macros restart-nginx --dry-run
 
 # Use an explicit file
 honey macros --file ops/honeyfile.yaml restart-nginx
+
+# JSON output for --list / --dry-run
+honey macros --list -o json
 ```
+
+`honey macros init` scaffolds a `honeyfile.yaml` with one example macro of each kind (including `egress`, below). Flags: `--file` (output path), `--force` (overwrite an existing file). See [`honey macros init`](./cli/honey_macros_init.md).
+
+The top-level **`-o`/`--output`** flag (`text` default, or `json`) controls `--list`/`--dry-run` output — this is distinct from the per-`exec`-macro `output` field described below.
 
 CLI reference: [`honey macros`](./cli/honey_macros.md)
 
@@ -50,6 +60,7 @@ Honey looks for `honeyfile.yaml` or `honeyfile.yml` in the current directory. Ov
 | `logs` | Stream logs from matching hosts |
 | `app` | Open an HTTP app proxy in the browser |
 | `tunnel` | Start a TCP proxy tunnel for an app |
+| `egress` | Route local traffic through a honey-managed host (VPN-like exit) |
 
 ## exec
 
@@ -193,6 +204,32 @@ Starts a TCP proxy tunnel for a configured app and keeps it running.
 | Field | Type | Description |
 |-------|------|-------------|
 | `app` | string | App name from `apps.*` in honey config |
+
+## egress
+
+Routes local traffic through a honey-managed host — a VPN-like exit, built on the same tunnel/SOCKS machinery as recipe `tunnel:` steps (see [CUE Recipes — SOCKS](./cue-recipes.md#jump-host--many-internal-services-socks)).
+
+```yaml
+    corp-vpn:
+      kind: egress
+      host: "corp-bastion"
+      port: 1080
+      auto_proxy: true
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `host` | string | Single exit host (mutually exclusive with `hosts`) |
+| `hosts` | list | Multiple candidate exit hosts |
+| `port` | int | Local SOCKS/listen port |
+| `bind` | string | Local bind address |
+| `tun` | bool | Use a Layer-3 tun device instead of SOCKS |
+| `auto_proxy` | bool | Automatically configure the OS/browser proxy to use this egress |
+| `bypass` | list | Hosts/CIDRs to exclude from the proxy |
+
+One of `host` or `hosts` is required.
 
 ## Host targeting
 

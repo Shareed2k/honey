@@ -32,6 +32,29 @@ var blockedTemplateFuncs = map[string]struct{}{
 	"randAlpha": {}, "randAlphaNum": {}, "randAscii": {}, "randBytes": {}, "randInt": {}, "randNumeric": {}, "randString": {}, "uuidv4": {},
 }
 
+// validateTemplateSyntax parses body as a Go template without executing it —
+// used at recipe-validate time (e.g. templated: true command/script steps),
+// where render-time data like KV/prior-step-output isn't available yet, to
+// still catch malformed {{ }} syntax early instead of only at execute time.
+// Registers the same function names templated command/script rendering will
+// actually use (see internal/engine's use of LoopTemplateFuncMap) — nil
+// store/capture is fine here since Parse only needs the function names to
+// exist, it never calls them.
+func validateTemplateSyntax(body string) error {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return fmt.Errorf("cuetry: template body is empty")
+	}
+	funcs := templateFuncMap(nil)
+	for name, fn := range LoopTemplateFuncMap(nil, nil) {
+		funcs[name] = fn
+	}
+	if _, err := template.New("recipe").Funcs(funcs).Parse(body); err != nil {
+		return fmt.Errorf("cuetry: template parse: %w", err)
+	}
+	return nil
+}
+
 // RenderTemplate evaluates a Go text/template with slim-sprig.
 func RenderTemplate(opts RenderTemplateOpts) (string, error) {
 	body := strings.TrimSpace(opts.Template)

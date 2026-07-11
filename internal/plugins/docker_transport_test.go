@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,7 +63,7 @@ func newTestDockerTransport(t *testing.T, addr string, cueSource string) *docker
 	if err != nil {
 		t.Fatalf("newPluginCue: %v", err)
 	}
-	return &dockerTransport{addr: addr, cue: pc, httpClient: http.DefaultClient}
+	return &dockerTransport{addr: addr, cue: pc, httpClient: http.DefaultClient, started: true}
 }
 
 func TestDockerTransport_CallRaw_EnvReachesRequestNotArgv(t *testing.T) {
@@ -411,6 +412,129 @@ func TestDockerTransport_CallRaw_ExecuteStepShimErrorStillBecomesGoError(t *test
 	}
 	if pe.Error == "" {
 		t.Fatal("expected PluginError.Error to be set")
+	}
+}
+
+// fakeCreateAndStart lets ensureStarted's lazy-first-use logic be tested
+// without a real Docker daemon: same seam shape docker_restart_test.go
+// already uses for restart's createAndStartFunc.
+type fakeCreateAndStart struct {
+	mu                    sync.Mutex
+	calls                 int
+	failuresBeforeSuccess int
+}
+
+func (f *fakeCreateAndStart) createAndStart(context.Context) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.calls <= f.failuresBeforeSuccess {
+		return "", "", errors.New("simulated create failure")
+	}
+	return "container-id", "http://container-addr.invalid:49094", nil
+}
+
+func (f *fakeCreateAndStart) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func TestDockerTransport_EnsureStarted_NotCalledAtConstruction(t *testing.T) {
+	pc, err := newPluginCue([]byte(testDockerCueSource))
+	if err != nil {
+		t.Fatalf("newPluginCue: %v", err)
+	}
+	dt := &dockerTransport{cue: pc, httpClient: http.DefaultClient}
+	if dt.started {
+		t.Fatal("expected started=false before any call — newDockerTransport must not create a container eagerly")
+	}
+	if dt.containerID != "" {
+		t.Fatalf("containerID=%q, want empty before first use", dt.containerID)
+	}
+}
+
+func TestDockerTransport_EnsureStarted_CreatesContainerOnlyOnce(t *testing.T) {
+	pc, err := newPluginCue([]byte(testDockerCueSource))
+	if err != nil {
+		t.Fatalf("newPluginCue: %v", err)
+	}
+	// onStarted intentionally left nil: ensureStarted's create/dedup logic is
+	// under test here, not the real crash-watch goroutine (which calls the
+	// live Docker API — see dockerTransport.onStarted's doc comment).
+	dt := &dockerTransport{cue: pc, httpClient: http.DefaultClient, lifecycleCtx: context.Background()}
+	fake := &fakeCreateAndStart{}
+
+	for range 3 {
+		if err := dt.ensureStarted(context.Background(), fake.createAndStart); err != nil {
+			t.Fatalf("ensureStarted: %v", err)
+		}
+	}
+
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("createAndStart called %d times, want exactly 1", got)
+	}
+	if !dt.started {
+		t.Fatal("expected started=true after a successful ensureStarted")
+	}
+	if dt.containerID != "container-id" || dt.addr != "http://container-addr.invalid:49094" {
+		t.Fatalf("containerID=%q addr=%q not populated from createAndStart's result", dt.containerID, dt.addr)
+	}
+}
+
+func TestDockerTransport_EnsureStarted_RetriesAfterFailureInsteadOfWedging(t *testing.T) {
+	pc, err := newPluginCue([]byte(testDockerCueSource))
+	if err != nil {
+		t.Fatalf("newPluginCue: %v", err)
+	}
+	dt := &dockerTransport{cue: pc, httpClient: http.DefaultClient, lifecycleCtx: context.Background()}
+	fake := &fakeCreateAndStart{failuresBeforeSuccess: 1}
+
+	if err := dt.ensureStarted(context.Background(), fake.createAndStart); err == nil {
+		t.Fatal("expected the first (simulated failure) call to return an error")
+	}
+	if dt.started {
+		t.Fatal("expected started=false after a failed attempt")
+	}
+
+	if err := dt.ensureStarted(context.Background(), fake.createAndStart); err != nil {
+		t.Fatalf("expected the retry to succeed, got: %v", err)
+	}
+	if !dt.started {
+		t.Fatal("expected started=true after the retry succeeds")
+	}
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("createAndStart called %d times, want 2 (1 failure + 1 success)", got)
+	}
+}
+
+func TestDockerTransport_EnsureStarted_ConcurrentCallsCreateOnlyOneContainer(t *testing.T) {
+	pc, err := newPluginCue([]byte(testDockerCueSource))
+	if err != nil {
+		t.Fatalf("newPluginCue: %v", err)
+	}
+	dt := &dockerTransport{cue: pc, httpClient: http.DefaultClient, lifecycleCtx: context.Background()}
+	fake := &fakeCreateAndStart{}
+
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() {
+			_ = dt.ensureStarted(context.Background(), fake.createAndStart)
+		})
+	}
+	wg.Wait()
+
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("createAndStart called %d times under concurrent first use, want exactly 1", got)
+	}
+}
+
+func TestDockerTransport_Close_NeverStartedIsNoop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	dt := &dockerTransport{cli: &client.Client{}, cancel: cancel, lifecycleCtx: ctx}
+
+	if err := dt.Close(context.Background()); err != nil {
+		t.Fatalf("Close on a never-started transport should be a no-op, got: %v", err)
 	}
 }
 

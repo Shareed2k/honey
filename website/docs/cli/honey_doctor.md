@@ -1,16 +1,23 @@
 ---
-id: honey_plugins
-title: honey plugins
+id: honey_doctor
+title: honey doctor
 ---
 
-## honey plugins
+## honey doctor
 
-Manage WASM plugins
+Check honey installation health: config, plugins, OPA policy, SSH key, and more
+
+```
+honey doctor [flags]
+```
 
 ### Options
 
 ```
-  -h, --help   help for plugins
+  -h, --help      help for doctor
+      --mcp       Include MCP-specific checks
+      --plugins   Include plugin checks
+      --web       Include web server listen-addr check
 ```
 
 ### Options inherited from parent commands
@@ -28,7 +35,4 @@ Manage WASM plugins
 ### SEE ALSO
 
 * [honey](honey.md)	 - DevOps tool to help find an instance in sea of clouds
-* [honey plugins inspect](honey_plugins_inspect.md)	 - Show manifest, capabilities, and effective network policy for a plugin
-* [honey plugins install](honey_plugins_install.md)	 - Install a plugin from a URL, archive, or local directory
-* [honey plugins list](honey_plugins_list.md)	 - Show plugin id, capabilities, and path
 

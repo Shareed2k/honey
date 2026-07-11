@@ -13,10 +13,10 @@ import (
 	"github.com/shareed2k/honey/internal/stepkv"
 )
 
-// TestResolvePostgresKVBaseKey ...
-func TestResolvePostgresKVBaseKey(t *testing.T) {
+// TestResolveStepKVBaseKey ...
+func TestResolveStepKVBaseKey(t *testing.T) {
 	t.Parallel()
-	key, err := cuetry.ResolvePostgresKVBaseKey("pg_activity", true, "db/primary:1")
+	key, err := cuetry.ResolveStepKVBaseKey("pg_activity", true, "db/primary:1")
 	if err != nil {
 		t.Fatal(err)
 	}
