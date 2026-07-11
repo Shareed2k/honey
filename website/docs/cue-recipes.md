@@ -4,7 +4,7 @@ title: CUE Recipes
 slug: /cue-recipes
 ---
 
-Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each step targets hosts from your current search and performs **exactly one** action: `command`, `put`, `get`, `script`, `agent_transfer`, `ai`, `plugin` (WASM — see [Plugin development](./plugins-development.md)), `tunnel` (operator-side port forward), or `k8s` (Kubernetes API — see [Kubernetes steps](#kubernetes-steps)).
+Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each step targets hosts from your current search and performs **exactly one** action: `command`, `put`, `get`, `script`, `agent_transfer`, `summarize`, `ai`, `plugin` (WASM — see [Plugin development](./plugins-development.md)), `tunnel` (operator-side port forward), or `k8s` (Kubernetes API — see [Kubernetes steps](#kubernetes-steps)).
 
 Use **`honey cue-validate`** to check a file, **`honey cue-exec`** to dry-run or execute (same host resolution as `honey search`). From the search TUI, press **r** (append `!` to the path to execute). The [Web UI](./web-ui.md) Recipes tab runs the same engine.
 
@@ -35,7 +35,7 @@ Each step has a `host` field resolved against search results:
 | Literal IP | Match `PrimaryIP` |
 | `"*"` | Every row with a `PrimaryIP` |
 | `"re:PATTERN"` | Go regexp (RE2) on `Name` (rows with IP only) |
-| `"_"` | Local only — required for `ai` steps |
+| `"_"` | Local only — required for `summarize`/`ai` steps |
 
 For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` selects the destination (each must match exactly one row).
 
@@ -50,7 +50,8 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 | `k8s` | Kubernetes API | Direct API calls: apply, delete, scale, rollout, get, exec, job — [Kubernetes steps](#kubernetes-steps) |
 | `put` / `get` | SFTP or k8s tar stream | Relative `local` paths from recipe directory |
 | `agent_transfer` | A→cloud→B | Needs honey config for `cloud_backend_ref` |
-| `ai` | Local (operator) | `host: "_"`; needs `OPENAI_API_KEY` when executing |
+| `summarize` | Local (operator) | `host: "_"`; terminal step only — must be last, at most one per recipe, nothing may depend on it; summarizes the whole run/ancestor chain; needs `OPENAI_API_KEY` when executing |
+| `ai` | Local (operator) | `host: "_"`; a single LLM completion, usable anywhere (any position, any number of times, other steps may depend on its output) — like `template:` but calling an LLM instead of rendering a template; optional `templated`; needs `OPENAI_API_KEY` when executing |
 | `recipe` | Local (operator) | Invoke a sub-recipe — [Sub-recipes](#sub-recipes) |
 
 Optional **`recipe.defaults`**: `run_as`, `env`, `secrets`, `kv_tunnel`, `max_parallel`, `ssh_port`, `ssh_private_key`, `k8s_debug_image`.
@@ -154,7 +155,7 @@ Example: [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/e
 
 - **`HONEY_STEP_ID`:** set on remote env when the step has an `id` (use to namespace shared KV keys).
 - **`kv_tunnel`:** one operator-side `stepkv` session for the whole run; see [KV tunnel](#recipe-kv-tunnel) below.
-- **Failure / skip:** if a step fails (or all hosts hit transient SSH errors), **descendants are skipped**. If an **`ai`** step becomes unreachable, the run **aborts**.
+- **Failure / skip:** if a step fails (or all hosts hit transient SSH errors), **descendants are skipped**. If a **`summarize`** step becomes unreachable, the run **aborts**.
 - **Web UI:** Recipes wizard → **Graph** tab shows the DAG (`POST /api/v1/recipes/validate-content` → `graph` field).
 
 Example: [`graph_parallel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/graph_parallel.cue).
@@ -194,7 +195,7 @@ Optional **`when: "<CEL expression>"`** on any step kind. The expression must ev
 |------|----------------|
 | `command`, `script`, `plugin`, `put`, `get` | Per expanded target host |
 | `agent_transfer` | Once on the **source** host (`dest.*` available in CEL) |
-| `ai` | Once locally (`host.name == "_"`; `steps` uses aggregated prior results) |
+| `summarize`, `ai` | Once locally (`host.name == "_"`; `steps` uses aggregated prior results) |
 
 ### Rules
 
@@ -751,7 +752,8 @@ Example: [`kafka_controller_rolling_restart.cue`](https://github.com/shareed2k/h
 
 - **Hooks** (`on_success` / `on_failure`): command/script/plugin only; local or remote follow-up per host. See [`honey cue-exec`](./cli/honey_cue-exec.md).
 - **`notify`:** optional per-step notifications after success ([nikoksr/notify](https://github.com/nikoksr/notify)).
-- **`ai`:** terminal summarizer after prior steps; optional `notify` and `when` (aggregated `steps` view).
+- **`summarize`:** terminal summarizer after prior steps — must be the last step in the recipe, at most one per recipe, and no other step may depend on it; sends the whole run's (or, in graph mode, its full ancestor chain's) combined output to the model in one request; optional `notify` and `when` (aggregated `steps` view).
+- **`ai`:** a single LLM completion, usable like any other step — any position, any number of times, and other steps may consume its output via `output`/`env_from`/`from_output` just like `template:`. Unlike `summarize:`, it has no built-in transcript aggregation; the prompt is sent as written, or rendered from prior step/KV data first via `templated: true` (see [Templated command/script steps](#templated-commandscript-steps) for the function reference — `ai:` reuses the same rendering). Optional `notify` and `when`.
 
 ## Loops and Matrix Execution
 
