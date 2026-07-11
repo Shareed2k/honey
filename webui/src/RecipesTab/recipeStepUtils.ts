@@ -5,6 +5,7 @@ export type RecipeStepKind =
   | 'command'
   | 'script'
   | 'ai'
+  | 'summarize'
   | 'template'
   | 'plugin'
   | 'put'
@@ -16,6 +17,7 @@ export const EDITABLE_KINDS = new Set<string>([
   'command',
   'script',
   'ai',
+  'summarize',
   'template',
   'plugin',
   'put',
@@ -26,7 +28,7 @@ export const EDITABLE_KINDS = new Set<string>([
 
 export const RETRY_KINDS = new Set(['command', 'script', 'plugin', 'put', 'get', 'tunnel']);
 
-export const NOTIFY_KINDS = new Set(['command', 'script', 'plugin', 'ai']);
+export const NOTIFY_KINDS = new Set(['command', 'script', 'plugin', 'ai', 'summarize']);
 
 /** Cloud providers for agent_transfer steps (matches files UI / cloudtransfer). */
 export const AGENT_TRANSFER_CLOUD_PROVIDERS = ['s3', 'googlecloudstorage'] as const;
@@ -41,6 +43,7 @@ export const ADD_STEP_KINDS: RecipeStepKind[] = [
   'tunnel',
   'agent_transfer',
   'ai',
+  'summarize',
   'template',
 ];
 
@@ -48,6 +51,7 @@ export const ADD_STEP_KINDS: RecipeStepKind[] = [
 export function stepKind(s: ParsedRecipeStep): string {
   if (s.command !== undefined) return 'command';
   if (s.script != null) return 'script';
+  if (s.summarize != null) return 'summarize';
   if (s.ai != null) return 'ai';
   if (s.template != null) return 'template';
   if (s.plugin != null) return 'plugin';
@@ -67,9 +71,9 @@ export function stepSupportsNotify(kind: string): boolean {
 }
 
 export function canAddStepKind(kind: RecipeStepKind, recipe: ParsedRecipe): boolean {
-  if (kind === 'ai' && recipe.steps.length > 0) {
-    const hasAI = recipe.steps.some((st) => st.ai != null);
-    if (hasAI) return false;
+  if (kind === 'summarize' && recipe.steps.length > 0) {
+    const hasSummarize = recipe.steps.some((st) => st.summarize != null);
+    if (hasSummarize) return false;
   }
   return true;
 }
@@ -94,6 +98,12 @@ export function defaultStepForKind(
         ...base,
         host: '_',
         ai: { prompt: 'Summarize the prior step output.' },
+      };
+    case 'summarize':
+      return {
+        ...base,
+        host: '_',
+        summarize: { prompt: 'Summarize the run.' },
       };
     case 'template':
       return {

@@ -18,7 +18,10 @@ env:
 tasks:
   lint:
     desc: Run Go linters and security checks
-    deps: [golint, govulncheck, gosec]
+    cmds:
+      - task: golint
+      - task: govulncheck
+      - task: gosec
 
   golint:
     desc: Run golangci-lint

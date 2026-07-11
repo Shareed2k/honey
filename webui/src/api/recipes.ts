@@ -122,12 +122,12 @@ export type StepKindOption = {
 };
 
 const preferredKindOrder = [
-  'command', 'script', 'put', 'get', 'template', 'plugin', 'tunnel', 'ai',
+  'command', 'script', 'put', 'get', 'template', 'plugin', 'tunnel', 'ai', 'summarize',
   'agent_transfer', 'docker', 'k8s', 'postgres', 'opensearch'
 ];
 
 const kindLabels: Record<string, string> = {
-  ai: 'AI', k8s: 'Kubernetes', postgres: 'Postgres', opensearch: 'OpenSearch', agent_transfer: 'Agent Transfer'
+  ai: 'AI', summarize: 'Summarize', k8s: 'Kubernetes', postgres: 'Postgres', opensearch: 'OpenSearch', agent_transfer: 'Agent Transfer'
 };
 
 function kindSortIndex(kind: string): number {

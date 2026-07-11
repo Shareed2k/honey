@@ -75,6 +75,7 @@ export type ParsedRecipeStep = {
   interpreter?: string;
   script?: ParsedRecipeFileTransfer;
   ai?: { model?: string; prompt?: string; system_prompt?: string; max_output_tokens?: number; max_input_chars?: number };
+  summarize?: { model?: string; prompt?: string; system_prompt?: string; max_output_tokens?: number; max_input_chars?: number };
   template?: ParsedRecipeStepTemplate;
   put?: ParsedRecipeFileTransfer;
   get?: ParsedRecipeFileTransfer;
