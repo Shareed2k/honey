@@ -116,6 +116,13 @@ const schemaSource = `
 		max_output_tokens?:  int
 		max_input_chars?:    int
 	})
+	ai?: close({
+		prompt:              string
+		system_prompt?:      string
+		model?:              string
+		max_output_tokens?:  int
+		max_input_chars?:    int
+	})
 	template?: close({
 		template: string
 		data?: {...}

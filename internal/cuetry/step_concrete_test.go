@@ -19,6 +19,7 @@ func TestStepValidate_RunAsUnsupportedKinds(t *testing.T) {
 		{"get", &GetStep{StepBase: StepBase{RunAs: "deploy"}}},
 		{"agent_transfer", &AgentTransferStep{StepBase: StepBase{RunAs: "deploy", Host: "a"}}},
 		{"summarize", &SummarizeStep{StepBase: StepBase{RunAs: "deploy", Host: MatchLocalAIHost}}},
+		{"ai", &AIStep{StepBase: StepBase{RunAs: "deploy", Host: MatchLocalAIHost}}},
 		{"template", &TemplateStep{StepBase: StepBase{RunAs: "deploy"}}},
 		{"tunnel", &TunnelStep{StepBase: StepBase{RunAs: "deploy"}}},
 		{"k8s", &K8sStep{StepBase: StepBase{RunAs: "deploy"}}},
@@ -70,6 +71,7 @@ func TestStepValidate_EnvUnsupportedKinds(t *testing.T) {
 	}{
 		{"agent_transfer", &AgentTransferStep{StepBase: StepBase{Env: map[string]string{"FOO": "bar"}, Host: "a"}}},
 		{"summarize", &SummarizeStep{StepBase: StepBase{Env: map[string]string{"FOO": "bar"}, Host: MatchLocalAIHost}}},
+		{"ai", &AIStep{StepBase: StepBase{Env: map[string]string{"FOO": "bar"}, Host: MatchLocalAIHost}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

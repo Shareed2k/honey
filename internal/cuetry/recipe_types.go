@@ -256,6 +256,15 @@ func (s *RecipeSummarize) ResolveSystemPrompt(configDefault string) string {
 	return DefaultRecipeAISystemPrompt
 }
 
+// RecipeAI configures a plain, freely-positionable local LLM-completion step (host must be "_").
+type RecipeAI struct {
+	Prompt          string `json:"prompt"`
+	SystemPrompt    string `json:"system_prompt,omitempty"`
+	Model           string `json:"model,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	MaxInputChars   int    `json:"max_input_chars,omitempty"`
+}
+
 // RecipeNotifyHTTP marks HTTP default JSON POST URLs (HONEY_NOTIFY_HTTP_URL) as selected in notify.services.
 type RecipeNotifyHTTP struct{}
 

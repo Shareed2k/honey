@@ -127,6 +127,10 @@ func previewForStep(s Step) string {
 		if v.Summarize != nil {
 			p = "summarize: " + strings.TrimSpace(v.Summarize.Prompt)
 		}
+	case *AIStep:
+		if v.AI != nil {
+			p = "ai: " + strings.TrimSpace(v.AI.Prompt)
+		}
 	case *TemplateStep:
 		if v.Template != nil {
 			p = strings.TrimSpace(v.Template.Template)

@@ -560,6 +560,54 @@ func (s *SummarizeStep) Validate(vc StepValidateCtx) error {
 var _ Step = (*SummarizeStep)(nil)
 
 // ---------------------------------------------------------------------------
+// ai (local) — no RemoteExec
+// ---------------------------------------------------------------------------
+
+// AIStep runs a single local LLM completion. Unlike summarize:, it has no
+// positional restriction, no at-most-one-per-recipe rule, and nothing stops
+// another step from depending on it — it behaves like template: with an LLM
+// call instead of a template render.
+type AIStep struct {
+	StepBase
+	AI        *RecipeAI `json:"ai,omitempty"`
+	Templated bool      `json:"templated,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *AIStep) Kind() string { return KindAI }
+
+// Clone returns a deep copy of the step (safe for loop fan-out mutation).
+func (s *AIStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields; shared rules run separately.
+func (s *AIStep) Validate(vc StepValidateCtx) error {
+	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on ai steps is not supported", i)
+	}
+	if len(s.Env) > 0 {
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for ai steps", i)
+	}
+	if strings.TrimSpace(s.Host) != MatchLocalAIHost {
+		return fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
+	}
+	if s.AI == nil {
+		return fmt.Errorf("cuetry: steps[%d]: internal ai step", i)
+	}
+	if strings.TrimSpace(s.AI.Prompt) == "" {
+		return fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
+	}
+	if s.Templated {
+		if err := validateTemplateSyntax(s.AI.Prompt); err != nil {
+			return fmt.Errorf("cuetry: steps[%d].ai.prompt: %w", i, err)
+		}
+	}
+	return nil
+}
+
+var _ Step = (*AIStep)(nil)
+
+// ---------------------------------------------------------------------------
 // opa (local) — no RemoteExec
 // ---------------------------------------------------------------------------
 
@@ -696,5 +744,6 @@ func init() {
 	RegisterStep(KindRecipe, []string{"recipe"}, func() Step { return &RecipeStep{} })
 	RegisterStep(KindAgentTransfer, []string{"agent_transfer"}, func() Step { return &AgentTransferStep{} })
 	RegisterStep(KindSummarize, []string{"summarize"}, func() Step { return &SummarizeStep{} })
+	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })
 	RegisterStep(KindOPA, []string{"opa"}, func() Step { return &OPAStep{} })
 }

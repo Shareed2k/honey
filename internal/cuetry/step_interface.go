@@ -40,6 +40,7 @@ const (
 	KindGet           = "get"
 	KindAgentTransfer = "agent_transfer"
 	KindSummarize     = "summarize"
+	KindAI            = "ai"
 	KindTemplate      = "template"
 	KindPlugin        = "plugin"
 	KindTunnel        = "tunnel"
