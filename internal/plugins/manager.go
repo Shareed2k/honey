@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -245,7 +246,11 @@ func resolveAllowedEnv(names []string) map[string]string {
 // locatePluginInitBinary finds the honey-plugin-init binary to bind-mount
 // into docker-runtime plugin containers: HONEY_PLUGIN_INIT_PATH env var if
 // set (also how tests_test.go/tests/integration point at a freshly-built
-// binary), otherwise alongside the running honey executable.
+// binary); otherwise alongside the running honey executable, preferring an
+// arch-suffixed binary (honey-plugin-init-linux-$GOARCH — how release
+// archives and the Homebrew formula ship it, one per target container
+// architecture) over the plain unsuffixed name (hand-built via `task
+// build-honey-plugin-init`, or HONEY_PLUGIN_INIT_PATH-adjacent setups).
 func locatePluginInitBinary() (string, error) {
 	if p := strings.TrimSpace(os.Getenv("HONEY_PLUGIN_INIT_PATH")); p != "" {
 		if err := validatePluginInitBinaryPath(p); err != nil {
@@ -257,9 +262,14 @@ func locatePluginInitBinary() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("plugins: locate honey-plugin-init: %w", err)
 	}
-	path := filepath.Join(filepath.Dir(exe), "honey-plugin-init")
+	dir := filepath.Dir(exe)
+	archPath := filepath.Join(dir, "honey-plugin-init-linux-"+runtime.GOARCH)
+	if validatePluginInitBinaryPath(archPath) == nil {
+		return archPath, nil
+	}
+	path := filepath.Join(dir, "honey-plugin-init")
 	if err := validatePluginInitBinaryPath(path); err != nil {
-		return "", fmt.Errorf("plugins: honey-plugin-init not found at %s (build it via `task build-honey-plugin-init` or set HONEY_PLUGIN_INIT_PATH): %w", path, err)
+		return "", fmt.Errorf("plugins: honey-plugin-init not found at %s or %s (build it via `task build-honey-plugin-init` or set HONEY_PLUGIN_INIT_PATH): %w", archPath, path, err)
 	}
 	return path, nil
 }
