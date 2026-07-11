@@ -51,14 +51,14 @@ func TestBuildStepGraph_waves(t *testing.T) {
 	}
 }
 
-func TestBuildStepGraph_aiCannotBeDependedOn(t *testing.T) {
+func TestBuildStepGraph_summarizeCannotBeDependedOn(t *testing.T) {
 	t.Parallel()
 	steps := wrapAll(
-		&AIStep{StepBase: StepBase{ID: "ai", Host: "_"}, AI: &RecipeAI{Prompt: "x"}},
-		&CommandStep{StepBase: StepBase{ID: "bad", Host: "*", Depends: []string{"ai"}}, Command: "true"},
+		&SummarizeStep{StepBase: StepBase{ID: "summarize", Host: "_"}, Summarize: &RecipeSummarize{Prompt: "x"}},
+		&CommandStep{StepBase: StepBase{ID: "bad", Host: "*", Depends: []string{"summarize"}}, Command: "true"},
 	)
 	_, err := BuildStepGraph(steps)
-	if err == nil || !strings.Contains(err.Error(), "ai") {
+	if err == nil || !strings.Contains(err.Error(), "summarize") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -71,7 +71,7 @@ recipe: {
 	type: "graph"
 	steps: [
 		{ id: "fetch", host: "*", command: "echo" },
-		{ id: "summarize", host: "_", depends: ["fetch"], ai: { prompt: "ok" } },
+		{ id: "summarize", host: "_", depends: ["fetch"], summarize: { prompt: "ok" } },
 	]
 }
 `

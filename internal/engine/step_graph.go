@@ -48,7 +48,7 @@ func StreamCueRecipeStepsGraph(ctx context.Context, run *CueRun, out chan<- Host
 			return err
 		}
 	}
-	if err := graphAbortIfAIUnreachable(sg, state); err != nil {
+	if err := graphAbortIfSummarizeUnreachable(sg, state); err != nil {
 		return err
 	}
 	for i, st := range state {
@@ -72,12 +72,12 @@ func StreamCueRecipeStepsGraph(ctx context.Context, run *CueRun, out chan<- Host
 	return nil
 }
 
-func graphAbortIfAIUnreachable(sg *cuetry.StepGraph, state []cuetry.StepRunState) error {
-	if sg.AIIndex < 0 {
+func graphAbortIfSummarizeUnreachable(sg *cuetry.StepGraph, state []cuetry.StepRunState) error {
+	if sg.SummarizeIndex < 0 {
 		return nil
 	}
-	if state[sg.AIIndex] == cuetry.StepRunSkipped {
-		return fmt.Errorf("ai step %q unreachable: a dependency failed or was skipped", sg.IndexToID[sg.AIIndex])
+	if state[sg.SummarizeIndex] == cuetry.StepRunSkipped {
+		return fmt.Errorf("summarize step %q unreachable: a dependency failed or was skipped", sg.IndexToID[sg.SummarizeIndex])
 	}
 	return nil
 }
@@ -192,7 +192,7 @@ func runGraphWave(ctx context.Context, run *CueRun, out chan<- HostExecResult, s
 		}(idx)
 	}
 	wg.Wait()
-	return graphAbortIfAIUnreachable(sg, state)
+	return graphAbortIfSummarizeUnreachable(sg, state)
 }
 
 func graphRunOneStep(ctx context.Context, run *CueRun, out chan<- HostExecResult, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, stateMu *sync.Mutex, historyMu *sync.Mutex, idx int) {

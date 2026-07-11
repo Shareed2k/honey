@@ -515,49 +515,49 @@ func (s *TemplateStep) Validate(vc StepValidateCtx) error {
 var _ Step = (*TemplateStep)(nil)
 
 // ---------------------------------------------------------------------------
-// ai (local) — no RemoteExec
+// summarize (local) — no RemoteExec
 // ---------------------------------------------------------------------------
 
-// AIStep runs the terminal local LLM summarizer (must be last; host must be "_").
-type AIStep struct {
+// SummarizeStep runs the terminal local LLM summarizer (must be last; host must be "_").
+type SummarizeStep struct {
 	StepBase
-	AI *RecipeAI `json:"ai,omitempty"`
+	Summarize *RecipeSummarize `json:"summarize,omitempty"`
 }
 
 // Kind returns the step kind identifier.
-func (s *AIStep) Kind() string { return KindAI }
+func (s *SummarizeStep) Kind() string { return KindSummarize }
 
 // Clone returns a deep copy of the step (safe for loop fan-out mutation).
-func (s *AIStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+func (s *SummarizeStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *AIStep) Validate(vc StepValidateCtx) error {
+func (s *SummarizeStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
 	if strings.TrimSpace(s.RunAs) != "" {
-		return fmt.Errorf("cuetry: steps[%d]: run_as on ai steps is not supported", i)
+		return fmt.Errorf("cuetry: steps[%d]: run_as on summarize steps is not supported", i)
 	}
 	if len(s.Env) > 0 {
-		return fmt.Errorf("cuetry: steps[%d]: env is not supported for ai steps", i)
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for summarize steps", i)
 	}
 	if vc.Mode == ExecutionModeLinear && i != vc.NumSteps-1 {
-		return fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
+		return fmt.Errorf("cuetry: steps[%d]: summarize step must be the last step in the recipe", i)
 	}
 	if i == 0 {
-		return fmt.Errorf("cuetry: steps[%d]: ai cannot be the first step; add at least one prior step", i)
+		return fmt.Errorf("cuetry: steps[%d]: summarize cannot be the first step; add at least one prior step", i)
 	}
 	if strings.TrimSpace(s.Host) != MatchLocalAIHost {
-		return fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
+		return fmt.Errorf("cuetry: steps[%d]: summarize step host must be %q", i, MatchLocalAIHost)
 	}
-	if s.AI == nil {
-		return fmt.Errorf("cuetry: steps[%d]: internal ai step", i)
+	if s.Summarize == nil {
+		return fmt.Errorf("cuetry: steps[%d]: internal summarize step", i)
 	}
-	if strings.TrimSpace(s.AI.Prompt) == "" {
-		return fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
+	if strings.TrimSpace(s.Summarize.Prompt) == "" {
+		return fmt.Errorf("cuetry: steps[%d].summarize.prompt is required", i)
 	}
 	return nil
 }
 
-var _ Step = (*AIStep)(nil)
+var _ Step = (*SummarizeStep)(nil)
 
 // ---------------------------------------------------------------------------
 // opa (local) — no RemoteExec
@@ -695,6 +695,6 @@ func init() {
 	RegisterStep(KindService, []string{"service"}, func() Step { return &ServiceStep{} })
 	RegisterStep(KindRecipe, []string{"recipe"}, func() Step { return &RecipeStep{} })
 	RegisterStep(KindAgentTransfer, []string{"agent_transfer"}, func() Step { return &AgentTransferStep{} })
-	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })
+	RegisterStep(KindSummarize, []string{"summarize"}, func() Step { return &SummarizeStep{} })
 	RegisterStep(KindOPA, []string{"opa"}, func() Step { return &OPAStep{} })
 }

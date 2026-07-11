@@ -109,7 +109,7 @@ const schemaSource = `
 		max_retries?:      int
 		agent_remote_dir?: string
 	})
-	ai?: close({
+	summarize?: close({
 		prompt:              string
 		system_prompt?:      string
 		model?:              string
@@ -555,7 +555,7 @@ func validateStepRetry(i int, b *StepBase, defaults *RecipeDefaults) error {
 }
 
 // validateStepEnvAndSecrets validates env/secrets syntax and the secrets
-// allow-list. env's own deny-list (agent_transfer, ai — only 2 of 19 kinds) is
+// allow-list. env's own deny-list (agent_transfer, summarize — only 2 of 19 kinds) is
 // enforced by those steps' own Validate() instead (see architecture review
 // candidate #7). secrets stays gated here: its allow-list is short (4 of 19
 // kinds), so this single check is already more concentrated than distributing

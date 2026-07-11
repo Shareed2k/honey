@@ -235,8 +235,8 @@ type RecipeStepTemplate struct {
 	Output   string         `json:"output,omitempty"`
 }
 
-// RecipeAI configures the terminal local LLM summarizer step (must be last in recipe; host must be "_").
-type RecipeAI struct {
+// RecipeSummarize configures the terminal local LLM summarizer step (must be last in recipe; host must be "_").
+type RecipeSummarize struct {
 	Prompt          string `json:"prompt"`
 	SystemPrompt    string `json:"system_prompt,omitempty"`
 	Model           string `json:"model,omitempty"`
@@ -244,11 +244,11 @@ type RecipeAI struct {
 	MaxInputChars   int    `json:"max_input_chars,omitempty"`
 }
 
-// ResolveSystemPrompt returns the system message for a recipe ai step.
-// Precedence: non-empty ai.system_prompt in CUE, then config defaults.ai_system_prompt, then built-in default.
-func (ai *RecipeAI) ResolveSystemPrompt(configDefault string) string {
-	if ai != nil && strings.TrimSpace(ai.SystemPrompt) != "" {
-		return strings.TrimSpace(ai.SystemPrompt)
+// ResolveSystemPrompt returns the system message for a recipe summarize step.
+// Precedence: non-empty summarize.system_prompt in CUE, then config defaults.ai_system_prompt, then built-in default.
+func (s *RecipeSummarize) ResolveSystemPrompt(configDefault string) string {
+	if s != nil && strings.TrimSpace(s.SystemPrompt) != "" {
+		return strings.TrimSpace(s.SystemPrompt)
 	}
 	if strings.TrimSpace(configDefault) != "" {
 		return strings.TrimSpace(configDefault)

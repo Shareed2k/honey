@@ -39,7 +39,7 @@ const (
 	KindPut           = "put"
 	KindGet           = "get"
 	KindAgentTransfer = "agent_transfer"
-	KindAI            = "ai"
+	KindSummarize     = "summarize"
 	KindTemplate      = "template"
 	KindPlugin        = "plugin"
 	KindTunnel        = "tunnel"

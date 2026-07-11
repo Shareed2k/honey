@@ -33,13 +33,13 @@ func RecipeExecutionMode(r Recipe) (ExecutionMode, error) {
 
 // StepGraph is a validated DAG over recipe steps (graph mode only).
 type StepGraph struct {
-	IDToIndex map[string]int
-	IndexToID []string
-	Depends   [][]int // step index -> dependency indices
-	Children  [][]int // reverse edges
-	TopoOrder []int
-	Waves     [][]int
-	AIIndex   int // >=0 when recipe has an ai step
+	IDToIndex      map[string]int
+	IndexToID      []string
+	Depends        [][]int // step index -> dependency indices
+	Children       [][]int // reverse edges
+	TopoOrder      []int
+	Waves          [][]int
+	SummarizeIndex int // >=0 when recipe has a summarize step
 }
 
 // BuildStepGraph validates ids and depends, detects cycles, and computes topo order and waves.
@@ -49,11 +49,11 @@ func BuildStepGraph(steps []StepWrapper) (*StepGraph, error) {
 		return nil, fmt.Errorf("cuetry: recipe has no steps")
 	}
 	sg := &StepGraph{
-		IDToIndex: make(map[string]int, n),
-		IndexToID: make([]string, n),
-		Depends:   make([][]int, n),
-		Children:  make([][]int, n),
-		AIIndex:   -1,
+		IDToIndex:      make(map[string]int, n),
+		IndexToID:      make([]string, n),
+		Depends:        make([][]int, n),
+		Children:       make([][]int, n),
+		SummarizeIndex: -1,
 	}
 	for i, w := range steps {
 		b := w.Step.Base()
@@ -69,14 +69,14 @@ func BuildStepGraph(steps []StepWrapper) (*StepGraph, error) {
 		}
 		sg.IDToIndex[id] = i
 		sg.IndexToID[i] = id
-		if w.Step.Kind() == KindAI {
-			if sg.AIIndex >= 0 {
-				return nil, fmt.Errorf("cuetry: recipe has more than one ai step")
+		if w.Step.Kind() == KindSummarize {
+			if sg.SummarizeIndex >= 0 {
+				return nil, fmt.Errorf("cuetry: recipe has more than one summarize step")
 			}
-			sg.AIIndex = i
+			sg.SummarizeIndex = i
 		}
 	}
-	nonAI := 0
+	nonSummarize := 0
 	for i, w := range steps {
 		for _, dep := range w.Step.Base().Depends {
 			dep = strings.TrimSpace(dep)
@@ -93,12 +93,12 @@ func BuildStepGraph(steps []StepWrapper) (*StepGraph, error) {
 			sg.Depends[i] = append(sg.Depends[i], j)
 			sg.Children[j] = append(sg.Children[j], i)
 		}
-		if w.Step.Kind() != KindAI {
-			nonAI++
+		if w.Step.Kind() != KindSummarize {
+			nonSummarize++
 		}
 	}
-	if nonAI == 0 {
-		return nil, fmt.Errorf("cuetry: graph recipe requires at least one non-ai step")
+	if nonSummarize == 0 {
+		return nil, fmt.Errorf("cuetry: graph recipe requires at least one non-summarize step")
 	}
 
 	// Validate rescue references
@@ -134,12 +134,12 @@ func BuildStepGraph(steps []StepWrapper) (*StepGraph, error) {
 		}
 	}
 
-	if sg.AIIndex >= 0 {
+	if sg.SummarizeIndex >= 0 {
 		for i, w := range steps {
 			for _, dep := range w.Step.Base().Depends {
 				dep = strings.TrimSpace(dep)
-				if sg.IDToIndex[dep] == sg.AIIndex {
-					return nil, fmt.Errorf("cuetry: steps[%d].id %q must not depend on ai step %q", i, sg.IndexToID[i], sg.IndexToID[sg.AIIndex])
+				if sg.IDToIndex[dep] == sg.SummarizeIndex {
+					return nil, fmt.Errorf("cuetry: steps[%d].id %q must not depend on summarize step %q", i, sg.IndexToID[i], sg.IndexToID[sg.SummarizeIndex])
 				}
 			}
 		}

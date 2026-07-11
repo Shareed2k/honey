@@ -7,13 +7,13 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-func TestParseRemoteRecipe_aiLastStep(t *testing.T) {
+func TestParseRemoteRecipe_summarizeLastStep(t *testing.T) {
 	cue := `
 recipe: {
 	name: "t"
 	steps: [
 		{ host: "*", command: "echo hi" },
-		{ host: "_", ai: { prompt: "Summarize." } },
+		{ host: "_", summarize: { prompt: "Summarize." } },
 	]
 }
 `
@@ -24,29 +24,29 @@ recipe: {
 	}
 }
 
-func TestParseRemoteRecipe_aiNotLast(t *testing.T) {
+func TestParseRemoteRecipe_summarizeNotLast(t *testing.T) {
 	cue := `
 recipe: {
 	name: "t"
 	steps: [
-		{ host: "_", ai: { prompt: "x" } },
+		{ host: "_", summarize: { prompt: "x" } },
 		{ host: "*", command: "echo hi" },
 	]
 }
 `
 	_, err := ParseRemoteRecipe([]byte(cue), nil)
-	if err == nil || !strings.Contains(err.Error(), "ai step must be the last") {
+	if err == nil || !strings.Contains(err.Error(), "summarize step must be the last") {
 		t.Fatalf("expected last-step error, got %v", err)
 	}
 }
 
-func TestParseRemoteRecipe_aiWithEnv(t *testing.T) {
+func TestParseRemoteRecipe_summarizeWithEnv(t *testing.T) {
 	cue := `
 recipe: {
 	name: "t"
 	steps: [
 		{ host: "*", command: "echo hi" },
-		{ host: "_", env: { FOO: "bar" }, ai: { prompt: "x" } },
+		{ host: "_", env: { FOO: "bar" }, summarize: { prompt: "x" } },
 	]
 }
 `
@@ -56,13 +56,13 @@ recipe: {
 	}
 }
 
-func TestParseRemoteRecipe_aiWrongHost(t *testing.T) {
+func TestParseRemoteRecipe_summarizeWrongHost(t *testing.T) {
 	cue := `
 recipe: {
 	name: "t"
 	steps: [
 		{ host: "*", command: "echo hi" },
-		{ host: "*", ai: { prompt: "x" } },
+		{ host: "*", summarize: { prompt: "x" } },
 	]
 }
 `
@@ -72,12 +72,12 @@ recipe: {
 	}
 }
 
-func TestParseRemoteRecipe_aiFirstStep(t *testing.T) {
+func TestParseRemoteRecipe_summarizeFirstStep(t *testing.T) {
 	cue := `
 recipe: {
 	name: "t"
 	steps: [
-		{ host: "_", ai: { prompt: "x" } },
+		{ host: "_", summarize: { prompt: "x" } },
 	]
 }
 `

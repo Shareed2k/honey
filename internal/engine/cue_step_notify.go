@@ -48,7 +48,7 @@ func resolveCueNotifySubject(recipe cuetry.Recipe, stepNo int, kind string, noti
 		return s
 	}
 	name := strings.TrimSpace(recipe.Name)
-	if kind == cuetry.KindAI {
+	if kind == cuetry.KindSummarize {
 		return fmt.Sprintf("honey: %s AI summary", name)
 	}
 	return fmt.Sprintf("honey: %s step %d (%s)", name, stepNo, kind)
