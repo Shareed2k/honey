@@ -23,7 +23,7 @@ recipe: {
 			id:      "anomaly-detection"
 			host:    "_"
 			depends: ["list-listening-ports", "high-cpu-processes"]
-			ai: {
+			summarize: {
 				prompt: """
 Act as a security analyst. Review the listening ports and top processes across these hosts.
 Identify any non-standard listening ports (e.g., something other than 22, 80, 443, etc.) 

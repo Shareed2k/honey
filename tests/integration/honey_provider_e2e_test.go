@@ -14,9 +14,9 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/honeyprovider"
+	"github.com/shareed2k/honey/internal/provider/localprovider"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/webserver"
-	"github.com/shareed2k/honey/internal/provider/localprovider"
 )
 
 func TestHoneyProviderE2E(t *testing.T) {
@@ -401,7 +401,7 @@ backends:
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
-	
+
 	// Test RunWithStreams
 	var outBuf bytes.Buffer
 	err = client.RunWithStreams("echo stream proxy", nil, &outBuf, nil)
@@ -411,7 +411,7 @@ backends:
 	if outBuf.String() != "stream proxy\n" && outBuf.String() != "stream proxy" {
 		t.Fatalf("unexpected stream output: %q", outBuf.String())
 	}
-	
+
 	// Test Tunnel Upstream
 	// Since SSH starts with a banner, if we read it, we know the tunnel works.
 	conn, err := executor.DialUpstream(context.Background(), "testuser", targetRec, fmt.Sprintf("127.0.0.1:%d", sshP))
@@ -419,7 +419,7 @@ backends:
 		t.Fatalf("DialUpstream failed: %v", err)
 	}
 	defer conn.Close()
-	
+
 	banner := make([]byte, 20)
 	n, err := conn.Read(banner)
 	if err != nil {

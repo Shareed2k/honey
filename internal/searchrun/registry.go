@@ -60,10 +60,8 @@ func (r *Registry) ListSearchProviderIDs(overrides ProviderOverrides) []string {
 // ListBackendRows queries all registered providers to build a list of configured backends.
 func (r *Registry) ListBackendRows() []config.BackendRow {
 	cfg := config.Get()
+	_ = cfg // cfg is not actually needed here, but kept for consistency
 	var rows []config.BackendRow
-	if cfg == nil {
-		return rows
-	}
 	for _, factory := range r.Factories {
 		rows = append(rows, factory.BackendRows()...)
 	}

@@ -133,20 +133,16 @@ func validateOneEnvFromRef(stepIdx, i int, ref EnvFromRef, depSet map[string]str
 	return nil
 }
 
-// templateOutputProducers maps named capture names (template.output or k8s.output) to producer step ids.
+// templateOutputProducers maps named capture names (template.output, k8s.output, output, reduce) to producer step ids.
 func templateOutputProducers(steps []StepWrapper) map[string]string {
 	out := make(map[string]string)
 	for _, w := range steps {
 		id := strings.TrimSpace(w.Step.Base().ID)
-		if ts, ok := w.Step.(*TemplateStep); ok && ts.Template != nil {
-			if name := strings.TrimSpace(ts.Template.Output); name != "" {
-				out[name] = id
-			}
+		if name := StepOutputName(w.Step); name != "" {
+			out[name] = id
 		}
-		if ks, ok := w.Step.(*K8sStep); ok && ks.K8s != nil {
-			if name := strings.TrimSpace(ks.K8s.Output); name != "" {
-				out[name] = id
-			}
+		if reduce := strings.TrimSpace(w.Step.Base().Reduce); reduce != "" {
+			out[reduce] = id
 		}
 	}
 	return out
@@ -166,13 +162,13 @@ func validateUniqueTemplateOutputs(steps []StepWrapper) error {
 		return nil
 	}
 	for i, w := range steps {
-		if ts, ok := w.Step.(*TemplateStep); ok && ts.Template != nil {
-			if err := check(i, strings.TrimSpace(ts.Template.Output), "template.output"); err != nil {
+		if name := StepOutputName(w.Step); name != "" {
+			if err := check(i, name, "output"); err != nil {
 				return err
 			}
 		}
-		if ks, ok := w.Step.(*K8sStep); ok && ks.K8s != nil {
-			if err := check(i, strings.TrimSpace(ks.K8s.Output), "k8s.output"); err != nil {
+		if reduce := strings.TrimSpace(w.Step.Base().Reduce); reduce != "" {
+			if err := check(i, reduce, "reduce"); err != nil {
 				return err
 			}
 		}

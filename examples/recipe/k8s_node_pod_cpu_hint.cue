@@ -62,7 +62,7 @@ echo "(done)"
 			host: "_"
 			// notify: {}
 			// notify: { services: { http: {} } }
-			ai: {
+			summarize: {
 				model: "models/gemini-3.1-pro-preview"
 				prompt: """
 From the per-host transcripts, summarize in short bullets: load/memory picture,

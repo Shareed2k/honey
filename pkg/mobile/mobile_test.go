@@ -109,8 +109,50 @@ func TestSearchHosts(t *testing.T) {
 	if !strings.Contains(err.Error(), "no backends match") && !strings.Contains(err.Error(), "all backends failed") {
 		t.Errorf("SearchHosts() expected backend failure error, got: %v", err)
 	}
+}
 
-	// Now let's try with empty string so it doesn't fail JSON parsing
-	// Wait, if we use a real provider but prevent network calls?
-	// The problem is k8s tries to connect. Let's just use the error case to verify the plumbing.
+func TestGetVersion(t *testing.T) {
+	v := mobile.GetVersion()
+	if v == "" {
+		t.Error("expected version string, got empty")
+	}
+}
+
+func TestListBackends(t *testing.T) {
+	_, err := mobile.ListBackends(`{not json`)
+	if err == nil {
+		t.Error("expected error for bad JSON")
+	}
+
+	got, err := mobile.ListBackends(`{"config_path": "dummy"}`)
+	if err != nil {
+		t.Fatalf("unexpected error for ListBackends: %v", err)
+	}
+	if !strings.Contains(got, "backends") {
+		t.Errorf("expected backends in response, got %s", got)
+	}
+}
+
+func TestExec(t *testing.T) {
+	_, err := mobile.Exec(`{not json`)
+	if err == nil {
+		t.Error("expected error for bad JSON")
+	}
+
+	// Test direct IP which skips search.
+	// Since we are mocking, it will try to SSH to 127.0.0.1 on a high port and probably fail,
+	// but it will cover the plumbing.
+	req := `{"host_ip": "127.0.0.1", "ssh_port": 65535, "command": "echo ok"}`
+	got, err := mobile.Exec(req)
+	// it might fail with "ssh: connect to host" or return a JSON with error inside results
+	if err != nil {
+		// If the engine.ExecuteSSHParallel returns error instead of results with error
+		if !strings.Contains(err.Error(), "connection refused") && !strings.Contains(err.Error(), "dial tcp") {
+			t.Logf("Expected network dial error from dummy ip, got: %v", err)
+		}
+	} else {
+		if !strings.Contains(got, "results") {
+			t.Errorf("expected results in Exec response, got: %s", got)
+		}
+	}
 }

@@ -53,7 +53,7 @@ export function HostField({
   kind: string;
   onChange: (patch: Partial<ParsedRecipeStep>) => void;
 }) {
-  if (kind === 'template' || kind === 'ai') {
+  if (kind === 'template' || kind === 'ai' || kind === 'summarize') {
     return (
       <label className="rcp-edit__field">
         host

@@ -46,12 +46,19 @@ backends:
         user: deploy
         identity_file: ~/.ssh/id_ed25519
       socket: /var/run/docker.sock
+    - name: remote-tcp
+      host: "tcp://10.0.0.2:2376"
+      tls_verify: true
+      ca_cert: /path/to/ca.pem
+      cert: /path/to/cert.pem
+      key: /path/to/key.pem
 ```
 
 | Field | Required |
 |-------|----------|
 | `name` | Yes |
 | `host`, `via_local`, `via_ssh`, `socket`, `mode`, `platform`, `run_as`, `all_containers` | Optional |
+| `tls_verify`, `ca_cert`, `cert`, `key` | Optional — client TLS for `tcp://`/`https://` hosts (config-only, no CLI flags) |
 
 ## CLI (no config file)
 
@@ -74,5 +81,5 @@ honey search --provider docker --docker-host unix:///var/run/docker.sock -o json
 
 ## Notes
 
-- **Auto-discover on cloud VMs** (second pass after GCP/AWS): experimental; see [Docker auto-discover](../docker-auto-discover). Requires `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1` and is not in YAML today.
+- **Auto-discover on other backends** (a second pass over hosts from GCP, AWS, Consul, Local, or Proxmox — SSH in and list containers): experimental; see [Docker auto-discover](../docker-auto-discover). Requires `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1` and is not in YAML today.
 - Moby **`ssh://`** does not use honey’s `~/.ssh/config` integration; use **`via_ssh`** for ProxyJump and honey SSH features.

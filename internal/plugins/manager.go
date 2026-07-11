@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -51,8 +53,8 @@ type loadedPlugin struct {
 	effectivePaths map[string]string
 	dir            string
 	wasm           []byte
-	plugin         *extism.Plugin
-	callMu         sync.Mutex // extism.Plugin is not safe for concurrent CallWithContext
+	transport      pluginTransport
+	callMu         sync.Mutex // neither extism.Plugin nor dockerTransport is safe for concurrent calls
 }
 
 func clonePathMap(m map[string]string) map[string]string {
@@ -115,7 +117,6 @@ func NewManager(ctx context.Context, cfg config.PluginsEffective) (*Manager, err
 
 func loadPluginDir(ctx context.Context, dir string, cfg config.PluginsEffective) (*loadedPlugin, error) {
 	manifestPath := filepath.Join(dir, "plugin.yaml")
-	wasmPath := filepath.Join(dir, "plugin.wasm")
 	manifest, err := loadManifest(manifestPath)
 	if err != nil {
 		return nil, err
@@ -124,6 +125,17 @@ func loadPluginDir(ctx context.Context, dir string, cfg config.PluginsEffective)
 	if err != nil {
 		return nil, err
 	}
+	if manifest.effectiveRuntime() == "docker" {
+		return loadDockerPluginDir(ctx, dir, manifest, hosts, paths)
+	}
+	return loadWasmPluginDir(ctx, dir, manifest, hosts, paths, cfg)
+}
+
+// loadWasmPluginDir is today's plugin-loading body, unchanged except for
+// taking manifest/hosts/paths as params (already computed by loadPluginDir)
+// instead of recomputing them.
+func loadWasmPluginDir(ctx context.Context, dir string, manifest Manifest, hosts []string, paths map[string]string, cfg config.PluginsEffective) (*loadedPlugin, error) {
+	wasmPath := filepath.Join(dir, "plugin.wasm")
 	wasm, err := safepath.ReadFile(wasmPath)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: read %s: %w", wasmPath, err)
@@ -170,8 +182,112 @@ func loadPluginDir(ctx context.Context, dir string, cfg config.PluginsEffective)
 		effectivePaths: paths,
 		dir:            dir,
 		wasm:           wasm,
-		plugin:         plug,
+		transport:      &extismTransport{plugin: plug},
 	}, nil
+}
+
+// loadDockerPluginDir loads a runtime: docker plugin: reads its plugin.cue,
+// locates the honey-plugin-init binary to bind-mount, and starts the container.
+func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hosts []string, paths map[string]string) (*loadedPlugin, error) {
+	cuePath := filepath.Join(dir, "plugin.cue")
+	cueBytes, err := safepath.ReadFile(cuePath)
+	if err != nil {
+		return nil, fmt.Errorf("plugins: read %s: %w", cuePath, err)
+	}
+	initPath, err := locatePluginInitBinary()
+	if err != nil {
+		return nil, err
+	}
+	maxBackoff, err := manifest.Docker.effectiveMaxBackoff()
+	if err != nil {
+		return nil, fmt.Errorf("plugins: invalid docker.restart.max_backoff: %w", err)
+	}
+	dt, err := newDockerTransport(ctx, dockerTransportConfig{
+		Image:              manifest.Docker.Image,
+		PullPolicy:         manifest.Docker.effectivePullPolicy(),
+		PluginInitHostPath: initPath,
+		CueSource:          cueBytes,
+		MaxBackoff:         maxBackoff,
+		Env:                resolveAllowedEnv(manifest.AllowedEnv),
+		Volumes:            manifest.Docker.Volumes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)
+	}
+	return &loadedPlugin{
+		manifest:       manifest,
+		effectiveHosts: hosts,
+		effectivePaths: paths,
+		dir:            dir,
+		transport:      dt,
+	}, nil
+}
+
+// resolveAllowedEnv resolves each allowed name from honey's own process
+// environment, for passthrough into a docker plugin's container — the same
+// "allowed_env" manifest field WASM plugins use for the get_env host
+// function, reinterpreted here since docker plugins have no mediated
+// host-function call to gate (see spec's capability model). Names with no
+// value set in honey's environment are silently omitted, not errored.
+func resolveAllowedEnv(names []string) map[string]string {
+	env := make(map[string]string, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if v, ok := os.LookupEnv(name); ok {
+			env[name] = v
+		}
+	}
+	return env
+}
+
+// locatePluginInitBinary finds the honey-plugin-init binary to bind-mount
+// into docker-runtime plugin containers: HONEY_PLUGIN_INIT_PATH env var if
+// set (also how tests_test.go/tests/integration point at a freshly-built
+// binary); otherwise alongside the running honey executable, preferring an
+// arch-suffixed binary (honey-plugin-init-linux-$GOARCH — how release
+// archives and the Homebrew formula ship it, one per target container
+// architecture) over the plain unsuffixed name (hand-built via `task
+// build-honey-plugin-init`, or HONEY_PLUGIN_INIT_PATH-adjacent setups).
+func locatePluginInitBinary() (string, error) {
+	if p := strings.TrimSpace(os.Getenv("HONEY_PLUGIN_INIT_PATH")); p != "" {
+		if err := validatePluginInitBinaryPath(p); err != nil {
+			return "", fmt.Errorf("plugins: HONEY_PLUGIN_INIT_PATH=%s: %w", p, err)
+		}
+		return p, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("plugins: locate honey-plugin-init: %w", err)
+	}
+	dir := filepath.Dir(exe)
+	archPath := filepath.Join(dir, "honey-plugin-init-linux-"+runtime.GOARCH)
+	if validatePluginInitBinaryPath(archPath) == nil {
+		return archPath, nil
+	}
+	path := filepath.Join(dir, "honey-plugin-init")
+	if err := validatePluginInitBinaryPath(path); err != nil {
+		return "", fmt.Errorf("plugins: honey-plugin-init not found at %s or %s (build it via `task build-honey-plugin-init` or set HONEY_PLUGIN_INIT_PATH): %w", archPath, path, err)
+	}
+	return path, nil
+}
+
+// validatePluginInitBinaryPath rejects anything but a regular file — a
+// directory at this path would otherwise be bind-mounted straight into the
+// plugin container, where it fails only much later with a cryptic Docker/OCI
+// runtime error ("is a directory: permission denied") instead of a clear one
+// from honey itself.
+func validatePluginInitBinaryPath(path string) error {
+	info, err := safepath.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("path %q is not a regular file", path)
+	}
+	return nil
 }
 
 // Enabled reports whether plugins are turned on in config.
@@ -296,16 +412,16 @@ func (m *Manager) Call(ctx context.Context, pluginID, export string, in, out any
 	}
 	lp.callMu.Lock()
 	defer lp.callMu.Unlock()
-	exit, outBytes, err := lp.plugin.CallWithContext(callCtx, export, inBytes)
+	exit, outBytes, err := lp.transport.CallRaw(callCtx, export, inBytes)
 	if err != nil {
 		return fmt.Errorf("plugins: %s.%s: %w", pluginID, export, err)
 	}
+	var pe apiv1.PluginError
+	if jsonErr := json.Unmarshal(outBytes, &pe); jsonErr == nil && strings.TrimSpace(pe.Error) != "" {
+		return fmt.Errorf("plugins: %s.%s: %s", pluginID, export, pe.Error)
+	}
 	if exit != 0 {
 		return fmt.Errorf("plugins: %s.%s: plugin returned exit code %d", pluginID, export, exit)
-	}
-	var pe apiv1.PluginError
-	if err := json.Unmarshal(outBytes, &pe); err == nil && strings.TrimSpace(pe.Error) != "" {
-		return fmt.Errorf("plugins: %s.%s: %s", pluginID, export, pe.Error)
 	}
 	if out == nil {
 		return nil
@@ -353,8 +469,8 @@ func (m *Manager) Close() error {
 	defer m.mu.Unlock()
 	var first error
 	for _, p := range m.plugins {
-		if p.plugin != nil {
-			if err := p.plugin.Close(context.Background()); err != nil && first == nil {
+		if p.transport != nil {
+			if err := p.transport.Close(context.Background()); err != nil && first == nil {
 				first = err
 			}
 		}

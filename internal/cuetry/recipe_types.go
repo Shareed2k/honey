@@ -90,11 +90,111 @@ type RecipePrompt struct {
 	Regex           string   `json:"regex,omitempty"`
 }
 
+// RecipeSecret provides a polymorphic way to specify a secret ref as a string or via a backend-specific struct.
+type RecipeSecret struct {
+	Ref   string             `json:"-"`
+	Vault *RecipeSecretVault `json:"vault,omitempty"`
+	Aws   *RecipeSecretAws   `json:"aws,omitempty"`
+	Gcp   *RecipeSecretGcp   `json:"gcp,omitempty"`
+}
+
+// RecipeSecretVault configures a Vault secret resolution.
+type RecipeSecretVault struct {
+	Path string `json:"path"`
+	Key  string `json:"key,omitempty"`
+}
+
+// RecipeSecretAws configures an AWS Secrets Manager secret resolution.
+type RecipeSecretAws struct {
+	SecretID string `json:"secret_id"`
+	Version  string `json:"version,omitempty"`
+	Key      string `json:"key,omitempty"`
+}
+
+// RecipeSecretGcp configures a GCP Secret Manager secret resolution.
+type RecipeSecretGcp struct {
+	Project string `json:"project,omitempty"`
+	Secret  string `json:"secret"`
+	Version string `json:"version,omitempty"`
+	Key     string `json:"key,omitempty"`
+}
+
+// UnmarshalJSON unmarshals either a string ref or a structured secret object.
+func (rs *RecipeSecret) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		rs.Ref = s
+		return nil
+	}
+	type Alias RecipeSecret
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*rs = RecipeSecret(a)
+	return nil
+}
+
+// MarshalJSON marshals back to a string ref if provided, or the structured object.
+func (rs *RecipeSecret) MarshalJSON() ([]byte, error) {
+	if rs.Ref != "" {
+		return json.Marshal(rs.Ref)
+	}
+	type Alias RecipeSecret
+	return json.Marshal((*Alias)(rs))
+}
+
+// StringRef compiles the struct representation into a standard honey secure URI ref.
+func (rs *RecipeSecret) StringRef() string {
+	if rs.Ref != "" {
+		return rs.Ref
+	}
+	if rs.Vault != nil {
+		ref := "vault:" + rs.Vault.Path
+		if rs.Vault.Key != "" {
+			ref += "#" + rs.Vault.Key
+		}
+		return ref
+	}
+	if rs.Aws != nil {
+		ref := "aws-sm:" + rs.Aws.SecretID
+		var opts []string
+		if rs.Aws.Version != "" {
+			opts = append(opts, "version="+rs.Aws.Version)
+		}
+		if rs.Aws.Key != "" {
+			opts = append(opts, "key="+rs.Aws.Key)
+		}
+		if len(opts) > 0 {
+			ref += "?" + strings.Join(opts, "&")
+		}
+		return ref
+	}
+	if rs.Gcp != nil {
+		ref := "gcp-sm:" + rs.Gcp.Secret
+		var opts []string
+		if rs.Gcp.Project != "" {
+			opts = append(opts, "project="+rs.Gcp.Project)
+		}
+		if rs.Gcp.Version != "" {
+			opts = append(opts, "version="+rs.Gcp.Version)
+		}
+		if rs.Gcp.Key != "" {
+			opts = append(opts, "key="+rs.Gcp.Key)
+		}
+		if len(opts) > 0 {
+			ref += "?" + strings.Join(opts, "&")
+		}
+		return ref
+	}
+	return ""
+}
+
 // RecipeDefaults holds recipe-level defaults (optional fields).
 type RecipeDefaults struct {
 	RunAs         string                  `json:"run_as,omitempty"`
 	Env           map[string]string       `json:"env,omitempty"`
-	Secrets       map[string]string       `json:"secrets,omitempty"`
+	Secrets       map[string]RecipeSecret `json:"secrets,omitempty"`
 	Prompts       map[string]RecipePrompt `json:"prompts,omitempty"`
 	K8sDebugImage string                  `json:"k8s_debug_image,omitempty"`
 	KVTunnel      *bool                   `json:"kv_tunnel,omitempty"`
@@ -135,8 +235,8 @@ type RecipeStepTemplate struct {
 	Output   string         `json:"output,omitempty"`
 }
 
-// RecipeAI configures the terminal local LLM summarizer step (must be last in recipe; host must be "_").
-type RecipeAI struct {
+// RecipeSummarize configures the terminal local LLM summarizer step (must be last in recipe; host must be "_").
+type RecipeSummarize struct {
 	Prompt          string `json:"prompt"`
 	SystemPrompt    string `json:"system_prompt,omitempty"`
 	Model           string `json:"model,omitempty"`
@@ -144,16 +244,25 @@ type RecipeAI struct {
 	MaxInputChars   int    `json:"max_input_chars,omitempty"`
 }
 
-// ResolveSystemPrompt returns the system message for a recipe ai step.
-// Precedence: non-empty ai.system_prompt in CUE, then config defaults.ai_system_prompt, then built-in default.
-func (ai *RecipeAI) ResolveSystemPrompt(configDefault string) string {
-	if ai != nil && strings.TrimSpace(ai.SystemPrompt) != "" {
-		return strings.TrimSpace(ai.SystemPrompt)
+// ResolveSystemPrompt returns the system message for a recipe summarize step.
+// Precedence: non-empty summarize.system_prompt in CUE, then config defaults.ai_system_prompt, then built-in default.
+func (s *RecipeSummarize) ResolveSystemPrompt(configDefault string) string {
+	if s != nil && strings.TrimSpace(s.SystemPrompt) != "" {
+		return strings.TrimSpace(s.SystemPrompt)
 	}
 	if strings.TrimSpace(configDefault) != "" {
 		return strings.TrimSpace(configDefault)
 	}
 	return DefaultRecipeAISystemPrompt
+}
+
+// RecipeAI configures a plain, freely-positionable local LLM-completion step (host must be "_").
+type RecipeAI struct {
+	Prompt          string `json:"prompt"`
+	SystemPrompt    string `json:"system_prompt,omitempty"`
+	Model           string `json:"model,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	MaxInputChars   int    `json:"max_input_chars,omitempty"`
 }
 
 // RecipeNotifyHTTP marks HTTP default JSON POST URLs (HONEY_NOTIFY_HTTP_URL) as selected in notify.services.
@@ -217,13 +326,13 @@ type Assertion struct {
 
 // RecipeStepHook runs once per target host after that host's main step result is known.
 type RecipeStepHook struct {
-	Where   string            `json:"where"`
-	Command string            `json:"command,omitempty"`
-	Plugin  *RecipePluginHook `json:"plugin,omitempty"`
-	RunAs   string            `json:"run_as,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Secrets map[string]string `json:"secrets,omitempty"`
-	Notify  *RecipeNotify     `json:"notify,omitempty"`
+	Where   string                  `json:"where"`
+	Command string                  `json:"command,omitempty"`
+	Plugin  *RecipePluginHook       `json:"plugin,omitempty"`
+	RunAs   string                  `json:"run_as,omitempty"`
+	Env     map[string]string       `json:"env,omitempty"`
+	Secrets map[string]RecipeSecret `json:"secrets,omitempty"`
+	Notify  *RecipeNotify           `json:"notify,omitempty"`
 }
 
 // EffectiveHookWhere returns the hook execution location. Empty defaults to remote.
@@ -249,11 +358,13 @@ func StepOutputName(s Step) string {
 	return ""
 }
 
-// RecipeStepPlugin configures a WASM custom_step plugin action.
+// RecipeStepPlugin configures a custom_step plugin action (wasm or docker runtime).
 type RecipeStepPlugin struct {
-	ID     string          `json:"id"`
-	Action string          `json:"action"`
-	Config json.RawMessage `json:"config,omitempty"`
+	ID           string          `json:"id"`
+	Action       string          `json:"action"`
+	Config       json.RawMessage `json:"config,omitempty"`
+	KVKey        string          `json:"kv_key,omitempty"`
+	KVKeyPerHost bool            `json:"kv_key_per_host,omitempty"`
 }
 
 // RecipeLoop configures dynamic runtime fan-out based on a previous step's captured output.
@@ -423,6 +534,19 @@ type RecipeStepPostgres struct {
 	MigrationsDir string            `json:"migrations_dir,omitempty"`
 	Files         []string          `json:"files,omitempty"`
 	Output        string            `json:"output,omitempty"`
+}
+
+// RecipeStepPackage configures a package management step.
+type RecipeStepPackage struct {
+	Name  string `json:"name"`
+	State string `json:"state"` // "present", "absent", "latest"
+}
+
+// RecipeStepService configures a service management step.
+type RecipeStepService struct {
+	Name    string `json:"name"`
+	State   string `json:"state"`             // "started", "stopped", "restarted", "reloaded", "status"
+	Enabled *bool  `json:"enabled,omitempty"` // enable/disable on boot
 }
 
 // CanonicalJSON returns deterministic JSON (sorted keys, no extra

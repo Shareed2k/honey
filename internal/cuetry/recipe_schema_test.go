@@ -21,7 +21,7 @@ func TestBuildRecipeStepJSONSchema(t *testing.T) {
 	}
 
 	// Each registered kind gets its own self-contained definition.
-	for _, kind := range []string{KindCommand, KindTemplate, KindPostgres, KindAI} {
+	for _, kind := range []string{KindCommand, KindTemplate, KindPostgres, KindSummarize} {
 		def, ok := defs[kind].(map[string]any)
 		if !ok {
 			t.Fatalf("expected definition for kind %q", kind)
@@ -32,7 +32,7 @@ func TestBuildRecipeStepJSONSchema(t *testing.T) {
 	}
 
 	// Template/ai are local: their schema must NOT expose remote SSH/fan-out fields.
-	for _, kind := range []string{KindTemplate, KindAI} {
+	for _, kind := range []string{KindTemplate, KindSummarize} {
 		def := defs[kind].(map[string]any)
 		props := def["properties"].(map[string]any)
 		for _, banned := range []string{"ssh_port", "max_parallel", "serial", "ssh_private_key"} {

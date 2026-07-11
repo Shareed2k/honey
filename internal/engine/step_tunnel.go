@@ -7,14 +7,12 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/truenasprovider"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
-	"golang.org/x/sync/semaphore"
 )
 
 // StreamCueStepTunnel ...
@@ -32,32 +30,15 @@ func (e *TunnelExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest
 		return fmt.Errorf("internal tunnel step")
 	}
 	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
-	if maxConc <= 0 {
-		maxConc = 8
-	}
-	if maxConc > maxConcurrencyCap {
-		maxConc = maxConcurrencyCap
-	}
-	sem := semaphore.NewWeighted(int64(maxConc))
-	var wg sync.WaitGroup
-	for _, target := range targets {
-		target := target
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := sem.Acquire(ctx, 1); err != nil {
-				ch <- HostExecResult{Name: target.Record.Name, IP: target.Record.PrimaryIP, Provider: target.Record.Provider, Success: false, ErrMsg: err.Error()}
-				return
-			}
-			defer sem.Release(1)
-			outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
-				return runCueTunnelOnHost(ctx, step, target.Record, opts.SSHUser, stepIdx, opts.Cache, opts.TunnelCoord, opts.Execute)
-			})
-			RecordMaxAttempts(attemptMax, outcome.Attempts)
-			ch <- outcome.Result
-		}()
-	}
-	wg.Wait()
+	DispatchHostResults(ctx, targets, maxConc, 8, func(target TargetContext) HostExecResult {
+		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
+			return runCueTunnelOnHost(ctx, step, target.Record, opts.SSHUser, stepIdx, opts.Cache, opts.TunnelCoord, opts.Execute)
+		})
+		RecordMaxAttempts(attemptMax, outcome.Attempts)
+		return outcome.Result
+	}, func(res HostExecResult) {
+		ch <- res
+	})
 	return nil
 }
 

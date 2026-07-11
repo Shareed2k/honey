@@ -1,0 +1,7 @@
+id: stealth_browser
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "honey-plugin-stealth-browser:latest"

@@ -6,6 +6,7 @@ website/.npm-cache/
 website/.npm-tmp/
 
 docs/*
+dist/
 
 webui/node_modules/
 contrib/ansible/inventory_plugins/__pycache__
@@ -21,7 +22,7 @@ runtime
 /honey
 honey
 .env
-.claude/*
+.claude
 
 */*.aar
 android/app/libs/*.aar
@@ -35,3 +36,4 @@ android/.gradle
 .claude
 android/app/src/main/assets/honey-arm64
 android/app/src/main/assets/honey-amd64
+examples/plugins/audio_transcribe/__pycache__

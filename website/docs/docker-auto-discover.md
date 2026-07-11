@@ -4,137 +4,139 @@ title: Docker auto-discover on cloud VMs
 slug: /docker-auto-discover
 ---
 
-Honey can run a **second search pass** after GCP, AWS, or other VM discovery: for each matching VM it SSHes to the host, dials `docker.sock`, and lists **running containers** as separate table rows (`provider: docker`). You can then open a **`docker exec`** shell from the TUI or [Web UI](./web-ui.md) without configuring a static `backends.docker` entry per VM.
+Honey can run a **second search pass** after GCP, AWS, Consul, Local, or Proxmox discovery: for each matching VM/host it SSHes to the host, dials `docker.sock`, and lists **running containers** as separate table rows (`provider: docker`). You can then open a **`docker exec`** shell from the TUI or [Web UI](./web-ui.md) without configuring a static `backends.docker` entry per VM.
 
-Auto-discover is **experimental** and gated by an environment variable. It is **not** available in honey YAML today—only CLI flags (and the same fields on `honey search` / MCP when exposed).
+Auto-discover is **experimental**, gated by an environment variable, and configured **only in YAML** — there are no dedicated CLI flags for it (no `--docker-discover-providers`/`--docker-discover-run-as`; those do not exist).
 
 ## How it works
 
 ```mermaid
 flowchart TD
-  A["Pass 1: cloud search\n(gcp, aws, …)"] --> B["VM rows in results"]
-  B --> C{"HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1\nand --docker-discover-providers set?"}
+  A["Pass 1: backend search\n(gcp, aws, consul, local, proxmox)"] --> B["Host rows in results"]
+  B --> C{"HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1\nand backend's docker_discover.enabled?"}
   C -->|no| D["Done"]
-  C -->|yes| E["Pass 2: for each VM\nwith PrimaryIP"]
+  C -->|yes| E["Pass 2: for each row\nwith PrimaryIP"]
   E --> F["Honey SSH + docker system dial-stdio"]
   F --> G["ContainerList API"]
-  G --> H["Merge container rows\n(deduped)"]
+  G --> H["Merge container rows\n(deduped, up to 8 hosts concurrently)"]
   H --> D
 ```
 
-1. **Pass 1** runs your normal providers (`--provider`, `--backends`, name filters, cache).
-2. **Pass 2** keeps only VM records whose `provider` is listed in `--docker-discover-providers` (for example `gcp`, `aws`).
-3. For each VM with a **PrimaryIP**, honey opens **Honey SSH** (same stack as `via_ssh` docker backends), optionally **`sudo -n -u`** a user that can use the socket, then calls the Engine API.
-4. Container rows are **merged** into the result set (VM rows stay; containers are additional rows).
+1. **Pass 1** runs whichever backends are enabled normally (`--provider`, `--backends`, name filters, cache) — this feature currently wraps the **`gcp`, `aws`, `consul`, `local`, and `proxmox`** backend factories (not `k8s`, `truenas`, or `docker` itself).
+2. **Pass 2** runs only for backends whose merged **`docker_discover.enabled`** is `true` (see YAML below) — there's no separate provider allowlist to configure; every host row from an enabled backend is a candidate.
+3. For each candidate row with a **PrimaryIP**, honey opens **Honey SSH** (same stack as `via_ssh` docker backends), optionally **`sudo -n -u`** a user that can use the socket, then calls the Engine API. Up to **8 hosts** are probed concurrently.
+4. Container rows are **merged** into the result set (host rows stay; containers are additional rows).
 
-Discover respects filters from pass 1: if you use `--backends gcp-stg2`, only VMs from that backend are scanned. If you use a positional name or `--name`, only VMs that matched that filter are candidates.
+Discover respects pass-1 filters: if you use `--backends gcp-stg2`, only hosts from that backend are scanned. If you use a positional name or `--name`, only hosts that matched that filter are candidates.
 
 ## Prerequisites
 
 | Requirement | Notes |
 |-------------|--------|
-| **Feature flag** | `export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1` (exactly `1`; unset = discover disabled) |
-| **Cloud credentials** | Same as a normal `honey search` for GCP/AWS (ADC, profiles, etc.) |
-| **SSH access** | Your `--ssh-user` (or `defaults.ssh_user`) must reach each VM’s **PrimaryIP** |
-| **Docker on the VM** | Engine listening on the socket you target (default Linux: `/var/run/docker.sock`) |
-| **Socket permissions** | SSH user in the `docker` group **or** passwordless `sudo` for `--docker-discover-run-as` (see below) |
-
-`--provider` must include every cloud id you pass to `--docker-discover-providers`. Example: discover `gcp` but `--provider aws` only → honey logs a warning and **skips** discover.
+| **Feature flag** | `export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1` (exactly `1`; unset = discover disabled, even with `docker_discover.enabled: true` in YAML) |
+| **Backend credentials** | Same as a normal `honey search` for that backend (ADC, profiles, Consul token, etc.) |
+| **SSH access** | Honey must be able to reach each host's **PrimaryIP** over SSH. For `local`/`proxmox` backends, a per-host/per-backend **`ssh_user`** field is honored; **GCP and AWS have no `ssh_user` config today** — the discover SSH hop uses whatever your SSH client/agent defaults to for that host, which may need `~/.ssh/config` entries per host |
+| **Docker on the host** | Engine listening on the socket you target (default Linux: `/var/run/docker.sock`) |
+| **Socket permissions** | SSH user in the `docker` group **or** passwordless `sudo` for `docker_discover.run_as` (see below) |
 
 ## Quick start
 
-```bash
-# 1. Enable the feature (required every shell session unless you export in profile)
-export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
+Enable the feature flag, then turn on discover for a backend in your config file:
 
-# 2. Search GCP + AWS VMs, then list containers on those VMs
-honey search --provider gcp,aws \
-  --docker-discover-providers gcp,aws \
-  my-app
+```bash
+export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
+```
+
+```yaml
+# ~/.config/honey/config.yaml
+version: 1
+backends:
+  gcp:
+    - name: my-gcp
+      project: my-gcp-project
+      docker_discover:
+        enabled: true
+```
+
+```bash
+honey search --config ~/.config/honey/config.yaml --provider gcp my-app
 ```
 
 Interactive TUI (default): pick a **docker** row and press **Enter** for `docker exec`, or use parallel **e** on marked containers.
 
-JSON for scripting:
-
-```bash
-export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
-honey search --provider gcp,aws \
-  --docker-discover-providers gcp,aws \
-  --json my-app
-```
+JSON for scripting: add `--json` / `-o json` to the same command.
 
 ## Common recipes
 
-### Limit to one config backend
+### Enable for every backend at once
 
-```bash
-export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
-honey search --config ~/.config/honey/config.yaml \
-  --backends gcp-stg2 \
-  --docker-discover-providers gcp \
-  --ssh-user ubuntu \
-  api
+Set `docker_discover` under top-level **`defaults`** instead of repeating it per backend — every backend that supports discover (`gcp`, `aws`, `consul`, `local`, `proxmox`) picks it up unless it sets its own `docker_discover` block (per-field override, not whole-block replace):
+
+```yaml
+defaults:
+  docker_discover:
+    enabled: true
+backends:
+  gcp:
+    - name: my-gcp
+      project: my-gcp-project
+  aws:
+    - name: my-aws
+      profile: production
+      docker_discover:
+        enabled: false   # opt this one backend out
 ```
 
-Only VMs from the `gcp-stg2` backend are scanned; other GCP projects in the file are ignored.
-
-### SSH as `ubuntu`, Docker socket only for `root`
+### SSH as a user that needs `sudo` for the socket
 
 Many images allow SSH as a normal user but restrict `/var/run/docker.sock` to root:
 
-```bash
-export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
-honey search --provider gcp,aws \
-  --docker-discover-providers gcp,aws \
-  --ssh-user ubuntu \
-  --docker-discover-run-as root \
-  web
+```yaml
+backends:
+  local:
+    - name: lab
+      hosts:
+        - name: web1
+          primary_ip: 10.0.0.10
+          ssh_user: ubuntu
+      docker_discover:
+        enabled: true
+        run_as: root
 ```
 
-Honey runs `sudo -n -u root` and `docker system dial-stdio` (Engine **23+**). Password prompts are not supported—configure **passwordless sudo** for that user pair.
+Honey runs `sudo -n -u root` and `docker system dial-stdio` (Engine **23+**). Password prompts are not supported — configure **passwordless sudo** for that user pair.
 
-### Custom socket or Windows VM
+### Custom socket or Windows host
 
-```bash
-export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
-honey search --provider gcp \
-  --docker-discover-providers gcp \
-  --docker-socket /var/run/docker.sock \
-  --docker-platform linux \
-  win-worker
+```yaml
+backends:
+  gcp:
+    - name: my-gcp
+      project: my-gcp-project
+      docker_discover:
+        enabled: true
+        socket: /var/run/docker.sock
+        platform: linux   # or "windows"
 ```
 
-For a Windows daemon host, set `--docker-platform windows` and a TCP socket if needed (for example `tcp://127.0.0.1:2375`).
+For a Windows daemon host, set `platform: windows`.
 
-### Include stopped containers
+### Stopped containers, swarm mode, `--docker-all` / `--docker-mode`
 
-Discover honors `--docker-all` (same as static docker search):
+The discover pass always lists **running containers only** (`mode: containers`) — the `--docker-all` and `--docker-mode` flags apply to static `backends.docker` search, not to this auto-discover pass, and there is currently no `docker_discover` field to change that.
 
-```bash
-export HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1
-honey search --provider aws \
-  --docker-discover-providers aws \
-  --docker-all \
-  legacy-svc
-```
+## `docker_discover` fields
 
-## Flags reference
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `enabled` | `false` | Turn discover on for this backend (or under `defaults` for all supporting backends) |
+| `run_as` | _(SSH user)_ | `sudo -n -u <run_as>` before calling the Engine API, when the SSH user can't use the socket directly |
+| `socket` | `/var/run/docker.sock` | Remote Engine socket path |
+| `platform` | `linux` | `linux` or `windows` |
 
-| Flag | Purpose |
-|------|---------|
-| `HONEY_FEATURE_DOCKER_VIA_PROVIDERS=1` | **Required** env var to enable pass 2 |
-| `--docker-discover-providers` | Comma-separated VM providers to scan (`gcp`, `aws`, …) |
-| `--provider` | Must include those cloud providers in pass 1 |
-| `--backends` | Optional; limits which named YAML backends run in pass 1 (and thus which VMs get discover) |
-| `--ssh-user` | SSH user for Honey dial to each VM (wired as `DockerSSHUser`) |
-| `--docker-discover-run-as` | User for `sudo -n -u …` when the SSH user cannot use `docker.sock` |
-| `--docker-socket` | Remote socket path (default: `/var/run/docker.sock` on Linux) |
-| `--docker-platform` | `linux` or `windows` (daemon host OS) |
-| `--docker-all` | Include non-running containers |
-| `--docker-mode` | `containers` (default), `swarm`, or `both` for discover listing |
+Backend-level fields override `defaults` **per field** (`enabled`/`run_as`/`socket`/`platform` each override independently, not as a whole block).
 
-Positional `[name]`, `--name`, and `--name-regex` apply to **both** passes (VM names and container names).
+Positional `[name]`, `--name`, and `--name-regex` apply to **both** passes (host names and container names).
 
 CLI details: [`honey search`](./cli/honey_search.md).
 

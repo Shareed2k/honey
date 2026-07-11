@@ -51,10 +51,17 @@ func TestServerInitializesCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if srv.recipeValidationCache == nil {
-		t.Errorf("expected recipeValidationCache to be initialized")
+	// recipeValidationCache/recipeGraphCache are only ever read through
+	// RecipesAPI (nothing on Server itself uses them), so they're owned and
+	// constructed there — not duplicated onto the Server struct too
+	// (architecture review candidate #6).
+	if srv.recipesAPI == nil {
+		t.Fatal("expected recipesAPI to be initialized")
 	}
-	if srv.recipeGraphCache == nil {
-		t.Errorf("expected recipeGraphCache to be initialized")
+	if srv.recipesAPI.recipeValidationCache == nil {
+		t.Errorf("expected recipesAPI.recipeValidationCache to be initialized")
+	}
+	if srv.recipesAPI.recipeGraphCache == nil {
+		t.Errorf("expected recipesAPI.recipeGraphCache to be initialized")
 	}
 }

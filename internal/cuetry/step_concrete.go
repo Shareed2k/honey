@@ -20,6 +20,7 @@ type CommandStep struct {
 	RemoteExec
 	Command     string `json:"command,omitempty"`
 	Interpreter string `json:"interpreter,omitempty"`
+	Templated   bool   `json:"templated,omitempty"`
 }
 
 // Kind returns the step kind identifier.
@@ -29,7 +30,14 @@ func (s *CommandStep) Kind() string { return KindCommand }
 func (s *CommandStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *CommandStep) Validate(_ StepValidateCtx) error { return nil }
+func (s *CommandStep) Validate(_ StepValidateCtx) error {
+	if s.Templated {
+		if err := validateTemplateSyntax(s.Command); err != nil {
+			return fmt.Errorf("command: %w", err)
+		}
+	}
+	return nil
+}
 
 var _ RemoteStep = (*CommandStep)(nil)
 
@@ -43,6 +51,7 @@ type ScriptStep struct {
 	RemoteExec
 	Script      *RecipeFileTransfer `json:"script,omitempty"`
 	Interpreter string              `json:"interpreter,omitempty"`
+	Templated   bool                `json:"templated,omitempty"`
 }
 
 // Kind returns the step kind identifier.
@@ -52,6 +61,9 @@ func (s *ScriptStep) Kind() string { return KindScript }
 func (s *ScriptStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
+// Templated is not syntax-checked here (unlike CommandStep): the rendered
+// body is the local script *file's content*, not a field available at
+// recipe-parse time — a bad template only surfaces at render/execute time.
 func (s *ScriptStep) Validate(_ StepValidateCtx) error {
 	if s.Script == nil {
 		return fmt.Errorf("script step requires a script file transfer")
@@ -79,7 +91,10 @@ func (s *PutStep) Kind() string { return KindPut }
 func (s *PutStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *PutStep) Validate(_ StepValidateCtx) error {
+func (s *PutStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on put steps is not supported", vc.Index)
+	}
 	if s.Put == nil {
 		return fmt.Errorf("put step requires a file transfer")
 	}
@@ -102,7 +117,10 @@ func (s *GetStep) Kind() string { return KindGet }
 func (s *GetStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *GetStep) Validate(_ StepValidateCtx) error {
+func (s *GetStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on get steps is not supported", vc.Index)
+	}
 	if s.Get == nil {
 		return fmt.Errorf("get step requires a file transfer")
 	}
@@ -139,6 +157,11 @@ func (s *PluginStep) Validate(_ StepValidateCtx) error {
 	if strings.TrimSpace(s.Plugin.Action) == "" {
 		return fmt.Errorf("plugin.action is required")
 	}
+	if key := strings.TrimSpace(s.Plugin.KVKey); key != "" {
+		if err := stepkvValidateKey(key); err != nil {
+			return fmt.Errorf("plugin.kv_key %q: %w", key, err)
+		}
+	}
 	return nil
 }
 
@@ -164,6 +187,9 @@ func (s *TunnelStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *TunnelStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on tunnel steps is not supported", i)
+	}
 	if s.Tunnel == nil {
 		return fmt.Errorf("cuetry: steps[%d]: internal tunnel step", i)
 	}
@@ -232,7 +258,10 @@ func (s *K8sStep) Kind() string { return KindK8s }
 func (s *K8sStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *K8sStep) Validate(_ StepValidateCtx) error {
+func (s *K8sStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on k8s steps is not supported", vc.Index)
+	}
 	if s.K8s == nil {
 		return fmt.Errorf("k8s step requires a k8s block")
 	}
@@ -278,7 +307,10 @@ func (s *OpensearchStep) Kind() string { return KindOpensearch }
 func (s *OpensearchStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *OpensearchStep) Validate(_ StepValidateCtx) error {
+func (s *OpensearchStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on opensearch steps is not supported", vc.Index)
+	}
 	if s.Opensearch == nil {
 		return fmt.Errorf("opensearch step requires an opensearch block")
 	}
@@ -301,7 +333,10 @@ func (s *PostgresStep) Kind() string { return KindPostgres }
 func (s *PostgresStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *PostgresStep) Validate(_ StepValidateCtx) error {
+func (s *PostgresStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on postgres steps is not supported", vc.Index)
+	}
 	if s.Postgres == nil {
 		return fmt.Errorf("postgres step requires a postgres block")
 	}
@@ -341,7 +376,10 @@ func (s *RecipeStep) Clone() Step {
 }
 
 // Validate checks this step's kind-specific fields; shared rules run separately.
-func (s *RecipeStep) Validate(_ StepValidateCtx) error {
+func (s *RecipeStep) Validate(vc StepValidateCtx) error {
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on recipe steps is not supported", vc.Index)
+	}
 	if s.Recipe == nil {
 		return fmt.Errorf("recipe step requires a recipe block")
 	}
@@ -373,6 +411,12 @@ func (s *AgentTransferStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); r
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *AgentTransferStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on agent_transfer steps is not supported", i)
+	}
+	if len(s.Env) > 0 {
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for agent_transfer steps", i)
+	}
 	at := s.AgentTransfer
 	if at == nil {
 		return fmt.Errorf("cuetry: steps[%d]: internal agent_transfer", i)
@@ -437,6 +481,9 @@ func (s *TemplateStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *TemplateStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on template steps is not supported", i)
+	}
 	// host: a render step with empty host is allowed (defaults applied later).
 	if strings.TrimSpace(s.Host) != "" || strings.TrimSpace(s.Render) == "" {
 		if err := ValidateHostField(s.Host); err != nil {
@@ -468,13 +515,62 @@ func (s *TemplateStep) Validate(vc StepValidateCtx) error {
 var _ Step = (*TemplateStep)(nil)
 
 // ---------------------------------------------------------------------------
+// summarize (local) — no RemoteExec
+// ---------------------------------------------------------------------------
+
+// SummarizeStep runs the terminal local LLM summarizer (must be last; host must be "_").
+type SummarizeStep struct {
+	StepBase
+	Summarize *RecipeSummarize `json:"summarize,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *SummarizeStep) Kind() string { return KindSummarize }
+
+// Clone returns a deep copy of the step (safe for loop fan-out mutation).
+func (s *SummarizeStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields; shared rules run separately.
+func (s *SummarizeStep) Validate(vc StepValidateCtx) error {
+	i := vc.Index
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on summarize steps is not supported", i)
+	}
+	if len(s.Env) > 0 {
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for summarize steps", i)
+	}
+	if vc.Mode == ExecutionModeLinear && i != vc.NumSteps-1 {
+		return fmt.Errorf("cuetry: steps[%d]: summarize step must be the last step in the recipe", i)
+	}
+	if i == 0 {
+		return fmt.Errorf("cuetry: steps[%d]: summarize cannot be the first step; add at least one prior step", i)
+	}
+	if strings.TrimSpace(s.Host) != MatchLocalAIHost {
+		return fmt.Errorf("cuetry: steps[%d]: summarize step host must be %q", i, MatchLocalAIHost)
+	}
+	if s.Summarize == nil {
+		return fmt.Errorf("cuetry: steps[%d]: internal summarize step", i)
+	}
+	if strings.TrimSpace(s.Summarize.Prompt) == "" {
+		return fmt.Errorf("cuetry: steps[%d].summarize.prompt is required", i)
+	}
+	return nil
+}
+
+var _ Step = (*SummarizeStep)(nil)
+
+// ---------------------------------------------------------------------------
 // ai (local) — no RemoteExec
 // ---------------------------------------------------------------------------
 
-// AIStep runs the terminal local LLM summarizer (must be last; host must be "_").
+// AIStep runs a single local LLM completion. Unlike summarize:, it has no
+// positional restriction, no at-most-one-per-recipe rule, and nothing stops
+// another step from depending on it — it behaves like template: with an LLM
+// call instead of a template render.
 type AIStep struct {
 	StepBase
-	AI *RecipeAI `json:"ai,omitempty"`
+	AI        *RecipeAI `json:"ai,omitempty"`
+	Templated bool      `json:"templated,omitempty"`
 }
 
 // Kind returns the step kind identifier.
@@ -486,11 +582,11 @@ func (s *AIStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
 // Validate checks this step's kind-specific fields; shared rules run separately.
 func (s *AIStep) Validate(vc StepValidateCtx) error {
 	i := vc.Index
-	if vc.Mode == ExecutionModeLinear && i != vc.NumSteps-1 {
-		return fmt.Errorf("cuetry: steps[%d]: ai step must be the last step in the recipe", i)
+	if strings.TrimSpace(s.RunAs) != "" {
+		return fmt.Errorf("cuetry: steps[%d]: run_as on ai steps is not supported", i)
 	}
-	if i == 0 {
-		return fmt.Errorf("cuetry: steps[%d]: ai cannot be the first step; add at least one prior step", i)
+	if len(s.Env) > 0 {
+		return fmt.Errorf("cuetry: steps[%d]: env is not supported for ai steps", i)
 	}
 	if strings.TrimSpace(s.Host) != MatchLocalAIHost {
 		return fmt.Errorf("cuetry: steps[%d]: ai step host must be %q", i, MatchLocalAIHost)
@@ -500,6 +596,11 @@ func (s *AIStep) Validate(vc StepValidateCtx) error {
 	}
 	if strings.TrimSpace(s.AI.Prompt) == "" {
 		return fmt.Errorf("cuetry: steps[%d].ai.prompt is required", i)
+	}
+	if s.Templated {
+		if err := validateTemplateSyntax(s.AI.Prompt); err != nil {
+			return fmt.Errorf("cuetry: steps[%d].ai.prompt: %w", i, err)
+		}
 	}
 	return nil
 }
@@ -553,6 +654,76 @@ func (s *OPAStep) Validate(vc StepValidateCtx) error {
 var _ Step = (*OPAStep)(nil)
 
 // ---------------------------------------------------------------------------
+// package
+// ---------------------------------------------------------------------------
+
+// PackageStep manages system packages.
+type PackageStep struct {
+	StepBase
+	RemoteExec
+	Package *RecipeStepPackage `json:"package,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *PackageStep) Kind() string { return KindPackage }
+
+// Clone returns a deep copy of the step.
+func (s *PackageStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields.
+func (s *PackageStep) Validate(vc StepValidateCtx) error {
+	if s.Package == nil {
+		return fmt.Errorf("cuetry: steps[%d].package is required", vc.Index)
+	}
+	if s.Package.Name == "" {
+		return fmt.Errorf("cuetry: steps[%d].package.name is required", vc.Index)
+	}
+	switch s.Package.State {
+	case "present", "absent", "latest":
+	default:
+		return fmt.Errorf("cuetry: steps[%d].package.state must be present, absent, or latest", vc.Index)
+	}
+	return nil
+}
+
+var _ RemoteStep = (*PackageStep)(nil)
+
+// ---------------------------------------------------------------------------
+// service
+// ---------------------------------------------------------------------------
+
+// ServiceStep manages system services.
+type ServiceStep struct {
+	StepBase
+	RemoteExec
+	Service *RecipeStepService `json:"service,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *ServiceStep) Kind() string { return KindService }
+
+// Clone returns a deep copy of the step.
+func (s *ServiceStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields.
+func (s *ServiceStep) Validate(vc StepValidateCtx) error {
+	if s.Service == nil {
+		return fmt.Errorf("cuetry: steps[%d].service is required", vc.Index)
+	}
+	if s.Service.Name == "" {
+		return fmt.Errorf("cuetry: steps[%d].service.name is required", vc.Index)
+	}
+	switch s.Service.State {
+	case "started", "stopped", "restarted", "reloaded", "status":
+	default:
+		return fmt.Errorf("cuetry: steps[%d].service.state must be started, stopped, restarted, reloaded, or status", vc.Index)
+	}
+	return nil
+}
+
+var _ RemoteStep = (*ServiceStep)(nil)
+
+// ---------------------------------------------------------------------------
 // registration
 // ---------------------------------------------------------------------------
 
@@ -568,8 +739,11 @@ func init() {
 	RegisterStep(KindDocker, []string{"docker"}, func() Step { return &DockerStep{} })
 	RegisterStep(KindOpensearch, []string{"opensearch"}, func() Step { return &OpensearchStep{} })
 	RegisterStep(KindPostgres, []string{"postgres"}, func() Step { return &PostgresStep{} })
+	RegisterStep(KindPackage, []string{"package"}, func() Step { return &PackageStep{} })
+	RegisterStep(KindService, []string{"service"}, func() Step { return &ServiceStep{} })
 	RegisterStep(KindRecipe, []string{"recipe"}, func() Step { return &RecipeStep{} })
 	RegisterStep(KindAgentTransfer, []string{"agent_transfer"}, func() Step { return &AgentTransferStep{} })
+	RegisterStep(KindSummarize, []string{"summarize"}, func() Step { return &SummarizeStep{} })
 	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })
 	RegisterStep(KindOPA, []string{"opa"}, func() Step { return &OPAStep{} })
 }

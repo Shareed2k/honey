@@ -188,7 +188,7 @@ func TestRecipeE2E_PutStep(t *testing.T) {
 	// Create a temporary local file to upload
 	tmpDir := t.TempDir()
 	localFile := filepath.Join(tmpDir, "upload_test.txt")
-	err := os.WriteFile(localFile, []byte("hello from local"), 0644)
+	err := os.WriteFile(localFile, []byte("hello from local"), 0o644)
 	require.NoError(t, err)
 
 	cueContent := `
@@ -252,7 +252,7 @@ func TestRecipeE2E_ScriptStep(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	localScript := filepath.Join(tmpDir, "test.sh")
-	err := os.WriteFile(localScript, []byte("#!/bin/sh\necho \"Script executed successfully\"\n"), 0755)
+	err := os.WriteFile(localScript, []byte("#!/bin/sh\necho \"Script executed successfully\"\n"), 0o755)
 	require.NoError(t, err)
 
 	cueContent := `
@@ -498,7 +498,7 @@ func TestRecipeE2E_LocalSteps(t *testing.T) {
 	// Build the echo WASM plugin for the test
 	// Assume the plugin is already built or we test just template if WASM is too complex to build in tests.
 	// We will skip plugin for now if WASM compiling in tests is heavy, but let's test template.
-	
+
 	_ = plugins.Manager{} // Spec compliance
 	reg := &testRegistry{}
 	rec := hosts.Record{Provider: "test", Name: "local-test"}
@@ -529,8 +529,8 @@ recipe: {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// To test command we need a dummy SSH mock or we just assert the template step directly 
-	// Wait, the template step runs, then command step runs. Since we don't have SSH dialer, 
+	// To test command we need a dummy SSH mock or we just assert the template step directly
+	// Wait, the template step runs, then command step runs. Since we don't have SSH dialer,
 	// command step will fail. Let's just check the template step.
 
 	cueContentOnlyTemplate := `

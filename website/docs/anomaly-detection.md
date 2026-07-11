@@ -53,6 +53,53 @@ honey logs myapp --anomaly --anomaly-preprocessor lshd --anomaly-only
 
 ---
 
+## 🔬 Embedded ONNX Classifier (no LLM required)
+
+For fully offline or air-gapped scoring, `honey` can run a local DistilBERT-based classifier via ONNX Runtime instead of (or alongside) an LLM.
+
+```bash
+honey logs myapp --anomaly \
+  --anomaly-model ./model.onnx \
+  --anomaly-tokenizer ./vocab.txt \
+  --anomaly-window 32
+```
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--anomaly-model` | _(none)_ | Path to the local ONNX model file — enables the embedded detector |
+| `--anomaly-tokenizer` | _(none)_ | Path to the DistilBERT `vocab.txt` tokenizer |
+| `--anomaly-window` | `32` | Sliding window size for anomaly scoring |
+| `--anomaly-strict` | `false` | Fail startup if the detector can't initialize (instead of silently disabling it) |
+| `--anomaly-selftest` | `false` | Validate model/tokenizer/runtime and run a local smoke test (requires `--anomaly`) |
+
+Setting **both** `--anomaly-model` and `--anomaly-endpoint` (LLM) runs **ensemble mode** — every log line is scored by both detectors in parallel; throughput is then bounded by the LLM's response time (~1–5s/line), not the ONNX model.
+
+## 📈 Frequency-Spike Burst Detection
+
+Independent of template/LLM scoring, `honey` tracks how often each log template recurs and flags a **burst** when the short-window rate spikes relative to the long-window baseline:
+
+```bash
+honey logs myapp --anomaly --anomaly-freq-window 100 --anomaly-freq-ratio 5.0
+```
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--anomaly-freq-window` | `100` | Short window size for rate-ratio comparison (`0` disables) |
+| `--anomaly-freq-ratio` | `5.0` | Short/long rate ratio above which a template is flagged as a frequency spike |
+
+## 🔔 Alerting on anomalies
+
+Detected anomalies can trigger the same [alert](./alert.md) notification path used by the Alertmanager webhook receiver:
+
+```yaml
+defaults:
+  logs:
+    alert_enabled: true
+    alert_suppress_duration: "5m"   # suppress repeat alerts for the same template
+```
+
+---
+
 ## 🧠 Dynamic Few-Shot Selection: LLMLog (VLDB 2025)
 
 Instead of using static, generic prompts, `honey` implements **LLMLog's Adaptive Demonstration Selection** (Algorithm 3) to guide the LLM with contextually relevant, vendor-specific few-shot examples.

@@ -1,0 +1,9 @@
+id: audio_transcribe
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "honey-plugin-audio-transcribe:latest"
+  volumes:
+    - "/mnt/audio-share:/audio:rw"

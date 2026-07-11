@@ -180,7 +180,7 @@ func CountRecipeStreamResults(recipe Recipe, records []hosts.Record) (int, error
 	var total int
 	for _, w := range recipe.Steps {
 		kind := w.Step.Kind()
-		if kind == KindAgentTransfer || kind == KindAI {
+		if kind == KindAgentTransfer || kind == KindSummarize || kind == KindAI {
 			total++
 			continue
 		}

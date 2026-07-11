@@ -30,7 +30,7 @@ recipe: {
 			id:      "audit"
 			host:    "_"
 			depends: ["scan"]
-			ai: {
+			summarize: {
 				prompt: """
 Produce a vulnerability audit from the scan reports: top 10 CVEs by severity
 with affected hosts and packages, the count of systems impacted per critical

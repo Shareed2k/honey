@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,7 +27,6 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
-	"golang.org/x/sync/semaphore"
 	memorycache "k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -141,29 +139,11 @@ func (e *K8sExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest, o
 		return fmt.Errorf("internal: k8s step missing k8s field")
 	}
 	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
-	if maxConc <= 0 {
-		maxConc = 8
-	}
-	if maxConc > maxConcurrencyCap {
-		maxConc = maxConcurrencyCap
-	}
-	sem := semaphore.NewWeighted(int64(maxConc))
-	var wg sync.WaitGroup
-	for _, target := range targets {
-		target := target
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := sem.Acquire(ctx, 1); err != nil {
-				ch <- HostExecResult{Name: target.Record.Name, IP: target.Record.PrimaryIP, Provider: target.Record.Provider, Success: false, ErrMsg: err.Error()}
-				return
-			}
-			defer sem.Release(1)
-			res := runK8sActionOnHost(ctx, opts, stepIdx, step, target, retryCfg, attemptMax)
-			ch <- res
-		}()
-	}
-	wg.Wait()
+	DispatchHostResults(ctx, targets, maxConc, 8, func(target TargetContext) HostExecResult {
+		return runK8sActionOnHost(ctx, opts, stepIdx, step, target, retryCfg, attemptMax)
+	}, func(res HostExecResult) {
+		ch <- res
+	})
 	return nil
 }
 

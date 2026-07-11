@@ -158,7 +158,7 @@ func TestBuildEnvMapForWhen_cliOverride(t *testing.T) {
 func TestBuildSecretsMapForWhen_dryRun(t *testing.T) {
 	t.Parallel()
 	m, err := BuildSecretsMapForWhen(context.Background(), false, nil, &StepBase{
-		Secrets: map[string]string{"X": "secure:v1:AA:bb"},
+		Secrets: map[string]RecipeSecret{"X": {Ref: "secure:v1:AA:bb"}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

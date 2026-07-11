@@ -123,7 +123,6 @@ route:
 
 ```yaml
 alert_webhook:
-  enabled: true
   port: 9095
   token: "my-secret-token"       # bearer token Alertmanager sends
   auto_investigate: true         # run mapping.command via SSH on matching hosts
@@ -132,6 +131,8 @@ alert_webhook:
 ```
 
 **Flag overrides:** `--port` and `--token` override YAML values for the current run.
+
+Note: `alert_webhook.enabled` is not currently read anywhere — `honey alert serve` starts the receiver unconditionally whenever the command is run, regardless of this field. Omit it; there is no way to keep the config present but the server off via YAML today.
 
 ### Notifications
 
@@ -152,7 +153,8 @@ alert_mappings:
 ```
 
 Honey posts a markdown-formatted message to the Slack incoming webhook with the alert name,
-matched host, investigation output (when `auto_investigate: true`), and a UTC timestamp.
+matched host, and investigation output (when `auto_investigate: true`). It does not include
+a timestamp.
 
 #### HTTP webhook
 

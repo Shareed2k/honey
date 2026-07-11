@@ -71,26 +71,30 @@ func TestRecipeE2E_PluginCVEScanner(t *testing.T) {
 	}
 
 	rec := hosts.CloneWithMetaSSHPort(hosts.Record{Provider: "test", Name: "ssh-test", PrimaryIP: sshH}, sshP)
-	
-	// Create a fake trivial vulnerability database mock or run a dummy command
-	// For E2E we'll just run auto installer that fails download or does a dry-run style command.
-	// Since we are running in an alpine-based SSH container, we can run "scan" and see it inject the logic
-	// The SSH container used in tests/integration/containers.go is typically alpine.
-	
+
+	// Scan an empty, freshly created directory rather than the container's
+	// real rootfs: trivy only reports findings for packages/manifests it can
+	// detect, so an empty dir yields total:0 deterministically, independent
+	// of what the live vulnerability database currently knows about the
+	// container's actual installed OS packages (which changes over time as
+	// new CVEs are disclosed against already-shipped packages).
 	cueContent := `
 recipe: {
 	name: "test-cve-scanner"
-	type: "graph"
+	type: "linear"
 	steps: [
 		{
-			id: "scan"
+			host: "*"
+			command: "mkdir -p /tmp/cve-scan-empty"
+		},
+		{
 			host: "*"
 			plugin: {
 				id: "cve-scanner"
 				action: "scan"
 				config: {
 					scanner: "auto"
-					target: "dir:/"
+					target: "dir:/tmp/cve-scan-empty"
 				}
 			}
 		}
@@ -125,10 +129,13 @@ recipe: {
 		results = append(results, res)
 	}
 
-	require.Len(t, results, 1)
-	
-	t.Logf("OUTPUT: %q", results[0].Output)
-	assert.True(t, results[0].Success)
-	assert.Contains(t, results[0].Output, `"scanner":"trivy"`)
-	assert.Contains(t, results[0].Output, `"total":0`)
+	require.Len(t, results, 2)
+
+	mkdirResult, scanResult := results[0], results[1]
+	require.True(t, mkdirResult.Success, "mkdir step failed: %s", mkdirResult.Output)
+
+	t.Logf("OUTPUT: %q", scanResult.Output)
+	assert.True(t, scanResult.Success)
+	assert.Contains(t, scanResult.Output, `"scanner":"trivy"`)
+	assert.Contains(t, scanResult.Output, `"total":0`)
 }

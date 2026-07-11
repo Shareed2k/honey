@@ -1,9 +1,15 @@
-# honey WASM plugins (Extism)
+# honey plugins (WASM + Docker runtime)
 
-Plugins live under `~/.config/honey/plugins/<name>/` with:
+Plugins live under `~/.config/honey/plugins/<name>/`. Two runtimes:
 
-- `plugin.yaml` — manifest (id, capabilities, optional `secret_ref_prefixes`)
-- `plugin.wasm` — Extism module
+- **`runtime: wasm`** (default) — sandboxed [Extism](https://extism.org/) module.
+  - `plugin.yaml` — manifest (id, capabilities, optional `secret_ref_prefixes`)
+  - `plugin.wasm` — Extism module, built with the [Extism Go PDK](https://github.com/extism/go-pdk) or other [Extism PDKs](https://extism.org/docs)
+- **`runtime: docker`** — runs a real binary (`mongosh`, `aws`, `gcloud`, `duckdb`, `ffmpeg`, …) inside a container. No WASM module and **no build step** — just two text files:
+  - `plugin.yaml` — manifest with `runtime: docker` and `docker: {image: "..."}`
+  - `plugin.cue` — declares each action's argv/output shape (see [Docker runtime plugins](../../website/docs/plugins-development.md#docker-runtime-plugins))
+
+See [Docker runtime plugins](../../website/docs/plugins-development.md#docker-runtime-plugins) for the full manifest/`plugin.cue` schema, and [`mongodb/`](mongodb/), [`duckdb/`](duckdb/), [`aws/`](aws/), [`gcloud/`](gcloud/) below for working examples.
 
 Enable in honey config:
 
@@ -135,9 +141,29 @@ Non-Go PDKs: call the `kv` host function with the same JSON shape (see table abo
 | Per-host custom step | `custom_step` |
 | Local hook after step | `hook` + `on_step_result` export |
 
-Postgres/MySQL **client libraries inside WASM** are still a poor fit (TCP + drivers). Prefer **HTTP APIs**, **`host_exec` + CLI**, or a future honey `host_sql` host function.
+Postgres/MySQL **client libraries inside WASM** are a poor fit (TCP + drivers). Prefer **HTTP APIs**, **`host_exec` + CLI**, the built-in `postgres`/`sqlite` plugins, or a **`runtime: docker`** plugin that execs the real client binary (`mongosh`, `psql`, …) in a container — see below.
 
-Author plugins with the [Extism Go PDK](https://github.com/extism/go-pdk) or other [Extism PDKs](https://extism.org/docs).
+Author WASM plugins with the [Extism Go PDK](https://github.com/extism/go-pdk) or other [Extism PDKs](https://extism.org/docs).
+
+## Example Docker-runtime plugins
+
+No WASM build step — each is just `plugin.yaml` (`runtime: docker`) + `plugin.cue` (actions/argv). Copy a directory into your plugins root to use it as-is:
+
+| Plugin | Image | Actions |
+|--------|-------|---------|
+| [`mongodb/`](mongodb/) | `mongo:latest` | `query`, `eval` — `mongosh` against a URI |
+| [`duckdb/`](duckdb/) | `duckdb/duckdb:latest` | `query`, `export_parquet` — bind-mounts `/var/honey/data` |
+| [`aws/`](aws/) | `amazon/aws-cli:latest` | `s3_ls`, `s3_cp`, `s3_rm`, `ec2_describe`, `ec2_start`, `ec2_stop` |
+| [`gcloud/`](gcloud/) | `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` | `compute_list`, `compute_start`, `compute_stop`, `storage_ls`, `storage_cp`, `storage_rm` |
+
+`gcloud`'s image is **amd64-only** — fails with `exec format error` on Apple Silicon hosts without qemu emulation registered. The other three are multi-arch.
+
+```bash
+mkdir -p ~/.config/honey/plugins/mongodb
+cp examples/plugins/mongodb/plugin.yaml examples/plugins/mongodb/plugin.cue ~/.config/honey/plugins/mongodb/
+```
+
+Requires `honey-plugin-init` built alongside the `honey` binary — see [Docker runtime plugins](../../website/docs/plugins-development.md#docker-runtime-plugins) for the full manifest/`plugin.cue` schema and packaging notes.
 
 ## Example: echo
 
@@ -146,7 +172,7 @@ Author plugins with the [Extism Go PDK](https://github.com/extism/go-pdk) or oth
 Source: [`examples/plugins/echo/`](echo/). Build and refresh the committed test binary:
 
 ```bash
-make build-plugin-examples
+task build-plugin-examples
 ```
 
 Install for local use:

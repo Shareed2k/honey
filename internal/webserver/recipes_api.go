@@ -59,6 +59,12 @@ type RecipesAPI struct {
 }
 
 // NewRecipesAPI creates a new isolated router and handler set for Recipes.
+//
+// recipeValidationCache/recipeGraphCache are constructed here rather than on
+// Server: nothing outside RecipesAPI ever reads them, so storing them on
+// Server too was pure duplication (architecture review candidate #6) — the
+// same self-contained shape webhookDedupCache/webhookRL/webhookCapture below
+// already followed.
 func NewRecipesAPI(
 	opts Options,
 	metrics *metrics.Registry,
@@ -67,9 +73,10 @@ func NewRecipesAPI(
 	ai AIAssistant,
 	plugins *plugincache.Cache,
 	sshCache *engine.ClientCache,
-	valCache *lru.Cache[string, *ValidateContentResponse],
-	graphCache *lru.Cache[string, *cuetry.RecipeGraphPlan],
 ) *RecipesAPI {
+	valCache, _ := lru.New[string, *ValidateContentResponse](50)
+	graphCache, _ := lru.New[string, *cuetry.RecipeGraphPlan](50)
+
 	dedupCache := ttlcache.New(
 		ttlcache.WithTTL[string, string](24*time.Hour),
 		ttlcache.WithDisableTouchOnHit[string, string](),

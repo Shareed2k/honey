@@ -7,14 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/metrics"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/sync/semaphore"
 )
 
 // ScriptUploadRunOptions controls upload/chmod/execute script runs.
@@ -87,36 +85,20 @@ func newScriptContentRunner(user, scriptContent, fileExtension string, opts Scri
 }
 
 func (sr *scriptRunner) stream(ctx context.Context, recs []TargetContext, maxConc int, out chan<- HostExecResult, post SSHPostHostResultFunc, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) {
-	if maxConc <= 0 {
-		maxConc = defaultSSHBatchConcurrency
-	}
-	if maxConc > maxConcurrencyCap {
-		maxConc = maxConcurrencyCap
-	}
-	sem := semaphore.NewWeighted(int64(maxConc))
-	var wg sync.WaitGroup
-	for i := range recs {
-		wg.Add(1)
-		go func(tc TargetContext) {
-			defer wg.Done()
-			if err := sem.Acquire(ctx, 1); err != nil {
-				out <- HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider, Success: false, ErrMsg: "cancelled"}
-				return
-			}
-			defer sem.Release(1)
-			outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
-				return sr.runHost(ctx, tc)
-			})
-			RecordMaxAttempts(attemptMax, outcome.Attempts)
-			observeSSHOperation(obs, "script", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
-			res := outcome.Result
-			if post != nil {
-				post(ctx, tc, &res)
-			}
-			out <- res
-		}(recs[i])
-	}
-	wg.Wait()
+	DispatchHostResults(ctx, recs, maxConc, defaultSSHBatchConcurrency, func(tc TargetContext) HostExecResult {
+		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
+			return sr.runHost(ctx, tc)
+		})
+		RecordMaxAttempts(attemptMax, outcome.Attempts)
+		observeSSHOperation(obs, "script", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+		res := outcome.Result
+		if post != nil {
+			post(ctx, tc, &res)
+		}
+		return res
+	}, func(res HostExecResult) {
+		out <- res
+	})
 }
 
 func (sr *scriptRunner) runHost(ctx context.Context, tc TargetContext) HostExecResult {

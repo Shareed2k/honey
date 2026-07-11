@@ -50,7 +50,7 @@ func validateOneEnv(k, v string) error {
 }
 
 // OverlapEnvSecrets returns an error if the same key appears in both env and secrets maps.
-func OverlapEnvSecrets(env, secrets map[string]string) error {
+func OverlapEnvSecrets(env map[string]string, secrets map[string]RecipeSecret) error {
 	if len(env) == 0 || len(secrets) == 0 {
 		return nil
 	}
@@ -63,14 +63,14 @@ func OverlapEnvSecrets(env, secrets map[string]string) error {
 }
 
 // ValidateRecipeSecretsRefMap checks secret map keys and ref strings (refs are resolved at execute time).
-func ValidateRecipeSecretsRefMap(m map[string]string) error {
+func ValidateRecipeSecretsRefMap(m map[string]RecipeSecret) error {
 	return ValidateRecipeSecretsRefMapPrefixes(m, nil)
 }
 
 // ValidateRecipeSecretsRefMapPrefixes allows secure:v1 refs and optional plugin-registered prefixes.
-func ValidateRecipeSecretsRefMapPrefixes(m map[string]string, allowedPrefixes []string) error {
-	for k, ref := range m {
-		if err := validateOneSecretRef(k, ref, allowedPrefixes); err != nil {
+func ValidateRecipeSecretsRefMapPrefixes(m map[string]RecipeSecret, allowedPrefixes []string) error {
+	for k, rs := range m {
+		if err := validateOneSecretRef(k, rs.StringRef(), allowedPrefixes); err != nil {
 			return err
 		}
 	}
@@ -143,11 +143,12 @@ func mergeEnvInto(ctx context.Context, resolve bool, resolver SecretResolver, ds
 }
 
 // MergeResolvedSecretsInto validates secret refs and merges resolved values into dst (or redacted placeholders when resolve is false).
-func MergeResolvedSecretsInto(ctx context.Context, resolve bool, resolver SecretResolver, dst map[string]string, secrets map[string]string, label string) error {
+func MergeResolvedSecretsInto(ctx context.Context, resolve bool, resolver SecretResolver, dst map[string]string, secrets map[string]RecipeSecret, label string) error {
 	if len(secrets) == 0 {
 		return nil
 	}
-	for k, ref := range secrets {
+	for k, rs := range secrets {
+		ref := rs.StringRef()
 		if strings.TrimSpace(k) == "" {
 			return fmt.Errorf("%s: empty secret key", label)
 		}

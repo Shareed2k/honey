@@ -39,6 +39,7 @@ type webhookTestFactory struct {
 func (f webhookTestFactory) FromConfig(_ searchrun.ProviderOverrides) []hosts.Backend {
 	return []hosts.Backend{webhookTestProvider{rec: f.rec}}
 }
+
 func (f webhookTestFactory) Default(_ searchrun.ProviderOverrides) hosts.Backend {
 	return webhookTestProvider{rec: f.rec}
 }

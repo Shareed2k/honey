@@ -43,6 +43,8 @@ backends:
       exec_mode: ssh                             # ssh | pve | hybrid
 ```
 
+Optional per-backend **`docker_discover`**.
+
 ## CLI (no config file)
 
 | Flag | Purpose |

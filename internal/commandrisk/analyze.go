@@ -176,7 +176,7 @@ func (a *Analysis) detectHelm(args []string) {
 }
 
 func (a *Analysis) detectDocker(args, flags []string) {
-	if containsAny(args, "rm") && (containsAny(flags, "-f", "--force")) {
+	if containsAny(args, "rm") && containsAny(flags, "-f", "--force") {
 		a.add(RiskSignal{ID: "DOCKER_RM_FORCE", Severity: SeverityHigh, Command: "docker", Args: args, Reason: "docker force-remove"})
 	}
 	if containsAny(args, "prune") {

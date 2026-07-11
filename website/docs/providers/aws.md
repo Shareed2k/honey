@@ -47,3 +47,4 @@ honey search --provider aws --aws-profile production -o json
 
 - Instances without a public/private IP honey can reach will not be connectable.
 - Profile name in YAML is required for configured backends; flag-only mode uses the default credential chain when profile is empty.
+- Only instances in `running` or `pending` state are listed.

@@ -108,8 +108,9 @@ curl -XPOST -H "Authorization: $GH_WEBHOOK_SECRET" \
 ```
 
 A trusted `X-Honey-User` header or a JWT on the request **overrides** the gjson
-`actor`; if neither is present and there is no `actor` path, the actor is
-`webhook:deploy-on-push`.
+`actor`; if neither is present and there is no `actor` path, the actor falls
+back to `webhook:<app_name>` — the app registry name from the URL
+(`webhook:my-app` for the route above), not the recipe's `name`.
 
 ## Decision points
 

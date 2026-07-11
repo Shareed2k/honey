@@ -9,7 +9,6 @@ import (
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
-	"golang.org/x/sync/semaphore"
 )
 
 func runCueStepTemplateOnHost(
@@ -143,58 +142,32 @@ func (e *TemplateExecutor) ExecuteStream(ctx context.Context, req ExecutionReque
 	}
 
 	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
-	if maxConc <= 0 {
-		maxConc = 8
-	}
-	if maxConc > maxConcurrencyCap {
-		maxConc = maxConcurrencyCap
-	}
-	sem := semaphore.NewWeighted(int64(maxConc))
-	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var stepErr error
 
-	for _, target := range targets {
-		target := target
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := sem.Acquire(ctx, 1); err != nil {
-				mu.Lock()
-				stepErr = err
-				mu.Unlock()
-				if ch != nil {
-					ch <- HostExecResult{Name: target.Record.Name, IP: target.Record.PrimaryIP, Provider: target.Record.Provider, Success: false, ErrMsg: err.Error()}
-				}
-				return
-			}
-			defer sem.Release(1)
-
-			res := runCueStepTemplateOnHost(
-				ctx,
-				opts.Recipe,
-				stepIdx,
-				step,
-				target,
-				opts.OutputStore,
-				opts.OutputCapture,
-				opts.RecipeKV,
-				opts.SecretResolver,
-				opts.Execute,
-			)
-
+	DispatchHostResults(ctx, targets, maxConc, 8, func(target TargetContext) HostExecResult {
+		return runCueStepTemplateOnHost(
+			ctx,
+			opts.Recipe,
+			stepIdx,
+			step,
+			target,
+			opts.OutputStore,
+			opts.OutputCapture,
+			opts.RecipeKV,
+			opts.SecretResolver,
+			opts.Execute,
+		)
+	}, func(res HostExecResult) {
+		if !res.Success && !res.Skipped {
 			mu.Lock()
-			if !res.Success && !res.Skipped {
-				stepErr = fmt.Errorf("template failed on %s: %s", target.Record.Name, res.ErrMsg)
-			}
+			stepErr = fmt.Errorf("template failed on %s: %s", res.Name, res.ErrMsg)
 			mu.Unlock()
-
-			if ch != nil {
-				ch <- res
-			}
-		}()
-	}
-	wg.Wait()
+		}
+		if ch != nil {
+			ch <- res
+		}
+	})
 	return stepErr
 }
 

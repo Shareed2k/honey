@@ -169,7 +169,7 @@ recipe: {
 				notify_subject: "Honey AI summary"
 				services: { http: {} }
 			}
-			ai: {
+			summarize: {
 				prompt: """
 Summarize the host listing in 3–5 bullet points. Note any missing output or failures.
 """

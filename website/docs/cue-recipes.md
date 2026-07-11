@@ -4,7 +4,7 @@ title: CUE Recipes
 slug: /cue-recipes
 ---
 
-Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each step targets hosts from your current search and performs **exactly one** action: `command`, `put`, `get`, `script`, `agent_transfer`, `ai`, `plugin` (WASM — see [Plugin development](./plugins-development.md)), `tunnel` (operator-side port forward), or `k8s` (Kubernetes API — see [Kubernetes steps](#kubernetes-steps)).
+Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each step targets hosts from your current search and performs **exactly one** action: `command`, `put`, `get`, `script`, `agent_transfer`, `summarize`, `ai`, `plugin` (WASM — see [Plugin development](./plugins-development.md)), `tunnel` (operator-side port forward), or `k8s` (Kubernetes API — see [Kubernetes steps](#kubernetes-steps)).
 
 Use **`honey cue-validate`** to check a file, **`honey cue-exec`** to dry-run or execute (same host resolution as `honey search`). From the search TUI, press **r** (append `!` to the path to execute). The [Web UI](./web-ui.md) Recipes tab runs the same engine.
 
@@ -35,7 +35,7 @@ Each step has a `host` field resolved against search results:
 | Literal IP | Match `PrimaryIP` |
 | `"*"` | Every row with a `PrimaryIP` |
 | `"re:PATTERN"` | Go regexp (RE2) on `Name` (rows with IP only) |
-| `"_"` | Local only — required for `ai` steps |
+| `"_"` | Local only — required for `summarize`/`ai` steps |
 
 For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` selects the destination (each must match exactly one row).
 
@@ -43,14 +43,15 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 
 | Kind | Remote? | Notes |
 |------|---------|-------|
-| `command` | SSH / k8s exec | Optional `env`, `secrets`, `hooks`, `kv_tunnel` |
-| `script` | SSH / k8s exec | Upload `local` → `remote`, then `sh <remote>` |
-| `plugin` | SSH / k8s exec | WASM custom step — [Plugin development](./plugins-development.md) |
+| `command` | SSH / k8s exec | Optional `env`, `secrets`, `hooks`, `kv_tunnel`, `templated` — [Templated command/script steps](#templated-commandscript-steps) |
+| `script` | SSH / k8s exec | Upload `local` → `remote`, then `sh <remote>`; optional `templated` |
+| `plugin` | SSH / k8s exec | Custom step (WASM or `runtime: docker`) — [Plugin development](./plugins-development.md), optional `kv_key`/`kv_key_per_host` |
 | `tunnel` | SSH / k8s / TrueNAS | Operator-side listen (local/remote/dynamic/UDP/tun) — [Tunnel steps](#tunnel-steps) |
 | `k8s` | Kubernetes API | Direct API calls: apply, delete, scale, rollout, get, exec, job — [Kubernetes steps](#kubernetes-steps) |
 | `put` / `get` | SFTP or k8s tar stream | Relative `local` paths from recipe directory |
 | `agent_transfer` | A→cloud→B | Needs honey config for `cloud_backend_ref` |
-| `ai` | Local (operator) | `host: "_"`; needs `OPENAI_API_KEY` when executing |
+| `summarize` | Local (operator) | `host: "_"`; terminal step only — must be last, at most one per recipe, nothing may depend on it; summarizes the whole run/ancestor chain; needs `OPENAI_API_KEY` when executing |
+| `ai` | Local (operator) | `host: "_"`; a single LLM completion, usable anywhere (any position, any number of times, other steps may depend on its output) — like `template:` but calling an LLM instead of rendering a template; optional `templated`; needs `OPENAI_API_KEY` when executing |
 | `recipe` | Local (operator) | Invoke a sub-recipe — [Sub-recipes](#sub-recipes) |
 
 Optional **`recipe.defaults`**: `run_as`, `env`, `secrets`, `kv_tunnel`, `max_parallel`, `ssh_port`, `ssh_private_key`, `k8s_debug_image`.
@@ -154,7 +155,7 @@ Example: [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/e
 
 - **`HONEY_STEP_ID`:** set on remote env when the step has an `id` (use to namespace shared KV keys).
 - **`kv_tunnel`:** one operator-side `stepkv` session for the whole run; see [KV tunnel](#recipe-kv-tunnel) below.
-- **Failure / skip:** if a step fails (or all hosts hit transient SSH errors), **descendants are skipped**. If an **`ai`** step becomes unreachable, the run **aborts**.
+- **Failure / skip:** if a step fails (or all hosts hit transient SSH errors), **descendants are skipped**. If a **`summarize`** step becomes unreachable, the run **aborts**.
 - **Web UI:** Recipes wizard → **Graph** tab shows the DAG (`POST /api/v1/recipes/validate-content` → `graph` field).
 
 Example: [`graph_parallel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/graph_parallel.cue).
@@ -194,7 +195,7 @@ Optional **`when: "<CEL expression>"`** on any step kind. The expression must ev
 |------|----------------|
 | `command`, `script`, `plugin`, `put`, `get` | Per expanded target host |
 | `agent_transfer` | Once on the **source** host (`dest.*` available in CEL) |
-| `ai` | Once locally (`host.name == "_"`; `steps` uses aggregated prior results) |
+| `summarize`, `ai` | Once locally (`host.name == "_"`; `steps` uses aggregated prior results) |
 
 ### Rules
 
@@ -751,7 +752,8 @@ Example: [`kafka_controller_rolling_restart.cue`](https://github.com/shareed2k/h
 
 - **Hooks** (`on_success` / `on_failure`): command/script/plugin only; local or remote follow-up per host. See [`honey cue-exec`](./cli/honey_cue-exec.md).
 - **`notify`:** optional per-step notifications after success ([nikoksr/notify](https://github.com/nikoksr/notify)).
-- **`ai`:** terminal summarizer after prior steps; optional `notify` and `when` (aggregated `steps` view).
+- **`summarize`:** terminal summarizer after prior steps — must be the last step in the recipe, at most one per recipe, and no other step may depend on it; sends the whole run's (or, in graph mode, its full ancestor chain's) combined output to the model in one request; optional `notify` and `when` (aggregated `steps` view).
+- **`ai`:** a single LLM completion, usable like any other step — any position, any number of times, and other steps may consume its output via `output`/`env_from`/`from_output` just like `template:`. Unlike `summarize:`, it has no built-in transcript aggregation; the prompt is sent as written, or rendered from prior step/KV data first via `templated: true` (see [Templated command/script steps](#templated-commandscript-steps) for the function reference — `ai:` reuses the same rendering). Optional `notify` and `when`.
 
 ## Loops and Matrix Execution
 
@@ -811,6 +813,44 @@ By default, step hooks (`on_success` or `on_failure`) run as side-car post-facto
 **`template.output`** captures the rendered string under a named key. It is only supported on `host: "_"` (local steps). For per-host templates (`host: "*"`), omit `output` and pass the result downstream via `env_from[].from_output` instead.
 
 Example: [`template_kv.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/template_kv.cue).
+
+## Templated command/script steps
+
+`env_from` caps every value at **8192 bytes** (`command`/`script` steps only ever see prior-step data as `$VAR` shell env vars). For larger payloads — a fetched web page, a large query result — set **`templated: true`** on a `command` or `script` step instead: its body is rendered as a Go template *before* the step runs, with the same `kvGet`/`kvHas`/sprig functions `template:` steps use, plus two more:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `stepStdout "id"` | string | First non-empty stdout captured for a prior step id (any host) |
+| `stepStdoutLines "id"` | []string | Same, split into lines |
+| `outputStdout "name"` | string | Value captured by a `template.output`/`k8s.output`-style named capture |
+| `outputStdoutLines "name"` | []string | Same, split into lines |
+
+The template `Data` also exposes `.steps`, `.outputs`, and (for `command` steps only — see below) `.env`:
+
+```cue
+{
+  id:        "check-title"
+  host:      "*"
+  depends:   ["fetch-protected-site"]
+  templated: true
+  command: """
+    TITLE="{{ regexFind "(?i)<title>.*</title>" (kvGet "stealth_fetch" | fromJson).content }}"
+    echo "Fetched page: $TITLE"
+    if [ -z "$TITLE" ]; then
+      echo "no title found" >&2
+      exit 1
+    fi
+  """
+}
+```
+
+Pairs naturally with a plugin step's **`kv_key`** (see [Plugin development](./plugins-development.md#kv_key--kv_key_per_host)), which writes the plugin's stdout straight to the recipe KV store (65536-byte cap) instead of `env_from` — the pattern the example above uses (`kvGet "stealth_fetch" | fromJson` reads back a plugin's JSON output written via `plugin.kv_key: "stealth_fetch"`).
+
+Rules and caveats:
+
+- **`command` steps** get per-host `.env` (the same resolved env `$VAR` expansion already sees) in addition to `.steps`/`.outputs`/KV. **`script` steps** render the *local file's content* once, before it's uploaded to any host — since one file is shared across every target, `.env` is not available there, only `.steps`/`.outputs`/KV.
+- Template **syntax** is checked at `cue-validate` time (a malformed `{{ }}` fails validation immediately). The template is **not** actually rendered during a dry-run (`cue-exec` without `--execute`) — render-time data (KV values, prior-step stdout) is normally still empty before anything has actually run, so dry-run output shows the raw, unrendered body with a `templated=true` note instead of risking a spurious render error.
+- CUE **triple-quoted strings** (`"""..."""`) avoid having to escape embedded `"` inside template function calls like `kvGet "key"` — see the example above and [`examples/recipe/template_kv.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/template_kv.cue) for the escaping alternative.
 
 ## Related
 

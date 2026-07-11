@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -16,6 +17,78 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/postgres"
 )
+
+type mockReduceExecutor struct{}
+
+func (m *mockReduceExecutor) ExecuteStream(_ context.Context, req ExecutionRequest, _ ExecutionOptions, resCh chan<- HostExecResult) error {
+	for _, t := range req.Targets {
+		out := t.Env["item"]
+		if data, ok := t.Env["DATA"]; ok {
+			out = data
+		}
+		resCh <- HostExecResult{
+			Name:    t.Record.Name,
+			Success: true,
+			Output:  out,
+		}
+	}
+	return nil
+}
+
+func (m *mockReduceExecutor) ExecuteDryRun(_ context.Context, _ ExecutionRequest, _ ExecutionOptions, _ io.Writer) error {
+	return nil
+}
+
+func TestStreamCueRecipeStep_Reduce(t *testing.T) {
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:     "gen",
+			Host:   "*",
+			Loop:   `["apple", "banana"]`,
+			Reduce: "fruits_array",
+		},
+		Command: "mock_reduce_cmd",
+	}
+
+	old, _ := GetStepExecutor(cuetry.KindCommand)
+	RegisterStepExecutor(cuetry.KindCommand, &mockReduceExecutor{})
+	defer func() { RegisterStepExecutor(cuetry.KindCommand, old) }()
+
+	run := &CueRun{
+		Params: CueRecipeRunParams{
+			Recipe:  cuetry.Recipe{},
+			Records: []hosts.Record{{Name: "h1", PrimaryIP: "1.2.3.4"}},
+		},
+		OutputCapture: cuetry.NewRecipeOutputCapture(),
+		OutputStore:   cuetry.NewStepOutputStore(),
+	}
+
+	ch := make(chan HostExecResult, 10)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range ch { //nolint:revive
+		}
+	}()
+
+	res, err := StreamCueRecipeStep(context.Background(), run, 0, step, nil, ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(res) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(res))
+	}
+
+	val, ok := run.OutputCapture.Get("fruits_array")
+	if !ok {
+		t.Fatalf("fruits_array not set in OutputCapture")
+	}
+	if val != `["apple","banana"]` && val != `["banana","apple"]` {
+		t.Fatalf("unexpected fruits_array value: %s", val)
+	}
+}
 
 func TestCueStepAllTargetsTransientTransportFailed(t *testing.T) {
 	t.Parallel()
@@ -435,6 +508,16 @@ func TestCueRecipeDisplayOutput_suppressesSuccessfulCapturedOutput(t *testing.T)
 			res:  HostExecResult{Success: true, Output: "hello"},
 			want: "hello",
 		},
+		{
+			name: "plugin kv_key capture prints a kv-specific note instead of the raw payload",
+			res:  HostExecResult{Success: true, Output: `{"content":"..."}`, KVCaptureKey: "stealth_fetch"},
+			want: "[stored in kv: stealth_fetch]",
+		},
+		{
+			name: "KVCaptureKey takes priority over OutputCapture when somehow both are set",
+			res:  HostExecResult{Success: true, Output: "x", KVCaptureKey: "stealth_fetch", OutputCapture: "RESULT"},
+			want: "[stored in kv: stealth_fetch]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -736,8 +819,11 @@ func TestCueRun_postgresStep(t *testing.T) {
 
 	// Create mock secret resolver
 	mockResolver := &mockSecretResolver{
+		handlesFunc: func(ref string) bool {
+			return strings.Contains(ref, "secure:v1:test") || strings.Contains(ref, "secure:v1:defaults")
+		},
 		resolveFunc: func(ref string) (string, error) {
-			if strings.Contains(ref, "PG_DSN") || strings.Contains(ref, "secure:v1:test") {
+			if strings.Contains(ref, "PG_DSN") || strings.Contains(ref, "secure:v1:test") || strings.Contains(ref, "secure:v1:defaults") {
 				return "postgresql://postgres:password@localhost:5432/postgres", nil
 			}
 			return "", fmt.Errorf("not found")
@@ -748,8 +834,8 @@ func TestCueRun_postgresStep(t *testing.T) {
 		Params: CueRecipeRunParams{
 			Recipe: cuetry.Recipe{
 				Defaults: &cuetry.RecipeDefaults{
-					Secrets: map[string]string{
-						"PG_DSN": "secure:v1:test",
+					Secrets: map[string]cuetry.RecipeSecret{
+						"DB_PASS": {Ref: "secure:v1:defaults"},
 					},
 				},
 			},
@@ -769,7 +855,7 @@ func TestCueRun_postgresStep(t *testing.T) {
 			Host: "h1",
 		},
 		Postgres: &cuetry.RecipeStepPostgres{
-			DSNSecret: "PG_DSN",
+			DSNSecret: "DB_PASS",
 			Action:    "query",
 			SQL:       "SELECT 1 AS ok",
 		},

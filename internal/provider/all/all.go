@@ -55,7 +55,8 @@ func (c configAdapter) DockerBackendSlicePtr() *[]config.DockerBackend {
 
 func (c configAdapter) SetDockerBackends(b []config.DockerBackend) { config.Get().Backends.Docker = b }
 
-func (c configAdapter) GCPBackends() []config.GCPBackend         { return config.Get().Backends.GCP }
+func (c configAdapter) GCPBackends() []config.GCPBackend { return config.Get().Backends.GCP }
+
 func (c configAdapter) GCPBackendSlicePtr() *[]config.GCPBackend { return &config.Get().Backends.GCP }
 func (c configAdapter) SetGCPBackends(b []config.GCPBackend)     { config.Get().Backends.GCP = b }
 

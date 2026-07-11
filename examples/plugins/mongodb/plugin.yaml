@@ -1,0 +1,7 @@
+id: mongodb
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "mongo:latest"

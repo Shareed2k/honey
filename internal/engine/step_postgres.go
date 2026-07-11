@@ -175,7 +175,7 @@ func resolvePostgresDSN(ctx context.Context, opts ExecutionOptions, step cuetry.
 	}
 	secureRef := ref
 	if !strings.HasPrefix(ref, "secure:v1:") {
-		var v string
+		var v cuetry.RecipeSecret
 		var ok bool
 		if step.Base().Secrets != nil {
 			v, ok = step.Base().Secrets[ref]
@@ -186,13 +186,13 @@ func resolvePostgresDSN(ctx context.Context, opts ExecutionOptions, step cuetry.
 		if !ok {
 			return "", fmt.Errorf("unknown secrets key %q", ref)
 		}
-		secureRef = strings.TrimSpace(v)
-	}
-	if !strings.HasPrefix(secureRef, "secure:v1:") {
-		return "", fmt.Errorf("secrets key %q must reference secure:v1", ref)
+		secureRef = strings.TrimSpace(v.StringRef())
 	}
 	if opts.SecretResolver == nil {
 		return "", fmt.Errorf("secret resolver not configured")
+	}
+	if !opts.SecretResolver.Handles(secureRef) {
+		return "", fmt.Errorf("secrets key %q: no configured secret provider for %q", ref, secureRef)
 	}
 	return opts.SecretResolver.Resolve(ctx, secureRef)
 }
