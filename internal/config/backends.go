@@ -20,4 +20,10 @@ type HoneyBackend struct {
 	// ServerCA optionally pins the gateway server certificate (PEM) the mTLS
 	// client trusts. Empty falls back to the enrolled device CA.
 	ServerCA string `yaml:"server_ca,omitempty" json:"server_ca,omitempty" honey:"label=Gateway server CA (PEM);secret" mod:"trim"`
+	// Mesh routes this backend's URL through the local libp2p mesh client
+	// (internal/meshnet) instead of the normal network path — for reaching a
+	// remote honey instance behind NAT/CGNAT with no port-forward. Requires
+	// Config.Mesh.Enabled on this process, with at least one relay
+	// configured in Config.Mesh.RelayAddrs.
+	Mesh bool `yaml:"mesh,omitempty" json:"mesh,omitempty" honey:"label=Route via mesh;default=false"`
 }

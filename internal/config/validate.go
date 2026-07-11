@@ -58,6 +58,8 @@ func (f *File) Validate() error {
 				msg = "This field is required."
 			case "required_without":
 				msg = "This field is required when " + e.Param() + " is empty."
+			case "required_if":
+				msg = "This field is required when " + e.Param() + "."
 			case "ip":
 				msg = "Must be a valid IP address."
 			case "url":
