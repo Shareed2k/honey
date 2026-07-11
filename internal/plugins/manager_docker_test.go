@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -152,6 +153,60 @@ func TestLocatePluginInitBinary_EnvOverrideDirectoryFailsClearly(t *testing.T) {
 	if !strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("error=%q should mention \"not a regular file\"", err.Error())
 	}
+}
+
+func TestLocatePluginInitBinary_PrefersArchSuffixedOverPlainName(t *testing.T) {
+	t.Setenv("HONEY_PLUGIN_INIT_PATH", "")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(exe)
+	archPath := filepath.Join(dir, "honey-plugin-init-linux-"+runtime.GOARCH)
+	plainPath := filepath.Join(dir, "honey-plugin-init")
+
+	writeExecutable(t, archPath)
+	writeExecutable(t, plainPath)
+
+	got, err := locatePluginInitBinary()
+	if err != nil {
+		t.Fatalf("locatePluginInitBinary: %v", err)
+	}
+	if got != archPath {
+		t.Fatalf("got=%q want=%q (arch-suffixed binary should win over the plain name)", got, archPath)
+	}
+}
+
+func TestLocatePluginInitBinary_FallsBackToPlainNameWithoutArchSuffix(t *testing.T) {
+	t.Setenv("HONEY_PLUGIN_INIT_PATH", "")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainPath := filepath.Join(filepath.Dir(exe), "honey-plugin-init")
+	writeExecutable(t, plainPath)
+
+	got, err := locatePluginInitBinary()
+	if err != nil {
+		t.Fatalf("locatePluginInitBinary: %v", err)
+	}
+	if got != plainPath {
+		t.Fatalf("got=%q want=%q", got, plainPath)
+	}
+}
+
+// writeExecutable creates an executable file at path (removed via t.Cleanup),
+// failing the test immediately if something already occupies that path (so
+// tests never clobber a real binary sitting next to the test executable).
+func writeExecutable(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("refusing to overwrite existing file at %s", path)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
 }
 
 func TestResolveAllowedEnv_ResolvesSetVarsOmitsUnset(t *testing.T) {

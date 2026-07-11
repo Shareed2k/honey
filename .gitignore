@@ -22,7 +22,7 @@ runtime
 /honey
 honey
 .env
-.claude/*
+.claude
 
 */*.aar
 android/app/libs/*.aar
