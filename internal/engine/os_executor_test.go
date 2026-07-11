@@ -5,9 +5,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 )
+
+func parseTestRecipe(t *testing.T, content string) cuetry.Recipe {
+	t.Helper()
+	rec, err := cuetry.ParseRemoteRecipe([]byte(content), nil)
+	if err != nil {
+		t.Fatalf("failed to parse test recipe: %v", err)
+	}
+	return rec
+}
 
 func TestRecipeRunner_DryRun_PackageService(t *testing.T) {
 	r := engine.NewRecipeRunner(engine.RunnerOptions{})

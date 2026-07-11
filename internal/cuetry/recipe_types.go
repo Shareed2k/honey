@@ -540,22 +540,6 @@ type RecipeStepService struct {
 	Enabled *bool  `json:"enabled,omitempty"` // enable/disable on boot
 }
 
-// RecipeStepAws configures an AWS API step.
-type RecipeStepAws struct {
-	Service   string         `json:"service"`
-	Operation string         `json:"operation"`
-	Params    map[string]any `json:"params,omitempty"`
-	Output    string         `json:"output,omitempty"`
-}
-
-// RecipeStepGcp configures a GCP API step.
-type RecipeStepGcp struct {
-	Service   string         `json:"service"`
-	Operation string         `json:"operation"`
-	Params    map[string]any `json:"params,omitempty"`
-	Output    string         `json:"output,omitempty"`
-}
-
 // CanonicalJSON returns deterministic JSON (sorted keys, no extra
 // whitespace) for the given Recipe. Two Recipes that resolve to the same plan
 // produce the same bytes here.
