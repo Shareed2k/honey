@@ -44,7 +44,7 @@ import (
 // `var meshDial = meshnet.DialPeer` (transport.go) is reassignable from this
 // package's own `_test.go` files (already exploited by transport_test.go's
 // TestMeshDialContext/TestBuildTransport/TestBuildWSDialer and
-// factory_test.go's TestBackendRows_MeshRouting, though those stub meshDial
+// transport_test.go's TestBackendRows_MeshRouting, though those stub meshDial
 // out entirely rather than routing it through a real libp2p Host). Swapping
 // meshDial to a closure backed by a genuinely separate, real libp2p Host --
 // a THIRD identity, distinct from both the relay and the "server" peer this
