@@ -1,0 +1,22 @@
+# Mesh (NAT traversal) example: the "server" side -- the honey instance
+# being reached from another instance behind NAT/CGNAT, through a
+# self-hosted libp2p relay. It has no backends.honey entry of its own here:
+# it's the one being dialed into, not the one dialing out.
+#
+# Docs: website/docs/providers/honey.md's "Mesh (NAT traversal)" section
+# Walkthrough: examples/mesh/README.md
+version: 1
+
+mesh:
+  enabled: true
+  # This instance's own mesh identity key -- from "Generate a mesh identity
+  # key" in ../README.md. A secret: treat it like the `token`/`server_ca`
+  # fields documented in website/docs/providers/honey.md, never commit a
+  # real value.
+  private_key: "<SERVER_PRIVATE_KEY>"
+  relay_addrs:
+    # The example relay's address + peer ID, printed by `go run .` in
+    # examples/mesh/relay -- see "Run the example relay" in ../README.md.
+    - "<RELAY_MULTIADDR>/p2p/<RELAY_PEER_ID>"
+  # listen_mesh: false   # most instances leave this off -- only set true if
+  #                      # THIS instance is itself publicly reachable
