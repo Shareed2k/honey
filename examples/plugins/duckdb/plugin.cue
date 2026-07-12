@@ -24,7 +24,7 @@ actions: export_parquet: {
 	argv: [
 		"duckdb",
 		config.db_file,
-		"-c", "COPY (\(config.query)) TO '/data/\(config.output)' (FORMAT PARQUET);"
+		"-c", "COPY (\(config.query)) TO '\(config.output)' (FORMAT PARQUET);"
 	]
 	
 	output_format: "text"

@@ -198,6 +198,20 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 	if err != nil {
 		return nil, err
 	}
+
+	// Ensure the global plugin workspaces directory exists and mount it
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("plugins: get home dir for workspaces: %w", err)
+	}
+	workspacesDir := filepath.Join(homeDir, ".honey", "workspaces")
+	if err := safepath.MkdirAll(workspacesDir, 0o755); err != nil {
+		return nil, fmt.Errorf("plugins: create workspaces dir %s: %w", workspacesDir, err)
+	}
+
+	volumes := manifest.Docker.Volumes
+	volumes = append(volumes, fmt.Sprintf("%s:%s:rw", workspacesDir, workspacesDir))
+
 	maxBackoff, err := manifest.Docker.effectiveMaxBackoff()
 	if err != nil {
 		return nil, fmt.Errorf("plugins: invalid docker.restart.max_backoff: %w", err)
@@ -209,7 +223,7 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 		CueSource:          cueBytes,
 		MaxBackoff:         maxBackoff,
 		Env:                resolveAllowedEnv(manifest.AllowedEnv),
-		Volumes:            manifest.Docker.Volumes,
+		Volumes:            volumes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)

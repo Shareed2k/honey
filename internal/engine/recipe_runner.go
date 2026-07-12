@@ -194,6 +194,12 @@ func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, erro
 	}
 	req.Env = validatedEnv
 
+	_, cleanupWS, err := SetupRecipeWorkspace(req.Env)
+	if err != nil {
+		return "", err
+	}
+	defer cleanupWS()
+
 	var plan string
 	err = r.withPluginManager(ctx, req, func(mgr *plugins.Manager) error {
 		params, err := r.buildRunParams(req, mgr)
@@ -423,19 +429,27 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 	}
 	req.Env = validatedEnv
 
+	_, cleanupWS, err := SetupRecipeWorkspace(req.Env)
+	if err != nil {
+		return nil, err
+	}
+
 	mgr, release, err := r.borrowPluginManager(ctx, req)
 	if err != nil {
+		cleanupWS()
 		return nil, err
 	}
 
 	params, err := r.buildRunParams(req, mgr)
 	if err != nil {
+		cleanupWS()
 		release()
 		return nil, err
 	}
 
 	rec, closeRec, err := r.openRunRecorder(req)
 	if err != nil {
+		cleanupWS()
 		release()
 		return nil, err
 	}
@@ -445,6 +459,7 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 
 	ch := make(chan HostExecResult, recipeRunChannelCap)
 	go func() {
+		defer cleanupWS()
 		defer release()
 		defer func() {
 			if closeRec {

@@ -15,9 +15,9 @@ recipe: {
 				id:     "duckdb"
 				action: "query"
 				config: {
-					// Assumes '/data' is mounted via docker.volumes in plugin.yaml
-					// and /data/sample.csv already exists on the host volume.
-					sql: "SELECT * FROM read_csv_auto('/data/sample.csv') LIMIT 5"
+					// Using generate_series to create dummy data inline so
+					// the demo runs out of the box without needing external files.
+					sql: "SELECT * FROM generate_series(1, 5) AS t(id)"
 				}
 			}
 		},
@@ -27,11 +27,10 @@ recipe: {
 				id:     "duckdb"
 				action: "export_parquet"
 				config: {
-					// We query the CSV directly using read_csv_auto instead of
-					// relying on a pre-existing table in a pre-existing database.
-					// This uses the default ":memory:" database.
-					query:   "SELECT * FROM read_csv_auto('/data/sample.csv') LIMIT 5"
-					output:  "active_users.parquet"
+					// This exports the dummy data to the temporary HONEY_WORKSPACE 
+					// which is automatically mounted and cleaned up for this run.
+					query:   "SELECT * FROM generate_series(1, 5) AS t(id)"
+					output:  "${HONEY_WORKSPACE}/active_users.parquet"
 				}
 			}
 		}
