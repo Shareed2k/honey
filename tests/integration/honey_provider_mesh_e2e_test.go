@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"crypto/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,12 +21,13 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 )
 
-// TestHoneyProviderMeshE2E proves the full mesh chain actually works end to
-// end: config (Mesh/MeshAddr) -> honeyprovider.buildTransport ->
+// TestHoneyProviderMeshE2E_SelfDialIsRejectedByLibp2p exercises the full mesh
+// chain -- config (Mesh/MeshAddr) -> honeyprovider.buildTransport ->
 // meshDialContext -> meshDial (meshnet.DialPeer) -> a real libp2p stream,
 // forced through a genuinely separate, real Circuit Relay v2 relay process
 // (not a shortcut/loopback bypass) -> meshnet.Listener() -> the webserver's
-// real HTTP handler -> a real JSON response.
+// real HTTP handler -- and asserts the one outcome that topology can
+// actually produce: a deterministic go-libp2p self-dial rejection.
 //
 // Why this is a self-dial, and why that's correct (not a shortcut):
 // internal/meshnet is a package-level singleton (one process-wide libp2p
@@ -41,16 +43,16 @@ import (
 //   - it's the Host meshnet.DialPeer/honeyprovider dial through (the
 //     "client" side).
 //
-// So the only topology available to prove the real, non-faked wiring is to
-// dial that one Host's own peer ID, through a real, independent, external
-// relay (constructed directly via libp2p.New with its own peer identity --
-// NOT internal/meshnet -- playing the role of "a generic, independent,
-// non-honey libp2p relay node", exactly the external infrastructure the real
-// feature depends on).
+// So the only topology available here is to dial that one Host's own peer
+// ID, through a real, independent, external relay (constructed directly via
+// libp2p.New with its own peer identity -- NOT internal/meshnet -- playing
+// the role of "a generic, independent, non-honey libp2p relay node", exactly
+// the external infrastructure the real feature depends on).
 //
-// IMPORTANT, EMPIRICALLY CONFIRMED FINDING (see task-7-report.md for the
-// full writeup): this self-dial does NOT actually work. go-libp2p's swarm
-// unconditionally refuses to dial your own peer ID -- see
+// EMPIRICALLY CONFIRMED FINDING (see task-7-report.md for the full writeup,
+// reused unchanged here): this self-dial does NOT actually work, and cannot,
+// by construction of go-libp2p itself. go-libp2p's swarm unconditionally
+// refuses to dial your own peer ID -- see
 // github.com/libp2p/go-libp2p@v0.48.0's p2p/net/swarm/swarm_dial.go:
 //
 //	if p == s.local {
@@ -66,17 +68,28 @@ import (
 // deterministically returns an error wrapping "dial to self attempted"
 // whenever meshAddr's target peer ID is this process's own meshnet peer ID
 // -- which it always is in this topology, by construction of the singleton
-// constraint above. This is confirmed with a standalone, minimal two-host
-// (non-honey) reproduction independent of this repo's code, documented in
-// task-7-report.md, so it is not specific to any bug in this repo's wiring.
+// constraint above. This was confirmed two ways in task 7 (a standalone,
+// minimal two-host, non-honey reproduction, and this repo's actual wiring),
+// so it is not specific to any bug in this repo's code.
 //
-// This test is still written to assert the real, intended success outcome
-// (matching TestHoneyProviderE2E/TestHoneyProviderMTLS_E2E's rigor: it
-// checks the actual returned record content, not merely "no error") because
-// weakening the assertion to match the known failure would misrepresent what
-// this test is supposed to prove. It is expected to fail as written, for the
-// reason above -- see task-7-report.md for the full analysis and status.
-func TestHoneyProviderMeshE2E(t *testing.T) {
+// Task 7 originally wrote this test to assert the real, intended success
+// outcome and left it failing, documenting the finding above rather than
+// weakening the assertion or deleting the test. Task 7b (this version) turns
+// that into a permanent, green regression test instead: it asserts the
+// specific, documented failure (an error whose message contains
+// "dial to self attempted") rather than "no error", so this test would
+// actively fail -- loudly telling a future reader something changed -- if
+// go-libp2p's swarm ever stops unconditionally rejecting self-dials. If that
+// ever happens, it would also mean a genuine single-process, single-Host,
+// self-dial-through-relay round trip has become possible, and this test
+// (and its doc comment) should be revisited to assert success instead. A
+// real two-*distinct*-peer round trip over this same mesh transport is
+// separately, positively proven by
+// internal/provider/honeyprovider/mesh_e2e_test.go's
+// TestHoney_MeshE2E_TwoDistinctPeers (added in task 7b), which swaps
+// honeyprovider's meshDial seam to use a genuinely separate third libp2p
+// Host as the dialer, sidestepping this singleton constraint entirely.
+func TestHoneyProviderMeshE2E_SelfDialIsRejectedByLibp2p(t *testing.T) {
 	// 1. Relay host: a raw go-libp2p host acting only as a relay -- a
 	// separate, independent libp2p identity from the meshnet singleton
 	// below. NOT internal/meshnet: this plays the role of a generic,
@@ -192,17 +205,18 @@ func TestHoneyProviderMeshE2E(t *testing.T) {
 	// Generous, bounded timeout: a relay reservation + circuit connection
 	// is slower than a loopback TCP dial (internal/meshnet's own tests
 	// don't exercise a real network at all; this is judgment applied per
-	// the brief, 15-30s scale).
+	// the brief, 15-30s scale). The self-dial rejection itself is
+	// near-instant (an in-memory peer.ID equality check fires before any
+	// transport dial), so this bound is generous headroom, not an
+	// expectation that this call is slow.
 	searchCtx, searchCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer searchCancel()
 	recs, err := provider.Search(searchCtx, hosts.Query{NameSubstring: "remote"})
-	if err != nil {
-		t.Fatalf("mesh search failed: %v", err)
+	if err == nil {
+		t.Fatalf("expected mesh self-dial to fail with go-libp2p's ErrDialToSelf, but Search succeeded with %d record(s): %+v -- if go-libp2p's swarm has stopped unconditionally rejecting self-dials, update this test (and its doc comment) to assert success instead", len(recs), recs)
 	}
-	if len(recs) != 1 {
-		t.Fatalf("expected 1 record, got %d: %+v", len(recs), recs)
-	}
-	if recs[0].Name != "remote-host" {
-		t.Errorf("unexpected record: %+v", recs[0])
+	const wantSubstring = "dial to self attempted"
+	if !strings.Contains(err.Error(), wantSubstring) {
+		t.Fatalf("expected error to contain %q (go-libp2p's ErrDialToSelf, see task-7-report.md), got: %v", wantSubstring, err)
 	}
 }
