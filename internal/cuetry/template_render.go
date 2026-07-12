@@ -100,6 +100,21 @@ func templateFuncMap(kv KVReader) template.FuncMap {
 	out["trim"] = strings.TrimSpace
 	out["default"] = templateDefault
 	out["toJson"] = templateToJSON
+	// shquote POSIX-single-quote-escapes a value for safe embedding in
+	// templated command/script text. Unlike sprig's quote/squote (registered
+	// above via sprig.TxtFuncMap — kept for their legitimate non-shell uses,
+	// e.g. template: steps rendering YAML/JSON), neither of those is safe
+	// here: squote is a bare `'%v'` wrap with no escaping of embedded single
+	// quotes, and quote uses Go's %q (backslash) escaping, which POSIX shells
+	// don't honor and which still leaves $(...)/backtick command
+	// substitution live inside double quotes. Use shquote instead whenever a
+	// templated command/script interpolates dynamic data (env, stepStdout,
+	// outputs, kvGet) whose content isn't fully trusted — see
+	// internal/engine/agent_transfer.go's shellQuote for the same escaping
+	// used on the non-templated path.
+	out["shquote"] = func(v any) string {
+		return shellSingleQuoted(fmt.Sprint(v))
+	}
 	out["kvGet"] = func(key string) string {
 		key = strings.TrimSpace(key)
 		if key == "" {

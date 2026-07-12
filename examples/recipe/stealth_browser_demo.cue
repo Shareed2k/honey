@@ -14,7 +14,11 @@
 // existed). check-title then reads it back with templated: true — a Go
 // text/template rendered from live KV/prior-step data before the command
 // runs, using the same kvGet/fromJson/regexFind functions template: steps
-// already have — no $VAR shell plumbing or grep needed.
+// already have — no $VAR shell plumbing or grep needed. The extracted title
+// is piped through shquote before landing in the shell body: it's scraped
+// content from a real page, not a fixed literal, so it must be POSIX
+// shell-escaped rather than trusted as-is (sprig's quote/squote are not
+// shell-safe — see cue-recipes.md's "Templated command/script steps").
 recipe: {
 	name: "stealth-browser-demo"
 	type: "graph"
@@ -41,7 +45,7 @@ recipe: {
 			depends:   ["fetch-protected-site"]
 			templated: true
 			command: """
-				TITLE="{{ regexFind "(?i)<title>.*</title>" (kvGet "stealth_fetch" | fromJson).content }}"
+				TITLE={{ (regexFind "(?i)<title>.*</title>" (kvGet "stealth_fetch" | fromJson).content) | shquote }}
 				echo "Fetched page: $TITLE"
 
 				# A missing/empty title usually means a block page or a

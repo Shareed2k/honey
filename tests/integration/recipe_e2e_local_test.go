@@ -2,10 +2,10 @@ package integration
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
-	"os"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
@@ -74,7 +74,7 @@ func TestRecipeE2E_LocalScript(t *testing.T) {
 
 	// For the legacy script string parser
 	tmpScript := "/tmp/honey-e2e-local-script.sh"
-	os.WriteFile(tmpScript, []byte("echo 'local script ran'"), 0600)
+	os.WriteFile(tmpScript, []byte("echo 'local script ran'"), 0o600)
 	defer os.Remove(tmpScript)
 
 	cueContent := `
@@ -101,10 +101,10 @@ recipe: {
 	defer cancel()
 
 	params := engine.CueRecipeRunParams{
-		Recipe:  recipe,
+		Recipe:    recipe,
 		RecipeDir: "/tmp",
-		Records: []hosts.Record{rec},
-		Execute: true,
+		Records:   []hosts.Record{rec},
+		Execute:   true,
 	}
 
 	outCh := make(chan engine.HostExecResult, 10)

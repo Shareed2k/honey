@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
 
 type localTransport struct{}
 
-func (t *localTransport) RunCommand(ctx context.Context, user string, tc TargetContext, cache *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, opts BatchOptions) HostExecResult {
+func (t *localTransport) RunCommand(ctx context.Context, _ string, tc TargetContext, _ *ClientCache, kvTunnel bool, cmd SSHRemoteCmdFunc, opts BatchOptions) HostExecResult {
 	res := HostExecResult{
 		Name:     tc.Record.Name,
 		IP:       tc.Record.PrimaryIP,
@@ -33,13 +34,38 @@ func (t *localTransport) RunCommand(ctx context.Context, user string, tc TargetC
 
 	remoteCmd := strings.TrimSpace(cmd(tc, kv))
 
+	var workspaceDir string
+	if tc.Env != nil && tc.Env["HONEY_WORKSPACE"] != "" {
+		workspaceDir = tc.Env["HONEY_WORKSPACE"]
+	} else {
+		workspaceDir = os.TempDir()
+	}
+
+	scriptFile, err := os.CreateTemp(workspaceDir, "honey_local_step_*.sh")
+	if err != nil {
+		res.Success = false
+		res.ErrMsg = "create temp script: " + err.Error()
+		return res
+	}
+	scriptPath := scriptFile.Name()
+	defer os.Remove(scriptPath)
+
+	if _, err := scriptFile.WriteString(remoteCmd); err != nil {
+		scriptFile.Close()
+		res.Success = false
+		res.ErrMsg = "write temp script: " + err.Error()
+		return res
+	}
+	scriptFile.Close()
+
 	if opts.CmdTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, opts.CmdTimeout)
 		defer cancel()
 	}
 
-	execCmd := exec.CommandContext(ctx, "sh", "-c", remoteCmd)
+	execCmd := exec.CommandContext(ctx, "sh")
+	execCmd.Stdin = strings.NewReader(remoteCmd)
 
 	raw, err := execCmd.CombinedOutput()
 	maxOutputBytes := resolveMaxOutputBytes(opts)

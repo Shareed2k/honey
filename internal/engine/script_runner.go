@@ -112,8 +112,8 @@ func (sr *scriptRunner) stream(ctx context.Context, recs []TargetContext, maxCon
 func (sr *scriptRunner) runLocalHost(ctx context.Context, tc TargetContext) HostExecResult {
 	res := HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider}
 
-	// Ensure the local script is executable
-	if err := os.Chmod(sr.localAbs, 0755); err != nil {
+	// Ensure the local script is executable (required for scripts without explicit interpreter)
+	if err := os.Chmod(sr.localAbs, 0o700); err != nil { // #nosec G302 -- script must be executable by operator
 		res.Success = false
 		res.ErrMsg = "chmod: " + err.Error()
 		return res
@@ -141,13 +141,38 @@ func (sr *scriptRunner) runLocalHost(ctx context.Context, tc TargetContext) Host
 	// Fallback in case remotePath wasn't shell-quoted
 	remoteCmd = strings.ReplaceAll(remoteCmd, sr.remotePath, sr.localAbs)
 
+	var workspaceDir string
+	if tc.Env != nil && tc.Env["HONEY_WORKSPACE"] != "" {
+		workspaceDir = tc.Env["HONEY_WORKSPACE"]
+	} else {
+		workspaceDir = os.TempDir()
+	}
+
+	scriptFile, err := os.CreateTemp(workspaceDir, "honey_local_script_*.sh")
+	if err != nil {
+		res.Success = false
+		res.ErrMsg = "create temp script: " + err.Error()
+		return res
+	}
+	scriptPath := scriptFile.Name()
+	defer os.Remove(scriptPath)
+
+	if _, err := scriptFile.WriteString(remoteCmd); err != nil {
+		scriptFile.Close()
+		res.Success = false
+		res.ErrMsg = "write temp script: " + err.Error()
+		return res
+	}
+	scriptFile.Close()
+
 	if sr.cmdTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, sr.cmdTimeout)
 		defer cancel()
 	}
 
-	execCmd := exec.CommandContext(ctx, "sh", "-c", remoteCmd)
+	execCmd := exec.CommandContext(ctx, "sh")
+	execCmd.Stdin = strings.NewReader(remoteCmd)
 
 	raw, err := execCmd.CombinedOutput()
 	out := strings.TrimSpace(string(raw))
