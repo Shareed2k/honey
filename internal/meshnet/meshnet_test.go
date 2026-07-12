@@ -323,7 +323,23 @@ func TestMeshnetStartIdempotency(t *testing.T) {
 		}
 	})
 
-	t.Run("partial failure closes the host before start returns its error", func(t *testing.T) {
+	t.Run("a relay connect failure during start is non-fatal: start still succeeds", func(t *testing.T) {
+		// This subtest replaces a prior version of this test (from before
+		// Finding 2 of the final whole-branch mesh review) that asserted
+		// the opposite: that a relay Connect failure during Start tore the
+		// host down and made Start itself fail. That behavior meant a
+		// single transiently-unreachable relay at process-start permanently
+		// disabled mesh for the rest of the process's life, because Start's
+		// result is latched (see the idempotency contract on Start) — no
+		// retry, no recovery short of restarting the whole process. Since
+		// go-libp2p's own AutoRelay subsystem (configured via
+		// EnableAutoRelayWithStaticRelays, unconditionally, above this
+		// loop) already retries connecting to these exact static relays in
+		// the background on its own schedule regardless of this explicit
+		// warm-up Connect's outcome, that Connect's failure is deliberately
+		// no longer treated as fatal. This subtest proves the new,
+		// resilient behavior; it deliberately does not restore the old
+		// assertions (that would be re-introducing the bug Finding 2 fixes).
 		resetState(t)
 
 		fh := newFakeHost()
@@ -338,29 +354,61 @@ func TestMeshnetStartIdempotency(t *testing.T) {
 		cfg := Config{Enabled: true, PrivateKey: newTestPrivateKeyString(), RelayAddrs: []string{relayAddr}}
 
 		err := Start(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("Start: got %v, want nil (a relay Connect failure must not fail Start)", err)
+		}
+		if fh.closeCalls != 0 {
+			t.Fatalf("host Close called %d times, want 0 (host must not be torn down over a relay warm-up connect failure)", fh.closeCalls)
+		}
+
+		// The singleton must consider itself started despite the relay
+		// connect failure: Status, DialPeer, Listener must all work against
+		// the constructed host (AutoRelay is expected to establish the
+		// actual relay connection later, in the background).
+		if _, err := Status(); err != nil {
+			t.Fatalf("Status after Start with a failed relay warm-up connect: got %v, want nil", err)
+		}
+		if Enabled() != true {
+			t.Fatal("expected Enabled() to be true")
+		}
+
+		// A second Start call must still just replay the cached (nil) result,
+		// not attempt to reconnect or reconstruct the host.
+		if err2 := Start(context.Background(), cfg); err2 != nil {
+			t.Fatalf("second Start: got %v, want nil (cached)", err2)
+		}
+		if fh.closeCalls != 0 {
+			t.Fatalf("host Close called %d times after retry, want still 0", fh.closeCalls)
+		}
+	})
+
+	t.Run("newHost construction failure remains fatal", func(t *testing.T) {
+		// Unlike the relay Connect warm-up above, a newHost (libp2p.New)
+		// construction failure is an unconditional problem — no amount of
+		// AutoRelay backoff fixes a host that never came up — so it must
+		// remain fatal. Covered primarily by
+		// "start surfaces a newHost construction failure" in
+		// TestMeshnetStartValidation; this subtest exists alongside the
+		// relay-connect-is-non-fatal case above purely so the two contrasting
+		// outcomes (relay connect failure vs. host construction failure) are
+		// easy to find next to each other and their fatal/non-fatal status
+		// is explicit.
+		resetState(t)
+
+		wantErr := errors.New("construct failed")
+		withFakeNewHost(t, func(_ ...libp2p.Option) (meshHost, error) {
+			return nil, wantErr
+		})
+
+		relayAddr, _ := newTestRelayAddr()
+		cfg := Config{Enabled: true, PrivateKey: newTestPrivateKeyString(), RelayAddrs: []string{relayAddr}}
+
+		err := Start(context.Background(), cfg)
 		if err == nil {
-			t.Fatal("expected an error")
+			t.Fatal("expected an error: newHost construction failure must remain fatal")
 		}
-		if !strings.Contains(err.Error(), "boom: relay unreachable") {
-			t.Fatalf("error %q does not wrap the underlying connect error", err)
-		}
-		if fh.closeCalls != 1 {
-			t.Fatalf("host Close called %d times, want 1", fh.closeCalls)
-		}
-
-		// The singleton must not consider itself started after a partial failure.
-		if _, err := Status(); !errors.Is(err, errNotStarted) {
-			t.Fatalf("Status after failed Start: got %v, want errNotStarted", err)
-		}
-
-		// Retrying Start (without an intervening Stop) must replay the same
-		// cached failure, not attempt to construct (and re-close) a new host.
-		err2 := Start(context.Background(), cfg)
-		if err2 == nil || err2.Error() != err.Error() {
-			t.Fatalf("second Start after failure: got %v, want the same cached error %v", err2, err)
-		}
-		if fh.closeCalls != 1 {
-			t.Fatalf("host Close called %d times after retry, want still 1 (no re-init)", fh.closeCalls)
+		if !strings.Contains(err.Error(), "construct failed") {
+			t.Fatalf("error %q does not wrap the underlying construct error", err)
 		}
 	})
 }

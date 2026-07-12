@@ -49,6 +49,18 @@ func init() {
 }
 
 func runWeb(cmd *cobra.Command, _ []string) error {
+	// Mesh (internal/meshnet) is started for every honey subcommand in
+	// root.go's PersistentPreRunE, which always runs before this RunE — so
+	// by this point Start has already been attempted if cfg.Mesh.Enabled.
+	// Stop it (best-effort, log-only on error) on every return path out of
+	// this function, not just the srv.Start(ctx) exit at the bottom: a
+	// prior version of this function only stopped mesh after a successful
+	// webserver.NewServer + srv.Start, which meant an early return (e.g.
+	// webserver.NewServer itself failing) leaked the running mesh Host.
+	// meshnet.Enabled() is false (a no-op) whenever mesh wasn't started, so
+	// this defer is always safe to register unconditionally.
+	defer stopMeshBestEffort()
+
 	disableAuth := webNoAuth
 	if !disableAuth {
 		if b, perr := strconv.ParseBool(strings.TrimSpace(os.Getenv("HONEY_WEB_NO_AUTH"))); perr == nil {
@@ -96,18 +108,6 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("web auth config: %w", err)
 	}
 
-	if cfg != nil && cfg.Mesh.Enabled {
-		meshCfg := meshnet.Config{
-			Enabled:    cfg.Mesh.Enabled,
-			PrivateKey: cfg.Mesh.PrivateKey,
-			RelayAddrs: cfg.Mesh.RelayAddrs,
-			ListenMesh: cfg.Mesh.ListenMesh,
-		}
-		if err := meshnet.Start(context.Background(), meshCfg); err != nil {
-			zap.L().Warn("honey mesh failed to start, continuing without it", zap.Error(err))
-		}
-	}
-
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:         webListen,
 		Token:              token,
@@ -140,11 +140,18 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err = srv.Start(ctx)
-	if meshnet.Enabled() {
-		if stopErr := meshnet.Stop(context.Background()); stopErr != nil {
-			zap.L().Warn("honey mesh failed to stop cleanly", zap.Error(stopErr))
-		}
+	return srv.Start(ctx)
+}
+
+// stopMeshBestEffort stops the mesh singleton (internal/meshnet) if it was
+// started, logging (not returning) any Stop error — mirrors the log-and-continue
+// pattern this file already uses for mesh startup problems. A no-op when mesh
+// was never enabled/started.
+func stopMeshBestEffort() {
+	if !meshnet.Enabled() {
+		return
 	}
-	return err
+	if err := meshnet.Stop(context.Background()); err != nil {
+		zap.L().Warn("honey mesh failed to stop cleanly", zap.Error(err))
+	}
 }

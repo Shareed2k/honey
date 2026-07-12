@@ -23,6 +23,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	ma "github.com/multiformats/go-multiaddr"
+	"go.uber.org/zap"
 )
 
 // ProtocolID is the libp2p stream protocol this package's DialPeer/Listener
@@ -182,10 +183,26 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 
 	for _, ri := range relayInfos {
+		// This synchronous Connect is a best-effort warm-up, not a
+		// correctness requirement: libp2p.EnableAutoRelayWithStaticRelays
+		// above already configures go-libp2p's AutoRelay subsystem to
+		// independently retry connecting to (and obtaining a reservation
+		// with) these exact same static relays in the background, on its
+		// own schedule, regardless of whether this call succeeds — see
+		// go-libp2p's p2p/host/autorelay/relay_finder.go
+		// (findNodes/tryNode and maybeConnectToRelay/connectToRelay both
+		// call host.Connect on a recurring backoff loop once the relay
+		// finder starts). Confirmed by reading the pinned
+		// github.com/libp2p/go-libp2p@v0.48.0 source.
+		//
+		// So a relay being transiently unreachable at this exact instant
+		// must not be fatal: Start's result is latched (see the
+		// idempotency contract above) and would otherwise disable mesh
+		// for the rest of the process's life even after the relay
+		// recovers. Log and move on; AutoRelay converges on its own.
 		if err := host.Connect(ctx, ri); err != nil {
-			_ = teardown(host)
-			startErr = fmt.Errorf("meshnet: connect to relay %s: %w", ri.ID, err)
-			return startErr
+			zap.L().Warn("meshnet: warm-up connect to relay failed; AutoRelay will keep retrying in the background",
+				zap.Stringer("relay", ri.ID), zap.Error(err))
 		}
 	}
 
@@ -197,9 +214,11 @@ func Start(ctx context.Context, cfg Config) error {
 	return nil
 }
 
-// teardown closes the underlying libp2p host. Shared by Start's
-// partial-failure path and Stop so there is exactly one place that releases
-// the host's background goroutines/listeners.
+// teardown closes the underlying libp2p host. Named (rather than calling
+// h.Close() directly) so there is exactly one place that releases the host's
+// background goroutines/listeners — currently only Stop, since Start no
+// longer treats a relay Connect failure as fatal (see the loop above) and so
+// has no partial-failure path of its own once the host is constructed.
 func teardown(h meshHost) error {
 	return h.Close()
 }
