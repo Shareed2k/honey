@@ -37,3 +37,4 @@ android/.gradle
 android/app/src/main/assets/honey-arm64
 android/app/src/main/assets/honey-amd64
 examples/plugins/audio_transcribe/__pycache__
+examples/mesh/relay/relay

@@ -162,6 +162,7 @@ type fakeHost struct {
 	mu             sync.Mutex
 	network        *fakeNetwork
 	connectErr     error
+	connectDelay   time.Duration // if >0, Connect blocks this long or until ctx is done, whichever first
 	connectCalls   int
 	newStreamErr   error
 	newStreamRet   network.Stream
@@ -177,11 +178,26 @@ func newFakeHost() *fakeHost {
 
 func (f *fakeHost) ID() peer.ID { return f.id }
 
-func (f *fakeHost) Connect(_ context.Context, _ peer.AddrInfo) error {
+// Connect mimics real go-libp2p Host.Connect's ctx-respecting behavior: when
+// connectDelay is set (e.g. to simulate an unreachable relay that would hang
+// far longer than any caller-imposed timeout), it blocks until either that
+// delay elapses or ctx is canceled/times out first, returning ctx.Err() in
+// the latter case -- exactly the shape meshnet.Start's per-relay
+// context.WithTimeout wrapper is meant to bound.
+func (f *fakeHost) Connect(ctx context.Context, _ peer.AddrInfo) error {
 	f.mu.Lock()
 	f.connectCalls++
 	err := f.connectErr
+	delay := f.connectDelay
 	f.mu.Unlock()
+
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return err
 }
 

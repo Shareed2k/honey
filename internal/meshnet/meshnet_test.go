@@ -382,6 +382,48 @@ func TestMeshnetStartIdempotency(t *testing.T) {
 		}
 	})
 
+	t.Run("a relay connect that hangs is bounded by relayWarmUpConnectTimeout, not the fake's full hang", func(t *testing.T) {
+		// Regression test for final review round 2: before this fix, Start's
+		// per-relay host.Connect call had no timeout of its own, so a relay
+		// that never answers (or answers only after go-libp2p's much larger
+		// ~15s default swarm dial timeout) would block Start -- and by
+		// extension internal/cli/root.go's PersistentPreRunE, which now runs
+		// on every honey subcommand invocation, not just honey web's
+		// long-running startup -- for that entire duration. Simulate that
+		// worst case with a fake relay whose Connect would otherwise hang far
+		// longer (10s) than the bound Start now imposes
+		// (relayWarmUpConnectTimeout, 2s), and assert Start still returns
+		// (successfully, per the round-1 non-fatal-Connect-failure fix)
+		// within a small multiple of that bound rather than waiting out the
+		// fake's full hang.
+		resetState(t)
+
+		fh := newFakeHost()
+		fh.connectDelay = 10 * time.Second
+		withFakeNewHost(t, func(_ ...libp2p.Option) (meshHost, error) {
+			return fh, nil
+		})
+
+		relayAddr, _ := newTestRelayAddr()
+		cfg := Config{Enabled: true, PrivateKey: newTestPrivateKeyString(), RelayAddrs: []string{relayAddr}}
+
+		start := time.Now()
+		err := Start(context.Background(), cfg)
+		elapsed := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("Start: got %v, want nil (a bounded relay Connect timeout must be non-fatal, same as any other Connect failure)", err)
+		}
+		const bound = relayWarmUpConnectTimeout * 3 // generous slack for CI scheduling jitter
+		if elapsed >= bound {
+			t.Fatalf("Start took %s, want well under %s (relayWarmUpConnectTimeout=%s); the fake's full hang is %s -- Start must not wait that long",
+				elapsed, bound, relayWarmUpConnectTimeout, fh.connectDelay)
+		}
+		if fh.connectCalls != 1 {
+			t.Fatalf("host.Connect called %d times, want exactly 1", fh.connectCalls)
+		}
+	})
+
 	t.Run("newHost construction failure remains fatal", func(t *testing.T) {
 		// Unlike the relay Connect warm-up above, a newHost (libp2p.New)
 		// construction failure is an unconditional problem — no amount of

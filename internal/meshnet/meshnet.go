@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -25,6 +26,22 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 )
+
+// relayWarmUpConnectTimeout bounds the worst-case latency of each per-relay
+// warm-up Connect call in Start below. go-libp2p's swarm default dial
+// timeout is ~15s per address, and Start now runs unconditionally on every
+// CLI invocation (internal/cli/root.go's PersistentPreRunE) whenever
+// mesh.enabled is true, not just from honey web's long-running startup.
+// Without a bound here, a single transiently-unreachable relay would make
+// every honey subcommand -- honey version, honey docs, shell completion,
+// etc. -- hang for up to ~15s per configured relay. 2s is short enough to
+// keep the common (reachable-relay or small relay list) case near-instant,
+// long enough not to abort a connect that's merely a bit slow, and — since
+// this Connect's failure is already non-fatal per the round-1 fix below — a
+// timeout here is just another form of that same failure: AutoRelay's own
+// background retry (configured unconditionally via
+// EnableAutoRelayWithStaticRelays) takes over regardless.
+const relayWarmUpConnectTimeout = 2 * time.Second
 
 // ProtocolID is the libp2p stream protocol this package's DialPeer/Listener
 // use to carry honeyprovider's HTTP traffic over a libp2p Stream. Exported
@@ -200,7 +217,19 @@ func Start(ctx context.Context, cfg Config) error {
 		// idempotency contract above) and would otherwise disable mesh
 		// for the rest of the process's life even after the relay
 		// recovers. Log and move on; AutoRelay converges on its own.
-		if err := host.Connect(ctx, ri); err != nil {
+		//
+		// The connect itself is bounded by relayWarmUpConnectTimeout: a
+		// context.WithTimeout derived per relay, canceled as soon as this
+		// iteration's Connect returns, so a slow/unreachable relay can
+		// delay Start by at most relayWarmUpConnectTimeout per configured
+		// relay rather than go-libp2p's much larger default dial timeout.
+		// A timeout here surfaces as a plain ctx.DeadlineExceeded error
+		// from Connect and is handled identically to any other Connect
+		// failure below: logged, non-fatal.
+		connectCtx, cancel := context.WithTimeout(ctx, relayWarmUpConnectTimeout)
+		err := host.Connect(connectCtx, ri)
+		cancel()
+		if err != nil {
 			zap.L().Warn("meshnet: warm-up connect to relay failed; AutoRelay will keep retrying in the background",
 				zap.Stringer("relay", ri.ID), zap.Error(err))
 		}
