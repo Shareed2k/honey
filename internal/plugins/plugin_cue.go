@@ -56,21 +56,35 @@ func (pc *pluginCue) evalAction(action string, config map[string]any) (actionRes
 	configVal := pc.ctx.Encode(config)
 	scope := pc.ctx.CompileString("").FillPath(cue.ParsePath("config"), configVal)
 	doc := pc.ctx.CompileBytes(pc.source, cue.Filename("plugin.cue"), cue.Scope(scope))
-	if err := doc.Err(); err != nil {
-		return actionResult{}, fmt.Errorf("plugins: compile plugin.cue: %w", err)
-	}
+	// We do not check doc.Err() here immediately because other actions might fail to compile
+	// if they depend on fields not present in this action's config.
 
 	actionVal := doc.LookupPath(cue.ParsePath("actions." + action))
 	if !actionVal.Exists() {
 		return actionResult{}, fmt.Errorf("plugins: plugin.cue: unknown action %q", action)
 	}
 
-	// Validate config against schema
+	// Validate config against schema and apply defaults
 	if cfgDef := actionVal.LookupPath(cue.ParsePath("#Config")); cfgDef.Exists() {
 		unified := cfgDef.Unify(configVal)
 		if err := unified.Validate(cue.Concrete(true), cue.Final()); err != nil {
 			return actionResult{}, fmt.Errorf("plugins: action %q: config validation: %w", action, err)
 		}
+
+		// Decode the unified config back to a map to extract the concrete values (including defaults).
+		// Note: This relies on fields being required-with-default (e.g. `field: string | *"default"`)
+		// rather than optional (`field?: string | *"default"`), as CUE Decode omits uninstantiated optional fields.
+		var resolvedConfig map[string]any
+		if err := unified.Decode(&resolvedConfig); err != nil {
+			return actionResult{}, fmt.Errorf("plugins: action %q: decode unified config: %w", action, err)
+		}
+
+		// Re-evaluate with the resolved config
+		configVal = pc.ctx.Encode(resolvedConfig)
+		scope = pc.ctx.CompileString("").FillPath(cue.ParsePath("config"), configVal)
+		doc = pc.ctx.CompileBytes(pc.source, cue.Filename("plugin.cue"), cue.Scope(scope))
+
+		actionVal = doc.LookupPath(cue.ParsePath("actions." + action))
 	}
 
 	argvVal := actionVal.LookupPath(cue.ParsePath("argv"))

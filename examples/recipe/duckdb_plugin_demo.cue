@@ -27,12 +27,10 @@ recipe: {
 				id:     "duckdb"
 				action: "export_parquet"
 				config: {
-					// db_file is a path *inside the container*, not under /data —
-					// this demo assumes /my_database.db already exists with a
-					// users table (e.g. copy one into /var/honey/data and use
-					// "/data/my_database.db" instead if starting from scratch).
-					db_file: "my_database.db"
-					query:   "SELECT * FROM users WHERE active = true"
+					// We query the CSV directly using read_csv_auto instead of
+					// relying on a pre-existing table in a pre-existing database.
+					// This uses the default ":memory:" database.
+					query:   "SELECT * FROM read_csv_auto('/data/sample.csv') LIMIT 5"
 					output:  "active_users.parquet"
 				}
 			}

@@ -8,6 +8,7 @@ before:
     - sh -c 'test -f internal/webserver/static/index.html || go tool task webui'
     - go generate ./...
     - go tool task download-onnx-runtime
+    - go tool task build-honey-plugin-init
 
 builds:
   - id: honey
@@ -67,6 +68,8 @@ archives:
       - LICENSE
       - completions/*
       - runtime/onnx/**
+      - dist/honey-plugin-init-linux-amd64
+      - dist/honey-plugin-init-linux-arm64
 
 checksum:
   name_template: "checksums.txt"

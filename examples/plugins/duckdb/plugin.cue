@@ -1,6 +1,6 @@
 actions: query: {
 	#Config: {
-		db_file?: string | *":memory:"
+		db_file: string | *":memory:"
 		sql:      string
 	}
 	
@@ -16,7 +16,7 @@ actions: query: {
 
 actions: export_parquet: {
 	#Config: {
-		db_file: string
+		db_file: string | *":memory:"
 		query:   string
 		output:  string
 	}
