@@ -10,8 +10,10 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/webserver"
 )
@@ -94,6 +96,18 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("web auth config: %w", err)
 	}
 
+	if cfg != nil && cfg.Mesh.Enabled {
+		meshCfg := meshnet.Config{
+			Enabled:    cfg.Mesh.Enabled,
+			PrivateKey: cfg.Mesh.PrivateKey,
+			RelayAddrs: cfg.Mesh.RelayAddrs,
+			ListenMesh: cfg.Mesh.ListenMesh,
+		}
+		if err := meshnet.Start(context.Background(), meshCfg); err != nil {
+			zap.L().Warn("honey mesh failed to start, continuing without it", zap.Error(err))
+		}
+	}
+
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:         webListen,
 		Token:              token,
@@ -119,11 +133,18 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		JWTPubKey:          authCfg.jwtPubKey,
 		TrustedProxyNets:   authCfg.trustedNets,
 		WebAuthn:           authCfg.webauthn,
+		EnableMesh:         meshnet.Enabled(),
 	})
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return srv.Start(ctx)
+	err = srv.Start(ctx)
+	if meshnet.Enabled() {
+		if stopErr := meshnet.Stop(context.Background()); stopErr != nil {
+			zap.L().Warn("honey mesh failed to stop cleanly", zap.Error(stopErr))
+		}
+	}
+	return err
 }
