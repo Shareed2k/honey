@@ -633,6 +633,7 @@ backends:
     - name: remote-honey
       url: https://honey.example.com
       mesh: true
+      mesh_addr: /ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooTestPeerAddr
 `
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
@@ -647,5 +648,86 @@ backends:
 	}
 	if !f.Backends.Honey[0].Mesh {
 		t.Fatal("honey backend mesh flag should be true")
+	}
+	if f.Backends.Honey[0].MeshAddr != "/ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooTestPeerAddr" {
+		t.Fatalf("honey backend mesh_addr = %q, want the configured multiaddr", f.Backends.Honey[0].MeshAddr)
+	}
+}
+
+func TestHoneyBackendMeshRequiresMeshAddr(t *testing.T) {
+	t.Parallel()
+	data := `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+      mesh: true
+`
+	_, err := ParseYAML([]byte(data))
+	if err == nil {
+		t.Fatal("expected validation error for mesh: true with empty mesh_addr, got nil")
+	}
+	if !strings.Contains(err.Error(), "mesh_addr") {
+		t.Fatalf("expected mesh_addr validation error, got: %v", err)
+	}
+}
+
+func TestHoneyBackendMeshAddrValidatesCleanly(t *testing.T) {
+	t.Parallel()
+	data := `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+      mesh: true
+      mesh_addr: /ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooTestPeerAddr
+`
+	f, err := ParseYAML([]byte(data))
+	if err != nil {
+		t.Fatalf("expected no error for mesh: true with non-empty mesh_addr, got: %v", err)
+	}
+	if f.Backends.Honey[0].MeshAddr == "" {
+		t.Fatal("expected mesh_addr to be populated")
+	}
+}
+
+func TestHoneyBackendMeshFalseIgnoresMeshAddr(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "mesh false with mesh_addr present",
+			data: `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+      mesh: false
+      mesh_addr: /ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooTestPeerAddr
+`,
+		},
+		{
+			name: "mesh and mesh_addr both absent",
+			data: `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := ParseYAML([]byte(tt.data)); err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
 	}
 }

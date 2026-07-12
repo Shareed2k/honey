@@ -36,6 +36,8 @@ type Executor struct {
 	Insecure bool
 	MTLS     bool
 	ServerCA string
+	Mesh     bool
+	MeshAddr string
 }
 
 // Dial creates a new HostClient that proxies execution to the upstream Honey server.
@@ -46,6 +48,8 @@ func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error
 		insecure: e.Insecure,
 		mtls:     e.MTLS,
 		serverCA: e.ServerCA,
+		mesh:     e.Mesh,
+		meshAddr: e.MeshAddr,
 		user:     user,
 		record:   r,
 	}, nil
@@ -126,7 +130,7 @@ func (e *Executor) DialUpstream(ctx context.Context, user string, r hosts.Record
 	if e.MTLS {
 		token = ""
 	}
-	conn, err := dialWS(ctx, wsURL, token, tlsCfg)
+	conn, err := dialWS(ctx, wsURL, token, tlsCfg, meshDialContext(e.Mesh, e.MeshAddr))
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +154,14 @@ func (e *Executor) DialUpstream(ctx context.Context, user string, r hosts.Record
 	return &wsConn{conn: conn}, nil
 }
 
-func dialWS(ctx context.Context, u, token string, tlsCfg *tls.Config) (*websocket.Conn, error) {
+func dialWS(ctx context.Context, u, token string, tlsCfg *tls.Config, dialCtx func(context.Context, string, string) (net.Conn, error)) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,
 		HandshakeTimeout: 15 * time.Second,
 		TLSClientConfig:  tlsCfg,
+	}
+	if dialCtx != nil {
+		dialer.NetDialContext = dialCtx
 	}
 	headers := http.Header{}
 	if token != "" {
@@ -228,6 +235,8 @@ type Client struct {
 	insecure bool
 	mtls     bool
 	serverCA string
+	mesh     bool
+	meshAddr string
 	user     string
 	record   hosts.Record
 }
@@ -254,13 +263,15 @@ func (c *Client) doRequest(ctx context.Context, path string, body any, out any) 
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
-	tlsCfg, err := clientTLSConfig(c.insecure, c.mtls, c.serverCA)
+	tr, err := buildTransport(trustConfig{
+		insecure: c.insecure,
+		mtls:     c.mtls,
+		serverCA: c.serverCA,
+		mesh:     c.mesh,
+		meshAddr: c.meshAddr,
+	})
 	if err != nil {
 		return err
-	}
-	tr := &http.Transport{
-		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: tlsCfg,
 	}
 	client := &http.Client{
 		Transport: tr,
@@ -332,7 +343,7 @@ func (c *Client) RunWithStreams(cmd string, stdin io.Reader, stdout, _ io.Writer
 	if c.mtls {
 		token = ""
 	}
-	conn, err := dialWS(context.Background(), wsURL, token, tlsCfg)
+	conn, err := dialWS(context.Background(), wsURL, token, tlsCfg, meshDialContext(c.mesh, c.meshAddr))
 	if err != nil {
 		return err
 	}
@@ -472,9 +483,18 @@ func (c *Client) doRequestWithBody(ctx context.Context, method, path string, bod
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
-	tr := &http.Transport{
-		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: c.insecure}, // #nosec G402
+	// mtls is intentionally not threaded through here (unlike doRequest) — this
+	// preserves this call site's pre-existing behavior of never applying mTLS,
+	// which predates the buildTransport consolidation. See transport.go.
+	tr, err := buildTransport(trustConfig{
+		insecure: c.insecure,
+		mtls:     false,
+		serverCA: c.serverCA,
+		mesh:     c.mesh,
+		meshAddr: c.meshAddr,
+	})
+	if err != nil {
+		return err
 	}
 	client := &http.Client{
 		Transport: tr,
@@ -511,9 +531,18 @@ func (c *Client) doDownload(ctx context.Context, path string, out io.Writer) err
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
-	tr := &http.Transport{
-		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: c.insecure}, // #nosec G402
+	// mtls is intentionally not threaded through here (unlike doRequest) — this
+	// preserves this call site's pre-existing behavior of never applying mTLS,
+	// which predates the buildTransport consolidation. See transport.go.
+	tr, err := buildTransport(trustConfig{
+		insecure: c.insecure,
+		mtls:     false,
+		serverCA: c.serverCA,
+		mesh:     c.mesh,
+		meshAddr: c.meshAddr,
+	})
+	if err != nil {
+		return err
 	}
 	client := &http.Client{
 		Transport: tr,

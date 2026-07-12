@@ -26,4 +26,12 @@ type HoneyBackend struct {
 	// Config.Mesh.Enabled on this process, with at least one relay
 	// configured in Config.Mesh.RelayAddrs.
 	Mesh bool `yaml:"mesh,omitempty" json:"mesh,omitempty" honey:"label=Route via mesh;default=false"`
+	// MeshAddr is the libp2p multiaddr to dial when Mesh is true — the actual
+	// network target, e.g. a direct peer address or a full Circuit Relay v2
+	// path (relay + target peer ID). URL is still used for building this
+	// backend's request paths (e.g. "/api/v1/search") via plain string
+	// concatenation — its host component is never actually resolved for a
+	// mesh-routed backend, since the real dial is intercepted and redirected
+	// to MeshAddr instead. Required when Mesh is true.
+	MeshAddr string `yaml:"mesh_addr,omitempty" json:"mesh_addr,omitempty" honey:"label=Mesh dial address" validate:"required_if=Mesh true" mod:"trim"`
 }

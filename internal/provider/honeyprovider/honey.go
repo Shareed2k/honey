@@ -4,7 +4,6 @@ package honeyprovider
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/shareed2k/honey/internal/devmtls"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
 )
@@ -28,6 +26,11 @@ type Honey struct {
 	// gateway server cert.
 	MTLS     bool
 	ServerCA string
+	// Mesh routes this backend through the local libp2p mesh client
+	// (internal/meshnet) instead of the normal network path. MeshAddr is the
+	// libp2p multiaddr to dial when Mesh is true.
+	Mesh     bool
+	MeshAddr string
 
 	clientOnce sync.Once
 	client     *http.Client
@@ -90,24 +93,16 @@ func (h *Honey) Search(ctx context.Context, q hosts.Query) ([]hosts.Record, erro
 	}
 
 	h.clientOnce.Do(func() {
-		var tr *http.Transport
-		if t, ok := http.DefaultTransport.(*http.Transport); ok {
-			tr = t.Clone()
-		} else {
-			tr = &http.Transport{}
-		}
-		if h.MTLS {
-			cfg, cerr := devmtls.ClientTLSConfig(h.ServerCA)
-			if cerr != nil {
-				h.clientErr = fmt.Errorf("honey mTLS: %w", cerr)
-				return
-			}
-			tr.TLSClientConfig = cfg
-		} else if h.Insecure {
-			if tr.TLSClientConfig == nil {
-				tr.TLSClientConfig = &tls.Config{}
-			}
-			tr.TLSClientConfig.InsecureSkipVerify = true
+		tr, err := buildTransport(trustConfig{
+			insecure: h.Insecure,
+			mtls:     h.MTLS,
+			serverCA: h.ServerCA,
+			mesh:     h.Mesh,
+			meshAddr: h.MeshAddr,
+		})
+		if err != nil {
+			h.clientErr = fmt.Errorf("honey mTLS: %w", err)
+			return
 		}
 		h.client = &http.Client{Transport: tr}
 	})
