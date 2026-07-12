@@ -538,3 +538,4 @@
 {"ts":"2026-07-12T05:31:36.577Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
 {"ts":"2026-07-12T05:34:02.759Z","hook":"privacy-block","action":"warn","tool":"Bash","pattern":"secret"}
 {"ts":"2026-07-12T06:30:46.802Z","hook":"subagent-context","action":"skip","reason":"no-active-tsv"}
+{"ts":"2026-07-12T12:21:50.614Z","hook":"iteration-context","action":"skip","iterationCount":20,"reason":"no-tsv"}

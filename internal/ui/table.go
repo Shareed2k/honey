@@ -1338,7 +1338,7 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 				}
 				return remoteCmd
 			}
-			_ = engine.StreamSSHParallel(context.Background(), user, jobs, false, cmdFunc, ch, engine.BatchOptions{Reg: reg})
+			_ = engine.StreamCommandParallel(context.Background(), user, jobs, false, cmdFunc, ch, engine.BatchOptions{Reg: reg})
 		}()
 
 		return streamStartMsg{

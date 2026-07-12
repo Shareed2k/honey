@@ -147,7 +147,7 @@ func (e *CommandExecutor) ExecuteStream(ctx context.Context, req ExecutionReques
 
 	recipeScoped := kvTunnel
 	post := CueRecipeSSHPostHostResult(ctx, opts, stepIdx, kind, step, recipeScoped)
-	return StreamSSHParallel(ctx, opts.SSHUser, targets, kvTunnel, cmdFunc, ch, BatchOptions{
+	return StreamCommandParallel(ctx, opts.SSHUser, targets, kvTunnel, cmdFunc, ch, BatchOptions{
 		MaxConc:        RecipeHostMaxConc(step, opts.Recipe.Defaults),
 		Cache:          opts.Cache,
 		RecipeKV:       opts.RecipeKV,
