@@ -58,7 +58,7 @@ mesh:
 
 | Field | Required |
 |-------|----------|
-| `enabled` | Yes — turns this process's own mesh identity on |
+| `enabled` | No — defaults to off; set `true` to turn this process's own mesh identity on |
 | `private_key` | Yes, if `enabled` — this instance's libp2p identity key (base64, go-libp2p's "config file" key encoding); a secret, treat it like `token`/`server_ca` above |
 | `relay_addrs` | Yes, if `enabled` — multiaddr(s) of the relay(s) this instance uses to obtain a relay reservation and dial through |
 | `listen_mesh` | No — also run the Circuit Relay v2 relay service on this instance; only relevant if this instance is itself publicly reachable, so most instances leave it off |
