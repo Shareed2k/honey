@@ -16,6 +16,7 @@ contrib/ansible/inventory_plugins/__pycache__
 
 *.wasm
 *.wasm.gz
+coverage-int.txt
 
 models
 runtime

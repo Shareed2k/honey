@@ -4,11 +4,27 @@ import { ConfigProvider, theme, message } from 'antd';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import StudioWorkspace from './StudioWorkspace';
 import { apiGet, apiPost } from '../api/core';
+import { RootProvider } from '../contexts';
 
-vi.mock('../api', () => ({
-  apiGet: vi.fn(),
-  apiPost: vi.fn(),
-}));
+// StudioWorkspace imports apiGet/apiPost from '../api/core', not a '../api'
+// barrel (no such module exists) — mocking the wrong specifier leaves the
+// component's real fetch() call intact, which rejects asynchronously against
+// a relative URL in the test environment and leaks into whichever test runs
+// next. listStepKinds/stepSchemaForKind ('../api/recipes') are synchronous
+// schema lookups, not network calls, so they don't need mocking here.
+//
+// Partial mock (importOriginal): RootProvider's nested AppContext also pulls
+// getToken/apiHeaders from this same module — replacing the whole module
+// (rather than only apiGet/apiPost) would leave those undefined and crash
+// AppContext's own mount effect.
+vi.mock('../api/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/core')>();
+  return {
+    ...actual,
+    apiGet: vi.fn(),
+    apiPost: vi.fn(),
+  };
+});
 
 const originalGetComputedStyle = window.getComputedStyle.bind(window);
 
@@ -87,7 +103,9 @@ const renderStudio = () => {
 
   render(
     <ConfigProvider theme={{ algorithm: theme.darkAlgorithm }}>
-      <StudioWorkspace />
+      <RootProvider>
+        <StudioWorkspace />
+      </RootProvider>
     </ConfigProvider>
   );
 };

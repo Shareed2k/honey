@@ -457,7 +457,7 @@ function TerminalSession({
     const startRfb = () => {
       void (async () => {
         try {
-          const mod = await import('@novnc/novnc/lib/rfb');
+          const mod = await import('@novnc/novnc');
           if (cancelled || !vncHostRef.current) {
             return;
           }
