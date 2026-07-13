@@ -1,0 +1,10 @@
+title = "gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore committed webui build output (minified vendor JS/CSS) — false positives from high-entropy minified identifiers, no real secrets"
+paths = [
+  '''internal/webserver/static/assets/.*''',
+]
