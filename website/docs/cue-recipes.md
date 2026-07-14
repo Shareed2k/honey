@@ -824,6 +824,7 @@ Example: [`template_kv.cue`](https://github.com/shareed2k/honey/blob/main/exampl
 | `stepStdoutLines "id"` | []string | Same, split into lines |
 | `outputStdout "name"` | string | Value captured by a `template.output`/`k8s.output`-style named capture |
 | `outputStdoutLines "name"` | []string | Same, split into lines |
+| `shquote` | string | POSIX-single-quote-escape a value for safe embedding in the shell body — see the security note below |
 
 The template `Data` also exposes `.steps`, `.outputs`, and (for `command` steps only — see below) `.env`:
 
@@ -834,7 +835,7 @@ The template `Data` also exposes `.steps`, `.outputs`, and (for `command` steps 
   depends:   ["fetch-protected-site"]
   templated: true
   command: """
-    TITLE="{{ regexFind "(?i)<title>.*</title>" (kvGet "stealth_fetch" | fromJson).content }}"
+    TITLE={{ (regexFind "(?i)<title>.*</title>" (kvGet "stealth_fetch" | fromJson).content) | shquote }}
     echo "Fetched page: $TITLE"
     if [ -z "$TITLE" ]; then
       echo "no title found" >&2
@@ -851,6 +852,7 @@ Rules and caveats:
 - **`command` steps** get per-host `.env` (the same resolved env `$VAR` expansion already sees) in addition to `.steps`/`.outputs`/KV. **`script` steps** render the *local file's content* once, before it's uploaded to any host — since one file is shared across every target, `.env` is not available there, only `.steps`/`.outputs`/KV.
 - Template **syntax** is checked at `cue-validate` time (a malformed `{{ }}` fails validation immediately). The template is **not** actually rendered during a dry-run (`cue-exec` without `--execute`) — render-time data (KV values, prior-step stdout) is normally still empty before anything has actually run, so dry-run output shows the raw, unrendered body with a `templated=true` note instead of risking a spurious render error.
 - CUE **triple-quoted strings** (`"""..."""`) avoid having to escape embedded `"` inside template function calls like `kvGet "key"` — see the example above and [`examples/recipe/template_kv.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/template_kv.cue) for the escaping alternative.
+- **Security — always `shquote` dynamic values embedded in shell text.** `kvGet`, `stepStdout`, and `outputStdout` can return genuinely untrusted content (a scraped web page, a query result, anything a prior step captured) — the rendered template becomes the literal `command`/`script` body, so any of that content lands directly in shell syntax. **`quote`/`squote`** (from the sprig library `template:` steps and this page's function table both expose) are **not shell-safe**: `squote` is a bare `'...'` wrap with no escaping of embedded single quotes, and `quote` uses Go's `%q` escaping, which POSIX shells don't honor and which still leaves `$(...)`/backtick command substitution live even inside double quotes. Use **`shquote`** instead whenever a templated command/script interpolates a value that isn't a fixed literal you wrote yourself — it's the same POSIX single-quote escaping honey's own non-templated env-var expansion already relies on.
 
 ## Related
 

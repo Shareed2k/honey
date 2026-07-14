@@ -3,6 +3,8 @@ package honeyprovider
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -123,4 +125,47 @@ func TestHoneySearch_BackendFilter(t *testing.T) {
 			assert.Equal(t, tt.wantFwdBackends, gotBackends)
 		})
 	}
+}
+
+// TestHoneySearch_Mesh covers the honey.go call site: swapping the
+// package-level meshDial (white-box only) so no real mesh/relay is touched.
+// These two subtests share that package-level var, so (unlike the other
+// subtests in this file) they are intentionally not run with t.Parallel().
+func TestHoneySearch_Mesh(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(searchResponse{Records: []hosts.Record{}})
+	}))
+	defer ts.Close()
+
+	t.Run("mesh true routes through meshDial", func(t *testing.T) {
+		orig := meshDial
+		var gotAddr string
+		meshDial = func(ctx context.Context, meshAddr string) (net.Conn, error) {
+			gotAddr = meshAddr
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", ts.Listener.Addr().String())
+		}
+		t.Cleanup(func() { meshDial = orig })
+
+		h := &Honey{Name: "mesh-honey", URL: "http://mesh-target.invalid", Mesh: true, MeshAddr: "/ip4/1.2.3.4/tcp/4001/p2p/target"}
+		_, err := h.Search(context.Background(), hosts.Query{})
+		require.NoError(t, err)
+		assert.Equal(t, "/ip4/1.2.3.4/tcp/4001/p2p/target", gotAddr)
+	})
+
+	t.Run("mesh false uses the default dialer", func(t *testing.T) {
+		orig := meshDial
+		called := false
+		meshDial = func(context.Context, string) (net.Conn, error) {
+			called = true
+			return nil, errors.New("meshDial should not be called")
+		}
+		t.Cleanup(func() { meshDial = orig })
+
+		h := &Honey{Name: "plain-honey", URL: ts.URL}
+		_, err := h.Search(context.Background(), hosts.Query{})
+		require.NoError(t, err)
+		assert.False(t, called)
+	})
 }

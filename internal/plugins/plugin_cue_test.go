@@ -42,7 +42,30 @@ actions: search: {
 	stdin: config.query
 	output_format: "json"
 }
+actions: defaults: {
+	#Config: {
+		field1: string | *"default_opt"
+		field2: string | *"default_req"
+	}
+	argv: ["echo", config.field1, config.field2]
+}
 `
+
+func TestPluginCue_EvalAction_AppliesDefaults(t *testing.T) {
+	pc, err := newPluginCue([]byte(testPluginCueSource))
+	if err != nil {
+		t.Fatalf("newPluginCue: %v", err)
+	}
+	// Omit both optional and required fields to ensure defaults are applied
+	res, err := pc.evalAction("defaults", map[string]any{})
+	if err != nil {
+		t.Fatalf("evalAction: %v", err)
+	}
+	want := []string{"echo", "default_opt", "default_req"}
+	if !slices.Equal(res.Argv, want) {
+		t.Fatalf("argv=%v want=%v", res.Argv, want)
+	}
+}
 
 func TestPluginCue_EvalAction_FlatConfig(t *testing.T) {
 	pc, err := newPluginCue([]byte(testPluginCueSource))

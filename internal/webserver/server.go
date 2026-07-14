@@ -23,6 +23,7 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
 	plugincache "github.com/shareed2k/honey/internal/plugincache"
 	"github.com/shareed2k/honey/internal/policy"
@@ -57,7 +58,14 @@ type Options struct {
 	NoCache            bool
 	Refresh            bool
 	AllowLogsCommand   bool
-	OnReady            func() // called after the listener is bound, before serving
+	// EnableMesh, when true, additionally serves this webserver's existing API
+	// on a second listener obtained from internal/meshnet.Listener() — so other
+	// honey instances can reach this one through the libp2p mesh (Circuit Relay
+	// v2 + DCUtR), in addition to (not instead of) the normal TCP ListenAddr.
+	// A misconfigured or not-yet-ready mesh must never prevent the ordinary
+	// TCP listener from serving — see Start's handling below.
+	EnableMesh bool
+	OnReady    func() // called after the listener is bound, before serving
 
 	// AuditSink receives one event per security-relevant action (approval decisions,
 	// recipe runs). nil is replaced with a no-op sink in NewServer.
@@ -456,6 +464,20 @@ func (s *Server) Start(ctx context.Context) error {
 		errCh <- srv.Serve(ln)
 	}()
 
+	var meshLn net.Listener
+	if s.opts.EnableMesh {
+		meshLn, err = meshnet.Listener()
+		if err != nil {
+			zap.L().Warn("honey mesh listener unavailable, continuing without it", zap.Error(err))
+			meshLn = nil
+		} else {
+			go func() {
+				zap.L().Info("honey web listening (mesh)")
+				errCh <- srv.Serve(meshLn)
+			}()
+		}
+	}
+
 	s.startRecordingRetention(ctx)
 	if s.scheduleManager != nil {
 		s.scheduleManager.Start(ctx)
@@ -463,7 +485,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	nListeners := 1
 	if metricsSrv != nil {
-		nListeners = 2
+		nListeners++
+	}
+	if meshLn != nil {
+		nListeners++
 	}
 	for {
 		select {

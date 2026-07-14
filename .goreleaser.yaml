@@ -72,8 +72,8 @@ archives:
       - LICENSE
       - completions/*
       - runtime/onnx/**
-      - dist/honey-plugin-init-linux-amd64
-      - dist/honey-plugin-init-linux-arm64
+      - build/honey-plugin-init-linux-amd64
+      - build/honey-plugin-init-linux-arm64
 
 checksum:
   name_template: 'checksums.txt'

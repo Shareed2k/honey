@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GitLoadModal from './GitLoadModal';
 import { apiGet } from '../api/core';
 
-vi.mock('../api', () => ({
+// GitLoadModal imports apiGet from '../api/core', not a '../api' barrel (no
+// such module exists) — mocking the wrong specifier leaves the component's
+// real fetch() call intact, which rejects asynchronously against a relative
+// URL in the test environment and leaks into whichever test runs next.
+vi.mock('../api/core', () => ({
   apiGet: vi.fn(),
 }));
 

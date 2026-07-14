@@ -7,9 +7,9 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-// TestStreamSSHParallel_CancelledCtxEmitsCancelled verifies that once the run
+// TestStreamCommandParallel_CancelledCtxEmitsCancelled verifies that once the run
 // context is cancelled, hosts are not dialed and each emits a "cancelled" result.
-func TestStreamSSHParallel_CancelledCtxEmitsCancelled(t *testing.T) {
+func TestStreamCommandParallel_CancelledCtxEmitsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled before the run starts
 
@@ -21,7 +21,7 @@ func TestStreamSSHParallel_CancelledCtxEmitsCancelled(t *testing.T) {
 	ch := make(chan HostExecResult, len(jobs))
 	go func() {
 		defer close(ch)
-		_ = StreamSSHParallel(ctx, "user", jobs, false,
+		_ = StreamCommandParallel(ctx, "user", jobs, false,
 			func(_ TargetContext, _ map[string]string) string { return "echo should-not-run" },
 			ch, BatchOptions{})
 	}()

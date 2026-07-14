@@ -34,6 +34,19 @@ type File struct {
 	AlertWebhook  AlertWebhookConfig `yaml:"alert_webhook,omitempty" json:"alert_webhook,omitempty"`
 	Audit         Audit              `yaml:"audit,omitempty" json:"audit,omitempty"`
 	SMTP          *SMTPConfig        `yaml:"smtp,omitempty" json:"smtp,omitempty"`
+	Mesh          MeshConfig         `yaml:"mesh,omitempty" json:"mesh,omitempty"`
+}
+
+// MeshConfig configures this process's own libp2p mesh identity, used to
+// reach (and be reached by) honey backends flagged mesh: true — see
+// HoneyBackend.Mesh. RelayAddrs are multiaddrs of self-hosted, generic
+// libp2p relay node(s) (not honey-specific infrastructure) used for NAT
+// traversal via Circuit Relay v2 + DCUtR.
+type MeshConfig struct {
+	Enabled    bool     `yaml:"enabled" json:"enabled" honey:"label=Enable mesh"`
+	PrivateKey string   `yaml:"private_key,omitempty" json:"private_key,omitempty" honey:"label=Mesh identity key;secret" validate:"required_if=Enabled true" mod:"trim"`
+	RelayAddrs []string `yaml:"relay_addrs,omitempty" json:"relay_addrs,omitempty" honey:"label=Relay multiaddrs" validate:"required_if=Enabled true,dive,required"`
+	ListenMesh bool     `yaml:"listen_mesh,omitempty" json:"listen_mesh,omitempty" honey:"label=Also act as a relay (only if reachable)"`
 }
 
 // SMTPConfig holds global SMTP configuration for email notifications.

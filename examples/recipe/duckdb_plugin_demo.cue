@@ -15,9 +15,9 @@ recipe: {
 				id:     "duckdb"
 				action: "query"
 				config: {
-					// Assumes '/data' is mounted via docker.volumes in plugin.yaml
-					// and /data/sample.csv already exists on the host volume.
-					sql: "SELECT * FROM read_csv_auto('/data/sample.csv') LIMIT 5"
+					// Using generate_series to create dummy data inline so
+					// the demo runs out of the box without needing external files.
+					sql: "SELECT * FROM generate_series(1, 5) AS t(id)"
 				}
 			}
 		},
@@ -27,13 +27,10 @@ recipe: {
 				id:     "duckdb"
 				action: "export_parquet"
 				config: {
-					// db_file is a path *inside the container*, not under /data —
-					// this demo assumes /my_database.db already exists with a
-					// users table (e.g. copy one into /var/honey/data and use
-					// "/data/my_database.db" instead if starting from scratch).
-					db_file: "my_database.db"
-					query:   "SELECT * FROM users WHERE active = true"
-					output:  "active_users.parquet"
+					// This exports the dummy data to the temporary HONEY_WORKSPACE 
+					// which is automatically mounted and cleaned up for this run.
+					query:   "SELECT * FROM generate_series(1, 5) AS t(id)"
+					output:  "${HONEY_WORKSPACE}/active_users.parquet"
 				}
 			}
 		}

@@ -148,7 +148,7 @@ func (run *CueRun) GatherFacts(ctx context.Context) {
 		targets = append(targets, TargetContext{Record: r}) // no env needed for facts gathering
 	}
 
-	err := StreamSSHParallel(ctx, run.Params.SSHUser, targets, false, cmdFunc, ch, BatchOptions{
+	err := StreamCommandParallel(ctx, run.Params.SSHUser, targets, false, cmdFunc, ch, BatchOptions{
 		MaxConc:    8,
 		Cache:      run.Cache,
 		AttemptMax: nil,

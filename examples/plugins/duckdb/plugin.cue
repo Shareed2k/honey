@@ -1,6 +1,6 @@
 actions: query: {
 	#Config: {
-		db_file?: string | *":memory:"
+		db_file: string | *":memory:"
 		sql:      string
 	}
 	
@@ -16,7 +16,7 @@ actions: query: {
 
 actions: export_parquet: {
 	#Config: {
-		db_file: string
+		db_file: string | *":memory:"
 		query:   string
 		output:  string
 	}
@@ -24,7 +24,7 @@ actions: export_parquet: {
 	argv: [
 		"duckdb",
 		config.db_file,
-		"-c", "COPY (\(config.query)) TO '/data/\(config.output)' (FORMAT PARQUET);"
+		"-c", "COPY (\(config.query)) TO '\(config.output)' (FORMAT PARQUET);"
 	]
 	
 	output_format: "text"

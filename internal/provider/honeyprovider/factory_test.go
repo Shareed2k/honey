@@ -155,3 +155,78 @@ func TestMTLSBackendsSkipped(t *testing.T) {
 	rec := hosts.Record{Meta: map[string]string{"honey_upstream_backend": "mtls-honey"}}
 	assert.Nil(t, ep.ExecutorFor(rec, nil))
 }
+
+// TestFromConfig_MeshFieldsPropagate verifies Mesh/MeshAddr are threaded from
+// config.HoneyBackend into the constructed *honeyprovider.Honey unchanged.
+func TestFromConfig_MeshFieldsPropagate(t *testing.T) {
+	t.Parallel()
+
+	cfg := &mockConfigProvider{
+		backends: []config.HoneyBackend{
+			{Name: "mesh-honey", URL: "http://mesh.example.com", Mesh: true, MeshAddr: "/ip4/1.2.3.4/tcp/4001/p2p/target"},
+		},
+	}
+	factory := honeyprovider.NewFactory(cfg)
+
+	providers := factory.FromConfig(searchrun.ProviderOverrides{})
+	require.Len(t, providers, 1)
+
+	h, ok := providers[0].(*honeyprovider.Honey)
+	require.True(t, ok)
+	assert.True(t, h.Mesh)
+	assert.Equal(t, "/ip4/1.2.3.4/tcp/4001/p2p/target", h.MeshAddr)
+}
+
+// TestExecutorFor_MeshFieldsPropagate verifies Mesh/MeshAddr are threaded from
+// config.HoneyBackend into the constructed *honeyprovider.Executor unchanged.
+func TestExecutorFor_MeshFieldsPropagate(t *testing.T) {
+	t.Parallel()
+
+	cfg := &mockConfigProvider{
+		backends: []config.HoneyBackend{
+			{Name: "mesh-honey", URL: "http://mesh.example.com", Mesh: true, MeshAddr: "/ip4/1.2.3.4/tcp/4001/p2p/target"},
+		},
+	}
+	factory := honeyprovider.NewFactory(cfg)
+
+	ep, ok := factory.(searchrun.ExecutorProvider)
+	require.True(t, ok)
+	rec := hosts.Record{Meta: map[string]string{"honey_upstream_backend": "mesh-honey"}}
+	ex, ok := ep.ExecutorFor(rec, nil).(*honeyprovider.Executor)
+	require.True(t, ok)
+	assert.True(t, ex.Mesh)
+	assert.Equal(t, "/ip4/1.2.3.4/tcp/4001/p2p/target", ex.MeshAddr)
+}
+
+// TestMeshBackendsNotSkipped verifies mesh-flagged honey backends are, unlike
+// MTLS-managed ones, never excluded from FromConfig/BackendRows just because
+// this process's own mesh dial isn't (yet) ready — that's a normal per-call
+// network error, not a structural unreachability like an MTLS credential
+// owned by another process. See honeyFactory.FromConfig's Mesh field comment.
+func TestMeshBackendsNotSkipped(t *testing.T) {
+	t.Parallel()
+
+	cfg := &mockConfigProvider{
+		backends: []config.HoneyBackend{
+			{Name: "mesh-honey", URL: "http://mesh-target.invalid", Mesh: true, MeshAddr: "/ip4/1.2.3.4/tcp/4001/p2p/target"},
+		},
+	}
+	factory := honeyprovider.NewFactory(cfg)
+
+	// FromConfig: the mesh backend is included even though no mesh has been
+	// started in this process (meshnet.Start is never called by this package).
+	providers := factory.FromConfig(searchrun.ProviderOverrides{})
+	assert.Len(t, providers, 1)
+
+	// BackendRows: its own "honey" row is present too (the fetch of its
+	// sub-backends will simply fail quietly, like any other unreachable
+	// backend, since nothing is listening at mesh-target.invalid).
+	rows := factory.BackendRows()
+	var honeyNames []string
+	for _, r := range rows {
+		if r.Kind == "honey" {
+			honeyNames = append(honeyNames, r.Name)
+		}
+	}
+	assert.Equal(t, []string{"mesh-honey"}, honeyNames)
+}

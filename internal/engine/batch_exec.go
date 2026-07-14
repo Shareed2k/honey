@@ -127,10 +127,10 @@ func resolveMaxOutputBytes(opts BatchOptions) int {
 	return opts.MaxOutputBytes
 }
 
-// StreamSSHParallel runs the command on records and streams results to out channel.
+// StreamCommandParallel runs the command on records and streams results to out channel.
 // It does not close the channel itself.
-// StreamSSHParallel ...
-func StreamSSHParallel(ctx context.Context, user string, jobs []TargetContext, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, out chan<- HostExecResult, opts BatchOptions) error {
+// StreamCommandParallel ...
+func StreamCommandParallel(ctx context.Context, user string, jobs []TargetContext, kvTunnel bool, remoteCmd SSHRemoteCmdFunc, out chan<- HostExecResult, opts BatchOptions) error {
 	maxConc := opts.MaxConc
 	if maxConc <= 0 {
 		maxConc = defaultSSHBatchConcurrency
@@ -160,15 +160,15 @@ func StreamSSHParallel(ctx context.Context, user string, jobs []TargetContext, k
 		}
 
 		run := func() HostExecResult {
-			if tc.Record.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(tc.Record, truenasshell.ConsoleTrueNASAPI) {
-				return runOneRemoteTrueNAS(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV, resolveMaxOutputBytes(opts))
-			}
-			return RunOneRemoteSSH(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts.RecipeKV, opts.RecipeScopedKV, opts.CmdTimeout, resolveMaxOutputBytes(opts))
+			transport := resolveTransport(tc)
+			return transport.RunCommand(ctx, effUser, tc, cache, kvTunnel, remoteCmd, opts)
 		}
 		outcome := RunHostExecWithRetry(ctx, opts.RetryCfg, run)
 		RecordMaxAttempts(opts.AttemptMax, outcome.Attempts)
 		op := "exec"
-		if tc.Record.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(tc.Record, truenasshell.ConsoleTrueNASAPI) {
+		if tc.Record.Name == "_" {
+			op = "local"
+		} else if tc.Record.Provider == "truenas" && truenasshell.ShouldUseTrueNASShell(tc.Record, truenasshell.ConsoleTrueNASAPI) {
 			op = "truenas"
 		}
 		observeSSHOperation(opts.Obs, op, hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
@@ -202,7 +202,7 @@ func ExecuteSSHParallel(user string, recs []TargetContext, remoteCmdFunc func(ho
 		wrap := func(tc TargetContext, _ map[string]string) string {
 			return remoteCmdFunc(tc.Record)
 		}
-		_ = StreamSSHParallel(context.Background(), user, jobs, false, wrap, ch, BatchOptions{MaxConc: maxConc, Reg: reg})
+		_ = StreamCommandParallel(context.Background(), user, jobs, false, wrap, ch, BatchOptions{MaxConc: maxConc, Reg: reg})
 	}()
 
 	out := make([]HostExecResult, 0, len(jobs))

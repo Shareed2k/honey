@@ -107,8 +107,8 @@ recipe: {
 		return ""
 	}
 
-	require.Empty(t, getOutput("pkg")) // Output should be silenced
-	require.Contains(t, getOutput("verify_pkg"), "jq") // jq --version
+	require.Empty(t, getOutput("pkg"))                                           // Output should be silenced
+	require.Contains(t, getOutput("verify_pkg"), "jq")                           // jq --version
 	require.Contains(t, getOutput("svc"), "Starting periodic command scheduler") // fallback to service successful
 	require.Contains(t, getOutput("verify_svc"), "cron is running")              // service cron status
 }

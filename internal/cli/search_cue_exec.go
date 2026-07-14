@@ -166,6 +166,12 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	_, cleanupWS, err := engine.SetupRecipeWorkspace(cliEnv)
+	if err != nil {
+		return err
+	}
+	defer cleanupWS()
+
 	cache := engine.NewClientCache()
 	cache.SetRegistry(buildHostExecRegistry())
 

@@ -6,14 +6,44 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/plugins"
+	"github.com/shareed2k/honey/internal/safepath"
 	"go.uber.org/zap"
 )
+
+// SetupRecipeWorkspace creates a unique temporary directory for the recipe run
+// and injects it into env as HONEY_WORKSPACE. It returns the path and a cleanup function.
+// Centralized here so CLI cue-exec, API, Webhooks, and Scheduler runs all get consistent behavior.
+func SetupRecipeWorkspace(env map[string]string) (string, func(), error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", func() {}, fmt.Errorf("workspace: get home dir: %w", err)
+	}
+	runID := uuid.New().String()
+	wsDir, err := safepath.JoinUnder(homeDir, ".honey", "workspaces", "run-"+runID)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("workspace: resolve path: %w", err)
+	}
+	if err := safepath.MkdirAll(wsDir, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("workspace: create dir %s: %w", wsDir, err)
+	}
+
+	if env != nil {
+		env["HONEY_WORKSPACE"] = wsDir
+	}
+
+	cleanup := func() {
+		_ = os.RemoveAll(wsDir)
+	}
+	return wsDir, cleanup, nil
+}
 
 // RunCueRecipeSteps executes a CUE recipe over a slice of target records.
 func RunCueRecipeSteps(ctx context.Context, out io.Writer, p CueRecipeRunParams, rec *SessionRecorder) (runErr error) {

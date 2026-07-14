@@ -1,7 +1,6 @@
 package honeyprovider
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -49,6 +48,12 @@ func (f honeyFactory) FromConfig(_ searchrun.ProviderOverrides) []hosts.Backend 
 			Insecure: b.Insecure,
 			MTLS:     b.MTLS,
 			ServerCA: b.ServerCA,
+			// No MTLS-style skip for Mesh: this process owns the mesh dial itself
+			// (unlike an MTLS-managed credential owned by the mobile app), so an
+			// unready/failed mesh must surface as a normal per-call network error
+			// from Search(), not exclude the backend from the list entirely.
+			Mesh:     b.Mesh,
+			MeshAddr: b.MeshAddr,
 		})
 	}
 	return out
@@ -83,21 +88,6 @@ func (f honeyFactory) BackendRows() []config.BackendRow {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Use DisableKeepAlives to prevent connection leaks for these short-lived fetches.
-	defaultClient := &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-		},
-	}
-	insecureClient := &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-		},
-	}
-
 	for _, b := range backends {
 		b := b // capture loop variable
 		if b.MTLS && !devmtls.Registered() {
@@ -117,20 +107,19 @@ func (f honeyFactory) BackendRows() []config.BackendRow {
 				req.Header.Set("Authorization", "Bearer "+b.Token)
 			}
 
-			client := defaultClient
-			switch {
-			case b.MTLS:
-				cfg, cerr := devmtls.ClientTLSConfig(b.ServerCA)
-				if cerr != nil {
-					return
-				}
-				client = &http.Client{
-					Timeout:   2 * time.Second,
-					Transport: &http.Transport{DisableKeepAlives: true, TLSClientConfig: cfg},
-				}
-			case b.Insecure:
-				client = insecureClient
+			tr, terr := buildTransport(trustConfig{
+				insecure: b.Insecure,
+				mtls:     b.MTLS,
+				serverCA: b.ServerCA,
+				mesh:     b.Mesh,
+				meshAddr: b.MeshAddr,
+			})
+			if terr != nil {
+				return
 			}
+			// Use DisableKeepAlives to prevent connection leaks for this short-lived fetch.
+			tr.DisableKeepAlives = true
+			client := &http.Client{Timeout: 2 * time.Second, Transport: tr}
 
 			resp, err := client.Do(req)
 			if err != nil {
@@ -179,6 +168,8 @@ func (f honeyFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.
 				Insecure: b.Insecure,
 				MTLS:     b.MTLS,
 				ServerCA: b.ServerCA,
+				Mesh:     b.Mesh,
+				MeshAddr: b.MeshAddr,
 			}
 		}
 	}
