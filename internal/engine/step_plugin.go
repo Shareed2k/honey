@@ -84,6 +84,19 @@ func runCuePluginOnHost(ctx context.Context, opts ExecutionOptions, stepIdx int,
 		return res
 	}
 	runAs := cuetry.EffectiveRunAs(step.Base(), opts.Recipe.Defaults)
+	sshUser := opts.SSHUser
+	if u := strings.TrimSpace(target.Meta["ssh_user"]); u != "" {
+		sshUser = u
+	}
+	// A runtime:docker plugin targeting a real remote host runs its
+	// shim-container on that host's Docker daemon (over SSH) instead of the
+	// operator's local daemon. Only on --execute (dry-run keeps everything
+	// local) and only when a per-run session exists to own the remote
+	// container's lifecycle. host: "_" / localhost stays on the local path.
+	useRemoteDocker := opts.Execute &&
+		opts.DockerPluginSess != nil &&
+		pluginMgr.IsDockerPlugin(pls.Plugin.ID) &&
+		isRemoteHostRecord(target)
 	bridge := NewRemoteBridge(opts.SSHUser, target, opts.Cache, opts.Reg, opts.RecipeDir, runAs, env, pluginMgr.EffectivePaths(pls.Plugin.ID))
 	hostCtx := &plugins.HostRunContext{
 		SSHUser:              opts.SSHUser,
@@ -122,7 +135,16 @@ func runCuePluginOnHost(ctx context.Context, opts ExecutionOptions, stepIdx int,
 		var totalAttempts int
 		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
 			inner := HostExecResult{Name: target.Name, IP: target.PrimaryIP, Provider: target.Provider, Success: false}
-			out, execErr := pluginMgr.ExecuteStep(callCtx, pls.Plugin.ID, pls.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, opts.Execute, secretsDry, kvSess)
+			var (
+				out     apiv1.ExecuteStepOutput
+				execErr error
+			)
+			if useRemoteDocker {
+				factory := newDockerPluginSSHBackendFactory(ctx, opts.Cache, sshUser, runAs, target)
+				out, execErr = opts.DockerPluginSess.ExecuteStep(callCtx, factory, dockerPluginHostKey(target), pls.Plugin.ID, pls.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, opts.Execute, secretsDry, kvSess)
+			} else {
+				out, execErr = pluginMgr.ExecuteStep(callCtx, pls.Plugin.ID, pls.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, opts.Execute, secretsDry, kvSess)
+			}
 			if execErr != nil {
 				inner.ErrMsg = execErr.Error()
 				if metrics.ObserverEnabled(obs) {
@@ -182,7 +204,8 @@ func applyExecuteStepOutput(res *HostExecResult, out apiv1.ExecuteStepOutput) {
 	res.Success = out.Success
 	res.Skipped = out.Skipped
 	res.ExitCode = out.ExitCode
-	res.Output = strings.TrimSpace(out.Stdout)
+	res.Stdout = strings.TrimSpace(out.Stdout)
+	res.Output = res.Stdout
 	if out.Stderr != "" {
 		if res.Output != "" {
 			res.Output += "\n"

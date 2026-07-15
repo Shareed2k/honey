@@ -248,6 +248,7 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		OutputCapture:     run.OutputCapture,
 		Facts:             run.Facts,
 		TriggeredHandlers: run.TriggeredHandlers,
+		DockerPluginSess:  run.DockerPluginSess,
 	}
 
 	proxyCh := make(chan HostExecResult)
@@ -433,6 +434,10 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	defer run.RecipeKV.Close()
 	run.TunnelCoord = NewRecipeTunnelCoordinator(nil)
 	defer run.TunnelCoord.Close()
+	if p.PluginMgr != nil && p.PluginMgr.Enabled() {
+		run.DockerPluginSess = p.PluginMgr.NewDockerHostSession()
+		defer func() { _ = run.DockerPluginSess.Close(context.Background()) }()
+	}
 	if err := EnsureKVSessionForRecipe(p.Recipe, run.RecipeKV, p.Execute); err != nil {
 		return err
 	}
@@ -742,6 +747,7 @@ func StreamCueLoopStep(ctx context.Context, run *CueRun, i int, step cuetry.Step
 				Cache:             run.Cache,
 				RecipeKV:          run.RecipeKV,
 				TunnelCoord:       run.TunnelCoord,
+				DockerPluginSess:  run.DockerPluginSess,
 				OutputStore:       run.OutputStore,
 				OutputCapture:     run.OutputCapture,
 				Facts:             run.Facts,
@@ -791,22 +797,33 @@ func RecordGraphStepStdout(recipe cuetry.Recipe, step cuetry.Step, kind string, 
 	case cuetry.KindCommand, cuetry.KindScript, cuetry.KindPlugin, cuetry.KindTunnel:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
-				store.Record(id, HostNameFromExecResult(row.Name), row.Output)
+				store.Record(id, HostNameFromExecResult(row.Name), stdoutForRecord(row))
 			}
 		}
 	case cuetry.KindTemplate:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
-				store.Record(id, cuetry.MatchLocalAIHost, row.Output)
+				store.Record(id, cuetry.MatchLocalAIHost, stdoutForRecord(row))
 			}
 		}
 	case cuetry.KindK8s:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
-				store.Record(id, HostNameFromExecResult(row.Name), row.Output)
+				store.Record(id, HostNameFromExecResult(row.Name), stdoutForRecord(row))
 			}
 		}
 	}
+}
+
+// stdoutForRecord picks what env_from/stepStdout consumers should see for a
+// step's output: HostExecResult.Stdout (stderr-free) when the executor
+// populated it — currently plugin steps only — otherwise the combined
+// Output every other step kind has always provided, unchanged.
+func stdoutForRecord(row HostExecResult) string {
+	if row.Stdout != "" {
+		return row.Stdout
+	}
+	return row.Output
 }
 
 // CueRecipeDisplayOutput ...

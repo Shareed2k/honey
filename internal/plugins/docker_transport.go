@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 	"sort"
@@ -41,11 +42,77 @@ const (
 // these.
 var pluginInitPort = networktypes.MustParsePort(fmt.Sprintf("%d/tcp", pluginInitContainerPort))
 
+// DockerBackend abstracts the daemon a docker plugin's shim-container runs
+// against: the operator's local Docker daemon (localBackend, below) or a
+// remote host's daemon over SSH (the engine's ssh backend). It captures
+// exactly the three operator-local assumptions of the shim model — which
+// daemon, where the honey-plugin-init binary lives to bind-mount, and how to
+// reach the shim's published loopback port. Everything else in
+// dockerTransport (container lifecycle, the /call HTTP protocol) is
+// backend-agnostic, so local and remote share one code path.
+type DockerBackend interface {
+	// Client returns the moby client for the target daemon. The transport
+	// does not close it — Close (below) owns that.
+	Client() *client.Client
+	// ShimHostPath returns the path, on the daemon host, of the
+	// honey-plugin-init binary to bind-mount as the container entrypoint.
+	// Remote backends stage the binary onto the host here (idempotently).
+	ShimHostPath(ctx context.Context) (string, error)
+	// DialShim dials the shim's published loopback address on the daemon
+	// host. Local dials directly; remote tunnels through SSH. The signature
+	// matches http.Transport.DialContext so it can be wired straight in.
+	DialShim(ctx context.Context, network, address string) (net.Conn, error)
+	// Close releases backend-owned resources (the moby client, etc.). It
+	// must not close a borrowed/shared SSH connection it does not own.
+	Close() error
+}
+
+// localBackend is the default DockerBackend: the operator's own Docker daemon,
+// the honey-plugin-init binary resolved on the operator's filesystem, and a
+// plain loopback dial. Behavior identical to the pre-backend code path.
+type localBackend struct {
+	shimPath string
+	cli      *client.Client
+}
+
+// newLocalBackend builds a localBackend against the ambient Docker daemon
+// (DOCKER_HOST/env via client.FromEnv). socket, when non-empty, overrides the
+// daemon host (unused by the plugin loader today; kept for symmetry with the
+// docker step's own socket override).
+func newLocalBackend(shimPath, socket string) (*localBackend, error) {
+	var (
+		cli *client.Client
+		err error
+	)
+	if socket != "" {
+		cli, err = client.New(client.FromEnv, client.WithHost(socket))
+	} else {
+		cli, err = client.New(client.FromEnv)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("plugins: docker client: %w", err)
+	}
+	return &localBackend{shimPath: shimPath, cli: cli}, nil
+}
+
+func (b *localBackend) Client() *client.Client { return b.cli }
+
+func (b *localBackend) ShimHostPath(context.Context) (string, error) { return b.shimPath, nil }
+
+func (b *localBackend) DialShim(ctx context.Context, network, address string) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, network, address)
+}
+
+func (b *localBackend) Close() error { return b.cli.Close() }
+
 // dockerTransport runs a plugin as a long-lived Docker container (for the
-// Manager's process lifetime — not one container per call), reached over
-// HTTP via the honey-plugin-init binary bind-mounted as its entrypoint.
+// Manager's process lifetime, or a DockerHostSession's run lifetime for
+// remote hosts — not one container per call), reached over HTTP via the
+// honey-plugin-init binary bind-mounted as its entrypoint. The target daemon,
+// shim binary location, and shim dialer all come from backend.
 type dockerTransport struct {
-	cli        *client.Client
+	backend    DockerBackend
 	cue        *pluginCue
 	httpClient *http.Client
 	createCfg  dockerTransportConfig
@@ -111,27 +178,27 @@ func (t *dockerTransport) currentAddr() string {
 }
 
 // dockerTransportConfig holds everything needed to create+start the container.
+// The honey-plugin-init binary path is not here — it comes from the backend's
+// ShimHostPath (local resolves it on the operator FS; remote stages it onto
+// the target host), since it differs per daemon.
 type dockerTransportConfig struct {
-	Image              string
-	PullPolicy         string // "if_not_present" or "always"
-	PluginInitHostPath string // path to the honey-plugin-init binary on the honey host
-	CueSource          []byte
-	MaxBackoff         time.Duration
-	Env                map[string]string // resolved allowed_env values, passed through as container env vars
-	Volumes            []string          // static bind mounts from manifest.Docker.Volumes, Docker bind syntax
+	Image      string
+	PullPolicy string // "if_not_present" or "always"
+	CueSource  []byte
+	MaxBackoff time.Duration
+	Env        map[string]string // resolved allowed_env values, passed through as container env vars
+	Volumes    []string          // static bind mounts from manifest.Docker.Volumes, Docker bind syntax
 }
 
-// newDockerTransport validates the plugin's cue source and prepares a Docker
-// client, but does not pull/create/start a container — that's deferred to
-// ensureStarted on the transport's first real call (see dockerTransport.started).
-func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*dockerTransport, error) {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return nil, fmt.Errorf("plugins: docker client: %w", err)
-	}
+// newDockerTransport validates the plugin's cue source and wires the shim HTTP
+// client to dial through backend, but does not pull/create/start a container —
+// that's deferred to ensureStarted on the transport's first real call (see
+// dockerTransport.started). Takes ownership of backend: it is Closed here on a
+// construction error and by dockerTransport.Close otherwise.
+func newDockerTransport(ctx context.Context, backend DockerBackend, cfg dockerTransportConfig) (*dockerTransport, error) {
 	pc, err := newPluginCue(cfg.CueSource)
 	if err != nil {
-		cli.Close()
+		backend.Close()
 		return nil, err
 	}
 
@@ -141,9 +208,9 @@ func newDockerTransport(ctx context.Context, cfg dockerTransportConfig) (*docker
 	// whether the caller's own ctx ever gets cancelled.
 	internalCtx, cancel := context.WithCancel(ctx)
 	dt := &dockerTransport{
-		cli:          cli,
+		backend:      backend,
 		cue:          pc,
-		httpClient:   &http.Client{},
+		httpClient:   &http.Client{Transport: &http.Transport{DialContext: backend.DialShim}},
 		createCfg:    cfg,
 		cancel:       cancel,
 		lifecycleCtx: internalCtx,
@@ -183,8 +250,12 @@ func (t *dockerTransport) ensureStarted(ctx context.Context, createFn createAndS
 
 // createAndStart pulls (if needed), creates, starts a plugin container and
 // waits for honey-plugin-init inside it to become reachable. Shared by
-// newDockerTransport (initial start) and docker_restart.go's recreate loop.
-func createAndStart(ctx context.Context, cli *client.Client, cfg dockerTransportConfig) (containerID, addr string, err error) {
+// dockerTransport's first-use start (CallRaw) and docker_restart.go's recreate
+// loop. shimHostPath is the daemon-host path of the honey-plugin-init binary
+// to bind-mount (from the backend); httpClient is the shim HTTP client (its
+// transport dials through the same backend, so readiness polling works
+// against a remote daemon too).
+func createAndStart(ctx context.Context, cli *client.Client, httpClient *http.Client, shimHostPath string, cfg dockerTransportConfig) (containerID, addr string, err error) {
 	if cfg.PullPolicy == "always" {
 		if pullErr := pullImage(ctx, cli, cfg.Image); pullErr != nil {
 			return "", "", pullErr
@@ -198,7 +269,7 @@ func createAndStart(ctx context.Context, cli *client.Client, cfg dockerTransport
 		ExposedPorts: networktypes.PortSet{pluginInitPort: struct{}{}},
 	}
 	hostCfg := &containertypes.HostConfig{
-		Binds: buildBinds(cfg.PluginInitHostPath, cfg.Volumes),
+		Binds: buildBinds(shimHostPath, cfg.Volumes),
 		PortBindings: networktypes.PortMap{
 			pluginInitPort: {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: ""}},
 		},
@@ -221,7 +292,7 @@ func createAndStart(ctx context.Context, cli *client.Client, cfg dockerTransport
 		return "", "", cleanupFailedContainer(ctx, cli, resp.ID, wrapped)
 	}
 
-	addr, err = waitForReady(ctx, cli, resp.ID)
+	addr, err = waitForReady(ctx, cli, httpClient, resp.ID)
 	if err != nil {
 		return "", "", cleanupFailedContainer(ctx, cli, resp.ID, err)
 	}
@@ -313,7 +384,7 @@ func pullImage(ctx context.Context, cli *client.Client, image string) error {
 // the deadline elapses. The retry-loop logic itself is in pollUntilReady
 // (Docker-free, unit-tested directly); this function is just the
 // Docker-specific "how do I check" glue.
-func waitForReady(ctx context.Context, cli *client.Client, containerID string) (string, error) {
+func waitForReady(ctx context.Context, cli *client.Client, httpClient *http.Client, containerID string) (string, error) {
 	var addr string
 	checkFn := func() bool {
 		inspect, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
@@ -322,7 +393,7 @@ func waitForReady(ctx context.Context, cli *client.Client, containerID string) (
 		}
 		for _, binding := range inspect.Container.NetworkSettings.Ports[pluginInitPort] {
 			candidate := fmt.Sprintf("http://127.0.0.1:%s", binding.HostPort)
-			if pingReady(ctx, candidate) {
+			if pingReady(ctx, httpClient, candidate) {
 				addr = candidate
 				return true
 			}
@@ -357,12 +428,12 @@ func pollUntilReady(ctx context.Context, deadline time.Time, checkFn func() bool
 	}
 }
 
-func pingReady(ctx context.Context, addr string) bool {
+func pingReady(ctx context.Context, httpClient *http.Client, addr string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/healthz", nil)
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false
 	}
@@ -395,15 +466,25 @@ func pingReady(ctx context.Context, addr string) bool {
 // Both branches share execAction (evalAction against plugin.cue + POST to
 // honey-plugin-init over HTTP) since that part of the flow is identical.
 func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []byte) (int, []byte, error) {
-	if err := t.ensureStarted(ctx, func(ctx context.Context) (string, string, error) {
-		return createAndStart(ctx, t.cli, t.createCfg)
-	}); err != nil {
+	if err := t.ensureStarted(ctx, t.createContainer); err != nil {
 		return 0, nil, fmt.Errorf("plugins: start container on first use: %w", err)
 	}
 	if export == "execute_step" {
 		return t.callExecuteStep(ctx, inBytes)
 	}
 	return t.callDirect(ctx, export, inBytes)
+}
+
+// createContainer resolves the shim binary's daemon-host path from the backend
+// (staging it onto a remote host if needed) and pulls/creates/starts the
+// plugin container. Used both for first-use start (CallRaw) and crash-recreate
+// (docker_restart.go).
+func (t *dockerTransport) createContainer(ctx context.Context) (containerID, addr string, err error) {
+	shimPath, err := t.backend.ShimHostPath(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("plugins: resolve honey-plugin-init: %w", err)
+	}
+	return createAndStart(ctx, t.backend.Client(), t.httpClient, shimPath, t.createCfg)
 }
 
 // callDirect is the direct-call convention: export is the CUE action name,
@@ -607,11 +688,12 @@ func (t *dockerTransport) Close(ctx context.Context) error {
 		t.cancel()
 	}
 
-	defer t.cli.Close()
+	cli := t.backend.Client()
+	defer t.backend.Close()
 	if !started {
 		// Never called: no container was ever created, so there's nothing
 		// to stop/remove.
 		return nil
 	}
-	return stopAndRemoveContainer(ctx, t.cli, t.cli, id)
+	return stopAndRemoveContainer(ctx, cli, cli, id)
 }

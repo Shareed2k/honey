@@ -67,6 +67,31 @@ The relay named in `relay_addrs` is a separate, generic, non-honey libp2p compon
 
 See [`examples/mesh`](https://github.com/shareed2k/honey/tree/main/examples/mesh) for a full, runnable walkthrough: generating a mesh identity key, running an example relay, and configuring two honey instances to reach each other through it.
 
+## Mobile app (Android) — no SSH private key on the phone
+
+The Android app's `config.yaml` (edited from the Config tab, or pushed to `configDir/config.yaml`) is the exact same schema as above — a `backends.honey` entry, optionally combined with `mesh: true`/`mesh_addr` and the top-level `mesh:` block for NAT traversal. Once configured:
+
+```yaml
+backends:
+  honey:
+    - name: central
+      url: "https://honey.internal:8443"
+      mtls: true          # phone already enrolls a device mTLS credential
+      mesh: true           # only if central sits behind NAT/CGNAT
+      mesh_addr: "/ip4/203.0.113.10/udp/4001/quic-v1/p2p/12D3KooW..."
+
+mesh:
+  enabled: true
+  private_key: "CAESQ..."
+  relay_addrs:
+    - "/ip4/203.0.113.10/udp/4001/quic-v1/p2p/12D3KooW..."
+```
+
+- **Exec** (run-command) against hosts returned by this backend proxies through `central` — the phone never needs an SSH private key for them. The app's SSH-key picker is replaced by a "Routed via provider: central (mTLS)" line for these hosts.
+- **VPN/tunnel** works the same way: picking a `central`-backed exit host tunnels through the remote honey server's own SSH session to that host, again with no private key on the phone.
+- Auth to `central` itself is mTLS (the phone's already-enrolled device credential) and/or the libp2p mesh — not a bearer token, since there's no good place to store one long-term on a phone.
+- A plain SSH username is still sent (it's not a secret) — the remote honey server uses it to open its own SSH session to the target host.
+
 ## CLI (no config file)
 
 There are no dedicated `--honey-*` flags. Use a config file.

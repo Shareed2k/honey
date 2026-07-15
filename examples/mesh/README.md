@@ -111,6 +111,38 @@ Take the printed address, with the real reachable IP substituted for
 `<RELAY_MULTIADDR>` below — and the printed peer ID — that's
 `<RELAY_PEER_ID>` below.
 
+### Deploy the relay (Docker)
+
+For a long-running relay, build the image and run it on a host with a
+genuine public IP and an open/forwarded **UDP** port (Circuit Relay v2 rides
+QUIC over UDP):
+
+```bash
+docker build -t honey-mesh-relay examples/mesh/relay
+
+docker run -d --name honey-relay --restart unless-stopped \
+  -p 4001:4001/udp \
+  -e RELAY_PRIVATE_KEY='<paste the private_key from step 1>' \
+  honey-mesh-relay
+```
+
+**Set `RELAY_PRIVATE_KEY`.** The relay's peer ID is derived from its identity
+key, and that peer ID is baked into every honey instance's
+`mesh.relay_addrs`. Without a fixed key the relay generates a *random*
+identity on each start, so its peer ID — and thus every client's
+`relay_addrs` — would break on the next container restart/redeploy. Generate
+a key with the **same** keygen snippet from step 1 above: its `private_key:`
+line is the value for `RELAY_PRIVATE_KEY`, and its `peer_id:` line is the
+relay's now-stable `<RELAY_PEER_ID>`. (Running the container with no
+`RELAY_PRIVATE_KEY` still works but logs a warning and uses a throwaway
+identity — fine only for a quick test.)
+
+Read the relay's address off the container logs (`docker logs honey-relay`),
+substituting the host's real public IP for `0.0.0.0` exactly as in step 2
+— that's `<RELAY_MULTIADDR>`. The `-force-public` caveat in "Production
+notes" below still applies: a real relay must have genuine public
+reachability, never `-force-public`.
+
 ## 3. Configure both sides
 
 - [`config.server.yaml`](config.server.yaml) — the instance being reached.
@@ -168,6 +200,44 @@ honey search --provider honey --config config.client.yaml -o json
 A working mesh path returns the server's rows, routed through the relay
 (and transparently upgraded to a direct, hole-punched connection when DCUtR
 can manage it) exactly like a directly reachable honey backend.
+
+## Reaching a firewalled host that runs Docker (no inbound SSH)
+
+This is the common real case: a box runs Docker (a Proxmox VM, a home
+server, a CGNAT'd machine) but you can't SSH *into* it — inbound 22 is
+firewalled/refused. The mesh solves it because the box only ever dials
+**out** to the relay; nothing needs to reach it inbound.
+
+The trick: instead of the operator reaching *into* the box to drive its
+Docker, run honey **on the box** with `mesh.enabled: true` (exactly
+`config.server.yaml`), and let the box run its own Docker workloads
+**locally** while the operator reaches its honey API over the relay
+(exactly `config.client.yaml`). No SSH into the box, no inbound port on it,
+no remote-Docker tunnel.
+
+Concretely, for a "check my containers for new images" job on such a box:
+
+1. On the box, run `honey web --config config.server.yaml` (its `mesh:`
+   block dials out to the relay — the box is now reachable over the mesh).
+2. On the box, run the watchtower recipe **locally** — `host: "_"` targets
+   the box's own Docker daemon, so the container runs right there, no SSH
+   and no remote transport involved:
+   ```bash
+   honey cue-exec --execute examples/recipe/watchtower_image_check.cue \
+     --config config.server.yaml
+   ```
+   (with the recipe's step `host:` set to `"_"` — the local-daemon form;
+   see [`examples/recipe/watchtower_image_check.cue`](../recipe/watchtower_image_check.cue)).
+   Schedule it with the recipe's `schedules:` block under `honey web`, or a
+   plain cron on the box — either way it runs autonomously on the box.
+3. From the operator, reach and manage that box over the relay with
+   `config.client.yaml`: `honey search --provider honey`, the web UI, logs,
+   or triggering recipes — all flow through the mesh circuit, so you
+   operate the firewalled box without ever opening a port on it.
+
+The docker daemon stays entirely local to the box; the mesh is only the
+management/observability channel. This needs no new honey code — it's the
+same mesh + honeyprovider federation this example already sets up.
 
 ## Production notes
 

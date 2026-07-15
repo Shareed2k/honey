@@ -67,6 +67,7 @@ object ApiModule {
                     val meta = recordObj.optJSONObject("meta")
                     val backendName = meta?.optString("backend_name", "") ?: ""
                     val sshPort = meta?.optString("ssh_port", "")?.toIntOrNull() ?: 0
+                    val honeyUpstreamBackend = meta?.optString("honey_upstream_backend", "") ?: ""
 
                     val groupsArray = recordObj.optJSONArray("groups")
                     val groups = mutableListOf<String>()
@@ -84,6 +85,7 @@ object ApiModule {
                             backendName = backendName,
                             primaryIp = primaryIp,
                             sshPort = sshPort,
+                            honeyUpstreamBackend = honeyUpstreamBackend,
                         ),
                     )
                 }

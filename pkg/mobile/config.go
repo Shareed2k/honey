@@ -45,8 +45,11 @@ func InitDefaultConfig(homeDir, configDir, cacheDir, recordDir, recipesDir strin
 	}
 
 	if modified {
-		return cfg.Save(path)
+		if err := cfg.Save(path); err != nil {
+			return err
+		}
 	}
+	startMeshIfConfigured(cfg)
 	return nil
 }
 
@@ -61,6 +64,7 @@ func LoadConfig(configDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	startMeshIfConfigured(cfg)
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return "", err

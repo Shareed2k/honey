@@ -42,6 +42,7 @@ type CueRun struct {
 	Cache             *ClientCache
 	RecipeKV          *RecipeKVCoordinator
 	TunnelCoord       *RecipeTunnelCoordinator
+	DockerPluginSess  *plugins.DockerHostSession
 	OutputStore       *cuetry.StepOutputStore
 	OutputCapture     *cuetry.RecipeOutputCapture
 	Facts             map[string]map[string]any

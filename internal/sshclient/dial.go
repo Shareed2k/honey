@@ -1231,10 +1231,18 @@ func RunTunnelGo(ctx context.Context, user, host string, sshPort int, localFwd s
 	return nil
 }
 
+// leafSSHProvider is implemented by any HostClient wrapper that can expose
+// its underlying SSH connection even when it isn't itself a *HoneyClient
+// (e.g. proxmoxprovider's hybridQEMUClient: Run() goes through the QEMU
+// guest agent, but its file-transfer side is a real SSH connection).
+type leafSSHProvider interface {
+	LeafSSH() *ssh.Client
+}
+
 // LeafSSHFromClient extracts the underlying *ssh.Client if available.
 func LeafSSHFromClient(c hostexec.HostClient) (*ssh.Client, error) {
-	if hc, ok := c.(*HoneyClient); ok {
-		if leaf := hc.LeafSSH(); leaf != nil {
+	if p, ok := c.(leafSSHProvider); ok {
+		if leaf := p.LeafSSH(); leaf != nil {
 			return leaf, nil
 		}
 	}

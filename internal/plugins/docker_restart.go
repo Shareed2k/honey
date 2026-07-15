@@ -31,7 +31,7 @@ func (t *dockerTransport) watchLoop(ctx context.Context) {
 		stop := t.stopWatch
 		t.mu.RUnlock()
 
-		waitResult := t.cli.ContainerWait(ctx, id, client.ContainerWaitOptions{
+		waitResult := t.backend.Client().ContainerWait(ctx, id, client.ContainerWaitOptions{
 			Condition: containertypes.WaitConditionNotRunning,
 		})
 
@@ -50,9 +50,7 @@ func (t *dockerTransport) watchLoop(ctx context.Context) {
 			}
 			zap.L().Warn("plugins: docker plugin container exited unexpectedly, restarting",
 				zap.String("container_id", id), zap.Int64("exit_code", res.StatusCode))
-			t.restart(ctx, func(ctx context.Context) (string, string, error) {
-				return createAndStart(ctx, t.cli, t.createCfg)
-			})
+			t.restart(ctx, t.createContainer)
 			if t.isRestarting() {
 				// restart only leaves restarting=true when it gave up
 				// because ctx is done (Manager shutting down) — nothing

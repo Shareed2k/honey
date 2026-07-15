@@ -19,6 +19,37 @@ CLI to search **GCP**, **AWS**, **Kubernetes**, **Docker**, **Consul**, **Proxmo
 brew install --cask shareed2k/tap/honey
 ```
 
+**Debian/Ubuntu (.deb):**
+
+```bash
+# grab the .deb for your arch from the latest release, then:
+dpkg -i honey_*_linux_amd64.deb        # or _arm64
+```
+
+Installs `honey` to `/usr/bin`, a systemd service (`honey.service`, runs as an
+unprivileged `honey` user), an example config at `/etc/honey/config.yaml`, and
+the `honey-plugin-init` shim (for docker plugins). Then:
+
+```bash
+sudoedit /etc/honey/config.yaml        # configure backends / mesh
+systemctl enable --now honey
+journalctl -u honey -f
+```
+
+For **docker: steps / docker plugins**, honey needs to reach
+the Docker socket. This is **not** granted on install (docker-group membership
+is root-equivalent) — opt in explicitly:
+
+```bash
+usermod -aG docker honey && systemctl restart honey
+```
+
+The package **recommends** `tmux` (recordings), `shellcheck` and `python3-flake8`
+(recipe linting) — apt installs them automatically. `tun2proxy` (for
+`honey egress --tun`) isn't in apt; grab it from
+[its releases](https://github.com/tun2proxy/tun2proxy/releases) if you need
+transparent-proxy mode.
+
 **Build from source:**
 
 ```bash
