@@ -547,13 +547,36 @@ task build-honey-plugin-init
 
 Or point at a prebuilt binary with the `HONEY_PLUGIN_INIT_PATH` environment variable. Without one of these, loading a `runtime: docker` plugin fails with `honey-plugin-init not found at ... (build it via task build-honey-plugin-init or set HONEY_PLUGIN_INIT_PATH)`.
 
+### Running a docker plugin on a remote host
+
+By default a `runtime: docker` plugin's container runs on the **operator's** Docker daemon. A recipe step's `host:` decides where instead:
+
+- `host: "_"` (or `localhost`/`127.0.0.1`) — the operator's local daemon (the default; unchanged).
+- any real matched host — on **that host's** Docker daemon, over the SSH connection honey already uses for that host.
+
+When a step targets a real host on `--execute`, honey:
+
+1. tunnels the Docker Engine API to the host over SSH (same mechanism as the `docker:` step),
+2. stages the arch-matched `honey-plugin-init` shim to `/tmp/honey-plugin-init-linux-<arch>` on the host (uploaded once, checksum-skipped on later runs — nothing else is installed on the host),
+3. runs the plugin's shim-container on the host's daemon and reaches the shim through the same SSH connection.
+
+Because the container is created by the **remote** daemon, `docker.volumes` bind mounts resolve on the remote host — e.g. `"/var/run/docker.sock:/var/run/docker.sock"` mounts the *host's* Docker socket, letting the plugin manage the host's own containers. The container is scoped to the run and stopped+removed when the recipe finishes.
+
+Requirements: the host needs SSH (already used by honey) and a Docker daemon — nothing else. The **operator** needs the shim binary matching the *remote host's* architecture — `honey-plugin-init-linux-<arch>` — available in one of: `$HONEY_PLUGIN_INIT_DIR`, the directory of `$HONEY_PLUGIN_INIT_PATH` (its arch-suffixed siblings), or alongside the `honey` binary (where releases ship both arches). In dev, `task build-honey-plugin-init` writes both arches to `build/`; point `HONEY_PLUGIN_INIT_DIR` there. WASM plugins are unaffected — they always run in-process on the operator.
+
+Dry-run keeps everything local (no remote containers), and cross-run container reuse is not done (one container per host per run).
+
+**Proxmox VMs/LXCs**: LXC guests always work, regardless of the backend's `exec_mode` — Proxmox has no LXC exec REST endpoint, so LXC command execution is always SSH-backed. QEMU VMs work when the backend's `exec_mode` is `ssh` (the default) or `hybrid` (which runs commands through the QEMU guest agent but still keeps a real SSH connection open for file transfers — reused here for the docker tunnel). `exec_mode: pve` (pure QEMU guest-agent, no SSH at all) cannot run a docker plugin remotely — there is no SSH connection to tunnel through.
+
+**When the host has no reachable SSH at all** (inbound firewalled/CGNAT, port 22 refused): the operator can't reach *into* it for the tunnel. Instead, run honey **on that host** with `mesh.enabled: true` — it dials *out* to a relay and becomes reachable over the libp2p mesh — and run the docker plugin **locally on that host** (`host: "_"`, its own Docker daemon), while the operator reaches and manages it over the relay via a `backends.honey` entry with `mesh: true`. No inbound port, no SSH into the host, no remote tunnel. See [`examples/mesh`](https://github.com/shareed2k/honey/tree/main/examples/mesh) → "Reaching a firewalled host that runs Docker".
+
 ### Known limitation: dry-run
 
 Unlike WASM plugins, `runtime: docker` actions currently always execute — `execute: false` (dry-run) and secrets-dry-run are not yet threaded through to the container call. Don't rely on dry-run to preview a docker-runtime plugin action's side effects; test against a disposable target first.
 
 ### Examples
 
-[`examples/plugins/`](https://github.com/shareed2k/honey/tree/main/examples/plugins) ships four ready-to-copy docker-runtime plugins — no build step, just copy `plugin.yaml` + `plugin.cue` into your plugins directory:
+[`examples/plugins/`](https://github.com/shareed2k/honey/tree/main/examples/plugins) ships several ready-to-copy docker-runtime plugins — no build step, just copy `plugin.yaml` + `plugin.cue` into your plugins directory:
 
 | Plugin | Image | Actions |
 |--------|-------|---------|
@@ -561,6 +584,7 @@ Unlike WASM plugins, `runtime: docker` actions currently always execute — `exe
 | [`duckdb/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/duckdb) | `duckdb/duckdb:latest` | `query`, `export_parquet` |
 | [`aws/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/aws) | `amazon/aws-cli:latest` | `s3_ls`, `s3_cp`, `s3_rm`, `ec2_describe`, `ec2_start`, `ec2_stop` |
 | [`gcloud/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/gcloud) | `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` | `compute_list`, `compute_start`, `compute_stop`, `storage_ls`, `storage_cp`, `storage_rm` |
+| [`watchtower/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/watchtower) | `docker.io/beatkind/watchtower:latest` | `check` (monitor-only, text output), `check_json` (same, single JSON document via watchtower's built-in `json.v1` notification template — see plugin.cue for the exact shape), `update` — mounts the daemon's Docker socket; pair with `host: "prod-*"` to check each server's own images (see [`watchtower_image_check.cue`](https://github.com/shareed2k/honey/tree/main/examples/recipe/watchtower_image_check.cue)). |
 
 `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` is **amd64-only** (no arm64 manifest) — on an Apple Silicon host with a VM-backed Docker daemon (Colima, Docker Desktop) with no qemu emulation registered, it fails with `exec format error`. The other three images are multi-arch.
 

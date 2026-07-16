@@ -1,0 +1,42 @@
+# honey config — installed at /etc/honey/config.yaml (edit, then:
+#   systemctl enable --now honey).
+# Full reference: https://github.com/shareed2k/honey
+version: 1
+
+# --- Mesh (NAT traversal / relay back-connection) -----------------------------
+# Uncomment to make THIS box reachable over a libp2p relay without any inbound
+# port (it dials OUT to the relay). See examples/mesh in the repo. private_key
+# is a SECRET — generate one per the mesh README, do not share it.
+#
+# mesh:
+#   enabled: true
+#   private_key: "<this box's mesh identity key>"
+#   relay_addrs:
+#     - "/ip4/<relay-ip>/udp/4001/quic-v1/p2p/<relay-peer-id>"
+
+# --- Backends -----------------------------------------------------------------
+# Static local hosts, or cloud/proxmox/k8s providers. Example:
+#
+# backends:
+#   local:
+#     - name: local
+#       hosts:
+#         - name: this-box
+#           primary_ip: 127.0.0.1
+
+# --- Plugins ------------------------------------------------------------------
+# Enable to use docker-runtime plugins (e.g. watchtower). The arch-matched
+# honey-plugin-init shim is installed by this package (HONEY_PLUGIN_INIT_DIR in
+# the systemd unit points at it).
+#
+# plugins:
+#   enabled: true
+#   directory: /etc/honey/plugins
+
+# --- Scheduled recipes (honey web scheduler) ----------------------------------
+# Wire a CUE recipe with a schedules: block to run it on a cron. Example:
+#
+# apps:
+#   watchtower:
+#     type: recipe
+#     target_recipe: /etc/honey/watchtower-local.cue

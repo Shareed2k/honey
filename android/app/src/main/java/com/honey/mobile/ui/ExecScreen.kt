@@ -133,6 +133,7 @@ fun ExecScreen(
     prefilledIp: String = "",
     prefilledProvider: String = "",
     prefilledSshPort: Int = 0,
+    prefilledHoneyBackend: String = "",
     vm: ExecViewModel = hiltViewModel(),
 ) {
     val activity = LocalContext.current as FragmentActivity
@@ -185,11 +186,19 @@ fun ExecScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(8.dp))
-            SshKeyDropdown(
-                keys = keys,
-                selectedId = selectedKeyId,
-                onSelect = { selectedKeyId = it },
-            )
+            if (prefilledHoneyBackend.isBlank()) {
+                SshKeyDropdown(
+                    keys = keys,
+                    selectedId = selectedKeyId,
+                    onSelect = { selectedKeyId = it },
+                )
+            } else {
+                Text(
+                    "Routed via provider: $prefilledHoneyBackend (mTLS)",
+                    color = TextDim,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             NeonButton(
                 onClick = {

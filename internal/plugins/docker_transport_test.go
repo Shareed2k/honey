@@ -531,7 +531,7 @@ func TestDockerTransport_EnsureStarted_ConcurrentCallsCreateOnlyOneContainer(t *
 
 func TestDockerTransport_Close_NeverStartedIsNoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	dt := &dockerTransport{cli: &client.Client{}, cancel: cancel, lifecycleCtx: ctx}
+	dt := &dockerTransport{backend: &localBackend{cli: &client.Client{}}, cancel: cancel, lifecycleCtx: ctx}
 
 	if err := dt.Close(context.Background()); err != nil {
 		t.Fatalf("Close on a never-started transport should be a no-op, got: %v", err)

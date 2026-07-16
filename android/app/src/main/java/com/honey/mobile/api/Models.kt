@@ -29,6 +29,12 @@ data class HostRecord(
     val backendName: String = "",
     val primaryIp: String = "",
     val sshPort: Int = 0,
+    // Non-empty when this record was resolved through a configured
+    // `backends.honey` entry (Go side: internal/provider/honeyprovider's
+    // Search tags records with Meta["honey_upstream_backend"]). When set,
+    // exec/VPN for this host runs on the provider side over mTLS/mesh — the
+    // SSH private-key picker is not needed and should be hidden.
+    val honeyUpstreamBackend: String = "",
 )
 
 data class ExecRequest(

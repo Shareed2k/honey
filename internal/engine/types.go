@@ -5,14 +5,25 @@ import "github.com/shareed2k/honey/internal/hosts"
 // HostExecResult is the outcome of one host execution step.
 // HostExecResult ...
 type HostExecResult struct {
-	Name          string
-	IP            string
-	Provider      string
-	Success       bool
-	Skipped       bool
-	Changed       bool
-	ExitCode      int
-	Output        string
+	Name     string
+	IP       string
+	Provider string
+	Success  bool
+	Skipped  bool
+	Changed  bool
+	ExitCode int
+	Output   string
+	// Stdout is the step's raw stdout only, with no stderr mixed in — unlike
+	// Output, which concatenates stdout+stderr for human display. Only
+	// populated by executors that keep the two streams genuinely separate
+	// internally (currently: plugin steps, via apiv1.ExecuteStepOutput);
+	// empty otherwise (e.g. command/script steps, whose HostClient.Run
+	// returns one already-merged stream from the SSH session — there is no
+	// separate stdout to recover there). env_from/stepStdout consumers
+	// should prefer this over Output when non-empty, since a step whose
+	// process logs diagnostics to stderr (common, not a bug in the process)
+	// would otherwise corrupt output_format: "json" parsing downstream.
+	Stdout        string
 	OutputCapture string
 	// KVCaptureKey is set when a step wrote its output to the recipe KV store
 	// (e.g. plugin.kv_key) instead of a named output capture. Unlike

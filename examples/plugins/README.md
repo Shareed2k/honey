@@ -9,7 +9,7 @@ Plugins live under `~/.config/honey/plugins/<name>/`. Two runtimes:
   - `plugin.yaml` — manifest with `runtime: docker` and `docker: {image: "..."}`
   - `plugin.cue` — declares each action's argv/output shape (see [Docker runtime plugins](../../website/docs/plugins-development.md#docker-runtime-plugins))
 
-See [Docker runtime plugins](../../website/docs/plugins-development.md#docker-runtime-plugins) for the full manifest/`plugin.cue` schema, and [`mongodb/`](mongodb/), [`duckdb/`](duckdb/), [`aws/`](aws/), [`gcloud/`](gcloud/) below for working examples.
+See [Docker runtime plugins](../../website/docs/plugins-development.md#docker-runtime-plugins) for the full manifest/`plugin.cue` schema, and [`mongodb/`](mongodb/), [`duckdb/`](duckdb/), [`aws/`](aws/), [`gcloud/`](gcloud/), [`watchtower/`](watchtower/) below for working examples. A docker plugin can also run on a **remote host's** daemon (over SSH) by targeting a real `host:` in the recipe instead of `host: "_"` — see [Running a docker plugin on a remote host](../../website/docs/plugins-development.md#running-a-docker-plugin-on-a-remote-host).
 
 Enable in honey config:
 
@@ -155,6 +155,7 @@ No WASM build step — each is just `plugin.yaml` (`runtime: docker`) + `plugin.
 | [`duckdb/`](duckdb/) | `duckdb/duckdb:latest` | `query`, `export_parquet` — bind-mounts `/var/honey/data` |
 | [`aws/`](aws/) | `amazon/aws-cli:latest` | `s3_ls`, `s3_cp`, `s3_rm`, `ec2_describe`, `ec2_start`, `ec2_stop` |
 | [`gcloud/`](gcloud/) | `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` | `compute_list`, `compute_start`, `compute_stop`, `storage_ls`, `storage_cp`, `storage_rm` |
+| [`watchtower/`](watchtower/) | `docker.io/beatkind/watchtower:latest` | `check` (monitor-only, text output), `check_json` (same, single JSON document via `json.v1` — see plugin.cue for the exact shape), `update` — mounts the daemon's Docker socket; with `host: "prod-*"` runs on each server's own daemon to check that server's images |
 
 `gcloud`'s image is **amd64-only** — fails with `exec format error` on Apple Silicon hosts without qemu emulation registered. The other three are multi-arch.
 

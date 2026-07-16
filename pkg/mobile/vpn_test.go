@@ -2,8 +2,16 @@ package mobile
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/hosts"
 )
 
 type fakeVPNCallback struct {
@@ -162,5 +170,153 @@ func TestResolveExit_DirectIPSkipsSearch(t *testing.T) {
 	}
 	if ip != "9.9.9.9" {
 		t.Errorf("ip = %q, want 9.9.9.9", ip)
+	}
+}
+
+// fakeExecutor is a local hand-rolled stub matching internal/hostexec.Executor
+// exactly. Only DialUpstream is exercised by the honeyprovider VPN path.
+type fakeExecutor struct {
+	dialCalls []fakeDialCall
+	conn      net.Conn
+	err       error
+}
+
+type fakeDialCall struct {
+	user    string
+	rec     hosts.Record
+	address string
+}
+
+func (f *fakeExecutor) Dial(_ string, _ hosts.Record) (hostexec.HostClient, error) {
+	return nil, nil
+}
+func (f *fakeExecutor) RunInteractive(_ string, _ hosts.Record) error { return nil }
+func (f *fakeExecutor) RunTunnel(_ context.Context, _ string, _ hosts.Record, _ string, _ io.Writer) error {
+	return nil
+}
+
+func (f *fakeExecutor) DialUpstream(_ context.Context, user string, rec hosts.Record, address string) (net.Conn, error) {
+	f.dialCalls = append(f.dialCalls, fakeDialCall{user: user, rec: rec, address: address})
+	return f.conn, f.err
+}
+
+type fakeExecRegistry struct {
+	ex *fakeExecutor
+}
+
+func (f *fakeExecRegistry) ForRecord(_ hosts.Record) hostexec.Executor { return f.ex }
+func (f *fakeExecRegistry) Reconfigure(_ *config.File)                 {}
+func (f *fakeExecRegistry) RunSSHTunnel(_ context.Context, _, _ string, _ int, _ string, _ io.Writer) error {
+	return nil
+}
+func (f *fakeExecRegistry) BorrowSSH(_ string, _ hosts.Record) (any, bool) { return nil, false }
+
+// TestDialerForExit_HoneyproviderPath proves a record carrying
+// Meta["honey_upstream_backend"] takes the honeyExecDialer branch — no SSH
+// pool is built, and garbage SSHIdentityFile/SSHIdentityPassphrase values are
+// never touched (dialerForExit would error out trying to parse them as a real
+// key if the raw-SSH branch were mistakenly taken instead).
+func TestDialerForExit_HoneyproviderPath(t *testing.T) {
+	rec := hosts.Record{
+		Name:      "db-1",
+		PrimaryIP: "10.1.2.3",
+		Meta:      map[string]string{"honey_upstream_backend": "prod-honey"},
+	}
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { clientConn.Close(); serverConn.Close() })
+	fx := &fakeExecutor{conn: clientConn}
+
+	orig := execRegistry
+	execRegistry = func() hostexec.Registry { return &fakeExecRegistry{ex: fx} }
+	t.Cleanup(func() { execRegistry = orig })
+
+	req := vpnRequest{
+		SSHIdentityFile:       "not-a-real-pem-should-never-be-read",
+		SSHIdentityPassphrase: "irrelevant",
+	}
+	dialer, pool, err := dialerForExit(context.Background(), req, rec, "ubuntu", "10.1.2.3", 22)
+	if err != nil {
+		t.Fatalf("dialerForExit: %v", err)
+	}
+	if pool != nil {
+		t.Fatalf("expected nil pool for honeyprovider path, got %v", pool)
+	}
+	hd, ok := dialer.(*honeyExecDialer)
+	if !ok {
+		t.Fatalf("expected *honeyExecDialer, got %T", dialer)
+	}
+	if hd.ex != fx || hd.user != "ubuntu" || hd.rec.Name != "db-1" {
+		t.Errorf("honeyExecDialer not wired correctly: %+v", hd)
+	}
+	// The pre-flight probe (one DialUpstream call to ip:sshPort) should have
+	// happened during dialerForExit itself.
+	if len(fx.dialCalls) != 1 {
+		t.Fatalf("expected 1 probe DialUpstream call, got %d", len(fx.dialCalls))
+	}
+	if fx.dialCalls[0].address != "10.1.2.3:22" {
+		t.Errorf("probe address = %q, want 10.1.2.3:22", fx.dialCalls[0].address)
+	}
+}
+
+// TestDialerForExit_HoneyproviderProbeFailure proves a failing pre-flight
+// probe surfaces as a dialerForExit error (so StartVPN fails fast) instead of
+// only showing up later as a per-connection SOCKS5 dial failure.
+func TestDialerForExit_HoneyproviderProbeFailure(t *testing.T) {
+	rec := hosts.Record{
+		Name:      "db-1",
+		PrimaryIP: "10.1.2.3",
+		Meta:      map[string]string{"honey_upstream_backend": "prod-honey"},
+	}
+	fx := &fakeExecutor{err: fmt.Errorf("mesh not warmed up")}
+
+	orig := execRegistry
+	execRegistry = func() hostexec.Registry { return &fakeExecRegistry{ex: fx} }
+	t.Cleanup(func() { execRegistry = orig })
+
+	_, _, err := dialerForExit(context.Background(), vpnRequest{}, rec, "ubuntu", "10.1.2.3", 22)
+	if err == nil {
+		t.Fatal("expected probe failure to propagate, got nil")
+	}
+}
+
+// TestHoneyExecDialer_ForwardsToDialUpstream proves both sshclient.SSHDialer
+// (Dial) and sshclient's contextDialer fast path (DialContext) forward the
+// exact user/record/address to Executor.DialUpstream, with no real
+// network/websocket involved.
+func TestHoneyExecDialer_ForwardsToDialUpstream(t *testing.T) {
+	rec := hosts.Record{Name: "db-1", PrimaryIP: "10.1.2.3"}
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { clientConn.Close(); serverConn.Close() })
+
+	fx := &fakeExecutor{conn: clientConn}
+	d := &honeyExecDialer{ex: fx, user: "ubuntu", rec: rec}
+
+	if _, err := d.DialContext(context.Background(), "tcp", "127.0.0.1:5432"); err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	if _, err := d.Dial("tcp", "127.0.0.1:5432"); err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	if len(fx.dialCalls) != 2 {
+		t.Fatalf("expected 2 DialUpstream calls, got %d", len(fx.dialCalls))
+	}
+	for _, call := range fx.dialCalls {
+		if call.user != "ubuntu" || call.address != "127.0.0.1:5432" || call.rec.Name != "db-1" {
+			t.Errorf("unexpected DialUpstream args: %+v", call)
+		}
+	}
+}
+
+// TestDialerForExit_RawSSHPath_NoHoneyMeta proves a record with no
+// honey_upstream_backend meta still takes the raw-SSH branch (a real, if
+// doomed-to-fail-fast, SSH pool dial attempt) — guards against the Meta check
+// accidentally being too broad.
+func TestDialerForExit_RawSSHPath_NoHoneyMeta(t *testing.T) {
+	rec := hosts.Record{Name: "plain-host", PrimaryIP: "127.0.0.1"}
+	req := vpnRequest{PoolSize: 1}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := dialerForExit(ctx, req, rec, "ubuntu", "127.0.0.1", 1); err == nil {
+		t.Fatal("expected raw SSH pool dial to fail against a closed port, got nil error")
 	}
 }

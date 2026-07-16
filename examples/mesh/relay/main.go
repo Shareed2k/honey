@@ -25,13 +25,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/crypto"
 )
 
 func main() {
 	listenAddr := flag.String("listen", "/ip4/0.0.0.0/udp/4001/quic-v1", "multiaddr to listen on")
+	identity := flag.String("identity", "", "base64 libp2p private key for a STABLE peer ID across restarts (overrides $RELAY_PRIVATE_KEY). Generate one with the keygen snippet in ../README.md. Leave empty for a random per-run identity (dev only).")
 	forcePublic := flag.Bool("force-public", false, "LOCAL TESTING ONLY: force AutoNAT to report this host as publicly reachable, without actually verifying it. Never use this on a real relay -- see 'Production notes' in ../README.md.")
 	flag.Parse()
 
@@ -46,6 +49,34 @@ func main() {
 		// a real relay with a genuine public IP and an open/forwarded UDP
 		// port, AutoNAT detects this on its own -- no extra flag needed.
 		libp2p.EnableRelayService(),
+	}
+
+	// A relay's peer ID is derived from its identity key and is baked into
+	// every honey instance's mesh.relay_addrs. For a deployed relay the ID
+	// must stay stable across restarts, so take the key from -identity or
+	// $RELAY_PRIVATE_KEY (same base64 "config file" encoding honey's own
+	// mesh.private_key uses -- see internal/meshnet decodePrivateKey and the
+	// keygen snippet in ../README.md). With no key we fall back to a random
+	// per-run identity, which is fine for local testing but would change the
+	// peer ID on every restart in a deployment.
+	keyStr := strings.TrimSpace(os.Getenv("RELAY_PRIVATE_KEY"))
+	if *identity != "" {
+		keyStr = strings.TrimSpace(*identity)
+	}
+	if keyStr != "" {
+		raw, err := crypto.ConfigDecodeKey(keyStr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "decode relay identity key: %v\n", err)
+			os.Exit(1)
+		}
+		sk, err := crypto.UnmarshalPrivateKey(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "unmarshal relay identity key: %v\n", err)
+			os.Exit(1)
+		}
+		opts = append(opts, libp2p.Identity(sk))
+	} else {
+		fmt.Fprintln(os.Stderr, "WARNING: no relay identity key set (-identity / $RELAY_PRIVATE_KEY) -- using a random identity. This relay's peer ID will change on every restart and break clients' mesh.relay_addrs. Set a key for a deployable relay (see ../README.md).")
 	}
 
 	if *forcePublic {

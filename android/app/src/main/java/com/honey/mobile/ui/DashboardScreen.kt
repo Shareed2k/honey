@@ -31,8 +31,8 @@ import com.honey.mobile.ui.theme.*
 
 @Composable
 fun DashboardScreen(
-    onNavigateExec: (hostName: String, provider: String, ip: String, sshPort: Int) -> Unit = { _, _, _, _ -> },
-    onNavigateVpn: (hostName: String, ip: String, sshPort: Int) -> Unit = { _, _, _ -> },
+    onNavigateExec: (hostName: String, provider: String, ip: String, sshPort: Int, honeyBackend: String) -> Unit = { _, _, _, _, _ -> },
+    onNavigateVpn: (hostName: String, ip: String, sshPort: Int, honeyBackend: String) -> Unit = { _, _, _, _ -> },
     vm: DashboardViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -233,8 +233,8 @@ fun DashboardScreen(
                 HostCard(
                     host = host,
                     onCopy = { clipboard.setText(AnnotatedString(host.name)) },
-                    onExec = { onNavigateExec(host.name, host.provider, host.primaryIp, host.sshPort) },
-                    onVpn = { onNavigateVpn(host.name, host.primaryIp, host.sshPort) },
+                    onExec = { onNavigateExec(host.name, host.provider, host.primaryIp, host.sshPort, host.honeyUpstreamBackend) },
+                    onVpn = { onNavigateVpn(host.name, host.primaryIp, host.sshPort, host.honeyUpstreamBackend) },
                 )
             }
 

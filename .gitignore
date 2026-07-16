@@ -22,7 +22,6 @@ coverage-int.txt
 models
 runtime
 /honey
-honey
 .env
 .claude
 

@@ -24,12 +24,23 @@ import (
 type vpnSession struct {
 	cancel      context.CancelFunc
 	stopForward func()
-	pool        *sshclient.SSHPool
+	// pool is nil when the session is routed through a honeyprovider-backed
+	// exit (see dialerForExit) — there is no local SSH connection at all in
+	// that case, only the honeyExecDialer. StopVPN's `if sess.pool != nil`
+	// guard below already tolerates that.
+	pool *sshclient.SSHPool
 }
 
 var (
 	vpnMu      sync.Mutex
 	vpnCurrent *vpnSession
+
+	// execRegistry resolves the host execution registry used by the
+	// honeyprovider branch in dialerForExit. A package-level func var —
+	// not a direct cli.GetExecRegistry() call — purely so tests can
+	// substitute a fake registry/executor without touching any process-wide
+	// honey state.
+	execRegistry = cli.GetExecRegistry
 )
 
 // vpnRequest is the JSON request shared by ResolveExitNode and StartVPN.
@@ -113,6 +124,54 @@ func ResolveExitNode(requestJSON string) (string, error) {
 	return string(b), nil
 }
 
+// dialerForExit picks how StartVPN reaches rec: a raw SSH pool (existing
+// behavior) or, when rec was resolved through a configured honey backend
+// (Meta["honey_upstream_backend"] set by honeyprovider.Honey.Search — see
+// internal/provider/honeyprovider/honey.go and factory.go's
+// HandlesRecord/ExecutorFor), the same hostexec.Executor the desktop CLI/web
+// exec path already uses for that record.
+//
+// In the honeyprovider branch, req.SSHIdentityFile/SSHIdentityPassphrase are
+// never read: the upstream honey server authenticates the phone-to-server hop
+// itself (mTLS/token/libp2p mesh) and uses its own server-side credential to
+// SSH into rec — no SSH private key is ever needed on, or sent from, the
+// phone for this path. user stays meaningful in both branches: it names the
+// account the (local or upstream) SSH connection should use.
+//
+// Returns the dialer to hand to sshclient.StartDynamicForwardMulti, and the
+// backing *sshclient.SSHPool if one was created (nil for the honeyprovider
+// branch — see vpnSession.pool's comment).
+func dialerForExit(ctx context.Context, req vpnRequest, rec hosts.Record, user, ip string, sshPort int) (sshclient.SSHDialer, *sshclient.SSHPool, error) {
+	if backend := rec.Meta["honey_upstream_backend"]; backend != "" {
+		ex := execRegistry().ForRecord(rec)
+		d := &honeyExecDialer{ex: ex, user: user, rec: rec}
+		// Pre-flight probe: a cold mesh relay or a missing device mTLS
+		// credential must surface here as a StartVPN error, not silently as
+		// a per-connection SOCKS5 dial failure after "connected" was already
+		// emitted to the app.
+		probe, perr := d.DialContext(ctx, "tcp", ip+":"+strconv.Itoa(sshPort))
+		if perr != nil {
+			return nil, nil, fmt.Errorf("honeyprovider connectivity probe: %w", perr)
+		}
+		probe.Close()
+		return d, nil, nil
+	}
+
+	// Authenticate with the key held in memory — it is never written to disk.
+	keyPEM := strings.TrimSpace(req.SSHIdentityFile)
+	dialFn := func() (*sshclient.HoneyClient, error) {
+		if keyPEM != "" {
+			return sshclient.DialHoneyClientWithKey(user, ip, sshPort, []byte(keyPEM), req.SSHIdentityPassphrase)
+		}
+		return sshclient.DialHoneyClient(user, ip, sshPort, "")
+	}
+	pool, err := sshclient.NewSSHPool(ctx, req.PoolSize, dialFn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ssh pool: %w", err)
+	}
+	return pool, pool, nil
+}
+
 // StartVPN attaches the tun2socks engine to an existing VpnService TUN fd and
 // pumps it through a fresh SOCKS5-over-SSH tunnel to the requested exit host.
 // Non-blocking; lifecycle and traffic are streamed via cb. Returns an error if a
@@ -162,7 +221,7 @@ func StartVPN(tunFd int, requestJSON string, cb VPNCallback) error {
 	}()
 
 	emitState(cb, "resolving")
-	_, ip, sshPort, err := resolveExit(req)
+	rec, ip, sshPort, err := resolveExit(req)
 	if err != nil {
 		emitState(cb, "error")
 		return err
@@ -175,28 +234,23 @@ func StartVPN(tunFd int, requestJSON string, cb VPNCallback) error {
 	if user == "" {
 		user = defaultSSHUser(req.ConfigPath)
 	}
-	// Authenticate with the key held in memory — it is never written to disk.
-	keyPEM := strings.TrimSpace(req.SSHIdentityFile)
-	dialFn := func() (*sshclient.HoneyClient, error) {
-		if keyPEM != "" {
-			return sshclient.DialHoneyClientWithKey(user, ip, sshPort, []byte(keyPEM), req.SSHIdentityPassphrase)
-		}
-		return sshclient.DialHoneyClient(user, ip, sshPort, "")
-	}
-	pool, err := sshclient.NewSSHPool(ctx, req.PoolSize, dialFn)
+
+	dialer, pool, err := dialerForExit(ctx, req, rec, user, ip, sshPort)
 	if err != nil {
 		cancel()
 		emitState(cb, "error")
-		return fmt.Errorf("ssh pool: %w", err)
+		return err
 	}
 
 	socksHost, socksPort, stopForward, err := sshclient.StartDynamicForwardMulti(
 		ctx,
-		[]sshclient.WeightedClient{{Client: pool, Weight: 1}},
+		[]sshclient.WeightedClient{{Client: dialer, Weight: 1}},
 		"127.0.0.1", 0,
 	)
 	if err != nil {
-		pool.Close()
+		if pool != nil {
+			pool.Close()
+		}
 		cancel()
 		emitState(cb, "error")
 		return fmt.Errorf("start SOCKS5 proxy: %w", err)

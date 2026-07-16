@@ -223,6 +223,11 @@ func executeDockerRun(ctx context.Context, cli *client.Client, r *cuetry.DockerR
 	}
 	hostConfig := &container.HostConfig{
 		AutoRemove: r.Rm,
+		// Volumes are Docker bind specs ("host:container[:ro|rw]") — the same
+		// shape HostConfig.Binds takes. Wiring this lets a docker: run step
+		// mount e.g. /var/run/docker.sock into the container purely over the
+		// Engine API (moby SDK), with no docker CLI needed inside honey.
+		Binds: r.Volumes,
 	}
 	createOpts := client.ContainerCreateOptions{
 		Config:     config,

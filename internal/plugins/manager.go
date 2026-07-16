@@ -53,8 +53,10 @@ type loadedPlugin struct {
 	effectivePaths map[string]string
 	dir            string
 	wasm           []byte
-	transport      pluginTransport
-	callMu         sync.Mutex // neither extism.Plugin nor dockerTransport is safe for concurrent calls
+	cueSource      []byte // plugin.cue bytes, retained for docker plugins so a
+	// DockerHostSession can build a fresh per-remote-host transport
+	transport pluginTransport
+	callMu    sync.Mutex // neither extism.Plugin nor dockerTransport is safe for concurrent calls
 }
 
 func clonePathMap(m map[string]string) map[string]string {
@@ -216,14 +218,17 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 	if err != nil {
 		return nil, fmt.Errorf("plugins: invalid docker.restart.max_backoff: %w", err)
 	}
-	dt, err := newDockerTransport(ctx, dockerTransportConfig{
-		Image:              manifest.Docker.Image,
-		PullPolicy:         manifest.Docker.effectivePullPolicy(),
-		PluginInitHostPath: initPath,
-		CueSource:          cueBytes,
-		MaxBackoff:         maxBackoff,
-		Env:                resolveAllowedEnv(manifest.AllowedEnv),
-		Volumes:            volumes,
+	backend, err := newLocalBackend(initPath, "")
+	if err != nil {
+		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)
+	}
+	dt, err := newDockerTransport(ctx, backend, dockerTransportConfig{
+		Image:      manifest.Docker.Image,
+		PullPolicy: manifest.Docker.effectivePullPolicy(),
+		CueSource:  cueBytes,
+		MaxBackoff: maxBackoff,
+		Env:        resolveAllowedEnv(manifest.AllowedEnv),
+		Volumes:    volumes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)
@@ -233,6 +238,7 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 		effectiveHosts: hosts,
 		effectivePaths: paths,
 		dir:            dir,
+		cueSource:      cueBytes,
 		transport:      dt,
 	}, nil
 }
@@ -286,6 +292,43 @@ func locatePluginInitBinary() (string, error) {
 		return "", fmt.Errorf("plugins: honey-plugin-init not found at %s or %s (build it via `task build-honey-plugin-init` or set HONEY_PLUGIN_INIT_PATH): %w", archPath, path, err)
 	}
 	return path, nil
+}
+
+// LocateShimBinaryForArch finds the honey-plugin-init binary built for the
+// given GOARCH ("amd64"/"arm64"), for staging onto a remote host of that
+// architecture (the remote docker-plugin path). Searches, in order, for
+// "honey-plugin-init-linux-<goarch>" in: $HONEY_PLUGIN_INIT_DIR, the directory
+// of $HONEY_PLUGIN_INIT_PATH (release archives ship both arches side by side,
+// so the arch-suffixed sibling of the operator's own binary is the natural
+// spot), then alongside the running honey executable. Unlike
+// locatePluginInitBinary it never uses HONEY_PLUGIN_INIT_PATH's file directly
+// or the unsuffixed name — those identify a single (operator-arch) binary that
+// may not match the remote host's arch.
+func LocateShimBinaryForArch(goarch string) (string, error) {
+	goarch = strings.TrimSpace(goarch)
+	if goarch == "" {
+		return "", fmt.Errorf("plugins: empty GOARCH for honey-plugin-init lookup")
+	}
+	name := "honey-plugin-init-linux-" + goarch
+	var dirs []string
+	if d := strings.TrimSpace(os.Getenv("HONEY_PLUGIN_INIT_DIR")); d != "" {
+		dirs = append(dirs, d)
+	}
+	if p := strings.TrimSpace(os.Getenv("HONEY_PLUGIN_INIT_PATH")); p != "" {
+		dirs = append(dirs, filepath.Dir(p))
+	}
+	if exe, err := os.Executable(); err == nil {
+		dirs = append(dirs, filepath.Dir(exe))
+	}
+	tried := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		p := filepath.Join(d, name)
+		if validatePluginInitBinaryPath(p) == nil {
+			return p, nil
+		}
+		tried = append(tried, p)
+	}
+	return "", fmt.Errorf("plugins: %s not found (looked in: %s; build both arches via `task build-honey-plugin-init`, then set HONEY_PLUGIN_INIT_DIR or HONEY_PLUGIN_INIT_PATH, or ship both alongside the honey binary)", name, strings.Join(tried, ", "))
 }
 
 // validatePluginInitBinaryPath rejects anything but a regular file — a
@@ -346,6 +389,19 @@ func (m *Manager) List() []Info {
 		})
 	}
 	return out
+}
+
+// IsDockerPlugin reports whether pluginID is a loaded runtime:docker plugin
+// (vs. a WASM plugin). The remote-host execution path (DockerHostSession)
+// applies only to docker plugins.
+func (m *Manager) IsDockerPlugin(pluginID string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.byID[strings.TrimSpace(pluginID)]
+	return ok && p != nil && p.manifest.effectiveRuntime() == "docker"
 }
 
 // EffectivePaths returns validated allowed_paths for a loaded plugin id.

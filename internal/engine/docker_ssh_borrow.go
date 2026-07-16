@@ -11,10 +11,9 @@ func (c *ClientCache) BorrowSSH(user string, hop hosts.Record) (interface{}, boo
 	if err != nil {
 		return nil, false
 	}
-	if h, ok := hc.(*sshclient.HoneyClient); ok {
-		if leaf := h.LeafSSH(); leaf != nil {
-			return leaf, true
-		}
+	leaf, err := sshclient.LeafSSHFromClient(hc)
+	if err != nil {
+		return nil, false
 	}
-	return nil, false
+	return leaf, true
 }

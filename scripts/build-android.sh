@@ -20,7 +20,9 @@ echo "Building AAR for Android..."
 # -androidapi 26 matches the app's minSdk. Lower values (gomobile defaults to 16)
 # fail against NDK r27 ("unsupported API version 16") and lack getifaddrs, which
 # the netstatus cgo dependency needs (declared on Android API >= 24).
+# -checklinkname=0: wlynxg/anet (via go-libp2p) uses //go:linkname net.zoneCache,
+# which the Go 1.23+ linker rejects by default (per anet README, required on Android).
 gomobile bind -target=android/arm64 -androidapi 26 -trimpath -o "$OUT_DIR/honey.aar" \
-  -ldflags="-s -w -extldflags=-Wl,-z,max-page-size=0x4000" ./pkg/mobile
+  -ldflags="-s -w -checklinkname=0 -extldflags=-Wl,-z,max-page-size=0x4000" ./pkg/mobile
 
 echo "Build complete: $OUT_DIR/honey.aar"

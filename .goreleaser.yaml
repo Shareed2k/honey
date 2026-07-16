@@ -75,6 +75,61 @@ archives:
       - build/honey-plugin-init-linux-amd64
       - build/honey-plugin-init-linux-arm64
 
+nfpms:
+  - id: honey-deb
+    package_name: honey
+    ids: [honey] # only the honey build (linux amd64/arm64); non-linux ignored
+    formats:
+      - deb
+    maintainer: "Roman Kredentser <shareed2k@gmail.com>"
+    description: "Search and operate on instances across GCP, AWS, Kubernetes, Consul, and Proxmox"
+    homepage: "https://github.com/shareed2k/honey"
+    license: MIT
+    bindir: /usr/bin # honey → /usr/bin/honey
+    # Hard deps: only what core (search / ssh exec / web / mesh) needs.
+    dependencies:
+      - ca-certificates
+      - openssh-client
+    # Feature-specific tools — pulled by apt unless --no-install-recommends.
+    # tmux: session recordings/replay; shellcheck: lint shell recipe steps;
+    # python3-flake8: lint python recipe steps. (tun2proxy, for egress --tun,
+    # is NOT in apt — install it from https://github.com/tun2proxy/tun2proxy
+    # releases if you need transparent-proxy mode.)
+    recommends:
+      - tmux
+      - shellcheck
+      - python3-flake8
+    contents:
+      # Arch-matched honey-plugin-init shim, next to the honey binary so docker
+      # plugins (local + remote) find it via HONEY_PLUGIN_INIT_DIR=/usr/bin.
+      - src: "build/honey-plugin-init-linux-{{ .Arch }}"
+        dst: "/usr/bin/honey-plugin-init-linux-{{ .Arch }}"
+        file_info:
+          mode: 0755
+      # ONNX runtime libs for the arch (anomaly feature; unit sets the env).
+      - src: "runtime/onnx/linux/{{ .Arch }}/"
+        dst: "/usr/lib/honey/onnx/"
+      # systemd unit + example config (config not overwritten on upgrade).
+      - src: contrib/systemd/honey.service
+        dst: /lib/systemd/system/honey.service
+      - src: contrib/systemd/config.example.yaml
+        dst: /etc/honey/config.yaml
+        type: "config|noreplace"
+      # shell completions
+      - src: completions/honey.bash
+        dst: /usr/share/bash-completion/completions/honey
+      - src: completions/honey.zsh
+        dst: /usr/share/zsh/site-functions/_honey
+      - src: completions/honey.fish
+        dst: /usr/share/fish/vendor_completions.d/honey.fish
+    scripts:
+      postinstall: contrib/nfpm/postinstall.sh
+      preremove: contrib/nfpm/preremove.sh
+    deb:
+      lintian_overrides:
+        - statically-linked-binary
+        - embedded-library
+
 checksum:
   name_template: 'checksums.txt'
 
