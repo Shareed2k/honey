@@ -82,10 +82,11 @@ func startMeshIfConfigured(cfg *config.File) {
 		return
 	}
 	meshCfg := meshnet.Config{
-		Enabled:    cfg.Mesh.Enabled,
-		PrivateKey: cfg.Mesh.PrivateKey,
-		RelayAddrs: cfg.Mesh.RelayAddrs,
-		ListenMesh: cfg.Mesh.ListenMesh,
+		Enabled:           cfg.Mesh.Enabled,
+		PrivateKey:        cfg.Mesh.PrivateKey,
+		RelayAddrs:        cfg.Mesh.RelayAddrs,
+		ListenMesh:        cfg.Mesh.ListenMesh,
+		ForceReachability: cfg.Mesh.ForceReachability,
 	}
 	if err := meshnet.Start(context.Background(), meshCfg); err != nil {
 		zap.L().Warn("honey mesh failed to start, continuing without it", zap.Error(err))

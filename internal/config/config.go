@@ -47,6 +47,14 @@ type MeshConfig struct {
 	PrivateKey string   `yaml:"private_key,omitempty" json:"private_key,omitempty" honey:"label=Mesh identity key;secret" validate:"required_if=Enabled true" mod:"trim"`
 	RelayAddrs []string `yaml:"relay_addrs,omitempty" json:"relay_addrs,omitempty" honey:"label=Relay multiaddrs" validate:"required_if=Enabled true,dive,required"`
 	ListenMesh bool     `yaml:"listen_mesh,omitempty" json:"listen_mesh,omitempty" honey:"label=Also act as a relay (only if reachable)"`
+	// ForceReachability overrides libp2p's AutoNAT reachability detection.
+	// Empty = automatic (default). "private" forces this node to consider
+	// itself behind NAT so AutoRelay always obtains a relay reservation — set
+	// this on a mesh server whose relay sits on the same LAN (or any network
+	// where AutoNAT wrongly concludes the node is publicly reachable and so
+	// skips reserving, causing clients to get NO_RESERVATION). "public" forces
+	// the opposite. Rarely needed; leave empty unless diagnosing reservations.
+	ForceReachability string `yaml:"force_reachability,omitempty" json:"force_reachability,omitempty" honey:"label=Force reachability (private/public)" validate:"omitempty,oneof=private public"`
 }
 
 // SMTPConfig holds global SMTP configuration for email notifications.

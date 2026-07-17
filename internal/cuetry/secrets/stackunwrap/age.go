@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"filippo.io/age"
+	"filippo.io/age/armor"
 
 	"github.com/shareed2k/honey/internal/safepath"
 )
@@ -78,8 +80,17 @@ func loadAgeIdentities(path string) ([]age.Identity, error) {
 	return ids, nil
 }
 
-func decryptAgeToBytes(ids []age.Identity, armored []byte) ([]byte, error) {
-	r, err := age.Decrypt(bytes.NewReader(armored), ids...)
+func decryptAgeToBytes(ids []age.Identity, ciphertext []byte) ([]byte, error) {
+	// age.Decrypt only reads age's binary format. age:// inline values are
+	// ASCII-armored ("-----BEGIN AGE ENCRYPTED FILE-----") so they survive being
+	// stored/trimmed as a config string; unwrap the armor first when present.
+	// Binary ciphertext (e.g. age-file://) has no armor header and passes
+	// through unchanged.
+	var src io.Reader = bytes.NewReader(ciphertext)
+	if bytes.HasPrefix(bytes.TrimSpace(ciphertext), []byte(armor.Header)) {
+		src = armor.NewReader(src)
+	}
+	r, err := age.Decrypt(src, ids...)
 	if err != nil {
 		return nil, fmt.Errorf("age decrypt stack key: %w", err)
 	}

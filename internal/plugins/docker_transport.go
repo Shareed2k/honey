@@ -487,16 +487,67 @@ func (t *dockerTransport) createContainer(ctx context.Context) (containerID, add
 	return createAndStart(ctx, t.backend.Client(), t.httpClient, shimPath, t.createCfg)
 }
 
+// decodeConfigJSON unmarshals a plugin config object, typing integral numbers as
+// int64 (not float64) so they unify with CUE `int` #Config fields in evalAction.
+//
+// evalAction feeds the map to CUE via ctx.Encode: a Go float64(5) becomes the CUE
+// float 5.0 and fails an `int` disjunction with "empty disjunction". A plain
+// json.Unmarshal makes every JSON number a float64, so `vus: 5` in a recipe would
+// break. UseNumber preserves the original literal, letting us split integral
+// literals (→ int64 → CUE int) from fractional ones (→ float64 → CUE float),
+// mirroring how CUE's own JSON decoder types numbers. Always returns a non-nil map.
+func decodeConfigJSON(raw []byte) (map[string]any, error) {
+	config := map[string]any{}
+	if len(raw) == 0 {
+		return config, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&config); err != nil {
+		return nil, err
+	}
+	return normalizeJSONNumbers(config).(map[string]any), nil
+}
+
+// normalizeJSONNumbers walks a decoded-with-UseNumber value and replaces each
+// json.Number with an int64 (integral literal) or float64 (fractional), recursing
+// through nested objects and arrays. See decodeConfigJSON for why.
+func normalizeJSONNumbers(v any) any {
+	switch x := v.(type) {
+	case json.Number:
+		s := x.String()
+		if !strings.ContainsAny(s, ".eE") {
+			if i, err := x.Int64(); err == nil {
+				return i
+			}
+		}
+		if f, err := x.Float64(); err == nil {
+			return f
+		}
+		return s
+	case map[string]any:
+		for k, val := range x {
+			x[k] = normalizeJSONNumbers(val)
+		}
+		return x
+	case []any:
+		for i, val := range x {
+			x[i] = normalizeJSONNumbers(val)
+		}
+		return x
+	default:
+		return v
+	}
+}
+
 // callDirect is the direct-call convention: export is the CUE action name,
 // inBytes is the raw config object. Unchanged from CallRaw's original
 // (pre-execute_step-envelope) behavior — every existing docker-plugin test
 // exercises this path and must keep passing unmodified.
 func (t *dockerTransport) callDirect(ctx context.Context, export string, inBytes []byte) (int, []byte, error) {
-	var config map[string]any
-	if len(inBytes) > 0 {
-		if err := json.Unmarshal(inBytes, &config); err != nil {
-			return 0, nil, fmt.Errorf("plugins: decode call input: %w", err)
-		}
+	config, err := decodeConfigJSON(inBytes)
+	if err != nil {
+		return 0, nil, fmt.Errorf("plugins: decode call input: %w", err)
 	}
 	if t.isRestarting() {
 		return 0, nil, fmt.Errorf("plugins: container restarting, retry")
@@ -546,14 +597,9 @@ func (t *dockerTransport) callExecuteStep(ctx context.Context, inBytes []byte) (
 			return 0, nil, fmt.Errorf("plugins: decode execute_step input: %w", err)
 		}
 	}
-	var config map[string]any
-	if len(stepIn.Config) > 0 {
-		if err := json.Unmarshal(stepIn.Config, &config); err != nil {
-			return 0, nil, fmt.Errorf("plugins: decode execute_step config: %w", err)
-		}
-	}
-	if config == nil {
-		config = map[string]any{}
+	config, err := decodeConfigJSON(stepIn.Config)
+	if err != nil {
+		return 0, nil, fmt.Errorf("plugins: decode execute_step config: %w", err)
 	}
 
 	if t.isRestarting() {
