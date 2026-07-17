@@ -143,7 +143,18 @@ func pipe(ctx context.Context, a, b net.Conn) {
 // connection to remoteHost:remotePort via the upstream Honey proxy.
 func (c *Client) StartLocalForward(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int) (string, int, func(), error) {
 	target := net.JoinHostPort(remoteHost, strconv.Itoa(remotePort))
-	return listenAndPipe(ctx, bind, localPort, c.dialUpstream, func(net.Conn) (string, error) {
+	return listenAndPipe(ctx, bind, localPort, c.dialer(), func(net.Conn) (string, error) {
 		return target, nil
 	})
+}
+
+// dialer returns the upstream dial seam to use: dialUpstreamFn if the Client
+// was constructed with one set (the normal path, via Executor.Dial, and the
+// path tests use to inject a fake), else c.dialUpstream directly as a
+// defensive fallback for Clients built without it.
+func (c *Client) dialer() upstreamDialer {
+	if c.dialUpstreamFn != nil {
+		return c.dialUpstreamFn
+	}
+	return c.dialUpstream
 }

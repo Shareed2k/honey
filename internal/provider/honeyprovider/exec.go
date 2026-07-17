@@ -42,7 +42,7 @@ type Executor struct {
 
 // Dial creates a new HostClient that proxies execution to the upstream Honey server.
 func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
-	return &Client{
+	c := &Client{
 		url:      e.URL,
 		token:    e.Token,
 		insecure: e.Insecure,
@@ -52,7 +52,11 @@ func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error
 		meshAddr: e.MeshAddr,
 		user:     user,
 		record:   r,
-	}, nil
+	}
+	// Default the testable dial seam to the real upstream dialer; tests
+	// construct a *Client directly and set dialUpstreamFn to a fake.
+	c.dialUpstreamFn = c.dialUpstream
+	return c, nil
 }
 
 // RunInteractive is not currently implemented for proxy proxying.
@@ -239,6 +243,12 @@ type Client struct {
 	meshAddr string
 	user     string
 	record   hosts.Record
+
+	// dialUpstreamFn is the seam used by StartLocalForward/StartDynamicForward
+	// to reach the upstream Honey proxy. Executor.Dial defaults it to
+	// c.dialUpstream; tests construct a *Client directly and inject a fake
+	// here instead of standing up a real WS server/mesh.
+	dialUpstreamFn upstreamDialer
 }
 
 // doRequest sends a JSON POST request to the upstream Honey REST API.
@@ -651,11 +661,6 @@ func (c *Client) RemoveRemote(path string, recursive bool) error {
 // StartRemoteForward is not supported for upstream Honey proxying yet.
 func (c *Client) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (string, func(), error) {
 	return "", nil, fmt.Errorf("StartRemoteForward is not supported for upstream Honey proxying yet")
-}
-
-// StartDynamicForward is not supported for upstream Honey proxying yet.
-func (c *Client) StartDynamicForward(_ context.Context, _ string, _ int) (string, int, func(), error) {
-	return "", 0, nil, fmt.Errorf("StartDynamicForward is not supported for upstream Honey proxying yet")
 }
 
 // StartUDPRelay is not supported for upstream Honey proxying yet.
