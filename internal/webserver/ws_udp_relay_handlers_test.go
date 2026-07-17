@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/udprelaywire"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -199,6 +200,42 @@ func TestHandleWebUDPRelay_InvalidTarget(t *testing.T) {
 	require.NoError(t, conn.ReadJSON(&reply))
 	require.NotEmpty(t, reply.Error)
 	require.False(t, fd.wasCalled(), "dialer must not be called for an invalid target")
+}
+
+func TestHandleWebUDPRelay_OPADenied(t *testing.T) {
+	const src = `package honey
+import rego.v1
+default allow := false
+default deny_reason := "no udp relay for you"
+allow if input.action == "api_request"`
+	enf, err := policy.NewFromSource(context.Background(), "deny.rego", src)
+	require.NoError(t, err)
+
+	s := newTestServer(t, Options{Enforcer: enf})
+
+	fd := &fakeUDPDialer{target: newFakeUDPTarget()}
+	s.udpDialer = fd
+
+	ts := httptest.NewServer(s.router)
+	defer ts.Close()
+
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	wsURL := strings.Replace(ts.URL, "http", "ws", 1) + "/api/v1/ws/udp"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	require.NoError(t, conn.WriteJSON(map[string]string{"target": "1.2.3.4:53"}))
+
+	var reply struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	require.NoError(t, conn.ReadJSON(&reply))
+	require.NotEmpty(t, reply.Error)
+	require.False(t, fd.wasCalled(), "dialer must not be called when OPA denies the target")
 }
 
 func TestHandleWebUDPRelay_DialError(t *testing.T) {

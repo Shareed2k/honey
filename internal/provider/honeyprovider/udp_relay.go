@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/udprelaywire"
 )
 
@@ -299,6 +301,7 @@ func udpServerBridgeLoop(ctx context.Context, ln *net.UDPConn, wg *sync.WaitGrou
 			stream, err = opener.Open(ctx, target)
 			if err != nil {
 				mu.Unlock()
+				zap.L().Debug("udp relay: open server-bridge stream failed", zap.String("target", target), zap.Error(err))
 				continue
 			}
 			flows[key] = stream

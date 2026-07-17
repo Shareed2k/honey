@@ -59,6 +59,34 @@ func (realUDPDialer) DialUDP(ctx context.Context, target string) (udpTarget, err
 
 var _ udpDialer = (*realUDPDialer)(nil)
 
+// gateUDPRelay asks OPA whether actor may have the server originate UDP to
+// target (action "udp_relay"). A nil enforcer always allows. Unlike the
+// endpoint-level authMiddleware (which sees only the path), this passes the
+// caller-controlled target host:port so a policy can restrict WHICH address
+// the server will dial. target must already have passed ValidateTarget.
+func (s *Server) gateUDPRelay(r *http.Request, target string) error {
+	if s.opts.Enforcer == nil {
+		return nil
+	}
+	host, port, _ := net.SplitHostPort(target)
+	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
+	d, err := s.opts.Enforcer.Evaluate(r.Context(), map[string]any{
+		"action": "udp_relay",
+		"actor":  actor,
+		"target": map[string]any{
+			"host": host,
+			"port": port,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("policy: %w", err)
+	}
+	if !d.Allow {
+		return fmt.Errorf("%s", reasonOrForbidden(d.DenyReason))
+	}
+	return nil
+}
+
 // udpRelayIdleReadTimeout bounds a single udpTarget.Read call so the read
 // goroutine wakes up periodically to check for teardown instead of blocking
 // on Read forever; a timeout on its own is not fatal, the loop just reads
@@ -87,9 +115,14 @@ type WSUDPRelayHello struct {
 // SECURITY: target is caller-controlled. It is validated with
 // udprelaywire.ValidateTarget before dialing, but this endpoint still lets
 // an authorized caller make the server originate UDP traffic to an
-// arbitrary host:port (SSRF-shaped). It is gated the same way as the other
-// privileged ws/* handlers: the /api/v1 authMiddleware (token + OPA) plus
-// the explicit s.authorized(r) check below. Do not weaken either.
+// arbitrary host:port (SSRF-shaped). It is gated by the /api/v1
+// authMiddleware (token + OPA on the request path) plus the explicit
+// s.authorized(r) check below, same as the other privileged ws/* handlers --
+// but neither of those sees the target. In addition, gateUDPRelay evaluates a
+// target-aware OPA decision (action "udp_relay", including the target's host
+// and port) after ValidateTarget succeeds and before dialing, so a policy can
+// restrict WHICH host:port the server is allowed to dial, not just whether
+// the endpoint is reachable. Do not weaken any of these.
 //
 // @Summary Open UDP relay over WebSocket
 // @Tags tunnels
@@ -120,6 +153,11 @@ func (s *Server) handleWebUDPRelay(w http.ResponseWriter, r *http.Request) {
 
 	target := strings.TrimSpace(hello.Target)
 	if err := udprelaywire.ValidateTarget(target); err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+		return
+	}
+
+	if err := s.gateUDPRelay(r, target); err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
 		return
 	}
