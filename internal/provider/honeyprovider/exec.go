@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
+	"github.com/shareed2k/honey/internal/tun"
 )
 
 // clientTLSConfig builds the TLS config for a honey upstream connection: the
@@ -59,6 +61,14 @@ func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error
 	// Default the testable command-run seam to the real c.Run; tests
 	// construct a *Client directly and set runFn to a fake.
 	c.runFn = c.Run
+	// Default the seams StartTunForward composes over (a local dynamic
+	// forward + internal/tun's tun2proxy runner) to their real
+	// implementations; tests construct a *Client directly and set
+	// startDynamicForwardFn/tunRunFn/getuidFn to fakes instead of requiring
+	// root, a real listener, and the real tun2proxy binary.
+	c.startDynamicForwardFn = c.StartDynamicForward
+	c.tunRunFn = tun.Run
+	c.getuidFn = os.Getuid
 	return c, nil
 }
 
@@ -253,6 +263,25 @@ type Client struct {
 	// Executor.Dial defaults it to c.Run; tests construct a *Client directly
 	// and inject a fake here instead of making a real c.Run HTTP round trip.
 	runFn func(cmd string) ([]byte, error)
+
+	// startDynamicForwardFn is the seam StartTunForward composes over: it
+	// starts the local SOCKS5 proxy that internal/tun's tun2proxy subprocess
+	// dials through. Executor.Dial defaults it to c.StartDynamicForward;
+	// tests construct a *Client directly and inject a fake here instead of
+	// binding a real listener.
+	startDynamicForwardFn func(ctx context.Context, bind string, localPort int) (host string, port int, stop func(), err error)
+
+	// tunRunFn is the seam StartTunForward uses to run tun2proxy against the
+	// dynamic forward's SOCKS5 address. Executor.Dial defaults it to
+	// tun.Run; tests construct a *Client directly and inject a fake here
+	// instead of requiring root and the real tun2proxy binary.
+	tunRunFn func(ctx context.Context, cfg tun.Config) error
+
+	// getuidFn is the seam StartTunForward uses for its root guard.
+	// Executor.Dial defaults it to os.Getuid; tests construct a *Client
+	// directly and inject a fake here to exercise both branches without
+	// actually running as root.
+	getuidFn func() int
 }
 
 // doRequest sends a JSON POST request to the upstream Honey REST API.
@@ -660,11 +689,6 @@ func (c *Client) RemoveRemote(path string, recursive bool) error {
 	}
 
 	return nil
-}
-
-// StartTunForward is not supported for upstream Honey proxying yet.
-func (c *Client) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (string, func(), error) {
-	return "", nil, fmt.Errorf("StartTunForward is not supported for upstream Honey proxying yet")
 }
 
 // Close closes the proxy client.
