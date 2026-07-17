@@ -59,11 +59,6 @@ func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error
 	return c, nil
 }
 
-// RunInteractive is not currently implemented for proxy proxying.
-func (e *Executor) RunInteractive(_ string, _ hosts.Record) error {
-	return fmt.Errorf("interactive proxying via honey upstream is not yet implemented")
-}
-
 // RunTunnel runs a local port forward via the upstream Honey proxy.
 func (e *Executor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
 	parts := strings.Split(localFwd, ":")
