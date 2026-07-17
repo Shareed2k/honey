@@ -135,6 +135,11 @@ type Server struct {
 	// /api/v1/ws/remote-forward handler. nil selects defaultRemoteListener (the
 	// leaf.Listen path); tests inject an in-memory listener to avoid real SSH.
 	remoteListenerFor func(user string, r hosts.Record, bind string, port int) (net.Listener, func(), error)
+
+	// udpDialer obtains the UDP target connection for the /api/v1/ws/udp
+	// handler. Defaulted to realUDPDialer{} below; tests inject a fake to
+	// avoid opening real UDP sockets.
+	udpDialer udpDialer
 }
 
 // NewServer builds handlers with the given auth token.
@@ -183,6 +188,7 @@ func NewServer(opts Options) (*Server, error) {
 		webhookQueue:    q,
 		plugins:         pc,
 		fileClientCache: engine.NewClientCache(),
+		udpDialer:       realUDPDialer{},
 		commandRunner: engine.NewCommandRunner(engine.CommandRunnerOptions{
 			ExecRegistry:   opts.ExecRegistry,
 			SearchRegistry: opts.SearchRegistry,
@@ -304,6 +310,7 @@ func (s *Server) routes() error {
 		r.Post("/pve-qemu-vnc-offer", s.handlePveQemuVncOffer)
 		r.Get("/ws/tunnel", s.handleWebTunnel)
 		r.Get("/ws/remote-forward", s.handleWebRemoteForward)
+		r.Get("/ws/udp", s.handleWebUDPRelay)
 		r.Get("/ws/exec", s.handleWebExec)
 
 		r.Post("/agent", s.handleAgent)
