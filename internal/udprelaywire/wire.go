@@ -6,6 +6,7 @@ package udprelaywire
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,8 +16,8 @@ import (
 
 // maxPayloadSize is the largest UDP datagram payload a frame may carry: the
 // maximum theoretical UDP payload size (65535 byte IP payload minus the
-// 8-byte UDP header minus... in practice callers should never see anything
-// close to this, but it is the hard upper bound for a UDP datagram).
+// 8-byte UDP header minus the minimum 20-byte IP header). It is the hard
+// upper bound for a UDP datagram.
 const maxPayloadSize = 65507
 
 // WriteFrame writes payload to w as a single length-prefixed frame:
@@ -56,8 +57,10 @@ func WriteFrame(w io.Writer, payload []byte) error {
 // WriteFrame, and returns its payload. If r is exhausted before any header
 // bytes are read, it returns io.EOF unwrapped (via io.ReadFull) so callers
 // can detect a clean stream end with errors.Is(err, io.EOF). A partial
-// header or body (stream cut off mid-frame) is reported as
-// io.ErrUnexpectedEOF, per io.ReadFull's contract.
+// header, or a body cut off after a complete header was read (including a
+// truncation of zero body bytes), is reported as io.ErrUnexpectedEOF, per
+// io.ReadFull's contract, so callers never mistake a truncated frame for a
+// clean stream close.
 func ReadFrame(r io.Reader) ([]byte, error) {
 	var header [2]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
@@ -65,9 +68,21 @@ func ReadFrame(r io.Reader) ([]byte, error) {
 	}
 
 	n := binary.BigEndian.Uint16(header[:])
+	if n > maxPayloadSize {
+		return nil, fmt.Errorf("udprelaywire: frame length %d exceeds max %d", n, maxPayloadSize)
+	}
+
 	payload := make([]byte, n)
 	if n > 0 {
 		if _, err := io.ReadFull(r, payload); err != nil {
+			if errors.Is(err, io.EOF) {
+				// A complete header was already read, so running out of
+				// bytes now means the stream was truncated mid-frame, not
+				// a clean end. Promote to io.ErrUnexpectedEOF so callers
+				// looping on errors.Is(err, io.EOF) don't mistake this for
+				// a clean stream close.
+				err = io.ErrUnexpectedEOF
+			}
 			return nil, fmt.Errorf("udprelaywire: read frame payload: %w", err)
 		}
 	}
