@@ -211,9 +211,11 @@ func (s *TunnelStep) Validate(vc StepValidateCtx) error {
 		if !t.UseSSHConfig && t.RemotePort <= 0 {
 			return fmt.Errorf("cuetry: steps[%d].tunnel.remote_port is required unless use_ssh_config is true", i)
 		}
-		if tm == "udp" && !t.RemoteSocat {
-			return fmt.Errorf("cuetry: steps[%d].tunnel.remote_socat must be true for udp mode", i)
-		}
+		// remote_socat selects the udp relay vantage rather than gating it:
+		// true = socat-on-target (target-vantage), false = the backend's
+		// non-socat path (honeyprovider's server-side Go UDP bridge, or a
+		// direct TCP dial for a plain SSH host). Both are valid, so udp mode
+		// no longer requires remote_socat.
 	case "remote":
 		if !t.UseSSHConfig && (t.RemoteListen <= 0 || t.LocalTarget <= 0) {
 			return fmt.Errorf("cuetry: steps[%d].tunnel requires remote_listen_port and local_target_port for remote mode", i)

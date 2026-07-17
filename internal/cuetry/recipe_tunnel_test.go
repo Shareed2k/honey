@@ -37,8 +37,11 @@ func TestValidateStepTunnel_localRequiresRemotePort(t *testing.T) {
 	}
 }
 
-func TestValidateStepTunnel_udpRequiresSocat(t *testing.T) {
+func TestValidateStepTunnel_udpWithoutSocatIsServerBridge(t *testing.T) {
 	t.Parallel()
+	// mode:"udp" without remote_socat is valid: it selects the non-socat
+	// vantage (honeyprovider's server-side Go UDP bridge, useSocat=false),
+	// rather than being rejected.
 	err := (&TunnelStep{
 		StepBase: StepBase{Host: "db-*"},
 		Tunnel: &RecipeStepTunnel{
@@ -46,8 +49,24 @@ func TestValidateStepTunnel_udpRequiresSocat(t *testing.T) {
 			RemotePort: 53,
 		},
 	}).Validate(StepValidateCtx{Index: 0, Mode: ExecutionModeLinear})
-	if err == nil || !strings.Contains(err.Error(), "remote_socat") {
-		t.Fatalf("got %v", err)
+	if err != nil {
+		t.Fatalf("expected udp without remote_socat to be valid, got %v", err)
+	}
+}
+
+func TestValidateStepTunnel_udpWithSocatIsValid(t *testing.T) {
+	t.Parallel()
+	// remote_socat:true still selects socat-on-target and remains valid.
+	err := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
+		Tunnel: &RecipeStepTunnel{
+			Mode:        "udp",
+			RemotePort:  53,
+			RemoteSocat: true,
+		},
+	}).Validate(StepValidateCtx{Index: 0, Mode: ExecutionModeLinear})
+	if err != nil {
+		t.Fatalf("expected udp with remote_socat to be valid, got %v", err)
 	}
 }
 
