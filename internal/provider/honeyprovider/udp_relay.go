@@ -1,6 +1,7 @@
 package honeyprovider
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/shareed2k/honey/internal/udprelaywire"
 )
 
 // udpRelayIdleTimeout bounds how long a per-flow upstream TCP connection
@@ -17,27 +20,28 @@ import (
 const udpRelayIdleTimeout = 30 * time.Second
 
 // StartUDPRelay bridges a local UDP listener to remoteHost:remotePort via
-// the upstream Honey proxy.
+// the upstream Honey proxy, in one of two modes selected by useSocat:
 //
-// DialUpstream (c.dialer()/c.dialUpstream) only carries a TCP byte stream,
-// so UDP datagrams cannot be forwarded to it directly. Instead, this starts
-// a remote "socat TCP-LISTEN ... UDP:remoteHost:remotePort" relay on the
-// target (via c.Run, which the server executes over its own SSH connection
-// to the target) and bridges local UDP flows to that relay over the
-// upstream TCP dialer. useSocat must therefore be true; SOCKS-UDP-ASSOCIATE
-// (dynamic_forward.go) is a separate, unrelated path.
+//   - useSocat=true (target-vantage): DialUpstream (c.dialer()/c.dialUpstream)
+//     only carries a TCP byte stream, so UDP datagrams cannot be forwarded to
+//     it directly. Instead, this starts a remote "socat TCP-LISTEN ...
+//     UDP:remoteHost:remotePort" relay on the target (via c.Run, which the
+//     server executes over its own SSH connection to the target) and bridges
+//     local UDP flows to that relay over the upstream TCP dialer. This
+//     requires socat to be installed on the target.
+//   - useSocat=false (server-vantage): bridges local UDP flows to the
+//     server's /api/v1/ws/udp endpoint (see startServerBridgeUDPRelay below),
+//     which dials remoteHost:remotePort itself. No tooling is required on the
+//     target; the server reaches whatever it itself can route to.
 //
-// Every goroutine it spawns -- the read loop, every per-flow goroutine, and
-// the goroutine that launches the remote socat relay via c.Run -- exits via
-// the returned stop() (idempotent: it cancels the internal ctx, closes the
-// UDP listener, best-effort kills the remote socat process, then waits for
-// every one of those goroutines to return). killRemote() must run before
-// wg.Wait(): it is what makes the remote socat process exit, which in turn
-// unblocks the foreground c.Run(socatCmd) HTTP call so its goroutine can
-// return.
+// SOCKS-UDP-ASSOCIATE (dynamic_forward.go) is a separate, unrelated path.
+//
+// Every goroutine either mode spawns exits via the returned stop()
+// (idempotent, no leaks); see startRemoteSocatUDPRelay and
+// startServerBridgeUDPRelay for the per-mode teardown details.
 func (c *Client) StartUDPRelay(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int, useSocat bool) (host string, port int, stop func(), err error) {
 	if !useSocat {
-		return "", 0, nil, fmt.Errorf("honey upstream UDP relay requires socat mode (direct UDP is not supported over the proxy)")
+		return c.startServerBridgeUDPRelay(ctx, bind, localPort, remoteHost, remotePort)
 	}
 	if localPort < 0 || localPort >= 65536 {
 		return "", 0, nil, fmt.Errorf("local port out of range: %d", localPort)
@@ -98,6 +102,245 @@ func (c *Client) StartUDPRelay(ctx context.Context, bind string, localPort int, 
 		wg.Wait()
 	})
 	return host, port, stop, nil
+}
+
+// udpStreamOpener opens a framed byte-stream to the server's /api/v1/ws/udp
+// endpoint for a UDP target. Production dials the WS over mesh/mTLS/token
+// (realUDPStreamOpener); tests supply a net.Pipe-backed fake.
+type udpStreamOpener interface {
+	Open(ctx context.Context, target string) (net.Conn, error)
+}
+
+// realUDPStreamOpener is the production udpStreamOpener: it dials the
+// server's /api/v1/ws/udp endpoint over the same WS/mesh/mTLS/token
+// transport as c.dialUpstream (see forward_proxy.go's dialUpstream, which
+// this mirrors), sends the hello {"target": target}, and waits for
+// {"status":"connected"} (surfacing a {"error":...} reply as an error)
+// before handing back the wsConn as a net.Conn carrying the framed datagram
+// stream.
+type realUDPStreamOpener struct {
+	c *Client
+}
+
+var _ udpStreamOpener = (*realUDPStreamOpener)(nil)
+
+func (o *realUDPStreamOpener) Open(ctx context.Context, target string) (net.Conn, error) {
+	c := o.c
+	wsURL := strings.Replace(c.url, "http", "ws", 1) + "/api/v1/ws/udp"
+	tlsCfg, err := clientTLSConfig(c.insecure, c.mtls, c.serverCA)
+	if err != nil {
+		return nil, err
+	}
+	token := c.token
+	if c.mtls {
+		token = ""
+	}
+	conn, err := dialWS(ctx, wsURL, token, tlsCfg, meshDialContext(c.mesh, c.meshAddr))
+	if err != nil {
+		return nil, err
+	}
+
+	hello := map[string]any{"target": target}
+	if err := conn.SetWriteDeadline(time.Now().Add(upstreamHandshakeTimeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := conn.WriteJSON(hello); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(upstreamHandshakeTimeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	var resp map[string]any
+	if err := conn.ReadJSON(&resp); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if errStr, ok := resp["error"].(string); ok && errStr != "" {
+		conn.Close()
+		return nil, fmt.Errorf("udp relay dial error: %s", errStr)
+	}
+
+	// Handshake complete: clear the deadlines so the long-lived data phase
+	// (returned as a net.Conn) is not bounded by the handshake timeout.
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	return &wsConn{conn: conn}, nil
+}
+
+// udpOpener returns the UDP-relay stream-open seam to use: udpStreamOpener
+// if the Client was constructed with one set (the normal path, via
+// Executor.Dial, and the path tests use to inject a fake), else a real
+// opener built from this Client as a defensive fallback for Clients built
+// without it. Mirrors c.dialer()/c.runner().
+func (c *Client) udpOpener() udpStreamOpener {
+	if c.udpStreamOpener != nil {
+		return c.udpStreamOpener
+	}
+	return &realUDPStreamOpener{c: c}
+}
+
+// startServerBridgeUDPRelay implements StartUDPRelay's useSocat=false,
+// server-vantage mode: it bridges a local UDP listener to remoteHost:
+// remotePort via the server's /api/v1/ws/udp endpoint, which dials
+// remoteHost:remotePort itself (server-vantage, not target- or
+// client-vantage) -- so, unlike startRemoteSocatUDPRelay, no tooling of any
+// kind needs to be present on the target; the server reaches whatever it
+// itself can route to (including hosts only the server has network access
+// to, e.g. via a server-side VPN or mesh).
+//
+// remoteHost:remotePort is validated with udprelaywire.ValidateTarget before
+// anything is opened (the local UDP listener or any per-flow stream) since
+// it is echoed to the server as the hello target.
+//
+// Every goroutine this starts -- the UDP read loop and one reader goroutine
+// per client source-address flow -- exits via the returned stop()
+// (idempotent: cancel + close the UDP listener, which in turn makes the read
+// loop close every still-open per-flow stream before it returns, then
+// wg.Wait()).
+func (c *Client) startServerBridgeUDPRelay(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int) (host string, port int, stop func(), err error) {
+	if localPort < 0 || localPort >= 65536 {
+		return "", 0, nil, fmt.Errorf("local port out of range: %d", localPort)
+	}
+	remoteHost = strings.TrimSpace(remoteHost)
+	target := net.JoinHostPort(remoteHost, strconv.Itoa(remotePort))
+	if err := udprelaywire.ValidateTarget(target); err != nil {
+		return "", 0, nil, err
+	}
+
+	bind = strings.TrimSpace(bind)
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
+
+	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(bind, strconv.Itoa(localPort)))
+	if err != nil {
+		return "", 0, nil, err
+	}
+	udpLn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("honey upstream UDP relay listen: %w", err)
+	}
+	host, portStr, splitErr := net.SplitHostPort(udpLn.LocalAddr().String())
+	if splitErr != nil {
+		_ = udpLn.Close()
+		return "", 0, nil, splitErr
+	}
+	port, _ = strconv.Atoi(portStr)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		udpServerBridgeLoop(runCtx, udpLn, &wg, c.udpOpener(), target)
+	}()
+
+	stop = sync.OnceFunc(func() {
+		cancel()
+		_ = udpLn.Close()
+		wg.Wait()
+	})
+	return host, port, stop, nil
+}
+
+// udpServerBridgeLoop reads datagrams from ln and bridges each distinct
+// client source address to its own framed stream, opened via one
+// opener.Open(ctx, target) call per flow (keyed by client address). Each
+// local datagram is written as a single framed message: WriteFrame first
+// encodes it into a buffer, then the whole frame is sent with one Write call
+// (this preserves the MESSAGE-BOUNDARY invariant the server relies on -- the
+// production stream is a *wsConn, whose Write maps one call to one WS
+// BinaryMessage, so the frame must be fully built before Write is called,
+// never split across two Writes). A dedicated goroutine per flow reads
+// framed replies back via udprelaywire.ReadFrame and relays each to the
+// originating client address; it returns (ending the flow) on any read
+// error, including a clean io.EOF at a frame boundary, so a per-flow idle
+// timeout (udpRelayIdleTimeout, set as the read deadline before each
+// ReadFrame call) naturally tears down an inactive flow.
+//
+// It runs until ctx is cancelled or ln is closed, at which point it closes
+// any still-open flow streams so their reader goroutines (tracked via wg,
+// along with the caller's own wg.Add(1) for this loop) unblock and exit
+// promptly instead of waiting out the idle timeout.
+func udpServerBridgeLoop(ctx context.Context, ln *net.UDPConn, wg *sync.WaitGroup, opener udpStreamOpener, target string) {
+	buf := make([]byte, 65535)
+	flows := make(map[string]net.Conn)
+	var mu sync.Mutex
+
+	for {
+		_ = ln.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		n, addr, err := ln.ReadFromUDP(buf)
+		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			break
+		}
+
+		key := addr.String()
+		mu.Lock()
+		stream, ok := flows[key]
+		if !ok {
+			stream, err = opener.Open(ctx, target)
+			if err != nil {
+				mu.Unlock()
+				continue
+			}
+			flows[key] = stream
+			wg.Add(1)
+			go func(s net.Conn, clientAddr *net.UDPAddr, flowKey string) {
+				defer wg.Done()
+				defer func() {
+					mu.Lock()
+					delete(flows, flowKey)
+					mu.Unlock()
+					_ = s.Close()
+				}()
+				for {
+					_ = s.SetReadDeadline(time.Now().Add(udpRelayIdleTimeout))
+					payload, rerr := udprelaywire.ReadFrame(s)
+					if rerr != nil {
+						// Covers both a clean end (io.EOF at a frame
+						// boundary) and any other error (idle-timeout,
+						// truncation, closed stream): either way this flow
+						// is done, and ReadFrame never returns a partial
+						// payload alongside a non-nil error, so there is
+						// nothing left to relay.
+						return
+					}
+					_, _ = ln.WriteToUDP(payload, clientAddr)
+				}
+			}(stream, addr, key)
+		}
+		mu.Unlock()
+
+		var frame bytes.Buffer
+		if werr := udprelaywire.WriteFrame(&frame, buf[:n]); werr != nil {
+			continue
+		}
+		_, _ = stream.Write(frame.Bytes())
+	}
+
+	mu.Lock()
+	for _, s := range flows {
+		_ = s.Close()
+	}
+	mu.Unlock()
 }
 
 // validateRemoteHost rejects remoteHost values that are not a plain IP

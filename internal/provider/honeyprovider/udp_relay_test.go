@@ -1,6 +1,7 @@
 package honeyprovider
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"strings"
@@ -10,20 +11,114 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+
+	"github.com/shareed2k/honey/internal/udprelaywire"
 )
 
-// TestStartUDPRelay_SocatRequired covers the design constraint documented on
-// Client.StartUDPRelay: DialUpstream only carries TCP streams, so bridging
-// UDP requires the remote socat TCP<->UDP hop. useSocat=false must fail
-// fast with a clear error instead of silently doing nothing.
-func TestStartUDPRelay_SocatRequired(t *testing.T) {
-	c := &Client{}
-	host, port, stop, err := c.StartUDPRelay(context.Background(), "127.0.0.1", 0, "target", 53, false)
+// fakeUDPStreamOpener is a udpStreamOpener test double: Open records the
+// target it was asked to open and returns one end of a net.Pipe, with the
+// other end driven by an in-test goroutine that reads one udprelaywire frame
+// at a time and writes it straight back (framed), standing in for the real
+// server's /api/v1/ws/udp echo-shaped bridge without any network I/O.
+type fakeUDPStreamOpener struct {
+	mu     sync.Mutex
+	called bool
+	target string
+}
+
+func (f *fakeUDPStreamOpener) Open(_ context.Context, target string) (net.Conn, error) {
+	f.mu.Lock()
+	f.called = true
+	f.target = target
+	f.mu.Unlock()
+
+	client, server := net.Pipe()
+	go func() {
+		defer server.Close()
+		for {
+			payload, err := udprelaywire.ReadFrame(server)
+			if err != nil {
+				return
+			}
+			var frame bytes.Buffer
+			if werr := udprelaywire.WriteFrame(&frame, payload); werr != nil {
+				return
+			}
+			if _, werr := server.Write(frame.Bytes()); werr != nil {
+				return
+			}
+		}
+	}()
+	return client, nil
+}
+
+func (f *fakeUDPStreamOpener) wasCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.called
+}
+
+func (f *fakeUDPStreamOpener) dialedTarget() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.target
+}
+
+var _ udpStreamOpener = (*fakeUDPStreamOpener)(nil)
+
+// TestStartUDPRelay_ServerBridge covers StartUDPRelay's useSocat=false,
+// server-vantage mode end to end (minus the real network): a fake
+// udpStreamOpener stands in for the real WS dial to /api/v1/ws/udp, and a
+// real client UDP datagram round-trips through startServerBridgeUDPRelay's
+// framing (WriteFrame -> single Write; ReadFrame -> WriteToUDP) to prove the
+// bridge itself is wired correctly, independent of the real opener.
+func TestStartUDPRelay_ServerBridge(t *testing.T) {
+	defer goleak.VerifyNone(t,
+		goleak.IgnoreTopFunction("github.com/shareed2k/honey/internal/engine.(*GlobalTunnelPool).sweepLoop"))
+
+	opener := &fakeUDPStreamOpener{}
+	c := &Client{udpStreamOpener: opener}
+
+	host, port, stop, err := c.StartUDPRelay(context.Background(), "127.0.0.1", 0, "target-host", 53, false)
+	require.NoError(t, err)
+	require.NotNil(t, stop)
+
+	client, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.ParseIP(host), Port: port})
+	require.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.Write([]byte("ping"))
+	require.NoError(t, err)
+
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(3*time.Second)))
+	buf := make([]byte, 4)
+	n, err := client.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, "ping", string(buf[:n]))
+
+	require.True(t, opener.wasCalled())
+	require.Equal(t, "target-host:53", opener.dialedTarget())
+
+	// stop() must be idempotent.
+	stop()
+	stop()
+}
+
+// TestStartUDPRelay_ServerBridge_ValidatesTarget covers the SSRF-shaped-
+// surface guard on the server-bridge path: remoteHost:remotePort must be
+// validated by udprelaywire.ValidateTarget before anything is opened, so a
+// remoteHost containing shell/URL metacharacters is rejected before the
+// opener (and thus the server) ever sees it.
+func TestStartUDPRelay_ServerBridge_ValidatesTarget(t *testing.T) {
+	opener := &fakeUDPStreamOpener{}
+	c := &Client{udpStreamOpener: opener}
+
+	host, port, stop, err := c.StartUDPRelay(context.Background(), "127.0.0.1", 0, "bad;host", 53, false)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "socat")
 	require.Empty(t, host)
 	require.Zero(t, port)
 	require.Nil(t, stop)
+	require.False(t, opener.wasCalled(), "opener must not be called for an invalid target")
 }
 
 // TestUDPRelayLoop drives the core UDP<->TCP bridging logic directly (the

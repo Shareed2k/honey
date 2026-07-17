@@ -71,6 +71,10 @@ func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error
 	// Default the testable command-run seam to the real c.Run; tests
 	// construct a *Client directly and set runFn to a fake.
 	c.runFn = c.Run
+	// Default the UDP-relay server-bridge stream-open seam to the real WS
+	// dialer; tests construct a *Client directly and set udpStreamOpener to
+	// a fake.
+	c.udpStreamOpener = &realUDPStreamOpener{c: c}
 	// Default the seams StartTunForward composes over (a local dynamic
 	// forward + internal/tun's tun2proxy runner) to their real
 	// implementations; tests construct a *Client directly and set
@@ -292,6 +296,13 @@ type Client struct {
 	// Executor.Dial defaults it to c.Run; tests construct a *Client directly
 	// and inject a fake here instead of making a real c.Run HTTP round trip.
 	runFn func(cmd string) ([]byte, error)
+
+	// udpStreamOpener is the seam StartUDPRelay's server-bridge path
+	// (useSocat=false) uses to open a framed byte-stream to the server's
+	// /api/v1/ws/udp endpoint. Executor.Dial defaults it to
+	// &realUDPStreamOpener{c: c}; tests construct a *Client directly and
+	// inject a fake here instead of dialing a real WS/mesh connection.
+	udpStreamOpener udpStreamOpener
 
 	// startDynamicForwardFn is the seam StartTunForward composes over: it
 	// starts the local SOCKS5 proxy that internal/tun's tun2proxy subprocess

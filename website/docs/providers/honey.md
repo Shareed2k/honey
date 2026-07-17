@@ -111,6 +111,15 @@ Concretely:
   ["Mobile app"](#mobile-app-android--no-ssh-private-key-on-the-phone) above,
   which applies equally to the desktop CLI.
 
+### UDP relay: two modes
+
+UDP relay has two modes, selected by `useSocat` (a recipe's `tunnel.remote_socat` field, see [CUE recipes](/cue-recipes)):
+
+- **`remote_socat: true` — target-vantage.** The remote honey server starts a `socat TCP-LISTEN ... UDP:...` relay **on the target** (via its own exec path to that host) and bridges local UDP flows to it over the existing proxy connection. Requires `socat` to be installed on the target; traffic to the real UDP destination originates from the target's own network vantage point.
+- **`remote_socat: false` — server-vantage.** The **honey server itself** dials `remoteHost:remotePort` over a dedicated `/api/v1/ws/udp` WebSocket bridge (a pure-Go relay, no external tooling required anywhere) and shuttles length-prefixed UDP datagram frames back to the client. No dependency on the target having `socat` — the server reaches whatever *it* can route to, which includes hosts only the server has network access to (e.g. through a server-side VPN or the honey mesh), not just what's reachable from the target itself.
+
+Both modes are gated by the same token/mTLS auth as everything else in this doc. **`remote_socat: false` lets an authorized caller make the honey server originate UDP traffic to an arbitrary `host:port`** — this is an SSRF-shaped surface, so it is additionally gated by [OPA policy](/authorization) the same way the other privileged proxy actions (like remote forward, below) are; make sure that policy actually covers this action if you rely on it.
+
 Two operational caveats:
 
 - **Remote forward is a reverse exposure.** Unlike the other modes, a
