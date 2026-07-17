@@ -2,6 +2,7 @@ package honeyprovider
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -13,6 +14,26 @@ import (
 	"go.uber.org/goleak"
 	"golang.org/x/net/proxy"
 )
+
+// TestStartDynamicForward_EmptyBindDefaultsToLoopback covers the Minor
+// cross-surface-consistency review finding: StartDynamicForward must default
+// an empty bind to 127.0.0.1, matching StartUDPRelay and StartLocalForward,
+// instead of listening on all interfaces via net.JoinHostPort("", port).
+func TestStartDynamicForward_EmptyBindDefaultsToLoopback(t *testing.T) {
+	defer goleak.VerifyNone(t,
+		goleak.IgnoreTopFunction("github.com/shareed2k/honey/internal/engine.(*GlobalTunnelPool).sweepLoop"))
+
+	fake := func(_ context.Context, _ string) (net.Conn, error) {
+		return nil, fmt.Errorf("dial should not be called in this test")
+	}
+
+	c := &Client{dialUpstreamFn: fake}
+	host, _, stop, err := c.StartDynamicForward(context.Background(), "", 0)
+	require.NoError(t, err)
+	defer stop()
+
+	require.Equal(t, "127.0.0.1", host)
+}
 
 // TestStartDynamicForward drives the local SOCKS5 proxy with a real SOCKS5
 // client (golang.org/x/net/proxy.SOCKS5) and a fake dialUpstreamFn — no real

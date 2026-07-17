@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,10 @@ func (passthroughResolver) Resolve(ctx context.Context, _ string) (context.Conte
 // cancels the internal ctx, closes the listener, and waits for the serve
 // loop to return).
 func (c *Client) StartDynamicForward(ctx context.Context, bind string, localPort int) (host string, port int, stop func(), err error) {
+	bind = strings.TrimSpace(bind)
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
 	ln, err := net.Listen("tcp", net.JoinHostPort(bind, strconv.Itoa(localPort)))
 	if err != nil {
 		return "", 0, nil, fmt.Errorf("honey dynamic forward listen: %w", err)

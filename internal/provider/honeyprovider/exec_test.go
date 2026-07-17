@@ -222,6 +222,53 @@ func TestExecutor_DialUpstream_Mesh(t *testing.T) {
 	})
 }
 
+// TestExecutor_DialUpstream_HandshakeTimeout covers the same Important review
+// finding as TestClient_DialUpstream_HandshakeTimeout (forward_proxy_test.go),
+// but for Executor.DialUpstream: if the upstream accepts the WS upgrade but
+// then stalls before replying to the hello, the post-upgrade handshake
+// (WriteJSON + ReadJSON) must be bounded by upstreamHandshakeTimeout instead
+// of blocking forever, which would leak a goroutine and a WS conn per flow.
+func TestExecutor_DialUpstream_HandshakeTimeout(t *testing.T) {
+	orig := upstreamHandshakeTimeout
+	upstreamHandshakeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { upstreamHandshakeTimeout = orig })
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/ws/tunnel", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Accept the upgrade but never reply to the hello: simulates an
+		// upstream that stalls after a successful WS handshake.
+		_, _, _ = conn.ReadMessage()
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	e := &Executor{URL: ts.URL}
+
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		conn, err := e.DialUpstream(context.Background(), "ubuntu", hosts.Record{Name: "test-host"}, "x:1")
+		done <- result{conn: conn, err: err}
+	}()
+
+	select {
+	case res := <-done:
+		require.Error(t, res.err)
+		require.Nil(t, res.conn)
+	case <-time.After(time.Second):
+		t.Fatal("DialUpstream did not return within 1s; handshake is not bounded by a deadline")
+	}
+}
+
 // TestClient_RunWithStreams_Mesh covers the Client.RunWithStreams call site
 // (dialWS + meshDialContext over a websocket). Same meshDial-sharing caveat
 // as above applies.

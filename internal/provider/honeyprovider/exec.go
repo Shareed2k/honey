@@ -158,11 +158,19 @@ func (e *Executor) DialUpstream(ctx context.Context, user string, r hosts.Record
 	}
 
 	hello := map[string]any{"ssh_user": user, "record": r, "target": address}
+	if err := conn.SetWriteDeadline(time.Now().Add(upstreamHandshakeTimeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	if err := conn.WriteJSON(hello); err != nil {
 		conn.Close()
 		return nil, err
 	}
 
+	if err := conn.SetReadDeadline(time.Now().Add(upstreamHandshakeTimeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	var resp map[string]any
 	if err := conn.ReadJSON(&resp); err != nil {
 		conn.Close()
@@ -171,6 +179,17 @@ func (e *Executor) DialUpstream(ctx context.Context, user string, r hosts.Record
 	if errStr, ok := resp["error"].(string); ok && errStr != "" {
 		conn.Close()
 		return nil, fmt.Errorf("upstream dial error: %s", errStr)
+	}
+
+	// Handshake complete: clear the deadlines so the long-lived data phase
+	// (returned as a net.Conn) is not bounded by the handshake timeout.
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return nil, err
 	}
 
 	return &wsConn{conn: conn}, nil

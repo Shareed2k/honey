@@ -90,6 +90,10 @@ func (c *Client) dialUpstream(ctx context.Context, addr string) (net.Conn, error
 func listenAndPipe(ctx context.Context, bind string, port int, dial upstreamDialer,
 	targetFor func(net.Conn) (string, error),
 ) (string, int, func(), error) {
+	bind = strings.TrimSpace(bind)
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
 	ln, err := net.Listen("tcp", net.JoinHostPort(bind, strconv.Itoa(port)))
 	if err != nil {
 		return "", 0, nil, fmt.Errorf("honey upstream forward listen: %w", err)

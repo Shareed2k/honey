@@ -2,6 +2,7 @@ package honeyprovider
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -43,6 +44,27 @@ func TestListenAndPipe_LocalForward(t *testing.T) {
 	_, err = io.ReadFull(c, buf)
 	require.NoError(t, err)
 	require.Equal(t, "ping", string(buf))
+}
+
+// TestStartLocalForward_EmptyBindDefaultsToLoopback covers the Minor
+// cross-surface-consistency review finding: StartLocalForward (via
+// listenAndPipe) must default an empty bind to 127.0.0.1, matching
+// StartUDPRelay and StartDynamicForward, instead of listening on all
+// interfaces via net.JoinHostPort("", port).
+func TestStartLocalForward_EmptyBindDefaultsToLoopback(t *testing.T) {
+	defer goleak.VerifyNone(t,
+		goleak.IgnoreTopFunction("github.com/shareed2k/honey/internal/engine.(*GlobalTunnelPool).sweepLoop"))
+
+	fake := func(_ context.Context, _ string) (net.Conn, error) {
+		return nil, fmt.Errorf("dial should not be called in this test")
+	}
+
+	c := &Client{dialUpstreamFn: fake}
+	host, _, stop, err := c.StartLocalForward(context.Background(), "", 0, "remote-host", 1234)
+	require.NoError(t, err)
+	defer stop()
+
+	require.Equal(t, "127.0.0.1", host)
 }
 
 // TestClient_DialUpstream_HandshakeTimeout covers the Important review
