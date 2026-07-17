@@ -92,6 +92,38 @@ mesh:
 - Auth to `central` itself is mTLS (the phone's already-enrolled device credential) and/or the libp2p mesh — not a bearer token, since there's no good place to store one long-term on a phone.
 - A plain SSH username is still sent (it's not a secret) — the remote honey server uses it to open its own SSH session to the target host.
 
+## Tunneling & VPN over the proxy (interactive, forwards, UDP, tun)
+
+Interactive terminal, local forward, dynamic forward (SOCKS5), remote
+forward, UDP relay, and TUN/VPN mode all work the same way against a
+`honey`-backend host as they do against a direct SSH host — the remote honey
+server does the actual dial (SSH or otherwise) to the target; the client
+only talks to it over the backend's own auth (token, mTLS, and/or mesh).
+Concretely:
+
+- `honey <host>` (interactive shell), `honey proxy tcp` / local forwards,
+  `honey egress <host>` (SOCKS5 dynamic forward), remote forwards, and UDP
+  relays are all executed **server-side** and relayed back over the proxy
+  connection.
+- `honey egress <host> --tun` composes the same dynamic-forward mechanism
+  with a local `tun2proxy` process for a transparent VPN exit.
+- **No SSH private key is ever needed on the client** for these hosts — see
+  ["Mobile app"](#mobile-app-android--no-ssh-private-key-on-the-phone) above,
+  which applies equally to the desktop CLI.
+
+Two operational caveats:
+
+- **Remote forward is a reverse exposure.** Unlike the other modes, a
+  remote forward makes the **server** open a listener reachable from the
+  target-side network — it's an inbound exposure on the server, not just an
+  outbound relay on your behalf. It's gated by the same token/mTLS auth as
+  everything else in this doc, plus [OPA policy](/authorization) if one is
+  configured — make sure that policy actually covers this action if you're
+  relying on it.
+- **TUN mode needs local root + the `tun2proxy` binary.** The VPN exit
+  shells out to `tun2proxy` on the machine running the CLI; creating/routing
+  the TUN device needs root there, independent of the remote honey server.
+
 ## CLI (no config file)
 
 There are no dedicated `--honey-*` flags. Use a config file.

@@ -42,6 +42,16 @@ type Executor struct {
 	MeshAddr string
 }
 
+// Compile-time assertions that Client and Executor satisfy the hostexec
+// surface (including the six tunneling/forwarding methods added for proxy
+// parity: StartLocalForward, StartRemoteForward, StartDynamicForward,
+// StartUDPRelay, StartTunForward, and Executor.RunInteractive). If any
+// signature drifts from internal/hostexec/exec.go, this fails to compile.
+var (
+	_ hostexec.HostClient = (*Client)(nil)
+	_ hostexec.Executor   = (*Executor)(nil)
+)
+
 // Dial creates a new HostClient that proxies execution to the upstream Honey server.
 func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
 	c := &Client{
