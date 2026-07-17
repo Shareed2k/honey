@@ -658,11 +658,6 @@ func (c *Client) StartRemoteForward(_ context.Context, _ string, _ int, _ string
 	return "", nil, fmt.Errorf("StartRemoteForward is not supported for upstream Honey proxying yet")
 }
 
-// StartUDPRelay is not supported for upstream Honey proxying yet.
-func (c *Client) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (string, int, func(), error) {
-	return "", 0, nil, fmt.Errorf("StartUDPRelay is not supported for upstream Honey proxying yet")
-}
-
 // StartTunForward is not supported for upstream Honey proxying yet.
 func (c *Client) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (string, func(), error) {
 	return "", nil, fmt.Errorf("StartTunForward is not supported for upstream Honey proxying yet")
