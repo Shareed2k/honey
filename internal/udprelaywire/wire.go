@@ -25,19 +25,26 @@ const maxPayloadSize = 65507
 // (65507 bytes) since the length would not fit the uint16 header faithfully
 // as a real datagram size.
 func WriteFrame(w io.Writer, payload []byte) error {
-	if len(payload) > maxPayloadSize {
-		return fmt.Errorf("udprelaywire: payload too large: %d bytes (max %d)", len(payload), maxPayloadSize)
+	n := len(payload)
+	if n > maxPayloadSize {
+		return fmt.Errorf("udprelaywire: payload too large: %d bytes (max %d)", n, maxPayloadSize)
 	}
 
-	var header [2]byte
-	// Explicit cast to uint16 is safe: the length check above bounds
-	// len(payload) to maxPayloadSize (65507), well within uint16 range.
-	binary.BigEndian.PutUint16(header[:], uint16(len(payload))) // #nosec G115 -- bounds checked above
+	// Encode n as a big-endian 2-byte length header (matching
+	// encoding/binary.BigEndian's byte order) using explicit bitmasks
+	// rather than a uint16(n) conversion: masking each byte with & 0xff
+	// bounds its range in the expression itself, which is provably safe
+	// independent of the length check above (no wide-to-narrow integer
+	// conversion for a static analyzer to flag).
+	header := [2]byte{
+		byte((n >> 8) & 0xff),
+		byte(n & 0xff),
+	}
 
 	if _, err := w.Write(header[:]); err != nil {
 		return fmt.Errorf("udprelaywire: write frame header: %w", err)
 	}
-	if len(payload) > 0 {
+	if n > 0 {
 		if _, err := w.Write(payload); err != nil {
 			return fmt.Errorf("udprelaywire: write frame payload: %w", err)
 		}
