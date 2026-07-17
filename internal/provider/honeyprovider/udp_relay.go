@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,10 +27,14 @@ const udpRelayIdleTimeout = 30 * time.Second
 // upstream TCP dialer. useSocat must therefore be true; SOCKS-UDP-ASSOCIATE
 // (dynamic_forward.go) is a separate, unrelated path.
 //
-// Every goroutine it spawns exits via the returned stop() (idempotent: it
-// cancels the internal ctx, closes the UDP listener, waits for the read
-// loop and every per-flow goroutine to return, then best-effort kills the
-// remote socat process).
+// Every goroutine it spawns -- the read loop, every per-flow goroutine, and
+// the goroutine that launches the remote socat relay via c.Run -- exits via
+// the returned stop() (idempotent: it cancels the internal ctx, closes the
+// UDP listener, best-effort kills the remote socat process, then waits for
+// every one of those goroutines to return). killRemote() must run before
+// wg.Wait(): it is what makes the remote socat process exit, which in turn
+// unblocks the foreground c.Run(socatCmd) HTTP call so its goroutine can
+// return.
 func (c *Client) StartUDPRelay(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int, useSocat bool) (host string, port int, stop func(), err error) {
 	if !useSocat {
 		return "", 0, nil, fmt.Errorf("honey upstream UDP relay requires socat mode (direct UDP is not supported over the proxy)")
@@ -48,6 +53,12 @@ func (c *Client) StartUDPRelay(ctx context.Context, bind string, localPort int, 
 	if remoteHost == "" {
 		return "", 0, nil, fmt.Errorf("empty remote host")
 	}
+	// remoteHost is interpolated unescaped into a shell command run on the
+	// target (socatUDPRelayCmd/socatKillCmd), so it must be validated as a
+	// plain IP literal or DNS hostname before it ever reaches c.Run.
+	if err := validateRemoteHost(remoteHost); err != nil {
+		return "", 0, nil, err
+	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(bind, strconv.Itoa(localPort)))
 	if err != nil {
@@ -64,11 +75,12 @@ func (c *Client) StartUDPRelay(ctx context.Context, bind string, localPort int, 
 	}
 	port, _ = strconv.Atoi(portStr)
 
-	relayPort, killRemote := c.startRemoteSocatUDPRelay(remoteHost, remotePort)
-	relayAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(relayPort))
-
 	runCtx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
+
+	relayPort, killRemote := c.startRemoteSocatUDPRelay(&wg, remoteHost, remotePort)
+	relayAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(relayPort))
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -78,37 +90,83 @@ func (c *Client) StartUDPRelay(ctx context.Context, bind string, localPort int, 
 	stop = sync.OnceFunc(func() {
 		cancel()
 		_ = udpLn.Close()
-		wg.Wait()
+		// killRemote before wg.Wait: it makes the remote socat process
+		// exit, which unblocks the foreground c.Run(socatCmd) HTTP call
+		// started in startRemoteSocatUDPRelay's goroutine so it can
+		// return and wg.Wait() below can complete.
 		killRemote()
+		wg.Wait()
 	})
 	return host, port, stop, nil
 }
 
+// validateRemoteHost rejects remoteHost values that are not a plain IP
+// literal or DNS hostname. remoteHost is interpolated unescaped into a
+// shell command executed on the target via c.Run (socatUDPRelayCmd /
+// socatKillCmd), so anything containing shell metacharacters must be
+// rejected here rather than reaching the remote shell.
+func validateRemoteHost(remoteHost string) error {
+	if net.ParseIP(remoteHost) != nil {
+		return nil
+	}
+	if !hostnamePattern.MatchString(remoteHost) || len(remoteHost) > 253 {
+		return fmt.Errorf("invalid remote host %q: must be an IP address or a DNS hostname (letters, digits, '.', '-' only)", remoteHost)
+	}
+	return nil
+}
+
+// hostnamePattern matches a syntactically valid DNS hostname: dot-separated
+// labels of letters, digits and hyphens, each 1-63 characters, neither
+// starting nor ending with a hyphen. It rejects any shell metacharacters
+// (spaces, ;, |, &, $, backticks, etc.), which is the property that matters
+// here since remoteHost is interpolated unescaped into a remote shell
+// command.
+var hostnamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
+
+// runner returns the command-run seam to use: runFn if the Client was
+// constructed with one set (the normal path, via Executor.Dial, and the
+// path tests use to inject a fake), else c.Run directly as a defensive
+// fallback for Clients built without it. Mirrors c.dialer() in
+// forward_proxy.go.
+func (c *Client) runner() func(cmd string) ([]byte, error) {
+	if c.runFn != nil {
+		return c.runFn
+	}
+	return c.Run
+}
+
 // startRemoteSocatUDPRelay starts a remote socat TCP<->UDP relay on the
-// target via c.Run (which the server executes over its own SSH connection
-// to the target), listening on a pseudo-random high port and forwarding to
-// remoteHost:remotePort. c.Run blocks for the lifetime of the remote
-// command, so it is started in a background goroutine; the returned kill
-// func best-effort terminates it via a follow-up c.Run(pkill) call.
+// target via c.runner() (c.runFn if set, else c.Run -- which the server
+// executes over its own SSH connection to the target), listening on a
+// pseudo-random high port and forwarding to remoteHost:remotePort. The run
+// call blocks for the lifetime of the remote command, so it is started in a
+// background goroutine tracked on wg (the same WaitGroup StartUDPRelay's
+// stop() waits on); the returned kill func best-effort terminates it via a
+// follow-up run(pkill) call, which is what makes that goroutine's run(cmd)
+// call return.
 //
 // Mirrors sshclient.startRemoteSocatUDPRelay's port-pick and socat command
 // form, adapted to the Honey proxy's synchronous exec seam (c.Run) in place
 // of a long-lived SSH session that can simply be closed to kill the child.
-func (c *Client) startRemoteSocatUDPRelay(remoteHost string, remotePort int) (relayPort int, kill func()) {
+func (c *Client) startRemoteSocatUDPRelay(wg *sync.WaitGroup, remoteHost string, remotePort int) (relayPort int, kill func()) {
 	relayPort = 20000 + int(time.Now().UnixNano()%20000)
 	cmd := socatUDPRelayCmd(relayPort, remoteHost, remotePort)
+	run := c.runner()
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		// Best-effort: runs for as long as the remote socat process is
 		// alive. Errors (e.g. socat missing, port unavailable) are not
 		// surfaced synchronously to the caller -- the first UDP flow will
 		// simply fail to dial the relay. kill() below is how callers tear
-		// this down.
-		_, _ = c.Run(cmd)
+		// this down, which is also what unblocks and retires this
+		// goroutine so StartUDPRelay's stop() can return.
+		_, _ = run(cmd)
 	}()
 
 	kill = sync.OnceFunc(func() {
-		_, _ = c.Run(socatKillCmd(relayPort))
+		_, _ = run(socatKillCmd(relayPort))
 	})
 	return relayPort, kill
 }

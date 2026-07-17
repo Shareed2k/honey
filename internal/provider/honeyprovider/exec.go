@@ -56,6 +56,9 @@ func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error
 	// Default the testable dial seam to the real upstream dialer; tests
 	// construct a *Client directly and set dialUpstreamFn to a fake.
 	c.dialUpstreamFn = c.dialUpstream
+	// Default the testable command-run seam to the real c.Run; tests
+	// construct a *Client directly and set runFn to a fake.
+	c.runFn = c.Run
 	return c, nil
 }
 
@@ -244,6 +247,12 @@ type Client struct {
 	// c.dialUpstream; tests construct a *Client directly and inject a fake
 	// here instead of standing up a real WS server/mesh.
 	dialUpstreamFn upstreamDialer
+
+	// runFn is the seam used by StartUDPRelay to run commands on the
+	// upstream target (starting/killing the remote socat relay).
+	// Executor.Dial defaults it to c.Run; tests construct a *Client directly
+	// and inject a fake here instead of making a real c.Run HTTP round trip.
+	runFn func(cmd string) ([]byte, error)
 }
 
 // doRequest sends a JSON POST request to the upstream Honey REST API.
