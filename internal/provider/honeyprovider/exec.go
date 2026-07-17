@@ -662,11 +662,6 @@ func (c *Client) RemoveRemote(path string, recursive bool) error {
 	return nil
 }
 
-// StartRemoteForward is not supported for upstream Honey proxying yet.
-func (c *Client) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (string, func(), error) {
-	return "", nil, fmt.Errorf("StartRemoteForward is not supported for upstream Honey proxying yet")
-}
-
 // StartTunForward is not supported for upstream Honey proxying yet.
 func (c *Client) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (string, func(), error) {
 	return "", nil, fmt.Errorf("StartTunForward is not supported for upstream Honey proxying yet")
