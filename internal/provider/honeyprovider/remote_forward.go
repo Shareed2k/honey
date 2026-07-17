@@ -30,6 +30,13 @@ const (
 	rfClientHeaderLen = 5
 )
 
+// localDialTimeout bounds the local-target dial in handleOpen so a hung or
+// slow-to-connect non-loopback localHost cannot stall the demux reader loop
+// (which dials synchronously) indefinitely; the dial fails fast instead of
+// being bounded only by stop(). A package var so tests can override it
+// (matches upstreamHandshakeTimeout in forward_proxy.go).
+var localDialTimeout = 10 * time.Second
+
 // StartRemoteForward opens a reverse (remote) port-forward via the upstream
 // Honey proxy: it asks the server to listen on remoteBind:remoteListen on the
 // target side and pipes every connection accepted there to localHost:localTarget
@@ -204,8 +211,12 @@ func (m *rfClientMux) closeAll() {
 // handleOpen dials the local target for a newly announced remote conn and starts
 // pumping its reply bytes back to the server. Dialing synchronously in readLoop
 // guarantees the conn is registered before any data frame for it is processed.
+// The dial is bounded by localDialTimeout so a hung/slow local target fails
+// fast instead of stalling the demux reader loop until stop().
 func (m *rfClientMux) handleOpen(id uint32) {
-	local, err := (&net.Dialer{}).DialContext(m.ctx, "tcp", m.target)
+	dialCtx, cancel := context.WithTimeout(m.ctx, localDialTimeout)
+	local, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", m.target)
+	cancel()
 	if err != nil {
 		_ = m.writeFrame(id, rfFrameClientClose, nil)
 		return

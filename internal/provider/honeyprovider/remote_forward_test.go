@@ -109,6 +109,88 @@ func TestStartRemoteForward(t *testing.T) {
 	stop()
 }
 
+// TestStartRemoteForward_HandleOpenDialTimeout verifies that handleOpen's
+// local dial is bounded by localDialTimeout instead of hanging until stop():
+// dialing a blackhole target (192.0.2.1, TEST-NET-1 per RFC 5737 — unroutable,
+// so the SYN goes unanswered and DialContext blocks on it rather than being
+// refused immediately) must still produce a close frame within the timeout
+// window, and the demux reader loop must keep processing subsequent open
+// frames afterward rather than getting stuck.
+func TestStartRemoteForward_HandleOpenDialTimeout(t *testing.T) {
+	defer goleak.VerifyNone(t,
+		goleak.IgnoreTopFunction("github.com/shareed2k/honey/internal/engine.(*GlobalTunnelPool).sweepLoop"))
+
+	orig := localDialTimeout
+	localDialTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { localDialTimeout = orig })
+
+	gotClose := make(chan uint32, 4)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/ws/remote-forward", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		var hello map[string]any
+		if err := conn.ReadJSON(&hello); err != nil {
+			return
+		}
+		if err := conn.WriteJSON(map[string]string{"status": "listening", "addr": "1.2.3.4:2222"}); err != nil {
+			return
+		}
+
+		// Announce two "remote" connections back to back; both dial the same
+		// blackhole local target (set via StartRemoteForward's localHost
+		// below), so each handleOpen call should time out and self-close
+		// rather than hang — proving the demux stays responsive across
+		// successive opens instead of wedging on the first one.
+		writeRFFrameSrv(t, conn, 1, rfFrameClientOpen, nil)
+		writeRFFrameSrv(t, conn, 2, rfFrameClientOpen, nil)
+
+		for {
+			mt, p, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if mt != websocket.BinaryMessage || len(p) < rfClientHeaderLen {
+				continue
+			}
+			if p[4] == rfFrameClientClose {
+				gotClose <- binary.BigEndian.Uint32(p[0:4])
+			}
+		}
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := &Client{url: ts.URL, user: "ubuntu"}
+	start := time.Now()
+	remAddr, stop, err := c.StartRemoteForward(context.Background(), "0.0.0.0", 2222, "192.0.2.1", 81)
+	require.NoError(t, err)
+	require.NotNil(t, stop)
+	defer stop()
+	require.Equal(t, "1.2.3.4:2222", remAddr)
+
+	seen := map[uint32]bool{}
+	deadline := time.After(3 * time.Second)
+	for len(seen) < 2 {
+		select {
+		case id := <-gotClose:
+			seen[id] = true
+		case <-deadline:
+			t.Fatalf("timed out waiting for close frames from timed-out dials; got %v", seen)
+		}
+	}
+	require.Less(t, time.Since(start), 3*time.Second,
+		"hung local dials should be bounded by localDialTimeout, not hang until stop()")
+
+	stop()
+}
+
 // ensure the URL scheme rewrite is exercised (http -> ws) without a live server.
 func TestStartRemoteForward_DialError(t *testing.T) {
 	defer goleak.VerifyNone(t,
