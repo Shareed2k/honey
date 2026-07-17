@@ -32,12 +32,21 @@ import (
 //   - returns nil on WS TextMessage {"closed":true}, or an error on
 //     {"error":"..."} / an unexpected WS read error.
 //
-// Every goroutine it starts exits when the session ends: the resize pump and
-// the stdin pump observe ctx cancellation (the stdin pump can only notice
-// this between reads of in, same as any blocking io.Reader; production
-// callers pass os.Stdin, so this mirrors internal/engine's ssh_dial.go/
-// sshclient patterns). The reader goroutine's exit is joined synchronously
-// via readDone before runInteractiveWS returns.
+// Every goroutine it starts exits when the session ends, but they are not
+// all joined before returning. The resize pump observes ctx cancellation
+// promptly (it only ever blocks in a select over ctx.Done()/the resize
+// channel) and is joined via wg before return. The reader goroutine's exit
+// is joined synchronously via readDone before runInteractiveWS returns. The
+// stdin pump is fire-and-forget and deliberately NOT joined: it can only
+// notice ctx cancellation between reads of in, and production callers pass
+// os.Stdin, whose blocked Read cannot be interrupted by ctx cancellation or
+// by closing the WS conn -- only the next keystroke unblocks it. Waiting for
+// it here would hang RunInteractive after every clean session end (server
+// sends {"closed":true} when the user types "exit") until the user pressed
+// one more key. This matches Client.RunWithStreams (exec.go), which also
+// never joins its stdin-pump goroutine: on session end it leaves that
+// goroutine to exit on its own once its next write fails, harmless for the
+// remaining process lifetime.
 func runInteractiveWS(
 	ctx context.Context,
 	baseURL string,
@@ -76,10 +85,14 @@ func runInteractiveWS(
 	var wg sync.WaitGroup
 
 	// stdin pump: in -> WS BinaryMessage. Exits on a read error/EOF from in,
-	// or (between reads) when ctx is cancelled.
-	wg.Add(1)
+	// or (between reads) when ctx is cancelled. Fire-and-forget: NOT added to
+	// wg, and runInteractiveWS does not wait for it (see the doc comment
+	// above) so a blocked in.Read (os.Stdin in production) never delays the
+	// prompt return on session end. On return, conn is closed (defer above)
+	// and ctx is cancelled, so once this goroutine does get its next chance
+	// to run -- the next keystroke unblocks in.Read in production, or ctx.Done
+	// fires between reads -- its writeMessage/ctx check fails and it exits.
 	go func() {
-		defer wg.Done()
 		buf := make([]byte, 32*1024)
 		for {
 			select {

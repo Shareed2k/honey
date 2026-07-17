@@ -118,9 +118,14 @@ func TestRunInteractiveWS(t *testing.T) {
 		t.Fatal("resize message did not reach server")
 	}
 
-	// A sentinel payload makes the fake server send {"closed":true}; closing
-	// the input pipe afterward lets the stdin-pump goroutine observe EOF so
-	// runInteractiveWS can return cleanly with no goroutine left behind.
+	// A sentinel payload makes the fake server send {"closed":true}, which the
+	// reader goroutine turns into readDone <- nil; runInteractiveWS returns
+	// promptly on that signal alone (it does not wait on the stdin-pump
+	// goroutine -- see runInteractiveWS's doc comment). Closing the input
+	// pipe writer afterward is for this test's own hygiene, not for
+	// runInteractiveWS's return: it lets the stdin-pump goroutine observe EOF
+	// and exit instead of sitting blocked in inR.Read forever, which would
+	// otherwise trip the package's goleak.VerifyTestMain at process exit.
 	go func() {
 		_, _ = inW.Write(sentinel)
 		_ = inW.Close()
