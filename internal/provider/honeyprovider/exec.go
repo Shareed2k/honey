@@ -648,11 +648,6 @@ func (c *Client) RemoveRemote(path string, recursive bool) error {
 	return nil
 }
 
-// StartLocalForward is not supported for upstream Honey proxying yet.
-func (c *Client) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (string, int, func(), error) {
-	return "", 0, nil, fmt.Errorf("StartLocalForward is not supported for upstream Honey proxying yet")
-}
-
 // StartRemoteForward is not supported for upstream Honey proxying yet.
 func (c *Client) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (string, func(), error) {
 	return "", nil, fmt.Errorf("StartRemoteForward is not supported for upstream Honey proxying yet")
