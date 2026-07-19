@@ -33,6 +33,18 @@ func DialDockerCheck(user string, r hosts.Record, reg hostexec.Registry) error {
 
 // RunDockerInteractiveWithRecorder ...
 func RunDockerInteractiveWithRecorder(user string, r hosts.Record, recorder *SessionRecorder, reg hostexec.Registry) error {
+	// A record proxied through a honey upstream backend runs on the upstream
+	// server: delegate to the honeyprovider Executor's interactive proxy, which
+	// forwards the record over /ws/ssh so the server runs docker exec. Without
+	// this, reg.ForRecord returns the honeyprovider client and the
+	// *DockerNativeClient assertion below fails with "unexpected client type
+	// *honeyprovider.Client".
+	if reg != nil && r.Meta["honey_upstream_backend"] != "" {
+		if ex := reg.ForRecord(r); ex != nil {
+			return ex.RunInteractive(user, r)
+		}
+	}
+
 	client, err := reg.ForRecord(r).Dial(user, r)
 	if err != nil {
 		if recorder != nil {

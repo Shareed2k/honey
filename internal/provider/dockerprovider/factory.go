@@ -41,6 +41,10 @@ type dockerFactory struct {
 	cfg         ConfigProvider
 }
 
+// dockerFactory must satisfy ExecutorProvider (HandlesRecord + ExecutorFor) or
+// ResolveExecutor silently skips it and docker records fall through to SSH.
+var _ searchrun.ExecutorProvider = dockerFactory{}
+
 func (f dockerFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
 	locals := f.cfg.LocalBackends()
 	out := make([]hosts.Backend, 0, len(f.cfg.DockerBackends()))
@@ -96,6 +100,20 @@ func (f dockerFactory) BackendSlicePtr() any {
 func (f dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (f dockerFactory) ProviderName() string { return "docker" }
+
+// HandlesRecord gates ExecutorFor. A docker container/swarm-task record is
+// handled here (local Engine API), EXCEPT when it is proxied through a honey
+// upstream backend (Meta[honey_upstream_backend] set) -- those are handled by
+// honeyprovider so the terminal/exec runs on the upstream server. Without this
+// method dockerFactory does not satisfy searchrun.ExecutorProvider and every
+// docker record falls through to the SSH fallback ("no host ip for ssh").
+func (f dockerFactory) HandlesRecord(r hosts.Record) bool {
+	if strings.TrimSpace(r.Meta["honey_upstream_backend"]) != "" {
+		return false
+	}
+	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
+	return k == "container" || k == "swarm_task"
+}
 
 func (f dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor {
 	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
