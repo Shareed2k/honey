@@ -20,7 +20,11 @@ func TestDockerFactory_HandlesRecord(t *testing.T) {
 	}{
 		{"container", hosts.Record{Provider: "docker", Meta: map[string]string{"kind": "container", "container_id": "abc"}}, true},
 		{"swarm_task", hosts.Record{Provider: "docker", Meta: map[string]string{"kind": "swarm_task"}}, true},
-		{"upstream proxied excluded", hosts.Record{Provider: "docker", Meta: map[string]string{"kind": "container", "honey_upstream_backend": "remote-builder"}}, false},
+		// The upstream-routing tag does NOT change docker's claim: honeyprovider is
+		// ordered first and (when it has the backend) claims the record for proxying
+		// before docker is consulted; on the upstream server honey declines and
+		// docker must resolve the container locally, so it claims by kind here too.
+		{"upstream tag still claimed by kind", hosts.Record{Provider: "docker", Meta: map[string]string{"kind": "container", "honey_upstream_backend": "remote-builder"}}, true},
 		{"non-container kind", hosts.Record{Provider: "docker", Meta: map[string]string{"kind": "image"}}, false},
 		{"no kind", hosts.Record{Provider: "docker", Meta: map[string]string{}}, false},
 	}

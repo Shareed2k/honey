@@ -86,15 +86,14 @@ func (f k8sFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (f k8sFactory) ProviderName() string { return "k8s" }
 
-// HandlesRecord gates ExecutorFor. A k8s pod record is handled here, EXCEPT
-// when it is proxied through a honey upstream backend
-// (Meta[honey_upstream_backend] set) -- those are handled by honeyprovider so
-// exec runs on the upstream server. Without this method k8sFactory does not
-// satisfy searchrun.ExecutorProvider and pod records fall through to SSH.
+// HandlesRecord gates ExecutorFor: this factory serves k8s pod records. It claims
+// them regardless of the client-side honey_upstream_backend routing tag --
+// honeyprovider is ordered first (see provider/all) and claims the record for
+// proxying when a matching honey backend exists on this node; on the upstream
+// server honey declines and this factory resolves the pod locally. Without this
+// method k8sFactory would not satisfy searchrun.ExecutorProvider and pod records
+// would fall through to the SSH fallback.
 func (f k8sFactory) HandlesRecord(r hosts.Record) bool {
-	if strings.TrimSpace(r.Meta["honey_upstream_backend"]) != "" {
-		return false
-	}
 	return r.Meta["kind"] == "pod"
 }
 

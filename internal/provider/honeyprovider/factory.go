@@ -150,8 +150,24 @@ func (f honeyFactory) BackendSlicePtr() any {
 	return f.cfg.HoneyBackendSlicePtr()
 }
 
+// HandlesRecord claims a record only when THIS node can actually proxy it: the
+// record carries an upstream-routing tag AND a honey backend with that name is
+// configured here. On the client (which has the backend) this claims the record
+// and it is proxied; on the upstream server (no such backend) it declines, so the
+// record falls through to the native factory (docker/k8s) and is executed locally.
+// (Claiming merely on the tag being present would dead-end the record at the SSH
+// fallback on the server, since ExecutorFor would then return nil.)
 func (f honeyFactory) HandlesRecord(r hosts.Record) bool {
-	return r.Meta["honey_upstream_backend"] != ""
+	name := r.Meta["honey_upstream_backend"]
+	if name == "" {
+		return false
+	}
+	for _, b := range f.cfg.HoneyBackends() {
+		if b.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (f honeyFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {

@@ -101,16 +101,16 @@ func (f dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (f dockerFactory) ProviderName() string { return "docker" }
 
-// HandlesRecord gates ExecutorFor. A docker container/swarm-task record is
-// handled here (local Engine API), EXCEPT when it is proxied through a honey
-// upstream backend (Meta[honey_upstream_backend] set) -- those are handled by
-// honeyprovider so the terminal/exec runs on the upstream server. Without this
-// method dockerFactory does not satisfy searchrun.ExecutorProvider and every
-// docker record falls through to the SSH fallback ("no host ip for ssh").
+// HandlesRecord gates ExecutorFor: this factory serves docker container and
+// swarm-task records via the local Engine API. It claims such records regardless
+// of the client-side honey_upstream_backend routing tag -- honeyprovider is
+// ordered before this factory (see provider/all) and, when a matching honey
+// backend exists on this node, claims the record first for proxying; on the
+// upstream server (no such backend) honey declines and this factory resolves the
+// record locally. Without this method dockerFactory would not satisfy
+// searchrun.ExecutorProvider and every docker record would fall through to the
+// SSH fallback ("no host ip for ssh").
 func (f dockerFactory) HandlesRecord(r hosts.Record) bool {
-	if strings.TrimSpace(r.Meta["honey_upstream_backend"]) != "" {
-		return false
-	}
 	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
 	return k == "container" || k == "swarm_task"
 }

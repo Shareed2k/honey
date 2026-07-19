@@ -19,7 +19,10 @@ func TestK8sFactory_HandlesRecord(t *testing.T) {
 		want bool
 	}{
 		{"pod", hosts.Record{Provider: "k8s", Meta: map[string]string{"kind": "pod", "namespace": "default", "pod_name": "x"}}, true},
-		{"upstream proxied excluded", hosts.Record{Provider: "k8s", Meta: map[string]string{"kind": "pod", "honey_upstream_backend": "remote-builder"}}, false},
+		// Upstream-tagged pod: honey (ordered first, when it has the backend) claims
+		// it for proxying; on the upstream server honey declines and k8s resolves the
+		// pod locally, so k8s claims by kind regardless of the tag.
+		{"upstream tag still claimed by kind", hosts.Record{Provider: "k8s", Meta: map[string]string{"kind": "pod", "honey_upstream_backend": "remote-builder"}}, true},
 		{"non-pod kind", hosts.Record{Provider: "k8s", Meta: map[string]string{"kind": "node"}}, false},
 	}
 	for _, tc := range cases {
