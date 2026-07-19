@@ -36,6 +36,21 @@ func TruenasUpstreamDialer() truenasprovider.UpstreamDialer {
 // RunTerminalInteractive opens an interactive session (SSH, K8s, Docker, TrueNAS API shell, or Proxmox) on os.Stdin/Stdout.
 // RunTerminalInteractive ...
 func RunTerminalInteractive(user string, r hosts.Record, console string, reg hostexec.Registry) error {
+	// A record proxied through a honey upstream backend (mesh/direct) runs on
+	// the upstream server: the honey search tags it with honey_upstream_backend,
+	// and the registry resolves it to the honeyprovider Executor whose
+	// RunInteractive forwards the record over /ws/ssh so the server dispatches
+	// to the right native shell (docker exec / k8s exec / ssh). Delegate via the
+	// hostexec.Executor interface (no honeyprovider import -> avoids the
+	// engine<->honeyprovider test import cycle). Must precede the kind dispatch
+	// below, which assumes a LOCAL native client and fails with "unexpected
+	// client type *honeyprovider.Client" for a proxied docker/k8s record.
+	if reg != nil && r.Meta["honey_upstream_backend"] != "" {
+		if ex := reg.ForRecord(r); ex != nil {
+			return ex.RunInteractive(user, r)
+		}
+	}
+
 	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
 		return RunK8sInteractiveWithRecorder(user, r, nil)
 	}
