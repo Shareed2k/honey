@@ -184,10 +184,40 @@ func runInteractiveWS(
 	return runErr
 }
 
+// RunInteractiveStreams proxies an interactive terminal session for r through
+// the upstream Honey server's /ws/ssh endpoint, carrying the supplied
+// stdin/stdout and resize events over WebSocket frames. It is the
+// stream-oriented core shared by the CLI RunInteractive (which adds a local PTY
+// in raw mode + SIGWINCH forwarding on os.Stdin/os.Stdout) and the web terminal
+// (which supplies the browser's stdin/stdout pipes and WS-driven resizes). The
+// upstream server receives the full record and dispatches to the right native
+// terminal (docker exec / k8s exec / ssh) on its side. resize carries
+// [cols, rows] pairs. Cancel ctx (or let the server close the session) to
+// unwind.
+func (e *Executor) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
+	hello := map[string]any{
+		"ssh_user": user,
+		"record":   r,
+		"cols":     cols,
+		"rows":     rows,
+	}
+
+	tlsCfg, err := clientTLSConfig(e.Insecure, e.MTLS, e.ServerCA)
+	if err != nil {
+		return err
+	}
+	token := e.Token
+	if e.MTLS {
+		token = ""
+	}
+
+	return runInteractiveWS(ctx, e.URL, hello, stdin, stdout, token, tlsCfg, meshDialContext(e.Mesh, e.MeshAddr), resize)
+}
+
 // RunInteractive opens an interactive terminal session against r by proxying
 // through the upstream Honey server's /ws/ssh endpoint: a client-side PTY
 // (raw mode, initial size, SIGWINCH-driven resize forwarding) with
-// stdin/stdout carried as WebSocket frames over runInteractiveWS.
+// stdin/stdout carried as WebSocket frames over RunInteractiveStreams.
 func (e *Executor) RunInteractive(user string, r hosts.Record) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
@@ -205,22 +235,6 @@ func (e *Executor) RunInteractive(user string, r hosts.Record) error {
 		cols, rows = 80, 24
 	}
 
-	hello := map[string]any{
-		"ssh_user": user,
-		"record":   r,
-		"cols":     cols,
-		"rows":     rows,
-	}
-
-	tlsCfg, err := clientTLSConfig(e.Insecure, e.MTLS, e.ServerCA)
-	if err != nil {
-		return err
-	}
-	token := e.Token
-	if e.MTLS {
-		token = ""
-	}
-
 	resizeCh := make(chan [2]int, 1)
 	stopResize := sshclient.StartTerminalResize(fd, func(newCols, newRows int) {
 		select {
@@ -230,5 +244,5 @@ func (e *Executor) RunInteractive(user string, r hosts.Record) error {
 	})
 	defer stopResize()
 
-	return runInteractiveWS(context.Background(), e.URL, hello, os.Stdin, os.Stdout, token, tlsCfg, meshDialContext(e.Mesh, e.MeshAddr), resizeCh)
+	return e.RunInteractiveStreams(context.Background(), user, r, os.Stdin, os.Stdout, cols, rows, resizeCh)
 }

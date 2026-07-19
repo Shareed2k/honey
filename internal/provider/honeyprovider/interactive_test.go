@@ -140,3 +140,87 @@ func TestRunInteractiveWS(t *testing.T) {
 
 	_ = outR.Close()
 }
+
+// TestRunInteractiveStreams drives the exported Executor.RunInteractiveStreams
+// (the entry the web terminal uses for upstream-proxied records) against an
+// httptest /ws/ssh server: it verifies the Executor builds the hello with the
+// record + given size, round-trips stdin->stdout, and returns cleanly when the
+// server closes the session on a sentinel.
+func TestRunInteractiveStreams(t *testing.T) {
+	sentinel := []byte("__CLOSE_SESSION__")
+	helloReceived := make(chan map[string]any, 1)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws/ssh", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, helloRaw, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var hello map[string]any
+		if err := json.Unmarshal(helloRaw, &hello); err != nil {
+			return
+		}
+		helloReceived <- hello
+		for {
+			mt, p, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if mt == websocket.BinaryMessage {
+				if bytes.Equal(p, sentinel) {
+					_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true}`))
+					return
+				}
+				_ = conn.WriteMessage(websocket.BinaryMessage, p)
+			}
+		}
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	resizeCh := make(chan [2]int, 1)
+
+	e := &Executor{URL: ts.URL}
+	rec := hosts.Record{Name: "web-host", Meta: map[string]string{"kind": "docker", "honey_upstream_backend": "dokploy"}}
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- e.RunInteractiveStreams(context.Background(), "ubuntu", rec, inR, outW, 90, 30, resizeCh)
+	}()
+
+	select {
+	case h := <-helloReceived:
+		require.Equal(t, "ubuntu", h["ssh_user"])
+		require.EqualValues(t, 90, h["cols"])
+		require.EqualValues(t, 30, h["rows"])
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not receive hello")
+	}
+
+	payload := []byte("web stdin bytes")
+	go func() { _, _ = inW.Write(payload) }()
+	got := make([]byte, len(payload))
+	_, err := io.ReadFull(outR, got)
+	require.NoError(t, err)
+	require.Equal(t, payload, got)
+
+	go func() {
+		_, _ = inW.Write(sentinel)
+		_ = inW.Close()
+	}()
+	select {
+	case err := <-runDone:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunInteractiveStreams did not return after session close")
+	}
+	_ = outR.Close()
+}
