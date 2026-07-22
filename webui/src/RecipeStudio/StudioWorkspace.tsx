@@ -10,14 +10,15 @@ import { StepEditorPanel } from './workspace/panels/StepEditorPanel';
 import { ToolboxPanel } from './workspace/panels/ToolboxPanel';
 import { RunPanel } from './workspace/panels/RunPanel';
 import { RecordsPanel } from './workspace/panels/RecordsPanel';
+import { TerminalPanel } from './workspace/panels/TerminalPanel';
 import { ActivityBar } from './workspace/ActivityBar';
 import { attachDockviewSync } from './workspace/useDockviewSync';
 import { openGraph } from './workspace/registry';
 import { EditorHeaderActions } from './workspace/EditorHeaderActions';
 import { useWorkspaceStore } from './workspace/store';
 import { apiGet } from '../api/core';
+import type { HostRecord } from '../HostPicker';
 
-// Terminal panel is registered once it lands (Task 12).
 const components = {
   graph: GraphPanel,
   raweditor: RawEditorPanel,
@@ -25,6 +26,7 @@ const components = {
   toolbox: ToolboxPanel,
   run: RunPanel,
   records: RecordsPanel,
+  terminal: TerminalPanel,
 };
 
 interface RecipeStoreEntry {
@@ -58,9 +60,8 @@ export default function StudioWorkspace() {
     setApi(a);
     // First-run tool panel arrangement — toolbox on the left (Records tabbed
     // alongside it), step editor to the right, run panel docked below the
-    // step editor. `graph`/`raweditor` panels open on demand (New/Open); the
-    // Terminal panel joins this layout once its component is registered
-    // (Task 12).
+    // step editor. `graph`/`raweditor`/`terminal` panels open on demand
+    // (New/Open, Terminal action).
     a.addPanel({ id: 'toolbox', component: 'toolbox', title: 'Toolbox' });
     a.addPanel({
       id: 'records',
@@ -76,9 +77,24 @@ export default function StudioWorkspace() {
     });
     a.addPanel({ id: 'run', component: 'run', title: 'Run', position: { direction: 'below' } });
     disposeRef.current = attachDockviewSync(a, useWorkspaceStore.getState());
+
+    // Wire the store's `openTerminal` slot so the Records panel's Terminal
+    // action (decoupled from this module — see RecordsPanel.tsx) can spawn a
+    // Terminal panel here. Each call opens a new panel keyed by a fresh
+    // uuid, so multiple sessions can be open concurrently.
+    useWorkspaceStore.getState().setOpenTerminal((rec: HostRecord) => {
+      const id = `term:${crypto.randomUUID()}`;
+      a.addPanel({ id, component: 'terminal', params: { record: rec, pve: 'serial' }, title: rec.name ?? 'terminal' });
+    });
   };
 
-  useEffect(() => () => disposeRef.current?.(), []);
+  useEffect(
+    () => () => {
+      disposeRef.current?.();
+      useWorkspaceStore.getState().setOpenTerminal(null);
+    },
+    [],
+  );
 
   const handleNew = () => {
     const id = newDoc();
