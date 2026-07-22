@@ -59,6 +59,11 @@ describe('WorkspaceStore lifecycle', () => {
     expect(useWorkspaceStore.getState().docs['deploy.cue'].dirty).toBe(true);
   });
 
+  it('setSchema stores the schema as-is', () => {
+    useWorkspaceStore.getState().setSchema({ ok: 1 });
+    expect(useWorkspaceStore.getState().schema).toEqual({ ok: 1 });
+  });
+
   it('newDoc creates an untitled doc and returns its id', () => {
     const id = useWorkspaceStore.getState().newDoc();
     expect(id).toMatch(/^untitled-/);
