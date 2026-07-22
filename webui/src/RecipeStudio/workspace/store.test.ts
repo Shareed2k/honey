@@ -68,3 +68,31 @@ describe('WorkspaceStore lifecycle', () => {
     expect(useWorkspaceStore.getState().active).toBeNull();
   });
 });
+
+describe('WorkspaceStore per-doc actions', () => {
+  beforeEach(async () => {
+    useWorkspaceStore.setState({ docs: {}, active: null });
+    await useWorkspaceStore.getState().createDoc('deploy.cue');
+  });
+
+  it('mutates only the targeted doc', async () => {
+    await useWorkspaceStore.getState().createDoc('other.cue');
+    useWorkspaceStore.getState().setSelectedNode('deploy.cue', 's1');
+    expect(useWorkspaceStore.getState().docs['deploy.cue'].selectedNodeId).toBe('s1');
+    expect(useWorkspaceStore.getState().docs['other.cue'].selectedNodeId).toBeNull();
+  });
+
+  it('setNodeRunStatus sets status per node id', () => {
+    useWorkspaceStore.getState().setNodeRunStatus('deploy.cue', ['s1'], 'running');
+    expect(useWorkspaceStore.getState().docs['deploy.cue'].runStatus.s1).toBe('running');
+  });
+
+  it('setStepData marks the doc dirty', () => {
+    useWorkspaceStore.getState().setStepData('deploy.cue', 's1', { kind: 'run', command: 'x' });
+    expect(useWorkspaceStore.getState().docs['deploy.cue'].dirty).toBe(true);
+  });
+
+  it('actions on an unknown id are a no-op (no throw)', () => {
+    expect(() => useWorkspaceStore.getState().setSelectedNode('nope', 's1')).not.toThrow();
+  });
+});

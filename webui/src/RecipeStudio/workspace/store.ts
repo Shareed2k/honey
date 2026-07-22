@@ -1,7 +1,26 @@
 import { create } from 'zustand';
-import type { DocState } from './types';
+import type { DocState, RunStatus } from './types';
 import { parseDiskRecipe } from '../../api/recipes';
-import { buildFlowFromRecipe, applyWaveLayout, recipeNameFromFilename } from '../useRecipeGraph';
+import {
+  buildFlowFromRecipe,
+  applyWaveLayout,
+  recipeNameFromFilename,
+  createStepDraft,
+  uniqueStepID,
+} from '../useRecipeGraph';
+
+// helper: apply a patch to one doc; no-op if the id is unknown.
+function patchDoc(
+  set: (fn: (s: WorkspaceState) => Partial<WorkspaceState>) => void,
+  id: string,
+  patch: (d: DocState) => DocState,
+) {
+  set((s) => {
+    const doc = s.docs[id];
+    if (!doc) return {};
+    return { docs: { ...s.docs, [id]: patch(doc) } };
+  });
+}
 
 function blankDoc(recipeId: string, name: string): DocState {
   return {
@@ -26,6 +45,16 @@ interface WorkspaceState {
   newDoc(): string;
   freeDoc(id: string): void;
   setActive(id: string | null): void;
+
+  setSelectedNode(id: string, nodeId: string | null): void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  setStepData(id: string, nodeId: string, value: any): void;
+  addStep(id: string, kind: string): void;
+  setRawContent(id: string, text: string): void;
+  setRawMode(id: string, on: boolean): void;
+  setNodeRunStatus(id: string, nodeIds: string[], status: RunStatus): void;
+  markDirty(id: string): void;
+  resetDoc(id: string): void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -70,5 +99,53 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setActive(id) {
     set({ active: id });
+  },
+
+  setSelectedNode(id, nodeId) {
+    patchDoc(set, id, (d) => ({ ...d, selectedNodeId: nodeId }));
+  },
+  setStepData(id, nodeId, value) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      stepData: { ...d.stepData, [nodeId]: value },
+      dirty: true,
+    }));
+  },
+  addStep(id, kind) {
+    patchDoc(set, id, (d) => {
+      const used = new Set(d.nodes.map((n) => n.id));
+      const newId = uniqueStepID(kind, used);
+      const draft = createStepDraft(kind, newId);
+      return {
+        ...d,
+        nodes: applyWaveLayout([
+          ...d.nodes,
+          { id: newId, type: 'step', position: { x: 0, y: 0 }, data: { label: newId, kind } },
+        ]),
+        stepData: { ...d.stepData, [newId]: draft },
+        dirty: true,
+      };
+    });
+  },
+  setRawContent(id, text) {
+    patchDoc(set, id, (d) => ({ ...d, rawContent: text, dirty: true }));
+  },
+  setRawMode(id, on) {
+    patchDoc(set, id, (d) => ({ ...d, rawMode: on }));
+  },
+  setNodeRunStatus(id, nodeIds, status) {
+    patchDoc(set, id, (d) => {
+      const runStatus = { ...d.runStatus };
+      for (const nid of nodeIds) runStatus[nid] = status;
+      return { ...d, runStatus };
+    });
+  },
+  markDirty(id) {
+    patchDoc(set, id, (d) => ({ ...d, dirty: true }));
+  },
+  resetDoc(id) {
+    patchDoc(set, id, (d) => ({
+      ...blankDoc(d.recipeId, d.name),
+    }));
   },
 }));
