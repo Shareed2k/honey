@@ -1,13 +1,21 @@
 import { create } from 'zustand';
+import { message } from 'antd';
 import type { DocState, RunStatus } from './types';
-import { parseDiskRecipe } from '../../api/recipes';
+import { parseDiskRecipe, syncRecipeAST } from '../../api/recipes';
 import {
   buildFlowFromRecipe,
+  buildRecipeFromFlow,
+  computeWavesFromEdges,
   applyWaveLayout,
   recipeNameFromFilename,
   createStepDraft,
   uniqueStepID,
 } from '../useRecipeGraph';
+
+// Shape produced by buildFlowFromRecipe's `nodes` (typed `any[]` there since it
+// spans several call sites) — named here so `.map` over it keeps `id`/`position`
+// as known properties instead of losing them to index-signature spread erasure.
+type FlowNode = { id: string; position: { x: number; y: number }; data?: Record<string, unknown> };
 
 // helper: apply a patch to one doc; no-op if the id is unknown.
 function patchDoc(
@@ -55,6 +63,9 @@ interface WorkspaceState {
   setNodeRunStatus(id: string, nodeIds: string[], status: RunStatus): void;
   markDirty(id: string): void;
   resetDoc(id: string): void;
+
+  switchToRaw(id: string): Promise<void>;
+  switchToVisual(id: string): void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -147,5 +158,55 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     patchDoc(set, id, (d) => {
       return blankDoc(d.recipeId, d.name);
     });
+  },
+
+  async switchToRaw(id) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    const base = buildRecipeFromFlow({
+      name: recipeNameFromFilename(doc.recipeId),
+      nodes: doc.nodes,
+      edges: doc.edges,
+      stepData: doc.stepData,
+    });
+    const visualJSON = base as unknown as Record<string, unknown>;
+    if (doc.recipeDefaults && Object.keys(doc.recipeDefaults as object).length > 0) {
+      visualJSON.defaults = doc.recipeDefaults;
+    }
+    let newRaw: string;
+    if (doc.originalCue) {
+      try {
+        newRaw = await syncRecipeAST(doc.originalCue, visualJSON);
+      } catch {
+        newRaw = JSON.stringify(visualJSON, null, 2);
+      }
+    } else {
+      newRaw = JSON.stringify(visualJSON, null, 2);
+    }
+    patchDoc(set, id, (d) => ({ ...d, rawContent: newRaw, rawMode: true, selectedNodeId: null }));
+  },
+
+  switchToVisual(id) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    try {
+      const parsed = JSON.parse(doc.rawContent);
+      const { nodes, edges, stepData } = buildFlowFromRecipe(parsed);
+      const waveByNode = computeWavesFromEdges(nodes, edges);
+      const withWave = (nodes as FlowNode[]).map((n) => ({
+        ...n,
+        data: { ...(n.data ?? {}), wave: waveByNode[n.id] ?? 1 },
+      }));
+      patchDoc(set, id, (d) => ({
+        ...d,
+        nodes: applyWaveLayout(withWave),
+        edges,
+        stepData,
+        recipeDefaults: parsed.defaults ?? {},
+        rawMode: false,
+      }));
+    } catch {
+      message.error('Invalid JSON — fix errors before switching to visual mode');
+    }
   },
 }));

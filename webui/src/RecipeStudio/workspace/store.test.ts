@@ -10,6 +10,11 @@ vi.mock('../../api/recipes', () => ({
     defaults: { x: 1 },
     steps: [{ id: 's1', command: 'echo hi' }],
   })),
+  // Only exercised when a doc has a non-empty originalCue; the graph/raw
+  // toggle tests below use blank docs (originalCue: '') so this is never
+  // actually invoked, but store.ts imports the name so it must exist here.
+  syncRecipeAST: vi.fn(async (_originalCue: string, recipeContent: Record<string, unknown>) =>
+    JSON.stringify(recipeContent, null, 2)),
 }));
 vi.mock('../useRecipeGraph', async (orig) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,6 +31,7 @@ vi.mock('../useRecipeGraph', async (orig) => {
   };
 });
 
+import { message } from 'antd';
 import { useWorkspaceStore } from './store';
 
 describe('WorkspaceStore lifecycle', () => {
@@ -144,5 +150,66 @@ describe('WorkspaceStore per-doc actions', () => {
     expect(reset.selectedNodeId).toBeNull();
     expect(reset.dirty).toBe(false);
     expect(reset.nodes).toHaveLength(0);
+  });
+});
+
+describe('graph/raw toggle', () => {
+  beforeEach(async () => {
+    useWorkspaceStore.setState({ docs: {}, active: null });
+    await useWorkspaceStore.getState().createDoc('deploy.cue');
+  });
+
+  it('switchToRaw sets rawMode=true and populates a non-empty rawContent', async () => {
+    useWorkspaceStore.getState().setSelectedNode('deploy.cue', 's1');
+
+    await useWorkspaceStore.getState().switchToRaw('deploy.cue');
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.rawMode).toBe(true);
+    expect(typeof doc.rawContent).toBe('string');
+    expect(doc.rawContent.length).toBeGreaterThan(0);
+    expect(doc.selectedNodeId).toBeNull();
+  });
+
+  it('switchToVisual with valid JSON rebuilds the graph', () => {
+    // Matches what buildFlowFromRecipe (useRecipeGraph.ts ~line 238) reads: a
+    // top-level `steps` ARRAY (it does `(recipeJson.steps || []).forEach(...)`,
+    // which would throw on a keyed object), each step contributing an id
+    // (falls back to `step_<n>` when absent) and a kind detected from
+    // preferredKindOrder (falls back to 'command' when no known kind key is
+    // present, as here) — `defaults` is read directly as `parsed.defaults`.
+    const recipeJSON = JSON.stringify({
+      name: 'x',
+      type: 'graph',
+      steps: [{ run: { command: 'echo hi' } }],
+      defaults: {},
+    });
+    useWorkspaceStore.getState().setRawContent('deploy.cue', recipeJSON);
+    useWorkspaceStore.setState((s) => ({
+      docs: { ...s.docs, 'deploy.cue': { ...s.docs['deploy.cue'], rawMode: true } },
+    }));
+
+    useWorkspaceStore.getState().switchToVisual('deploy.cue');
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.rawMode).toBe(false);
+    expect(doc.nodes.length).toBeGreaterThan(0);
+  });
+
+  it('switchToVisual with invalid JSON does not throw and leaves rawMode unchanged', () => {
+    const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => '' as unknown as ReturnType<typeof message.error>);
+
+    useWorkspaceStore.getState().setRawContent('deploy.cue', 'not json');
+    useWorkspaceStore.setState((s) => ({
+      docs: { ...s.docs, 'deploy.cue': { ...s.docs['deploy.cue'], rawMode: true } },
+    }));
+
+    expect(() => useWorkspaceStore.getState().switchToVisual('deploy.cue')).not.toThrow();
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.rawMode).toBe(true);
+    expect(errorSpy).toHaveBeenCalled();
+
+    errorSpy.mockRestore();
   });
 });
