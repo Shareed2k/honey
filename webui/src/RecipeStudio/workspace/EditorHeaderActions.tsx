@@ -41,14 +41,13 @@ export function EditorHeaderActions(props: IDockviewHeaderActionsProps) {
     gitUrl?: string;
     gitBranch?: string;
   }) => {
-    try {
-      await save(recipeId, options);
-      setSaveVisible(false);
-      message.success('Saved');
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : String(err));
-      throw err;
-    }
+    // No local try/catch: on rejection, `save` throws straight through to
+    // StorageModal's own onSave catch, which already toasts `Failed to
+    // save: ...` and keeps the modal open (see StorageModal.tsx
+    // handleFinish). Toasting here too would double the error the user sees.
+    await save(recipeId, options);
+    setSaveVisible(false);
+    message.success('Saved');
   };
 
   return (

@@ -276,4 +276,66 @@ describe('validate/save actions', () => {
 
     expect(useWorkspaceStore.getState().docs['deploy.cue'].dirty).toBe(true);
   });
+
+  it('save: rawMode posts rawContent verbatim, not JSON.stringify of the visual doc', async () => {
+    useWorkspaceStore.getState().setRawContent('deploy.cue', 'raw cue text');
+    useWorkspaceStore.setState((s) => ({
+      docs: { ...s.docs, 'deploy.cue': { ...s.docs['deploy.cue'], rawMode: true } },
+    }));
+    vi.mocked(apiPost).mockResolvedValueOnce({ ok: true } as Response);
+
+    await useWorkspaceStore.getState().save('deploy.cue', {
+      storage: 'local', path: 'x.cue', commitMessage: '',
+    });
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v1/recipes/store/x.cue',
+      { content: 'raw cue text' },
+    );
+  });
+
+  it('save: git storage appends encoded git_url/git_branch query params to the URL', async () => {
+    vi.mocked(apiPost).mockResolvedValueOnce({ ok: true } as Response);
+
+    await useWorkspaceStore.getState().save('deploy.cue', {
+      storage: 'git', path: 'x.cue', commitMessage: 'msg',
+      gitUrl: 'https://e/r.git', gitBranch: 'main',
+    });
+
+    expect(apiPost).toHaveBeenCalledTimes(1);
+    const [url] = vi.mocked(apiPost).mock.calls[0];
+    // encodeURIComponent('https://e/r.git') turns ':' and '/' into %3A/%2F —
+    // asserting the literal encoded substring (not a re-derived expected value)
+    // proves encoding actually ran rather than the raw URL being passed through.
+    expect(url).toContain('git_url=https%3A%2F%2Fe%2Fr.git');
+    expect(url).toContain('git_branch=main');
+  });
+
+  it('save: URL-encodes a path that needs encoding (space)', async () => {
+    vi.mocked(apiPost).mockResolvedValueOnce({ ok: true } as Response);
+
+    await useWorkspaceStore.getState().save('deploy.cue', {
+      storage: 'local', path: 'my recipe.cue', commitMessage: '',
+    });
+
+    const [url] = vi.mocked(apiPost).mock.calls[0];
+    expect(url).toContain('my%20recipe.cue');
+  });
+
+  it('validate: rawMode with invalid JSON sets invalid state and skips validateRecipeContent', async () => {
+    useWorkspaceStore.getState().setRawContent('deploy.cue', 'not json');
+    useWorkspaceStore.setState((s) => ({
+      docs: { ...s.docs, 'deploy.cue': { ...s.docs['deploy.cue'], rawMode: true } },
+    }));
+
+    await useWorkspaceStore.getState().validate('deploy.cue');
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.validation.state).toBe('invalid');
+    expect(doc.validation.issues).toHaveLength(1);
+    expect(doc.validation.issues[0].message).toContain('JSON');
+    // The raw content never parses to a recipe object, so the parse-error
+    // branch must return early instead of calling the server-side validator.
+    expect(validateRecipeContent).not.toHaveBeenCalled();
+  });
 });
