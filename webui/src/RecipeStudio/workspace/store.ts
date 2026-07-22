@@ -48,11 +48,13 @@ let untitledCounter = 0;
 interface WorkspaceState {
   docs: Record<string, DocState>;
   active: string | null;
+  schema: unknown;
 
   createDoc(name: string): Promise<void>;
   newDoc(): string;
   freeDoc(id: string): void;
   setActive(id: string | null): void;
+  setSchema(schema: unknown): void;
 
   setSelectedNode(id: string, nodeId: string | null): void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,6 +73,7 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   docs: {},
   active: null,
+  schema: null,
 
   async createDoc(name) {
     if (get().docs[name]) return; // idempotent — already open
@@ -110,6 +113,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setActive(id) {
     set({ active: id });
+  },
+
+  setSchema(schema) {
+    set({ schema });
   },
 
   setSelectedNode(id, nodeId) {
