@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 import { message } from 'antd';
+import {
+  applyNodeChanges,
+  applyEdgeChanges,
+  addEdge,
+  type NodeChange,
+  type EdgeChange,
+  type Connection,
+} from '@xyflow/react';
 import type { DocState, RunStatus } from './types';
 import { fetchStoredRecipe, syncRecipeAST, validateRecipeContent } from '../../api/recipes';
 import { apiPost } from '../../api/core';
@@ -85,6 +93,14 @@ interface WorkspaceState {
   setSelectedNode(id: string, nodeId: string | null): void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setStepData(id: string, nodeId: string, value: any): void;
+  // ReactFlow drives node/edge mutations (drag, select, delete, connect)
+  // through these three callbacks — see GraphPanel. Position/select/dimension
+  // changes are cosmetic (buildRecipeFromFlow ignores node position), so only
+  // a node *removal* (which drops a step) marks the doc dirty; edge add/remove
+  // and new connections always change `depends`, so those always mark dirty.
+  onNodesChange(id: string, changes: NodeChange[]): void;
+  onEdgesChange(id: string, changes: EdgeChange[]): void;
+  onConnect(id: string, connection: Connection): void;
   addStep(id: string, kind: string): void;
   setRawContent(id: string, text: string): void;
   setRawMode(id: string, on: boolean): void;
@@ -169,6 +185,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     patchDoc(set, id, (d) => ({
       ...d,
       stepData: { ...d.stepData, [nodeId]: value },
+      dirty: true,
+    }));
+  },
+  onNodesChange(id, changes) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      nodes: applyNodeChanges(changes, d.nodes),
+      // position/select/dimension changes don't touch step order or `depends`
+      // — only a removal drops a step, so only that marks the doc dirty.
+      dirty: d.dirty || changes.some((c) => c.type === 'remove'),
+    }));
+  },
+  onEdgesChange(id, changes) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      edges: applyEdgeChanges(changes, d.edges),
+      dirty: true,
+    }));
+  },
+  onConnect(id, connection) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      edges: addEdge(connection, d.edges),
       dirty: true,
     }));
   },

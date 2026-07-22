@@ -11,6 +11,9 @@ export function GraphPanel({ params }: IDockviewPanelProps<{ recipeId: string }>
   const recipeId = params.recipeId;
   const doc = useWorkspaceStore((s) => s.docs[recipeId]);
   const setSelectedNode = useWorkspaceStore((s) => s.setSelectedNode);
+  const onNodesChange = useWorkspaceStore((s) => s.onNodesChange);
+  const onEdgesChange = useWorkspaceStore((s) => s.onEdgesChange);
+  const onConnect = useWorkspaceStore((s) => s.onConnect);
 
   if (!doc) return <div style={{ padding: 16, color: '#8b949e' }}>No document for {recipeId}</div>;
 
@@ -23,6 +26,9 @@ export function GraphPanel({ params }: IDockviewPanelProps<{ recipeId: string }>
         edges={doc.edges}
         nodeTypes={nodeTypes}
         onNodeClick={onNodeClick}
+        onNodesChange={(changes) => onNodesChange(recipeId, changes)}
+        onEdgesChange={(changes) => onEdgesChange(recipeId, changes)}
+        onConnect={(connection) => onConnect(recipeId, connection)}
         fitView
       >
         <Controls />

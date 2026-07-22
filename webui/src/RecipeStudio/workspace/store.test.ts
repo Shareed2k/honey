@@ -253,6 +253,94 @@ describe('run actions', () => {
   });
 });
 
+describe('graph interaction actions (onConnect/onNodesChange/onEdgesChange)', () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({
+      docs: {
+        'deploy.cue': {
+          recipeId: 'deploy.cue', name: 'deploy',
+          nodes: [
+            { id: 'a', type: 'step', position: { x: 0, y: 0 }, data: {} },
+            { id: 'b', type: 'step', position: { x: 100, y: 0 }, data: {} },
+          ],
+          edges: [],
+          stepData: {}, recipeDefaults: {}, selectedNodeId: null,
+          rawMode: false, rawContent: '', originalCue: '',
+          validation: { state: 'idle', issues: [] }, runStatus: {}, dirty: false,
+          runStepId: null, runCount: 0,
+        },
+      },
+      active: 'deploy.cue',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+  });
+
+  it('onConnect adds an edge between the connected nodes and marks the doc dirty', () => {
+    useWorkspaceStore.getState().onConnect('deploy.cue', { source: 'a', target: 'b', sourceHandle: null, targetHandle: null });
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.edges).toHaveLength(1);
+    expect(doc.edges[0].source).toBe('a');
+    expect(doc.edges[0].target).toBe('b');
+    expect(doc.dirty).toBe(true);
+  });
+
+  it('onConnect on an unknown doc id is a no-op (no throw)', () => {
+    expect(() =>
+      useWorkspaceStore.getState().onConnect('nope', { source: 'a', target: 'b', sourceHandle: null, targetHandle: null }),
+    ).not.toThrow();
+    expect(useWorkspaceStore.getState().docs['nope']).toBeUndefined();
+  });
+
+  it('onEdgesChange with a remove change drops the edge and marks the doc dirty', () => {
+    useWorkspaceStore.getState().onConnect('deploy.cue', { source: 'a', target: 'b', sourceHandle: null, targetHandle: null });
+    const edgeId = useWorkspaceStore.getState().docs['deploy.cue'].edges[0].id;
+    // clear dirty so the removal below is what proves the dirty flag.
+    useWorkspaceStore.setState((s) => ({
+      docs: { ...s.docs, 'deploy.cue': { ...s.docs['deploy.cue'], dirty: false } },
+    }));
+
+    useWorkspaceStore.getState().onEdgesChange('deploy.cue', [{ type: 'remove', id: edgeId }]);
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.edges).toHaveLength(0);
+    expect(doc.dirty).toBe(true);
+  });
+
+  it('onEdgesChange on an unknown doc id is a no-op (no throw)', () => {
+    expect(() =>
+      useWorkspaceStore.getState().onEdgesChange('nope', [{ type: 'remove', id: 'e1' }]),
+    ).not.toThrow();
+  });
+
+  it('onNodesChange with a position change updates the node position but does NOT mark the doc dirty', () => {
+    useWorkspaceStore.getState().onNodesChange('deploy.cue', [
+      { type: 'position', id: 'a', position: { x: 42, y: 7 } },
+    ]);
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    const nodeA = doc.nodes.find((n) => n.id === 'a');
+    expect(nodeA.position).toEqual({ x: 42, y: 7 });
+    expect(doc.dirty).toBe(false);
+  });
+
+  it('onNodesChange with a remove change removes the node and marks the doc dirty', () => {
+    useWorkspaceStore.getState().onNodesChange('deploy.cue', [{ type: 'remove', id: 'a' }]);
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.nodes).toHaveLength(1);
+    expect(doc.nodes.find((n) => n.id === 'a')).toBeUndefined();
+    expect(doc.dirty).toBe(true);
+  });
+
+  it('onNodesChange on an unknown doc id is a no-op (no throw)', () => {
+    expect(() =>
+      useWorkspaceStore.getState().onNodesChange('nope', [{ type: 'remove', id: 'a' }]),
+    ).not.toThrow();
+    expect(useWorkspaceStore.getState().docs['nope']).toBeUndefined();
+  });
+});
+
 describe('graph/raw toggle', () => {
   beforeEach(async () => {
     useWorkspaceStore.setState({ docs: {}, active: null });
