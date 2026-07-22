@@ -1,18 +1,24 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// parseDiskRecipe resolves to the ParsedRecipe itself — top-level `name`/`defaults`/`steps`,
-// no nested `{recipe: ...}` envelope (see api/recipes.ts parseDiskRecipe + api/types/recipes.ts
-// ParsedRecipe). The mock must mirror that shape so the test exercises the real production
-// code path in store.ts (which reads `recipeJson.defaults`/`recipeJson.steps` directly).
+// createDoc loads by name via GET /api/v1/recipes/store/{name} (fetchStoredRecipe) — the
+// StoreLoadResponse envelope `{recipe, raw_cue, ...}` (see api/recipes.ts fetchStoredRecipe +
+// internal/webserver/recipe_studio_handlers.go StoreLoadResponse) — NOT the path-validated
+// POST /api/v1/recipes/parse (parseDiskRecipe), which requires an allow-listed absolute path
+// and rejects bare filenames with "recipe path not allowed". The mock mirrors the real
+// envelope shape so the test exercises the real production code path in store.ts (which
+// reads `data.recipe`/`data.raw_cue` directly).
 vi.mock('../../api/recipes', () => ({
-  parseDiskRecipe: vi.fn(async (path: string) => ({
-    name: path,
-    defaults: { x: 1 },
-    steps: [{ id: 's1', command: 'echo hi' }],
+  fetchStoredRecipe: vi.fn(async (_name: string) => ({
+    recipe: { defaults: { x: 1 }, steps: [{ id: 's1', run: { command: 'echo hi' } }] },
+    raw_cue: 'some cue',
   })),
-  // Only exercised when a doc has a non-empty originalCue; the graph/raw
-  // toggle tests below use blank docs (originalCue: '') so this is never
-  // actually invoked, but store.ts imports the name so it must exist here.
+  // Asserted-against in the regression test below to prove createDoc no longer
+  // calls the path-validated parse endpoint.
+  parseDiskRecipe: vi.fn(async () => {
+    throw new Error('parseDiskRecipe should not be called by createDoc');
+  }),
+  // createDoc now always sets originalCue from raw_cue above (non-empty), so
+  // switchToRaw's AST-sync path runs rather than the JSON.stringify fallback.
   syncRecipeAST: vi.fn(async (_originalCue: string, recipeContent: Record<string, unknown>) =>
     JSON.stringify(recipeContent, null, 2)),
   // validate() below configures this per-test via mockResolvedValueOnce.
@@ -38,7 +44,7 @@ vi.mock('../useRecipeGraph', async (orig) => {
 
 import { message } from 'antd';
 import { useWorkspaceStore } from './store';
-import { validateRecipeContent } from '../../api/recipes';
+import { validateRecipeContent, fetchStoredRecipe, parseDiskRecipe } from '../../api/recipes';
 import { apiPost } from '../../api/core';
 
 describe('openTerminal slot', () => {
@@ -72,6 +78,25 @@ describe('WorkspaceStore lifecycle', () => {
     expect(doc.stepData.s1.kind).toBe('run');
     expect(doc.dirty).toBe(false);
     expect(doc.recipeDefaults).toEqual({ x: 1 });
+    // Proves the StoreLoadResponse's raw_cue is wired into the doc — this also
+    // fixes switchToRaw's AST-sync path, which previously always fell back to
+    // JSON.stringify because originalCue was never populated.
+    expect(doc.originalCue).toBe('some cue');
+  });
+
+  it('createDoc loads via the store-by-name endpoint (fetchStoredRecipe), never the path-validated parse endpoint (parseDiskRecipe)', async () => {
+    // Regression coverage: the bug this fixes was createDoc calling
+    // parseDiskRecipe (POST /api/v1/recipes/parse), which 403s on a bare
+    // filename with "recipe path not allowed". Asserting the by-name spy was
+    // called — and the path-validated one was not — is the coverage that was
+    // missing before (parseDiskRecipe was mocked away, hiding the wrong-endpoint bug).
+    vi.mocked(fetchStoredRecipe).mockClear();
+    vi.mocked(parseDiskRecipe).mockClear();
+
+    await useWorkspaceStore.getState().createDoc('regression-check.cue');
+
+    expect(fetchStoredRecipe).toHaveBeenCalledWith('regression-check.cue');
+    expect(parseDiskRecipe).not.toHaveBeenCalled();
   });
 
   it('createDoc is idempotent (does not reload an already-open doc)', async () => {

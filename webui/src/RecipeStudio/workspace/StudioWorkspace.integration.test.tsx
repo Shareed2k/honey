@@ -8,31 +8,33 @@ import { message } from 'antd';
 // the workspace back after a debounce; without a real export here that PUT
 // would throw `apiPutJson is not a function` if its timer ever fired before
 // `afterEach(cleanup)` tears the component (and workspaceSync) down.
+//
+// store.createDoc(name) calls the REAL fetchStoredRecipe (api/recipes.ts is not
+// mocked below), which hits GET /api/v1/recipes/store/{name} through this apiGet
+// mock — branched separately from the plain list GET /api/v1/recipes/store so the
+// Open-flow test below exercises the actual StoreLoadResponse shape, not a 404.
 vi.mock('../../api/core', () => ({
-  apiGet: vi.fn(async (path: string) => ({
-    ok: true,
-    json: async () => (path.includes('schema') ? {} : [{ name: 'deploy.cue' }]),
-  })),
+  apiGet: vi.fn(async (path: string) => {
+    if (path.includes('schema')) {
+      return { ok: true, json: async () => ({}) };
+    }
+    if (path === '/api/v1/recipes/store') {
+      return { ok: true, json: async () => [{ name: 'deploy.cue' }] };
+    }
+    // GET /api/v1/recipes/store/{name} — see recipe_studio_handlers.go StoreLoadResponse.
+    return {
+      ok: true,
+      json: async () => ({
+        recipe: { defaults: {}, steps: [{ id: 's1', run: { command: 'x' } }] },
+        raw_cue: '',
+      }),
+    };
+  }),
   apiPutJson: vi.fn(async () => ({ ok: true })),
 }));
 vi.mock('../../contexts/AppContext', () => ({
   useAppContext: () => ({ meta: { version: '1' } }),
 }));
-// store.createDoc(name) calls parseDiskRecipe under the hood — stub it so the
-// Open flow resolves without a real network/backend round trip. Keep every
-// other export real (e.g. listStepKinds, used by the always-mounted
-// ToolboxPanel) via importOriginal, mirroring ToolboxPanel.test.tsx.
-vi.mock('../../api/recipes', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../api/recipes')>();
-  return {
-    ...actual,
-    parseDiskRecipe: vi.fn(async () => ({
-      name: 'deploy.cue',
-      defaults: {},
-      steps: [{ id: 'step1', kind: 'command', host: '_', command: 'echo hi' }],
-    })),
-  };
-});
 
 import StudioWorkspace from '../StudioWorkspace';
 import { useWorkspaceStore } from './store';

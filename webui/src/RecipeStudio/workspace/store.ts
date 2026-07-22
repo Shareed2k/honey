@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { message } from 'antd';
 import type { DocState, RunStatus } from './types';
-import { parseDiskRecipe, syncRecipeAST, validateRecipeContent } from '../../api/recipes';
+import { fetchStoredRecipe, syncRecipeAST, validateRecipeContent } from '../../api/recipes';
 import { apiPost } from '../../api/core';
 import type { ParsedRecipe } from '../../api/types/recipes';
 import type { HostRecord } from '../../HostPicker';
@@ -112,10 +112,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   async createDoc(name) {
     if (get().docs[name]) return; // idempotent — already open
-    // parseDiskRecipe already unwraps the `{recipe: ...}` envelope server-side
-    // and resolves to the ParsedRecipe itself (top-level `steps`/`defaults`) —
-    // no further `.recipe` unwrap is needed or correct here.
-    const recipeJson = await parseDiskRecipe(name);
+    // Load by name via GET /api/v1/recipes/store/{name} — resolved against the
+    // configured recipe store, no path validation. The old
+    // POST /api/v1/recipes/parse (parseDiskRecipe) requires an absolute path
+    // present in the server's allow-list, so a bare filename like "foo.cue"
+    // is rejected with "recipe path not allowed".
+    const data = await fetchStoredRecipe(name);
+    const recipeJson = data.recipe;
     const { nodes, edges, stepData } = buildFlowFromRecipe(recipeJson);
     set((s) => ({
       docs: {
@@ -126,6 +129,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           edges,
           stepData,
           recipeDefaults: recipeJson?.defaults ?? {},
+          originalCue: data.raw_cue ?? '',
         },
       },
     }));

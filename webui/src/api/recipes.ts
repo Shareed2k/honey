@@ -76,6 +76,31 @@ export async function parseDiskRecipe(path: string): Promise<ParsedRecipe> {
   return j.recipe;
 }
 
+/** Response shape of GET /api/v1/recipes/store/{name} (see internal/webserver/recipe_studio_handlers.go StoreLoadResponse). */
+export type StoreLoadResponse = {
+  recipe: ParsedRecipe;
+  raw_cue: string;
+  plan?: string;
+  steps?: ResolvedStep[];
+  graph?: RecipeGraphPlan;
+  errors?: ValidationError[];
+};
+
+/**
+ * Load a STORED recipe by name via GET /api/v1/recipes/store/{name} — resolved against the
+ * configured recipe store and looked up by name, with no path validation. Unlike
+ * parseDiskRecipe's POST /api/v1/recipes/parse (which requires an absolute path present in
+ * the server's allow-list and rejects bare filenames with "recipe path not allowed"), this
+ * is the correct way for the Studio to open an already-saved recipe.
+ */
+export async function fetchStoredRecipe(name: string): Promise<StoreLoadResponse> {
+  const r = await apiGet(`/api/v1/recipes/store/${encodeURIComponent(name)}`);
+  if (!r.ok) {
+    throw new Error(await r.text());
+  }
+  return r.json();
+}
+
 export async function fixRecipeErrors(
   recipeContent: Record<string, unknown>,
   errors: unknown[],
