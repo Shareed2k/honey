@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { DockviewApi, IDockviewPanel } from 'dockview';
-import { recipeIdFromPanelId, openGraph } from './registry';
+import { recipeIdFromPanelId, openGraph, openRaw } from './registry';
 
 // Minimal fake satisfying only the members openGraph/openRaw touch. Cast
 // through `unknown` (never `any`) so the object literal itself is still
@@ -32,6 +32,32 @@ describe('registry helpers', () => {
     const fake: FakeApi = { getPanel: () => fakePanel, addPanel };
     const api = fake as unknown as DockviewApi;
     openGraph(api, 'deploy.cue');
+    expect(addPanel).not.toHaveBeenCalled();
+    expect(setActive).toHaveBeenCalled();
+  });
+
+  it('openRaw adds a panel when absent', () => {
+    const addPanel = vi.fn();
+    const fake: FakeApi = { getPanel: () => undefined, addPanel };
+    const api = fake as unknown as DockviewApi;
+    openRaw(api, 'deploy.cue');
+    expect(addPanel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'raw:deploy.cue',
+        component: 'raweditor',
+        params: { recipeId: 'deploy.cue' },
+        position: expect.objectContaining({ referencePanel: 'graph:deploy.cue' }),
+      }),
+    );
+  });
+
+  it('openRaw focuses an existing panel instead of re-adding', () => {
+    const setActive = vi.fn();
+    const addPanel = vi.fn();
+    const fakePanel = { api: { setActive } } as unknown as IDockviewPanel;
+    const fake: FakeApi = { getPanel: () => fakePanel, addPanel };
+    const api = fake as unknown as DockviewApi;
+    openRaw(api, 'deploy.cue');
     expect(addPanel).not.toHaveBeenCalled();
     expect(setActive).toHaveBeenCalled();
   });
