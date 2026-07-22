@@ -1,10 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { create } from 'zustand';
-import type { DocState, Validation } from './types';
+import type { DocState } from './types';
 import { parseDiskRecipe } from '../../api/recipes';
 import { buildFlowFromRecipe, applyWaveLayout, recipeNameFromFilename } from '../useRecipeGraph';
-
-const emptyValidation: Validation = { state: 'idle', issues: [] };
 
 function blankDoc(recipeId: string, name: string): DocState {
   return {
@@ -12,7 +9,9 @@ function blankDoc(recipeId: string, name: string): DocState {
     nodes: [], edges: [], stepData: {}, recipeDefaults: {},
     selectedNodeId: null,
     rawMode: false, rawContent: '', originalCue: '',
-    validation: { ...emptyValidation },
+    // Fresh literal per call — must NOT share an array/object reference across docs,
+    // or an in-place mutation on one doc's `issues` would corrupt every other doc.
+    validation: { state: 'idle', issues: [] },
     runStatus: {}, dirty: false,
   };
 }
@@ -35,8 +34,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   async createDoc(name) {
     if (get().docs[name]) return; // idempotent — already open
-    const parsed = await parseDiskRecipe(name);
-    const recipeJson = (parsed as any).recipe ?? parsed;
+    // parseDiskRecipe already unwraps the `{recipe: ...}` envelope server-side
+    // and resolves to the ParsedRecipe itself (top-level `steps`/`defaults`) —
+    // no further `.recipe` unwrap is needed or correct here.
+    const recipeJson = await parseDiskRecipe(name);
     const { nodes, edges, stepData } = buildFlowFromRecipe(recipeJson);
     set((s) => ({
       docs: {

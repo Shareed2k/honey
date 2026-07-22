@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+// parseDiskRecipe resolves to the ParsedRecipe itself — top-level `name`/`defaults`/`steps`,
+// no nested `{recipe: ...}` envelope (see api/recipes.ts parseDiskRecipe + api/types/recipes.ts
+// ParsedRecipe). The mock must mirror that shape so the test exercises the real production
+// code path in store.ts (which reads `recipeJson.defaults`/`recipeJson.steps` directly).
 vi.mock('../../api/recipes', () => ({
   parseDiskRecipe: vi.fn(async (path: string) => ({
-    recipe: { defaults: { x: 1 }, steps: [{ id: 's1', run: { command: 'echo hi' } }] },
     name: path,
+    defaults: { x: 1 },
+    steps: [{ id: 's1', command: 'echo hi' }],
   })),
 }));
 vi.mock('../useRecipeGraph', async (orig) => {
@@ -33,14 +38,19 @@ describe('WorkspaceStore lifecycle', () => {
     expect(doc.nodes).toHaveLength(1);
     expect(doc.stepData.s1.kind).toBe('run');
     expect(doc.dirty).toBe(false);
+    expect(doc.recipeDefaults).toEqual({ x: 1 });
   });
 
   it('createDoc is idempotent (does not reload an already-open doc)', async () => {
     const api = useWorkspaceStore.getState();
     await api.createDoc('deploy.cue');
-    useWorkspaceStore.getState().docs['deploy.cue'].dirty = true;
+    useWorkspaceStore.setState((s) => ({
+      docs: { ...s.docs, ['deploy.cue']: { ...s.docs['deploy.cue'], dirty: true } },
+    }));
     await api.createDoc('deploy.cue');
-    expect(useWorkspaceStore.getState().docs['deploy.cue']).toBeTruthy();
+    // A reload would have gone through blankDoc() again and reset dirty to false —
+    // asserting it's still true proves the idempotency guard actually short-circuited.
+    expect(useWorkspaceStore.getState().docs['deploy.cue'].dirty).toBe(true);
   });
 
   it('newDoc creates an untitled doc and returns its id', () => {
@@ -55,5 +65,6 @@ describe('WorkspaceStore lifecycle', () => {
     expect(useWorkspaceStore.getState().active).toBe('deploy.cue');
     useWorkspaceStore.getState().freeDoc('deploy.cue');
     expect(useWorkspaceStore.getState().docs['deploy.cue']).toBeUndefined();
+    expect(useWorkspaceStore.getState().active).toBeNull();
   });
 });
