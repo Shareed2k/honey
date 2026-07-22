@@ -209,14 +209,7 @@ func NewServer(opts Options) (*Server, error) {
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
 
-	{
-		cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
-		wsDir := "."
-		if cfgPath != "" {
-			wsDir = filepath.Dir(cfgPath)
-		}
-		s.workspace = workspacestore.New(wsDir)
-	}
+	s.workspace = workspacestore.New(workspaceStoreDir(s.opts.ConfigPath))
 
 	// Device mTLS enrollment: load-or-create a device CA under the state dir.
 	// Non-fatal — endpoints report 503 when unavailable.
@@ -231,6 +224,19 @@ func NewServer(opts Options) (*Server, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// workspaceStoreDir returns the dir for the studio workspace store: beside
+// the resolved config file when one exists, else under the runtime state
+// dir. Mirrors snippetsFilePath's tiering (see snippets_handlers.go).
+func workspaceStoreDir(configPath string) string {
+	if cp, err := config.ResolvePath(strings.TrimSpace(configPath)); err == nil && cp != "" {
+		return filepath.Dir(cp)
+	}
+	if dir, err := config.ResolveStateDir(); err == nil && dir != "" {
+		return dir
+	}
+	return "."
 }
 
 func (s *Server) routes() error {

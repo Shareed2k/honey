@@ -123,10 +123,31 @@ func TestPutStudioWorkspaceStoreError500Generic(t *testing.T) {
 
 func TestStudioWorkspaceRequiresAuth(t *testing.T) {
 	s := newTestServerWithStore(t, &fakeWorkspaceStore{})
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/studio/workspace", nil) // no token
-	s.router.ServeHTTP(rec, req)
-	if rec.Code == http.StatusOK {
-		t.Fatalf("GET without auth should not be 200")
+
+	getRec := httptest.NewRecorder()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/studio/workspace", nil) // no token
+	s.router.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET without auth = %d, want %d", getRec.Code, http.StatusUnauthorized)
+	}
+
+	putRec := httptest.NewRecorder()
+	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/studio/workspace", bytes.NewReader([]byte(`{"layout":{},"openRecipes":[]}`))) // no token
+	s.router.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusUnauthorized {
+		t.Fatalf("PUT without auth = %d, want %d", putRec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestPutStudioWorkspaceMaxRecipesAccepted204(t *testing.T) {
+	s := newTestServerWithStore(t, &fakeWorkspaceStore{})
+	names := make([]string, 64)
+	for i := range names {
+		names[i] = "r.cue"
+	}
+	b, _ := json.Marshal(workspacestore.Workspace{Layout: json.RawMessage(`{}`), OpenRecipes: names})
+	rec := do(s, http.MethodPut, b)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("PUT with 64 openRecipes = %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body.String())
 	}
 }
