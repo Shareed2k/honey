@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 
-export type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'api-docs' | 'feedback' | 'agent' | 'studio' | 'devices';
+export type Tab = 'search' | 'files' | 'backends' | 'config' | 'recipes' | 'tunnels' | 'apps' | 'logs' | 'feedback' | 'agent' | 'studio' | 'devices';
 
 interface NavigationContextType {
   tab: Tab;
@@ -22,7 +22,6 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       val === 'tunnels' ||
       val === 'apps' ||
       val === 'logs' ||
-      val === 'api-docs' ||
       val === 'feedback' ||
       val === 'studio'
     ) {
