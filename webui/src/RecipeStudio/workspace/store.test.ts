@@ -171,30 +171,12 @@ describe('graph/raw toggle', () => {
     expect(doc.selectedNodeId).toBeNull();
   });
 
-  it('switchToVisual with valid JSON rebuilds the graph', () => {
-    // Matches what buildFlowFromRecipe (useRecipeGraph.ts ~line 238) reads: a
-    // top-level `steps` ARRAY (it does `(recipeJson.steps || []).forEach(...)`,
-    // which would throw on a keyed object), each step contributing an id
-    // (falls back to `step_<n>` when absent) and a kind detected from
-    // preferredKindOrder (falls back to 'command' when no known kind key is
-    // present, as here) — `defaults` is read directly as `parsed.defaults`.
-    const recipeJSON = JSON.stringify({
-      name: 'x',
-      type: 'graph',
-      steps: [{ run: { command: 'echo hi' } }],
-      defaults: {},
-    });
-    useWorkspaceStore.getState().setRawContent('deploy.cue', recipeJSON);
-    useWorkspaceStore.setState((s) => ({
-      docs: { ...s.docs, 'deploy.cue': { ...s.docs['deploy.cue'], rawMode: true } },
-    }));
-
-    useWorkspaceStore.getState().switchToVisual('deploy.cue');
-
-    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
-    expect(doc.rawMode).toBe(false);
-    expect(doc.nodes.length).toBeGreaterThan(0);
-  });
+  // NOTE: the "valid JSON rebuilds the graph" case used to live here, but with
+  // buildFlowFromRecipe stubbed (see the file-level vi.mock above) to always
+  // return one fixed node, it could never prove the real recipe->graph
+  // transform runs on toggle. That genuine coverage — with buildFlowFromRecipe
+  // NOT mocked, asserting real node/edge/stepData counts from a crafted
+  // recipe — now lives in store.toggle.test.ts instead.
 
   it('switchToVisual with invalid JSON does not throw and leaves rawMode unchanged', () => {
     const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => '' as unknown as ReturnType<typeof message.error>);

@@ -177,7 +177,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (doc.originalCue) {
       try {
         newRaw = await syncRecipeAST(doc.originalCue, visualJSON);
-      } catch {
+      } catch (syncErr) {
+        console.warn('AST sync failed, falling back to JSON:', syncErr);
         newRaw = JSON.stringify(visualJSON, null, 2);
       }
     } else {
