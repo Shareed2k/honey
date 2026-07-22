@@ -1,23 +1,110 @@
-import { DockviewReact, type DockviewReadyEvent, type IDockviewPanelProps } from 'dockview';
+import { useEffect, useRef, useState } from 'react';
+import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from 'dockview';
 import 'dockview/dist/styles/dockview.css';
 import './workspace/dockview-theme-honey.css';
-import { useAppContext } from '../contexts/AppContext';
+import { Button, Select, Space, message } from 'antd';
+import { FileAddOutlined, FolderOpenOutlined } from '@ant-design/icons';
+import { GraphPanel } from './workspace/panels/GraphPanel';
+import { RawEditorPanel } from './workspace/panels/RawEditorPanel';
+import { StepEditorPanel } from './workspace/panels/StepEditorPanel';
+import { ToolboxPanel } from './workspace/panels/ToolboxPanel';
+import { ActivityBar } from './workspace/ActivityBar';
+import { attachDockviewSync } from './workspace/useDockviewSync';
+import { openGraph } from './workspace/registry';
+import { useWorkspaceStore } from './workspace/store';
+import { apiGet } from '../api/core';
 
-// Throwaway proof panel (Task 2 only; removed in Task 9 when real panels land).
-function HelloPanel(_props: IDockviewPanelProps) {
-  const { meta } = useAppContext();
-  return <div>context-ok v{meta?.version ?? '?'}</div>;
+// Run/Records/Terminal panels are registered as they land (Tasks 10-12).
+const components = {
+  graph: GraphPanel,
+  raweditor: RawEditorPanel,
+  stepeditor: StepEditorPanel,
+  toolbox: ToolboxPanel,
+};
+
+interface RecipeStoreEntry {
+  name: string;
 }
 
-const components = { hello: HelloPanel };
-
 export default function StudioWorkspace() {
+  const [api, setApi] = useState<DockviewApi | null>(null);
+  const disposeRef = useRef<(() => void) | null>(null);
+  const [recipeList, setRecipeList] = useState<RecipeStoreEntry[]>([]);
+  const setSchema = useWorkspaceStore((s) => s.setSchema);
+  const newDoc = useWorkspaceStore((s) => s.newDoc);
+  const createDoc = useWorkspaceStore((s) => s.createDoc);
+
+  useEffect(() => {
+    apiGet('/api/v1/recipes/schema')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data && setSchema(data))
+      .catch(() => {});
+  }, [setSchema]);
+
+  useEffect(() => {
+    apiGet('/api/v1/recipes/store')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setRecipeList(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
+
   const onReady = (event: DockviewReadyEvent) => {
-    event.api.addPanel({ id: 'hello', component: 'hello' });
+    const a = event.api;
+    setApi(a);
+    // First-run tool panel arrangement — toolbox on the left, step editor to
+    // its right. `graph`/`raweditor` panels open on demand (New/Open); the
+    // remaining tool panels (records/run) join the activity bar + this
+    // layout once their components are registered (Tasks 10-12).
+    a.addPanel({ id: 'toolbox', component: 'toolbox', title: 'Toolbox' });
+    a.addPanel({
+      id: 'stepeditor',
+      component: 'stepeditor',
+      title: 'Step',
+      position: { direction: 'right' },
+    });
+    disposeRef.current = attachDockviewSync(a, useWorkspaceStore.getState());
   };
+
+  useEffect(() => () => disposeRef.current?.(), []);
+
+  const handleNew = () => {
+    const id = newDoc();
+    if (api) openGraph(api, id);
+  };
+
+  const handleOpen = (name: string) => {
+    createDoc(name)
+      .then(() => {
+        if (api) openGraph(api, name);
+      })
+      .catch((err) => message.error(`Failed to open ${name}: ${err instanceof Error ? err.message : err}`));
+  };
+
   return (
-    <div style={{ height: '100%', width: '100%' }}>
-      <DockviewReact components={components} onReady={onReady} className="dockview-theme-honey" />
+    <div style={{ display: 'flex', height: '100%', width: '100%' }}>
+      <ActivityBar api={api} />
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+        <div style={{ padding: '6px 12px', background: '#001529', borderBottom: '1px solid #1f2937' }}>
+          <Space>
+            <Button size="small" icon={<FileAddOutlined />} onClick={handleNew}>
+              New Recipe
+            </Button>
+            <Select
+              size="small"
+              style={{ width: 220 }}
+              placeholder="Open recipe…"
+              suffixIcon={<FolderOpenOutlined />}
+              showSearch
+              optionFilterProp="label"
+              options={recipeList.map((r) => ({ value: r.name, label: r.name }))}
+              onSelect={handleOpen}
+            />
+          </Space>
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <DockviewReact components={components} onReady={onReady} className="dockview-theme-honey" />
+        </div>
+      </div>
     </div>
   );
 }
