@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,7 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
 	"github.com/shareed2k/honey/internal/webauthn"
+	"github.com/shareed2k/honey/internal/webserver/workspacestore"
 )
 
 // Options configures the embedded web server.
@@ -114,6 +116,7 @@ type Server struct {
 	fileClientCache *engine.ClientCache
 
 	snippetStore snippets.Store
+	workspace    workspaceStore
 
 	retentionState recordingRetentionState
 
@@ -205,6 +208,15 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
+
+	{
+		cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
+		wsDir := "."
+		if cfgPath != "" {
+			wsDir = filepath.Dir(cfgPath)
+		}
+		s.workspace = workspacestore.New(wsDir)
+	}
 
 	// Device mTLS enrollment: load-or-create a device CA under the state dir.
 	// Non-fatal — endpoints report 503 when unavailable.
@@ -333,6 +345,11 @@ func (s *Server) routes() error {
 		// Device mTLS enrollment: mint a one-time code (operator) + list issued devices.
 		r.Post("/devices/enroll-code", s.handleMintEnrollCode)
 		r.Get("/devices", s.handleListDevices)
+
+		r.Route("/studio", func(sr chi.Router) {
+			sr.Get("/workspace", s.handleGetStudioWorkspace)
+			sr.Put("/workspace", s.handlePutStudioWorkspace)
+		})
 	})
 
 	// Device enrollment is authenticated by the one-time code, not the session
