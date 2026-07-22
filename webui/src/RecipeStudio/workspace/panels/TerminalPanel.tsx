@@ -1,13 +1,21 @@
 import type { IDockviewPanelProps } from 'dockview';
-import { TerminalSession } from '../../../TerminalModal';
+import { TerminalSession, type PveConsoleMode, type TrueNASConsoleMode } from '../../../TerminalModal';
 import type { HostRecord } from '../../../HostPicker';
 import { useHostSelection } from '../../../contexts/HostSelectionContext';
 
 type TerminalParams = {
   record: HostRecord;
-  pve?: 'serial' | 'vnc';
-  truenasConsole?: 'ssh' | 'api';
+  pve?: PveConsoleMode;
+  truenasConsole?: TrueNASConsoleMode;
 };
+
+// Stable no-op passed as registerCloseTabSender. TerminalSession's connect
+// effect (TerminalModal.tsx) lists registerCloseTabSender in its dependency
+// array — a fresh inline arrow on every TerminalPanel render (e.g. from
+// HostSelectionContext's unmemoized Provider value re-rendering this panel)
+// would re-run that effect and tear down/reconnect the live ws+xterm session.
+// A module-level const guarantees the same reference across renders.
+const NOOP = () => {};
 
 // Re-hosts the existing TerminalSession component (SSH/docker/k8s/PVE/
 // TrueNAS/VNC) inside a dockview panel. TerminalSession owns its own
@@ -29,7 +37,7 @@ export function TerminalPanel({ params, api }: IDockviewPanelProps<TerminalParam
         pveConsole={params.pve ?? 'serial'}
         truenasConsole={params.truenasConsole ?? 'ssh'}
         isActive={true}
-        registerCloseTabSender={() => {}}
+        registerCloseTabSender={NOOP}
       />
     </div>
   );
