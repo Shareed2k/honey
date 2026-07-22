@@ -23,7 +23,14 @@ export function RecordsPanel(_props: IDockviewPanelProps) {
         selectedKeys={selectedKeys}
         onToggleRow={(rec) => {
           const key = recordKey(rec);
-          setSelectedKeys({ ...selectedKeys, [key]: !selectedKeys[key] });
+          // Functional updater (not the render-closure `selectedKeys`): antd
+          // Table's rowSelection.onSelectAll calls onToggleRow once per row,
+          // synchronously, in a plain loop (see HostPicker.tsx). If each call
+          // spread the same stale pre-click `selectedKeys`, only the LAST row
+          // toggled would survive React's batching. The functional form
+          // queues N updaters that each see the previous one's result, so a
+          // synchronous select-all loop toggles every row.
+          setSelectedKeys((prev) => ({ ...prev, [key]: !prev[key] }));
         }}
         renderRowActions={(rec: HostRecord) => (
           <Space>

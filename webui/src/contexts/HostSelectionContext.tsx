@@ -14,7 +14,15 @@ interface HostSelectionContextType {
   sshUser: string;
   setSshUser: (user: string) => void;
   selectedKeys: Record<string, boolean>;
-  setSelectedKeys: (keys: Record<string, boolean>) => void;
+  // Widened to the real dispatch type: this is the useState setter, so it
+  // genuinely accepts a functional updater `(prev) => next` in addition to a
+  // plain value. Callers that only ever passed a plain map (SearchTab,
+  // ReplayContext, RecipesTab) remain valid — `next` is still assignable to
+  // `SetStateAction<Record<string, boolean>>`. RecordsPanel relies on the
+  // functional form to avoid a stale-closure bug when antd's Table calls
+  // onSelectAll's per-row callback synchronously in a loop (see
+  // RecordsPanel.tsx onToggleRow).
+  setSelectedKeys: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   selectedRecords: HostRecord[];
 }
 

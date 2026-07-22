@@ -43,7 +43,7 @@ describe('RecordsPanel', () => {
     expect(screen.getAllByRole('button', { name: /terminal/i })).toHaveLength(2);
   });
 
-  it('toggling a row checkbox calls setSelectedKeys (from the SHARED context) with the toggled key', () => {
+  it('toggling a row checkbox calls setSelectedKeys (from the SHARED context) with a functional updater that toggles the key', () => {
     render(<RecordsPanel {...props()} />);
 
     const checkboxes = screen.getAllByRole('checkbox');
@@ -52,8 +52,17 @@ describe('RecordsPanel', () => {
     fireEvent.click(checkboxes[1]);
 
     expect(setSelectedKeys).toHaveBeenCalledTimes(1);
-    const arg = setSelectedKeys.mock.calls[0][0] as Record<string, boolean>;
-    expect(arg['docker\x1eweb\x1e10.0.0.1']).toBe(true);
+    // onToggleRow now passes a functional updater (not a plain map) so that
+    // antd's select-all loop (HostPicker's onSelectAll calling onToggleRow
+    // once per row, synchronously) doesn't clobber earlier toggles with a
+    // stale render-closure `selectedKeys` — see RecordsPanel.selectAll.test.tsx
+    // for the select-all regression this guards against.
+    const updater = setSelectedKeys.mock.calls[0][0] as (
+      prev: Record<string, boolean>,
+    ) => Record<string, boolean>;
+    expect(typeof updater).toBe('function');
+    const result = updater({});
+    expect(result['docker\x1eweb\x1e10.0.0.1']).toBe(true);
   });
 
   it('clicking Terminal calls the store openTerminal slot with that record', () => {
