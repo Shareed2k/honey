@@ -1,11 +1,12 @@
 import { Button, Tooltip } from 'antd';
-import { AppstoreOutlined, CodeOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, CodeOutlined, PlayCircleOutlined, DatabaseOutlined } from '@ant-design/icons';
 import type { DockviewApi } from 'dockview';
 
 // Only tool panels that are actually registered today (Toolbox, Step editor,
-// Run). Records joins this list once its panel lands (Task 11/12).
+// Run, Records). Terminal joins this list once its panel lands (Task 12).
 const TOOLS = [
   { id: 'toolbox', component: 'toolbox', icon: <AppstoreOutlined />, label: 'Toolbox' },
+  { id: 'records', component: 'records', icon: <DatabaseOutlined />, label: 'Records' },
   { id: 'stepeditor', component: 'stepeditor', icon: <CodeOutlined />, label: 'Step editor' },
   { id: 'run', component: 'run', icon: <PlayCircleOutlined />, label: 'Run' },
 ];

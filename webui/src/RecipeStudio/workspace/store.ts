@@ -4,6 +4,7 @@ import type { DocState, RunStatus } from './types';
 import { parseDiskRecipe, syncRecipeAST, validateRecipeContent } from '../../api/recipes';
 import { apiPost } from '../../api/core';
 import type { ParsedRecipe } from '../../api/types/recipes';
+import type { HostRecord } from '../../HostPicker';
 import {
   buildFlowFromRecipe,
   buildRecipeFromFlow,
@@ -69,12 +70,17 @@ interface WorkspaceState {
   docs: Record<string, DocState>;
   active: string | null;
   schema: unknown;
+  // Set by the shell (Task 12) once the Terminal panel exists, so other
+  // panels (e.g. Records) can spawn a terminal without importing the
+  // Terminal panel directly. null until the shell wires it up.
+  openTerminal: ((rec: HostRecord) => void) | null;
 
   createDoc(name: string): Promise<void>;
   newDoc(): string;
   freeDoc(id: string): void;
   setActive(id: string | null): void;
   setSchema(schema: unknown): void;
+  setOpenTerminal(fn: ((rec: HostRecord) => void) | null): void;
 
   setSelectedNode(id: string, nodeId: string | null): void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -102,6 +108,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   docs: {},
   active: null,
   schema: null,
+  openTerminal: null,
 
   async createDoc(name) {
     if (get().docs[name]) return; // idempotent — already open
@@ -145,6 +152,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setSchema(schema) {
     set({ schema });
+  },
+
+  setOpenTerminal(fn) {
+    set({ openTerminal: fn });
   },
 
   setSelectedNode(id, nodeId) {

@@ -41,6 +41,26 @@ import { useWorkspaceStore } from './store';
 import { validateRecipeContent } from '../../api/recipes';
 import { apiPost } from '../../api/core';
 
+describe('openTerminal slot', () => {
+  beforeEach(() => useWorkspaceStore.setState({ openTerminal: null }));
+
+  it('is null until the shell sets it', () => {
+    expect(useWorkspaceStore.getState().openTerminal).toBeNull();
+  });
+
+  it('setOpenTerminal stores the fn so other panels can read it back off the slot', () => {
+    const fn = vi.fn();
+    useWorkspaceStore.getState().setOpenTerminal(fn);
+    expect(useWorkspaceStore.getState().openTerminal).toBe(fn);
+  });
+
+  it('setOpenTerminal(null) clears the slot', () => {
+    useWorkspaceStore.getState().setOpenTerminal(vi.fn());
+    useWorkspaceStore.getState().setOpenTerminal(null);
+    expect(useWorkspaceStore.getState().openTerminal).toBeNull();
+  });
+});
+
 describe('WorkspaceStore lifecycle', () => {
   beforeEach(() => useWorkspaceStore.setState({ docs: {}, active: null }));
 
