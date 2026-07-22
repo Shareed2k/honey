@@ -144,8 +144,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     patchDoc(set, id, (d) => ({ ...d, dirty: true }));
   },
   resetDoc(id) {
-    patchDoc(set, id, (d) => ({
-      ...blankDoc(d.recipeId, d.name),
-    }));
+    patchDoc(set, id, (d) => {
+      return blankDoc(d.recipeId, d.name);
+    });
   },
 }));

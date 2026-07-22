@@ -95,4 +95,54 @@ describe('WorkspaceStore per-doc actions', () => {
   it('actions on an unknown id are a no-op (no throw)', () => {
     expect(() => useWorkspaceStore.getState().setSelectedNode('nope', 's1')).not.toThrow();
   });
+
+  it('addStep adds a node + matching stepData entry to the active doc only', async () => {
+    await useWorkspaceStore.getState().createDoc('other.cue');
+    const before = useWorkspaceStore.getState().docs['other.cue'].nodes.length;
+
+    useWorkspaceStore.getState().addStep('deploy.cue', 'run');
+
+    const deployDoc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(deployDoc.nodes).toHaveLength(2);
+    const newNode = deployDoc.nodes.find((n) => n.id !== 's1');
+    expect(newNode).toBeTruthy();
+    expect(deployDoc.stepData[newNode.id]).toBeTruthy();
+    expect(deployDoc.stepData[newNode.id].kind).toBe('run');
+
+    // cross-doc isolation: the other open doc must be untouched.
+    expect(useWorkspaceStore.getState().docs['other.cue'].nodes).toHaveLength(before);
+  });
+
+  it('setStepData on one doc leaves another open doc\'s stepData untouched', async () => {
+    await useWorkspaceStore.getState().createDoc('other.cue');
+
+    useWorkspaceStore.getState().setStepData('deploy.cue', 's1', { kind: 'run', command: 'x' });
+
+    expect(useWorkspaceStore.getState().docs['deploy.cue'].stepData.s1.command).toBe('x');
+    expect(useWorkspaceStore.getState().docs['other.cue'].stepData.s1.command).toBeUndefined();
+    expect(useWorkspaceStore.getState().docs['other.cue'].stepData.s1.kind).toBe('run');
+  });
+
+  it('resetDoc preserves recipeId/name identity while resetting content', () => {
+    const nameBefore = useWorkspaceStore.getState().docs['deploy.cue'].name;
+    expect(nameBefore).toBeTruthy();
+
+    // mutate the doc so it's non-blank and dirty.
+    useWorkspaceStore.getState().setSelectedNode('deploy.cue', 's1');
+    useWorkspaceStore.getState().addStep('deploy.cue', 'run');
+    const mutated = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(mutated.selectedNodeId).toBe('s1');
+    expect(mutated.dirty).toBe(true);
+    expect(mutated.nodes.length).toBeGreaterThan(0);
+
+    useWorkspaceStore.getState().resetDoc('deploy.cue');
+
+    const reset = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(reset).toBeTruthy();
+    expect(reset.recipeId).toBe('deploy.cue');
+    expect(reset.name).toBe(nameBefore);
+    expect(reset.selectedNodeId).toBeNull();
+    expect(reset.dirty).toBe(false);
+    expect(reset.nodes).toHaveLength(0);
+  });
 });
