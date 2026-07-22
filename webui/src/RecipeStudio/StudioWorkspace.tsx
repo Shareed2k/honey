@@ -8,6 +8,7 @@ import { GraphPanel } from './workspace/panels/GraphPanel';
 import { RawEditorPanel } from './workspace/panels/RawEditorPanel';
 import { StepEditorPanel } from './workspace/panels/StepEditorPanel';
 import { ToolboxPanel } from './workspace/panels/ToolboxPanel';
+import { RunPanel } from './workspace/panels/RunPanel';
 import { ActivityBar } from './workspace/ActivityBar';
 import { attachDockviewSync } from './workspace/useDockviewSync';
 import { openGraph } from './workspace/registry';
@@ -15,12 +16,13 @@ import { EditorHeaderActions } from './workspace/EditorHeaderActions';
 import { useWorkspaceStore } from './workspace/store';
 import { apiGet } from '../api/core';
 
-// Run/Records/Terminal panels are registered as they land (Tasks 10-12).
+// Records/Terminal panels are registered as they land (Tasks 11-12).
 const components = {
   graph: GraphPanel,
   raweditor: RawEditorPanel,
   stepeditor: StepEditorPanel,
   toolbox: ToolboxPanel,
+  run: RunPanel,
 };
 
 interface RecipeStoreEntry {
@@ -53,9 +55,10 @@ export default function StudioWorkspace() {
     const a = event.api;
     setApi(a);
     // First-run tool panel arrangement — toolbox on the left, step editor to
-    // its right. `graph`/`raweditor` panels open on demand (New/Open); the
-    // remaining tool panels (records/run) join the activity bar + this
-    // layout once their components are registered (Tasks 10-12).
+    // its right, run panel docked below the step editor. `graph`/`raweditor`
+    // panels open on demand (New/Open); the remaining tool panel (records)
+    // joins the activity bar + this layout once its component is registered
+    // (Tasks 11-12).
     a.addPanel({ id: 'toolbox', component: 'toolbox', title: 'Toolbox' });
     a.addPanel({
       id: 'stepeditor',
@@ -63,6 +66,7 @@ export default function StudioWorkspace() {
       title: 'Step',
       position: { direction: 'right' },
     });
+    a.addPanel({ id: 'run', component: 'run', title: 'Run', position: { direction: 'below' } });
     disposeRef.current = attachDockviewSync(a, useWorkspaceStore.getState());
   };
 

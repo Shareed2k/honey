@@ -23,6 +23,12 @@ export interface DocState {
   validation: Validation;
   runStatus: Record<string, RunStatus>;
   dirty: boolean;
+  // The step id a "Run Step" trigger targets, or null for a whole-recipe
+  // "Run recipe" run. runCount is bumped on every trigger (including
+  // "Run again" from the Run panel) so the panel/StepRun instance can be
+  // remounted via a `key` that changes on each run.
+  runStepId: string | null;
+  runCount: number;
 }
 
 export interface PersistedWorkspace {

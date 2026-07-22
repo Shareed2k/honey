@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import type { IDockviewHeaderActionsProps } from 'dockview';
 import { Button, Space, message } from 'antd';
-import { CodeOutlined, EyeOutlined, CheckCircleOutlined, SaveOutlined } from '@ant-design/icons';
+import { CodeOutlined, EyeOutlined, CheckCircleOutlined, SaveOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import { useWorkspaceStore } from './store';
 import { recipeIdFromPanelId } from './registry';
 import StorageModal from '../StorageModal';
+import { useHostSelection } from '../../contexts/HostSelectionContext';
 
 /**
  * dockview `rightHeaderActionsComponent` — rendered in EVERY group's header.
@@ -20,8 +21,18 @@ export function EditorHeaderActions(props: IDockviewHeaderActionsProps) {
   const switchToVisual = useWorkspaceStore((s) => s.switchToVisual);
   const validate = useWorkspaceStore((s) => s.validate);
   const save = useWorkspaceStore((s) => s.save);
+  const startRun = useWorkspaceStore((s) => s.startRun);
+  const { selectedRecords } = useHostSelection();
 
   if (!recipeId || !doc) return null;
+
+  const handleRunRecipe = () => {
+    if (selectedRecords.length === 0) {
+      message.warning('Select hosts in the Records panel first');
+      return;
+    }
+    startRun(recipeId, null);
+  };
 
   const handleValidate = async () => {
     await validate(recipeId);
@@ -66,6 +77,9 @@ export function EditorHeaderActions(props: IDockviewHeaderActionsProps) {
       </Button>
       <Button size="small" icon={<SaveOutlined />} onClick={() => setSaveVisible(true)}>
         Save
+      </Button>
+      <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={handleRunRecipe}>
+        Run recipe
       </Button>
       <StorageModal
         visible={saveVisible}

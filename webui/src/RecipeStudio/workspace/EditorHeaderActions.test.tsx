@@ -1,9 +1,18 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ConfigProvider, theme } from 'antd';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { message } from 'antd';
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from 'dockview';
 import { useWorkspaceStore } from './store';
 import { EditorHeaderActions } from './EditorHeaderActions';
+
+// Vitest hoists vi.mock factories above other module-level statements, so a
+// plain `const` referenced from inside the factory would hit a temporal-dead-
+// zone error — the "mock"-prefixed name opts it out of that hoisting check.
+const mockHostSelectionState: { selectedRecords: unknown[] } = { selectedRecords: [] };
+vi.mock('../../contexts/HostSelectionContext', () => ({
+  useHostSelection: () => ({ records: [], selectedRecords: mockHostSelectionState.selectedRecords, sshUser: 'root' }),
+}));
 
 // antd Modal (rendered inside EditorHeaderActions via StorageModal) reads
 // getComputedStyle for its motion/measurement logic — mirrors the same
@@ -12,6 +21,7 @@ const originalGetComputedStyle = window.getComputedStyle.bind(window);
 
 beforeEach(() => {
   vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => originalGetComputedStyle(elt));
+  mockHostSelectionState.selectedRecords = [];
   useWorkspaceStore.setState({
     docs: {
       'deploy.cue': {
@@ -113,5 +123,34 @@ describe('EditorHeaderActions', () => {
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     expect(await screen.findByText('Save Recipe Draft')).toBeTruthy();
+  });
+
+  describe('Run recipe', () => {
+    it('warns and does not start a run when no hosts are selected', () => {
+      mockHostSelectionState.selectedRecords = [];
+      const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun');
+      const warnSpy = vi.spyOn(message, 'warning').mockImplementation(() => '' as unknown as ReturnType<typeof message.warning>);
+
+      renderWithTheme('graph:deploy.cue');
+      fireEvent.click(screen.getByRole('button', { name: /run recipe/i }));
+
+      expect(warnSpy).toHaveBeenCalledWith('Select hosts in the Records panel first');
+      expect(startRunSpy).not.toHaveBeenCalled();
+
+      startRunSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+
+    it('starts a whole-recipe run (stepId null) for the panel\'s recipe id when hosts are selected', () => {
+      mockHostSelectionState.selectedRecords = [{ id: 'h1' }];
+      const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun').mockImplementation(() => {});
+
+      renderWithTheme('graph:deploy.cue');
+      fireEvent.click(screen.getByRole('button', { name: /run recipe/i }));
+
+      expect(startRunSpy).toHaveBeenCalledWith('deploy.cue', null);
+
+      startRunSpy.mockRestore();
+    });
   });
 });

@@ -165,6 +165,49 @@ describe('WorkspaceStore per-doc actions', () => {
   });
 });
 
+describe('run actions', () => {
+  beforeEach(async () => {
+    useWorkspaceStore.setState({ docs: {}, active: null });
+    await useWorkspaceStore.getState().createDoc('deploy.cue');
+  });
+
+  it('startRun sets runStepId and increments runCount', () => {
+    useWorkspaceStore.getState().startRun('deploy.cue', 's1');
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.runStepId).toBe('s1');
+    expect(doc.runCount).toBe(1);
+  });
+
+  it('startRun with stepId null (whole-recipe run) sets runStepId to null', () => {
+    useWorkspaceStore.getState().startRun('deploy.cue', null);
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.runStepId).toBeNull();
+    expect(doc.runCount).toBe(1);
+  });
+
+  it('startRun called again bumps runCount further and can retarget the step', () => {
+    useWorkspaceStore.getState().startRun('deploy.cue', 's1');
+    useWorkspaceStore.getState().startRun('deploy.cue', 's2');
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.runStepId).toBe('s2');
+    expect(doc.runCount).toBe(2);
+  });
+
+  it('bumpRun increments runCount only, leaving runStepId untouched', () => {
+    useWorkspaceStore.getState().startRun('deploy.cue', 's1');
+    useWorkspaceStore.getState().bumpRun('deploy.cue');
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.runStepId).toBe('s1');
+    expect(doc.runCount).toBe(2);
+  });
+
+  it('startRun/bumpRun on an unknown id are a no-op (no throw)', () => {
+    expect(() => useWorkspaceStore.getState().startRun('nope', 's1')).not.toThrow();
+    expect(() => useWorkspaceStore.getState().bumpRun('nope')).not.toThrow();
+    expect(useWorkspaceStore.getState().docs['nope']).toBeUndefined();
+  });
+});
+
 describe('graph/raw toggle', () => {
   beforeEach(async () => {
     useWorkspaceStore.setState({ docs: {}, active: null });

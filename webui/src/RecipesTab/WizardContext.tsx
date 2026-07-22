@@ -56,8 +56,32 @@ type WizardContextType = {
 
 const WizardContext = createContext<WizardContextType | null>(null);
 
-export function WizardProvider({ children, initialHosts = [] }: { children: ReactNode; initialHosts?: HostRecord[] }) {
-  const [state, dispatch] = useReducer(wizardReducer, { ...initialState, hosts: initialHosts });
+// `initialEdits`/`initialSshUser`/`initialRecordSession` let a caller seed the
+// reducer's starting state with a recipe to execute immediately (e.g. the
+// Recipe Studio Run panel, which has no interactive wizard steps of its own —
+// it just needs StepRun's context-driven exec to start from the right
+// recipe/hosts/user on first render). All optional; the plain
+// `<WizardProvider initialHosts={...}>` wizard flow is unaffected.
+export function WizardProvider({
+  children,
+  initialHosts = [],
+  initialEdits = null,
+  initialSshUser,
+  initialRecordSession,
+}: {
+  children: ReactNode;
+  initialHosts?: HostRecord[];
+  initialEdits?: ParsedRecipe | null;
+  initialSshUser?: string;
+  initialRecordSession?: boolean;
+}) {
+  const [state, dispatch] = useReducer(wizardReducer, {
+    ...initialState,
+    hosts: initialHosts,
+    edits: initialEdits,
+    sshUser: initialSshUser ?? initialState.sshUser,
+    recordSession: initialRecordSession ?? initialState.recordSession,
+  });
 
   return <WizardContext.Provider value={{ state, dispatch }}>{children}</WizardContext.Provider>;
 }

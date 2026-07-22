@@ -31,6 +31,7 @@ vi.mock('../../api/recipes', async (importOriginal) => {
 
 import StudioWorkspace from '../StudioWorkspace';
 import { useWorkspaceStore } from './store';
+import { HostSelectionProvider } from '../../contexts/HostSelectionContext';
 
 beforeEach(() => {
   useWorkspaceStore.setState({ docs: {}, active: null, schema: null });
@@ -38,9 +39,22 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+// The Run panel (mounted as part of the shell's onReady layout) reads
+// useHostSelection(), which throws outside a HostSelectionProvider — in the
+// real app this comes for free from contexts/index.tsx's RootProvider (which
+// wraps the whole app, StudioWorkspace included). Reproduce that ancestor
+// here so the shell renders exactly as it does in production.
+function renderShell() {
+  return render(
+    <HostSelectionProvider>
+      <StudioWorkspace />
+    </HostSelectionProvider>,
+  );
+}
+
 describe('StudioWorkspace shell', () => {
   it('opening a recipe adds a graph panel and sets it active', async () => {
-    render(<StudioWorkspace />);
+    renderShell();
 
     fireEvent.click(await screen.findByRole('button', { name: /new recipe/i }));
 
@@ -55,7 +69,7 @@ describe('StudioWorkspace shell', () => {
   });
 
   it('Open select: choosing a fetched recipe calls createDoc and opens its graph panel', async () => {
-    render(<StudioWorkspace />);
+    renderShell();
 
     // The recipe-store list is fetched on mount; wait for the option to land
     // in the Select before trying to open it. antd/rc-select opens its
@@ -88,7 +102,7 @@ describe('StudioWorkspace shell', () => {
       .spyOn(useWorkspaceStore.getState(), 'createDoc')
       .mockRejectedValue(new Error('boom'));
 
-    render(<StudioWorkspace />);
+    renderShell();
 
     const combobox = await screen.findByRole('combobox');
     fireEvent.mouseDown(combobox);

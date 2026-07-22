@@ -31,6 +31,8 @@ function blankDocState(id: string, overrides: Partial<DocState> = {}): DocState 
     validation: { state: 'idle', issues: [] },
     runStatus: {},
     dirty: false,
+    runStepId: null,
+    runCount: 0,
     ...overrides,
   };
 }

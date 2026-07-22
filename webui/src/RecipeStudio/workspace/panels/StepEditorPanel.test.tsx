@@ -1,7 +1,16 @@
 import { cleanup, render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { message } from 'antd';
 import { useWorkspaceStore } from '../store';
 import { StepEditorPanel } from './StepEditorPanel';
+
+// Vitest hoists vi.mock factories above other module-level statements, so a
+// plain `const` referenced from inside the factory would hit a temporal-dead-
+// zone error — the "mock"-prefixed name opts it out of that hoisting check.
+const mockHostSelectionState: { selectedRecords: unknown[] } = { selectedRecords: [] };
+vi.mock('../../../contexts/HostSelectionContext', () => ({
+  useHostSelection: () => ({ records: [], selectedRecords: mockHostSelectionState.selectedRecords, sshUser: 'root' }),
+}));
 
 // Stub renders a button that fires onChange with a sentinel value so we can
 // prove setStepData is wired with the right (recipeId, nodeId) pair — a
@@ -26,6 +35,7 @@ afterEach(cleanup);
 
 describe('StepEditorPanel', () => {
   beforeEach(() => {
+    mockHostSelectionState.selectedRecords = [];
     useWorkspaceStore.setState({
       docs: {
         'a.cue': {
@@ -71,5 +81,34 @@ describe('StepEditorPanel', () => {
     render(<StepEditorPanel {...props()} />);
     expect(screen.getByTestId('schema').textContent).toBe(JSON.stringify({}));
     expect(screen.getByTestId('value').textContent).toBe(JSON.stringify({ kind: 'run' }));
+  });
+
+  describe('Run Step', () => {
+    it('warns and does not start a run when no hosts are selected', () => {
+      mockHostSelectionState.selectedRecords = [];
+      const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun');
+      const warnSpy = vi.spyOn(message, 'warning').mockImplementation(() => '' as unknown as ReturnType<typeof message.warning>);
+
+      render(<StepEditorPanel {...props()} />);
+      fireEvent.click(screen.getByRole('button', { name: /run step/i }));
+
+      expect(warnSpy).toHaveBeenCalledWith('Select hosts in the Records panel first');
+      expect(startRunSpy).not.toHaveBeenCalled();
+
+      startRunSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+
+    it('starts a run for the active doc + selected node when hosts are selected', () => {
+      mockHostSelectionState.selectedRecords = [{ id: 'h1' }];
+      const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun').mockImplementation(() => {});
+
+      render(<StepEditorPanel {...props()} />);
+      fireEvent.click(screen.getByRole('button', { name: /run step/i }));
+
+      expect(startRunSpy).toHaveBeenCalledWith('a.cue', 'node1');
+
+      startRunSpy.mockRestore();
+    });
   });
 });
