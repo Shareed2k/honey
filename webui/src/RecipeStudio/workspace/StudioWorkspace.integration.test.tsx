@@ -3,12 +3,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { message } from 'antd';
 
 // Non-empty so the Open Select's fetched-options path (GET /api/v1/recipes/store)
-// has something to render/select in the Open-flow tests below.
+// has something to render/select in the Open-flow tests below. `apiPutJson` is
+// stubbed too — the shell wires up `attachWorkspaceSync` on mount, which PUTs
+// the workspace back after a debounce; without a real export here that PUT
+// would throw `apiPutJson is not a function` if its timer ever fired before
+// `afterEach(cleanup)` tears the component (and workspaceSync) down.
 vi.mock('../../api/core', () => ({
   apiGet: vi.fn(async (path: string) => ({
     ok: true,
     json: async () => (path.includes('schema') ? {} : [{ name: 'deploy.cue' }]),
   })),
+  apiPutJson: vi.fn(async () => ({ ok: true })),
 }));
 vi.mock('../../contexts/AppContext', () => ({
   useAppContext: () => ({ meta: { version: '1' } }),

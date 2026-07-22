@@ -87,6 +87,23 @@ export function attachWorkspaceSync(
 
       if (data.active) store.setActive(data.active);
     } finally {
+      // dockview's `onDidLayoutChange` is an `AsapEvent` — `api.fromJSON`
+      // above only *queues* its microtask (`queueMicrotask`), it doesn't fire
+      // synchronously. When `openRecipes` is empty the loop above never
+      // awaits anything, so without this drain we'd flip `restoring` back to
+      // false and return *before* that queued microtask runs — the event
+      // then lands with `restoring` already false, `scheduleSave()` arms the
+      // debounce timer, and a spurious PUT fires ~DEBOUNCE_MS later on every
+      // reload/reset. Draining one microtask here lets it fire (harmlessly,
+      // since `restoring` is still true) while we're still inside the guard.
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      // Belt-and-suspenders: if that drained event (or anything else during
+      // restore) armed the debounce timer anyway, cancel it — restore()
+      // should never leave a save scheduled behind it.
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       restoring = false;
     }
   };

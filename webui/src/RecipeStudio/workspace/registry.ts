@@ -76,26 +76,38 @@ export function openRecipeIds(api: DockviewApi): string[] {
   return [...ids];
 }
 
+type ToolPanelId = (typeof DEFAULT_TOOL_PANELS)[number]['id'];
+
+/**
+ * The `position` half of each default tool panel's placement — kept
+ * separate from `DEFAULT_TOOL_PANELS` (rather than folded into it) so that
+ * descriptor stays a plain id/component/title triple other callers can read
+ * without pulling in dockview's `AddPanelOptions` type. Panels absent here
+ * (`toolbox`) are added with no `position`, i.e. as the layout's first panel.
+ */
+const DEFAULT_TOOL_PANEL_POSITIONS: Partial<
+  Record<ToolPanelId, NonNullable<Parameters<DockviewApi['addPanel']>[0]['position']>>
+> = {
+  records: { referencePanel: 'toolbox', direction: 'within' },
+  stepeditor: { direction: 'right' },
+  run: { direction: 'below' },
+};
+
 /**
  * Applies the first-run tool panel arrangement (Task 9's shell layout):
  * toolbox on the left (Records tabbed alongside it), step editor to the
  * right, run panel docked below the step editor. Shared by the shell's
  * `onReady` (initial layout, before a saved workspace — if any — is
  * restored over it) and `resetLayout` (Task 15's "Reset Layout" action).
+ *
+ * Derives the panel id/component/title triple from `DEFAULT_TOOL_PANELS`
+ * (single source of truth — see also `applyDefaultLayout`'s doc comment on
+ * that constant) and layers on each panel's position from
+ * `DEFAULT_TOOL_PANEL_POSITIONS`.
  */
 export function applyDefaultLayout(api: DockviewApi): void {
-  api.addPanel({ id: 'toolbox', component: 'toolbox', title: 'Toolbox' });
-  api.addPanel({
-    id: 'records',
-    component: 'records',
-    title: 'Records',
-    position: { referencePanel: 'toolbox', direction: 'within' },
-  });
-  api.addPanel({
-    id: 'stepeditor',
-    component: 'stepeditor',
-    title: 'Step',
-    position: { direction: 'right' },
-  });
-  api.addPanel({ id: 'run', component: 'run', title: 'Run', position: { direction: 'below' } });
+  for (const panel of DEFAULT_TOOL_PANELS) {
+    const position = DEFAULT_TOOL_PANEL_POSITIONS[panel.id];
+    api.addPanel(position ? { ...panel, position } : { ...panel });
+  }
 }
