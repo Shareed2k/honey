@@ -61,3 +61,41 @@ export const DEFAULT_TOOL_PANELS = [
   { id: 'stepeditor', component: 'stepeditor', title: 'Step' },
   { id: 'run', component: 'run', title: 'Run' },
 ] as const;
+
+/**
+ * Returns the unique recipeIds currently open across `graph:`/`raw:` panels
+ * (deduplicated — a recipe with both a graph and a raw panel open counts
+ * once). Used by workspaceSync to build the `openRecipes` list it persists.
+ */
+export function openRecipeIds(api: DockviewApi): string[] {
+  const ids = new Set<string>();
+  for (const panel of api.panels) {
+    const id = recipeIdFromPanelId(panel.id);
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
+/**
+ * Applies the first-run tool panel arrangement (Task 9's shell layout):
+ * toolbox on the left (Records tabbed alongside it), step editor to the
+ * right, run panel docked below the step editor. Shared by the shell's
+ * `onReady` (initial layout, before a saved workspace — if any — is
+ * restored over it) and `resetLayout` (Task 15's "Reset Layout" action).
+ */
+export function applyDefaultLayout(api: DockviewApi): void {
+  api.addPanel({ id: 'toolbox', component: 'toolbox', title: 'Toolbox' });
+  api.addPanel({
+    id: 'records',
+    component: 'records',
+    title: 'Records',
+    position: { referencePanel: 'toolbox', direction: 'within' },
+  });
+  api.addPanel({
+    id: 'stepeditor',
+    component: 'stepeditor',
+    title: 'Step',
+    position: { direction: 'right' },
+  });
+  api.addPanel({ id: 'run', component: 'run', title: 'Run', position: { direction: 'below' } });
+}

@@ -13,7 +13,8 @@ import { RecordsPanel } from './workspace/panels/RecordsPanel';
 import { TerminalPanel } from './workspace/panels/TerminalPanel';
 import { ActivityBar } from './workspace/ActivityBar';
 import { attachDockviewSync } from './workspace/useDockviewSync';
-import { openGraph } from './workspace/registry';
+import { applyDefaultLayout, openGraph } from './workspace/registry';
+import { attachWorkspaceSync, resetLayout } from './workspace/persistence';
 import { EditorHeaderActions } from './workspace/EditorHeaderActions';
 import { useWorkspaceStore } from './workspace/store';
 import { apiGet } from '../api/core';
@@ -61,22 +62,18 @@ export default function StudioWorkspace() {
     // First-run tool panel arrangement — toolbox on the left (Records tabbed
     // alongside it), step editor to the right, run panel docked below the
     // step editor. `graph`/`raweditor`/`terminal` panels open on demand
-    // (New/Open, Terminal action).
-    a.addPanel({ id: 'toolbox', component: 'toolbox', title: 'Toolbox' });
-    a.addPanel({
-      id: 'records',
-      component: 'records',
-      title: 'Records',
-      position: { referencePanel: 'toolbox', direction: 'within' },
-    });
-    a.addPanel({
-      id: 'stepeditor',
-      component: 'stepeditor',
-      title: 'Step',
-      position: { direction: 'right' },
-    });
-    a.addPanel({ id: 'run', component: 'run', title: 'Run', position: { direction: 'below' } });
-    disposeRef.current = attachDockviewSync(a, useWorkspaceStore.getState());
+    // (New/Open, Terminal action). If a workspace was previously saved,
+    // `attachWorkspaceSync`'s restore() replaces this via `api.fromJSON`
+    // below — laying these out first (before any sync is attached, so
+    // neither subscription sees these adds) just avoids a blank shell while
+    // the GET is in flight.
+    applyDefaultLayout(a);
+
+    const disposers: (() => void)[] = [];
+    disposers.push(attachDockviewSync(a, useWorkspaceStore.getState()));
+    const sync = attachWorkspaceSync(a, useWorkspaceStore.getState());
+    disposers.push(sync.dispose);
+    disposeRef.current = () => disposers.forEach((d) => d());
 
     // Wire the store's `openTerminal` slot so the Records panel's Terminal
     // action (decoupled from this module — see RecordsPanel.tsx) can spawn a
@@ -128,6 +125,9 @@ export default function StudioWorkspace() {
               options={recipeList.map((r) => ({ value: r.name, label: r.name }))}
               onSelect={handleOpen}
             />
+            <Button size="small" onClick={() => api && resetLayout(api)}>
+              Reset Layout
+            </Button>
           </Space>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
