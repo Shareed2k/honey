@@ -24,7 +24,10 @@ type Workspace struct {
 	Active      string          `json:"active"`
 }
 
-// Local persists one Workspace blob as JSON on disk. Safe for concurrent use.
+// Local persists one Workspace blob as JSON on disk. Save writes atomically via
+// a unique temp file (os.CreateTemp) plus rename, so concurrent Local instances
+// pointed at the same directory never collide on a shared temp name. Safe for
+// concurrent use.
 type Local struct {
 	mu   sync.Mutex // guards the read / write+rename critical section
 	path string
@@ -54,8 +57,9 @@ func (l *Local) Load(_ context.Context) (Workspace, error) {
 	return ws, nil
 }
 
-// Save atomically writes the workspace (temp file + rename) so concurrent Loads
-// never observe a torn file.
+// Save atomically writes the workspace (unique temp file + rename) so concurrent
+// Loads never observe a torn file, and multiple Local instances targeting the
+// same directory never collide on a shared temp name.
 func (l *Local) Save(_ context.Context, ws Workspace) error {
 	data, err := json.Marshal(ws) // marshal outside the lock
 	if err != nil {
@@ -63,14 +67,25 @@ func (l *Local) Save(_ context.Context, ws Workspace) error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
+	dir := filepath.Dir(l.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("workspacestore: mkdir: %w", err)
 	}
-	tmp := l.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	f, err := os.CreateTemp(dir, "studio_workspace-*.tmp")
+	if err != nil {
+		return fmt.Errorf("workspacestore: create temp: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return fmt.Errorf("workspacestore: write temp: %w", err)
 	}
-	if err := os.Rename(tmp, l.path); err != nil {
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return fmt.Errorf("workspacestore: close temp: %w", err)
+	}
+	if err := os.Rename(f.Name(), l.path); err != nil {
+		_ = os.Remove(f.Name())
 		return fmt.Errorf("workspacestore: rename: %w", err)
 	}
 	return nil
