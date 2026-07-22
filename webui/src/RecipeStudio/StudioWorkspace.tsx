@@ -11,6 +11,7 @@ import { ToolboxPanel } from './workspace/panels/ToolboxPanel';
 import { ActivityBar } from './workspace/ActivityBar';
 import { attachDockviewSync } from './workspace/useDockviewSync';
 import { openGraph } from './workspace/registry';
+import { EditorHeaderActions } from './workspace/EditorHeaderActions';
 import { useWorkspaceStore } from './workspace/store';
 import { apiGet } from '../api/core';
 
@@ -102,7 +103,12 @@ export default function StudioWorkspace() {
           </Space>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
-          <DockviewReact components={components} onReady={onReady} className="dockview-theme-honey" />
+          <DockviewReact
+            components={components}
+            rightHeaderActionsComponent={EditorHeaderActions}
+            onReady={onReady}
+            className="dockview-theme-honey"
+          />
         </div>
       </div>
     </div>

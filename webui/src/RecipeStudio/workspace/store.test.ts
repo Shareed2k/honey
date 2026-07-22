@@ -15,6 +15,11 @@ vi.mock('../../api/recipes', () => ({
   // actually invoked, but store.ts imports the name so it must exist here.
   syncRecipeAST: vi.fn(async (_originalCue: string, recipeContent: Record<string, unknown>) =>
     JSON.stringify(recipeContent, null, 2)),
+  // validate() below configures this per-test via mockResolvedValueOnce.
+  validateRecipeContent: vi.fn(),
+}));
+vi.mock('../../api/core', () => ({
+  apiPost: vi.fn(),
 }));
 vi.mock('../useRecipeGraph', async (orig) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,6 +38,8 @@ vi.mock('../useRecipeGraph', async (orig) => {
 
 import { message } from 'antd';
 import { useWorkspaceStore } from './store';
+import { validateRecipeContent } from '../../api/recipes';
+import { apiPost } from '../../api/core';
 
 describe('WorkspaceStore lifecycle', () => {
   beforeEach(() => useWorkspaceStore.setState({ docs: {}, active: null }));
@@ -198,5 +205,75 @@ describe('graph/raw toggle', () => {
     expect(errorSpy).toHaveBeenCalled();
 
     errorSpy.mockRestore();
+  });
+});
+
+describe('validate/save actions', () => {
+  beforeEach(async () => {
+    useWorkspaceStore.setState({ docs: {}, active: null });
+    await useWorkspaceStore.getState().createDoc('deploy.cue');
+    vi.mocked(validateRecipeContent).mockReset();
+    vi.mocked(apiPost).mockReset();
+  });
+
+  it('validate: a valid recipe sets state to valid and records the risk', async () => {
+    vi.mocked(validateRecipeContent).mockResolvedValueOnce({
+      plan: '', steps: [], risk: { level: 'low' },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    await useWorkspaceStore.getState().validate('deploy.cue');
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.validation.state).toBe('valid');
+    expect(doc.validation.issues).toHaveLength(0);
+    expect(doc.validation.risk).toEqual({ level: 'low' });
+  });
+
+  it('validate: a rejected recipe sets state to invalid with its issues', async () => {
+    vi.mocked(validateRecipeContent).mockResolvedValueOnce({
+      errors: [{ message: 'bad' }],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    await useWorkspaceStore.getState().validate('deploy.cue');
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.validation.state).toBe('invalid');
+    expect(doc.validation.issues).toHaveLength(1);
+    expect(doc.validation.issues[0].message).toBe('bad');
+  });
+
+  it('save: success posts the built recipe JSON to the store URL and clears dirty', async () => {
+    useWorkspaceStore.getState().markDirty('deploy.cue');
+    expect(useWorkspaceStore.getState().docs['deploy.cue'].dirty).toBe(true);
+    vi.mocked(apiPost).mockResolvedValueOnce({ ok: true } as Response);
+
+    await useWorkspaceStore.getState().save('deploy.cue', {
+      storage: 'local', path: 'deploy.cue', commitMessage: '',
+    });
+
+    expect(useWorkspaceStore.getState().docs['deploy.cue'].dirty).toBe(false);
+    expect(apiPost).toHaveBeenCalledTimes(1);
+    const [url, body] = vi.mocked(apiPost).mock.calls[0];
+    expect(url).toBe('/api/v1/recipes/store/deploy.cue');
+    const content = (body as { content: string }).content;
+    expect(typeof content).toBe('string');
+    expect(JSON.parse(content)).toHaveProperty('steps');
+  });
+
+  it('save: failure throws and leaves the doc dirty', async () => {
+    useWorkspaceStore.getState().markDirty('deploy.cue');
+    vi.mocked(apiPost).mockResolvedValueOnce({
+      ok: false, text: async () => 'nope',
+    } as Response);
+
+    await expect(
+      useWorkspaceStore.getState().save('deploy.cue', {
+        storage: 'local', path: 'deploy.cue', commitMessage: '',
+      }),
+    ).rejects.toThrow('nope');
+
+    expect(useWorkspaceStore.getState().docs['deploy.cue'].dirty).toBe(true);
   });
 });

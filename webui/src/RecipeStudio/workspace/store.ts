@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { message } from 'antd';
 import type { DocState, RunStatus } from './types';
-import { parseDiskRecipe, syncRecipeAST } from '../../api/recipes';
+import { parseDiskRecipe, syncRecipeAST, validateRecipeContent } from '../../api/recipes';
+import { apiPost } from '../../api/core';
+import type { ParsedRecipe } from '../../api/types/recipes';
 import {
   buildFlowFromRecipe,
   buildRecipeFromFlow,
@@ -28,6 +30,23 @@ function patchDoc(
     if (!doc) return {};
     return { docs: { ...s.docs, [id]: patch(doc) } };
   });
+}
+
+// Builds the same recipe-JSON shape switchToRaw/validate/save all need from a
+// doc's visual-mode state (nodes/edges/stepData [+ defaults]). Shared here so
+// the three call sites can't drift out of sync with each other.
+function buildDocRecipe(doc: DocState): Record<string, unknown> {
+  const base = buildRecipeFromFlow({
+    name: recipeNameFromFilename(doc.recipeId),
+    nodes: doc.nodes,
+    edges: doc.edges,
+    stepData: doc.stepData,
+  });
+  const recipe = base as unknown as Record<string, unknown>;
+  if (doc.recipeDefaults && Object.keys(doc.recipeDefaults as object).length > 0) {
+    recipe.defaults = doc.recipeDefaults;
+  }
+  return recipe;
 }
 
 function blankDoc(recipeId: string, name: string): DocState {
@@ -68,6 +87,12 @@ interface WorkspaceState {
 
   switchToRaw(id: string): Promise<void>;
   switchToVisual(id: string): void;
+
+  validate(id: string): Promise<void>;
+  save(
+    id: string,
+    options: { storage: string; path: string; commitMessage: string; gitUrl?: string; gitBranch?: string },
+  ): Promise<void>;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -170,16 +195,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async switchToRaw(id) {
     const doc = get().docs[id];
     if (!doc) return;
-    const base = buildRecipeFromFlow({
-      name: recipeNameFromFilename(doc.recipeId),
-      nodes: doc.nodes,
-      edges: doc.edges,
-      stepData: doc.stepData,
-    });
-    const visualJSON = base as unknown as Record<string, unknown>;
-    if (doc.recipeDefaults && Object.keys(doc.recipeDefaults as object).length > 0) {
-      visualJSON.defaults = doc.recipeDefaults;
-    }
+    const visualJSON = buildDocRecipe(doc);
     let newRaw: string;
     if (doc.originalCue) {
       try {
@@ -216,5 +232,68 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch {
       message.error('Invalid JSON — fix errors before switching to visual mode');
     }
+  },
+
+  async validate(id) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    patchDoc(set, id, (d) => ({ ...d, validation: { ...d.validation, state: 'validating' } }));
+
+    let recipe: ParsedRecipe;
+    if (doc.rawMode) {
+      try {
+        recipe = JSON.parse(doc.rawContent) as ParsedRecipe;
+      } catch {
+        patchDoc(set, id, (d) => ({
+          ...d,
+          validation: { state: 'invalid', issues: [{ message: 'invalid JSON' }] },
+        }));
+        return;
+      }
+    } else {
+      recipe = buildDocRecipe(doc) as unknown as ParsedRecipe;
+    }
+
+    try {
+      const res = await validateRecipeContent(recipe);
+      if ('errors' in res) {
+        patchDoc(set, id, (d) => ({
+          ...d,
+          validation: {
+            state: 'invalid',
+            issues: res.errors.map((e) => ({ path: e.path, kind: e.kind, message: e.message })),
+            risk: undefined,
+          },
+        }));
+      } else {
+        patchDoc(set, id, (d) => ({
+          ...d,
+          validation: { state: 'valid', issues: [], risk: res.risk },
+        }));
+      }
+    } catch (err) {
+      patchDoc(set, id, (d) => ({
+        ...d,
+        validation: { state: 'invalid', issues: [{ message: String(err) }] },
+      }));
+    }
+  },
+
+  async save(id, options) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    const contentStr = doc.rawMode
+      ? doc.rawContent
+      : JSON.stringify(buildDocRecipe(doc), null, 2);
+
+    let url = `/api/v1/recipes/store/${encodeURIComponent(options.path)}`;
+    if (options.storage === 'git') {
+      url += `?git_url=${encodeURIComponent(options.gitUrl || '')}&git_branch=${encodeURIComponent(options.gitBranch || '')}`;
+    }
+    const res = await apiPost(url, { content: contentStr });
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
+    patchDoc(set, id, (d) => ({ ...d, dirty: false }));
   },
 }));
