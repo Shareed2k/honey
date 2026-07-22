@@ -176,3 +176,65 @@ describe('RunPanel subgraph filtering (step = target + ancestors, whole = all)',
     expect(captured).toContain('cmd-c');
   });
 });
+
+// Regression for the singleton-RunPanel stale-doc bug: RunPanel is mounted
+// once by the dockview shell and just follows `active` into `s.docs`, so
+// switching the active recipe tab does NOT remount RunPanel itself — only
+// the WizardProvider's `key` can force StepRun to re-seed from the
+// newly-active doc. Two docs that happen to share (runStepId, runCount) —
+// here both are runStepId=null/runCount=1, the common "just ran the whole
+// recipe" shape — used to collide on the old `${stepId ?? 'all'}-${runCount}`
+// key, so React reused the WizardProvider instance across the switch and
+// StepRun kept rendering doc A's recipe even though `active` (and `doc`) had
+// already moved to B. Asserting on the captured-recipe stub (fed by the REAL
+// WizardContext, per the mock above) is what makes this test fail under the
+// old key and pass under the fix — a shallow "no active run" or hosts-count
+// check wouldn't have caught it.
+describe('RunPanel remounts WizardProvider/StepRun on active-doc switch', () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({
+      docs: {
+        'doc-a.cue': {
+          recipeId: 'doc-a.cue', name: 'doc-a',
+          nodes: [{ id: 'step_a' }],
+          edges: [],
+          stepData: { step_a: { id: 'step_a', kind: 'run', command: 'cmd-a-only' } },
+          recipeDefaults: {}, selectedNodeId: null, rawMode: false, rawContent: '', originalCue: '',
+          validation: { state: 'idle', issues: [] }, runStatus: {}, dirty: false,
+          // Same (runStepId, runCount) as doc-b below — this is the collision
+          // that the old key (`${stepId ?? 'all'}-${runCount}`, no doc
+          // identity) could not distinguish.
+          runStepId: null, runCount: 1,
+        },
+        'doc-b.cue': {
+          recipeId: 'doc-b.cue', name: 'doc-b',
+          nodes: [{ id: 'step_b' }],
+          edges: [],
+          stepData: { step_b: { id: 'step_b', kind: 'run', command: 'cmd-b-only' } },
+          recipeDefaults: {}, selectedNodeId: null, rawMode: false, rawContent: '', originalCue: '',
+          validation: { state: 'idle', issues: [] }, runStatus: {}, dirty: false,
+          runStepId: null, runCount: 1,
+        },
+      },
+      active: 'doc-a.cue', schema: {},
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+  });
+
+  it('shows doc B\'s recipe (not stale doc A) after the active doc switches', () => {
+    const { rerender } = render(<RunPanel {...props()} />);
+
+    // Sanity: doc A's recipe is showing before the switch.
+    expect(screen.getByTestId('captured-recipe').textContent).toContain('cmd-a-only');
+
+    // Simulate the dockview shell's singleton RunPanel following a tab
+    // switch: only `active` changes in the store, RunPanel itself is never
+    // unmounted by the shell.
+    useWorkspaceStore.setState({ active: 'doc-b.cue' });
+    rerender(<RunPanel {...props()} />);
+
+    const captured = screen.getByTestId('captured-recipe').textContent ?? '';
+    expect(captured).toContain('cmd-b-only');
+    expect(captured).not.toContain('cmd-a-only');
+  });
+});

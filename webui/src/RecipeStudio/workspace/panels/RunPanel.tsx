@@ -57,12 +57,17 @@ export function RunPanel(_props: IDockviewPanelProps) {
         props — its real Props type is just the run-lifecycle callbacks
         (sessionRecordingAvailable/onViewRecording/onRunAgain/onStartNew/
         onRow/onStatusChange). A fresh WizardProvider per run (keyed on
-        stepId+runCount) seeds that context with this run's recipe/hosts/
-        user so StepRun's mount-time exec effect sees the right values on
-        its very first render.
+        recipeId+stepId+runCount) seeds that context with this run's recipe/
+        hosts/user so StepRun's mount-time exec effect sees the right values
+        on its very first render. recipeId must be in the key — otherwise two
+        open docs whose (stepId, runCount) happen to coincide (e.g. both just
+        did their first "Run recipe") would share a React key across an
+        active-doc switch, so React reuses the WizardProvider instance
+        instead of remounting it, and StepRun keeps showing the previous
+        doc's run against the newly-active doc.
       */}
       <WizardProvider
-        key={`${stepId ?? 'all'}-${doc.runCount}`}
+        key={`${doc.recipeId}-${stepId ?? 'all'}-${doc.runCount}`}
         initialHosts={selectedRecords}
         initialEdits={recipe as unknown as ParsedRecipe}
         initialSshUser={sshUser}
