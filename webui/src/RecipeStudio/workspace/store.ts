@@ -32,6 +32,24 @@ type FlowNode = { id: string; position: { x: number; y: number }; data?: Record<
 
 type ValidationIssue = { path?: string; kind?: string; message: string };
 
+// Stamps each node with its dependency wave (via computeWavesFromEdges)
+// BEFORE laying it out with applyWaveLayout. This ordering matters:
+// applyWaveLayout only *positions* nodes by whatever wave is already on
+// data.wave, falling back to a single `fallbackWave` for every node that
+// doesn't have one yet — so calling it on fresh nodes (e.g. straight out of
+// buildFlowFromRecipe, which never sets data.wave) stacks every node into one
+// column instead of staggering them by dependency depth. Shared by
+// createDoc/createDocFromRecipe/switchToVisual so every "load a recipe into
+// a doc" path lands the same staggered layout.
+function layoutFlowNodes(nodes: FlowNode[], edges: { source: string; target: string }[]): FlowNode[] {
+  const waveByNode = computeWavesFromEdges(nodes, edges);
+  const stamped = nodes.map((n) => ({
+    ...n,
+    data: { ...(n.data ?? {}), wave: waveByNode[n.id] ?? (n.data?.wave as number | undefined) ?? 1 },
+  }));
+  return applyWaveLayout(stamped);
+}
+
 // ---- validation -> node stamping ------------------------------------------
 // Ported from the old useRecipeStudioEngine.ts's graphWaveByNode/
 // applyValidationResultToNodes (see webui/src/RecipeStudio/useRecipeStudioEngine.ts),
@@ -171,26 +189,43 @@ function blankDoc(recipeId: string, name: string): DocState {
 
 let untitledCounter = 0;
 
-// Picks a doc key that won't clobber an already-open doc: `base` verbatim if
-// free, otherwise `<stem>-2<ext>`, `<stem>-3<ext>`, ... until one is free.
-// Exported so callers (the shell's Generate/Library/Git-load triggers) can
-// compute the SAME name createDocFromRecipe will key the doc under — since
-// createDocFromRecipe returns void, the caller needs to know the final key
-// up front (e.g. to open the matching graph panel right after creating the
-// doc). Both call this pure function against the same synchronous snapshot
-// of `docs`, so the result is guaranteed to agree.
-export function uniqueDocName(base: string, docs: Record<string, DocState>): string {
-  if (!docs[base]) return base;
+// Shared suffixing scheme: `base` verbatim if `isTaken(base)` is false,
+// otherwise `<stem>-2<ext>`, `<stem>-3<ext>`, ... until one is free.
+function nextAvailableName(base: string, isTaken: (name: string) => boolean): string {
+  if (!isTaken(base)) return base;
   const m = /^(.*?)(\.[^./]+)?$/.exec(base);
   const stem = m?.[1] ?? base;
   const ext = m?.[2] ?? '';
   let i = 2;
   let candidate = `${stem}-${i}${ext}`;
-  while (docs[candidate]) {
+  while (isTaken(candidate)) {
     i += 1;
     candidate = `${stem}-${i}${ext}`;
   }
   return candidate;
+}
+
+// Picks a doc key that won't clobber an already-open doc. Exported so callers
+// (the shell's Generate/Library/Git-load triggers) can compute the SAME name
+// createDocFromRecipe will key the doc under — since createDocFromRecipe
+// returns void, the caller needs to know the final key up front (e.g. to open
+// the matching graph panel right after creating the doc). Both call this pure
+// function against the same synchronous snapshot of `docs`, so the result is
+// guaranteed to agree.
+export function uniqueDocName(base: string, docs: Record<string, DocState>): string {
+  return nextAvailableName(base, (name) => Boolean(docs[name]));
+}
+
+// Picks a recipe-STORE filename that won't clobber an already-saved recipe —
+// same suffixing scheme as uniqueDocName, but checked against the store's
+// list of existing names (GET /api/v1/recipes/store, fetchRecipeStoreList)
+// rather than the workspace's open docs. Used by the shell's Library/Git-load
+// "import into the store" flows (StudioWorkspace.tsx) before POSTing content
+// to /api/v1/recipes/store/{name}, since that endpoint overwrites whatever is
+// already at `name` with no clobber warning of its own.
+export function uniqueStoreName(base: string, existingNames: Iterable<string>): string {
+  const taken = new Set(existingNames);
+  return nextAvailableName(base, (name) => taken.has(name));
 }
 
 interface WorkspaceState {
@@ -274,7 +309,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ...s.docs,
         [name]: {
           ...blankDoc(name, recipeNameFromFilename(name)),
-          nodes: applyWaveLayout(nodes),
+          nodes: layoutFlowNodes(nodes, edges),
           edges,
           stepData,
           recipeDefaults: recipeJson?.defaults ?? {},
@@ -293,7 +328,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ...s.docs,
         [finalName]: {
           ...blankDoc(finalName, recipeNameFromFilename(finalName)),
-          nodes: applyWaveLayout(nodes),
+          nodes: layoutFlowNodes(nodes, edges),
           edges,
           stepData,
           recipeDefaults: defaults,
@@ -482,14 +517,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const parsed = JSON.parse(doc.rawContent);
       const { nodes, edges, stepData } = buildFlowFromRecipe(parsed);
-      const waveByNode = computeWavesFromEdges(nodes, edges);
-      const withWave = (nodes as FlowNode[]).map((n) => ({
-        ...n,
-        data: { ...(n.data ?? {}), wave: waveByNode[n.id] ?? 1 },
-      }));
       patchDoc(set, id, (d) => ({
         ...d,
-        nodes: applyWaveLayout(withWave),
+        nodes: layoutFlowNodes(nodes, edges),
         edges,
         stepData,
         recipeDefaults: parsed.defaults ?? {},

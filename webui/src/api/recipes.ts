@@ -101,6 +101,37 @@ export async function fetchStoredRecipe(name: string): Promise<StoreLoadResponse
   return r.json();
 }
 
+/**
+ * Lists the recipe store's contents via GET /api/v1/recipes/store (handleRecipesStoreList) —
+ * a bare `{name, path}[]` array (unlike fetchRecipes' GET /api/v1/recipes, which lists
+ * disk-discoverable allow-listed paths, a different listing entirely). Used to compute a
+ * collision-free store filename before importing an external recipe (Library/Git-load) —
+ * see uniqueStoreName in workspace/store.ts.
+ */
+export async function fetchRecipeStoreList(): Promise<RecipeListEntry[]> {
+  const r = await apiGet('/api/v1/recipes/store');
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  const data = await r.json();
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Saves CUE content into the recipe store under `name` (must end in `.cue`) via
+ * POST /api/v1/recipes/store/{name} (handleRecipesStoreSave) — writes the CUE as-is, no
+ * parsing. Used by the Library/Git-load "import into the store" flows: content lands in the
+ * store first, then a subsequent GET /api/v1/recipes/store/{name} (fetchStoredRecipe) converts
+ * it to recipe JSON the same way opening any other stored recipe does.
+ */
+export async function saveStoredRecipe(name: string, content: string): Promise<void> {
+  const r = await apiPost(`/api/v1/recipes/store/${encodeURIComponent(name)}`, { content });
+  if (!r.ok) {
+    throw new Error(await r.text());
+  }
+}
+
 export async function fixRecipeErrors(
   recipeContent: Record<string, unknown>,
   errors: unknown[],

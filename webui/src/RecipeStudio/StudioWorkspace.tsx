@@ -18,9 +18,9 @@ import { attachDockviewSync } from './workspace/useDockviewSync';
 import { applyDefaultLayout, openGraph } from './workspace/registry';
 import { attachWorkspaceSync, resetLayout } from './workspace/persistence';
 import { EditorHeaderActions } from './workspace/EditorHeaderActions';
-import { useWorkspaceStore, uniqueDocName } from './workspace/store';
+import { useWorkspaceStore, uniqueDocName, uniqueStoreName } from './workspace/store';
 import { apiGet, apiPost } from '../api/core';
-import { generateRecipe } from '../api/recipes';
+import { generateRecipe, fetchRecipeStoreList, saveStoredRecipe } from '../api/recipes';
 import type { HostRecord } from '../HostPicker';
 import GitLoadModal from './GitLoadModal';
 import { LibraryModal } from './LibraryModal';
@@ -40,6 +40,13 @@ const components = {
 
 interface RecipeStoreEntry {
   name: string;
+}
+
+// The recipe store (recipestore.RecipeStore) requires a `.cue` filename — append
+// the extension when a Library entry's filename or a Git path's basename doesn't
+// already carry it, rather than letting the save 400.
+function ensureCueExtension(name: string): string {
+  return /\.cue$/i.test(name) ? name : `${name}.cue`;
 }
 
 export default function StudioWorkspace() {
@@ -155,31 +162,46 @@ export default function StudioWorkspace() {
     }
   };
 
-  // Ported from the old StudioWorkspace.tsx's LibraryModal onSelect: a
-  // library entry's `.content` is raw CUE, so it goes through the
-  // content-based parse endpoint (POST /api/v1/recipes/parse — no path
-  // validation, content travels in the body) to get recipe JSON before it
-  // can be turned into a graph.
+  // Shared tail end of the Library/Git-load "import" flows: both hand us raw
+  // CUE content from an external source (the recipe library, a git repo) that
+  // is NOT yet in our recipe store. Per the product decision, importing means
+  // SAVING it into the store first (so it behaves like any other stored
+  // recipe from then on — reopenable via the Open dropdown, diffable, etc.)
+  // and only then opening it visually — via createDoc(name), the same
+  // by-name load Open/Generate-via-store uses, which round-trips through the
+  // server's CUE->recipe-JSON converter (GET /api/v1/recipes/store/{name})
+  // instead of a client-side parse. uniqueStoreName guards the save against
+  // silently clobbering an already-saved recipe with the same name.
+  const importCueIntoStore = async (baseName: string, content: string): Promise<string> => {
+    const wantedName = ensureCueExtension(baseName);
+    const existing = await fetchRecipeStoreList();
+    const finalName = uniqueStoreName(wantedName, existing.map((e) => e.name));
+    await saveStoredRecipe(finalName, content);
+    await createDoc(finalName);
+    if (api) openGraph(api, finalName);
+    // Keep the Open dropdown's list in sync with the store so the just-imported
+    // recipe is reopenable without a page refresh.
+    setRecipeList((prev) => (prev.some((e) => e.name === finalName) ? prev : [...prev, { name: finalName }]));
+    return finalName;
+  };
+
+  // A library entry's `.content` is raw CUE — import it into the store (see
+  // importCueIntoStore) rather than parsing it client-side into a throwaway,
+  // never-saved doc.
   const handleLibrarySelect = async (libRecipe: LibraryRecipe) => {
     setLibraryOpen(false);
     try {
-      const parseRes = await apiPost('/api/v1/recipes/parse', { content: libRecipe.content });
-      if (!parseRes.ok) throw new Error(await parseRes.text());
-      const parseData = await parseRes.json();
-      openNewRecipeDoc(libRecipe.name, parseData.recipe, libRecipe.content);
-      message.success(`Loaded ${libRecipe.name} from Library`);
+      const finalName = await importCueIntoStore(libRecipe.filename || libRecipe.name, libRecipe.content);
+      message.success(`Imported ${libRecipe.name} into the store as ${finalName}`);
     } catch (err) {
-      message.error('Failed to load library recipe: ' + (err instanceof Error ? err.message : String(err)));
+      message.error('Failed to import library recipe: ' + (err instanceof Error ? err.message : String(err)));
     }
   };
 
-  // Ported from the old useRecipeStudioEngine.ts's doGitLoad: POST the git
-  // coordinates to /api/v1/recipes/store/git-load (fetches file content from
-  // the given repo/branch/path — does NOT save it into the local store),
-  // then parse that content the same content-based way the Library flow
-  // does. Unlike the old single-doc shell (which overwrote the current
-  // canvas and needed a discard-confirm), this always lands in a brand-new
-  // doc, so no confirm dialog is needed here.
+  // POST the git coordinates to /api/v1/recipes/store/git-load (fetches file
+  // content from the given repo/branch/path — does NOT save it into the local
+  // store on its own), then import that content into the store the same way
+  // the Library flow does (see importCueIntoStore).
   const handleGitLoad = async (options: {
     gitUrl: string;
     gitBranch: string;
@@ -201,18 +223,10 @@ export default function StudioWorkspace() {
       if (!loadRes.ok) throw new Error(await loadRes.text());
       const { content } = await loadRes.json();
 
-      const parseRes = await apiPost('/api/v1/recipes/parse', { content });
-      if (!parseRes.ok) throw new Error(await parseRes.text());
-      const parseData = await parseRes.json();
-      const recipeJson = parseData.recipe as { steps?: unknown[] } | undefined;
-      if (!recipeJson || !recipeJson.steps) {
-        message.warning('Selected file is not a valid graph recipe');
-        return;
-      }
-
-      openNewRecipeDoc(options.path, recipeJson, content);
+      const baseName = options.path.split('/').pop() || options.path;
+      const finalName = await importCueIntoStore(baseName, content);
       setGitLoadOpen(false);
-      message.success(`Successfully loaded ${options.path}!`);
+      message.success(`Imported ${options.path} into the store as ${finalName}`);
     } catch (err) {
       message.error('Failed to load git recipe: ' + (err instanceof Error ? err.message : String(err)));
       throw err; // GitLoadModal keeps itself open on a rejected onLoad.
@@ -262,13 +276,18 @@ export default function StudioWorkspace() {
         </div>
       </div>
 
-      {gitLoadOpen && (
-        <GitLoadModal
-          visible={gitLoadOpen}
-          onCancel={() => setGitLoadOpen(false)}
-          onLoad={handleGitLoad}
-        />
-      )}
+      {/*
+        Always mounted (mirrors LibraryModal below) rather than conditionally
+        rendered on `gitLoadOpen`: GitLoadModal's own studio-config prefill
+        effect only runs once per mount (guarded by its internal
+        `configLoaded` state), so conditionally mounting it re-fetched
+        /api/v1/recipes/studio-config on every reopen.
+      */}
+      <GitLoadModal
+        visible={gitLoadOpen}
+        onCancel={() => setGitLoadOpen(false)}
+        onLoad={handleGitLoad}
+      />
 
       <LibraryModal
         open={libraryOpen}
