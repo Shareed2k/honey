@@ -400,19 +400,23 @@ func pullImage(ctx context.Context, cli *client.Client, image string) error {
 // Docker-specific "how do I check" glue.
 func waitForReady(ctx context.Context, cli *client.Client, httpClient *http.Client, containerID string) (string, error) {
 	var addr string
-	checkFn := func() bool {
+	checkFn := func() (bool, error) {
 		inspect, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 		if err != nil || inspect.Container.NetworkSettings == nil {
-			return false
+			return false, nil
 		}
 		for _, binding := range inspect.Container.NetworkSettings.Ports[pluginInitPort] {
 			candidate := fmt.Sprintf("http://127.0.0.1:%s", binding.HostPort)
-			if pingReady(ctx, httpClient, candidate) {
+			ready, fatal := checkHealth(ctx, httpClient, candidate)
+			if fatal != nil {
+				return false, fatal
+			}
+			if ready {
 				addr = candidate
-				return true
+				return true, nil
 			}
 		}
-		return false
+		return false, nil
 	}
 	if err := pollUntilReady(ctx, time.Now().Add(60*time.Second), checkFn); err != nil {
 		return "", fmt.Errorf("plugins: container %s: %w", containerID, err)
@@ -420,15 +424,22 @@ func waitForReady(ctx context.Context, cli *client.Client, httpClient *http.Clie
 	return addr, nil
 }
 
-// pollUntilReady calls checkFn every 200ms until it returns true, the
-// deadline passes, or ctx is done. Pure retry-loop logic with no Docker
-// dependency, so its deadline/cancellation behavior gets fast, direct unit
+// pollUntilReady calls checkFn every 200ms until it reports ready, returns a
+// fatal error, the deadline passes, or ctx is done. A non-nil fatal error
+// (e.g. an api_version mismatch from checkHealth) aborts the loop
+// immediately instead of being retried — that failure will never resolve
+// itself by waiting longer. Pure retry-loop logic with no Docker dependency,
+// so its deadline/cancellation/fatal-abort behavior gets fast, direct unit
 // tests instead of relying solely on Task 9's real-Docker integration test
 // (architecture-review fix: this loop previously had no test coverage of
 // its own).
-func pollUntilReady(ctx context.Context, deadline time.Time, checkFn func() bool) error {
+func pollUntilReady(ctx context.Context, deadline time.Time, checkFn func() (bool, error)) error {
 	for {
-		if checkFn() {
+		ready, fatal := checkFn()
+		if fatal != nil {
+			return fatal
+		}
+		if ready {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -442,17 +453,32 @@ func pollUntilReady(ctx context.Context, deadline time.Time, checkFn func() bool
 	}
 }
 
-func pingReady(ctx context.Context, httpClient *http.Client, addr string) bool {
+// checkHealth GETs /healthz and classifies the result three ways:
+//
+//	(false, nil)   — not reachable / not 200 yet → keep retrying
+//	(false, fatal) — reachable but api_version mismatches honey → STOP, hard-fail
+//	(true,  nil)   — reachable and api_version matches → ready
+func checkHealth(ctx context.Context, httpClient *http.Client, addr string) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/healthz", nil)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return false
+		return false, nil // not up yet
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return false, nil
+	}
+	var body apiv1.HealthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false, nil // partial/old server mid-boot — retry
+	}
+	if body.APIVersion != apiv1.APIVersion {
+		return false, fmt.Errorf("honey-plugin-init api_version mismatch (honey expects %q, image reports %q); rebuild the image with a matching honey-plugin-init", apiv1.APIVersion, body.APIVersion)
+	}
+	return true, nil
 }
 
 // CallRaw dispatches on export to one of two calling conventions that

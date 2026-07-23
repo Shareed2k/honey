@@ -18,15 +18,19 @@ func main() {
 	addr := flag.String("addr", ":49094", "listen address")
 	flag.Parse()
 
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	http.HandleFunc("/healthz", healthzHandler)
 	http.HandleFunc("/call", handleCall)
 
 	log.Printf(`{"level":"info","msg":"honey-plugin-init listening","addr":%q}`, *addr)
 	if err := http.ListenAndServe(*addr, nil); err != nil { // #nosec G114
 		log.Fatalf(`{"level":"error","msg":"listen failed","error":%q}`, err.Error())
 	}
+}
+
+func healthzHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(apiv1.HealthResponse{APIVersion: apiv1.APIVersion})
 }
 
 func handleCall(w http.ResponseWriter, r *http.Request) {

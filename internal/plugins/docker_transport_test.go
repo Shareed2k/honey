@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -610,9 +611,9 @@ func TestDockerTransport_Close_NeverStartedIsNoop(t *testing.T) {
 
 func TestPollUntilReady_SucceedsWithinDeadline(t *testing.T) {
 	attempts := 0
-	checkFn := func() bool {
+	checkFn := func() (bool, error) {
 		attempts++
-		return attempts >= 3
+		return attempts >= 3, nil
 	}
 	err := pollUntilReady(context.Background(), time.Now().Add(time.Second), checkFn)
 	if err != nil {
@@ -624,7 +625,7 @@ func TestPollUntilReady_SucceedsWithinDeadline(t *testing.T) {
 }
 
 func TestPollUntilReady_TimesOutIfNeverReady(t *testing.T) {
-	checkFn := func() bool { return false }
+	checkFn := func() (bool, error) { return false, nil }
 	err := pollUntilReady(context.Background(), time.Now().Add(50*time.Millisecond), checkFn)
 	if err == nil {
 		t.Fatal("expected timeout error when checkFn never returns true")
@@ -634,10 +635,64 @@ func TestPollUntilReady_TimesOutIfNeverReady(t *testing.T) {
 func TestPollUntilReady_RespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	checkFn := func() bool { return false }
+	checkFn := func() (bool, error) { return false, nil }
 	err := pollUntilReady(ctx, time.Now().Add(time.Minute), checkFn)
 	if err == nil {
 		t.Fatal("expected error when context is already cancelled")
+	}
+}
+
+func TestPollUntilReady_FatalStopsImmediately(t *testing.T) {
+	calls := 0
+	err := pollUntilReady(context.Background(), time.Now().Add(5*time.Second), func() (bool, error) {
+		calls++
+		return false, fmt.Errorf("api_version mismatch")
+	})
+	if err == nil || !strings.Contains(err.Error(), "mismatch") {
+		t.Fatalf("want fatal mismatch error, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("fatal error must stop after 1 call, got %d", calls)
+	}
+}
+
+func TestPollUntilReady_ReadyAfterRetries(t *testing.T) {
+	calls := 0
+	err := pollUntilReady(context.Background(), time.Now().Add(5*time.Second), func() (bool, error) {
+		calls++
+		return calls >= 2, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}
+
+func TestCheckHealth_VersionMismatchIsFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiv1.HealthResponse{APIVersion: "honey.plugins/v999"})
+	}))
+	defer srv.Close()
+	ok, fatal := checkHealth(context.Background(), srv.Client(), srv.URL)
+	if ok || fatal == nil {
+		t.Fatalf("mismatch must be (false, fatal), got ok=%v fatal=%v", ok, fatal)
+	}
+}
+
+func TestCheckHealth_MatchIsReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiv1.HealthResponse{APIVersion: apiv1.APIVersion})
+	}))
+	defer srv.Close()
+	ok, fatal := checkHealth(context.Background(), srv.Client(), srv.URL)
+	if !ok || fatal != nil {
+		t.Fatalf("match must be (true, nil), got ok=%v fatal=%v", ok, fatal)
+	}
+}
+
+func TestCheckHealth_NoServerRetries(t *testing.T) {
+	ok, fatal := checkHealth(context.Background(), http.DefaultClient, "http://127.0.0.1:1")
+	if ok || fatal != nil {
+		t.Fatalf("unreachable must be (false, nil) to retry, got ok=%v fatal=%v", ok, fatal)
 	}
 }
 
