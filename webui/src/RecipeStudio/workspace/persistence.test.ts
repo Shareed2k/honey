@@ -203,6 +203,6 @@ describe('resetLayout', () => {
 
     expect(clear).toHaveBeenCalledTimes(1);
     const addedIds = addPanel.mock.calls.map(([opts]) => opts.id);
-    expect(addedIds).toEqual(['toolbox', 'records', 'stepeditor', 'run', 'validation']);
+    expect(addedIds).toEqual(['toolbox', 'records', 'stepeditor', 'settings', 'run', 'validation']);
   });
 });

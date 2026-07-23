@@ -21,6 +21,8 @@ import {
   recipeNameFromFilename,
   createStepDraft,
   uniqueStepID,
+  recipeStudioSnippets,
+  type StepDraft,
 } from '../useRecipeGraph';
 
 // Shape produced by buildFlowFromRecipe's `nodes` (typed `any[]` there since it
@@ -91,6 +93,38 @@ function stampValidationOnNodes(
   return applyWaveLayout(mapped);
 }
 
+// ---- snippet insertion -----------------------------------------------------
+// Ported from the old useRecipeStudioEngine.ts's addSnippet/remapSnippetStep/
+// remapSnippetValue (see webui/src/RecipeStudio/useRecipeStudioEngine.ts). A
+// snippet's step ids (recipeStudioSnippets, useRecipeGraph.ts) are only
+// unique *within* the snippet definition, so inserting one into a doc that
+// already has a same-named node (or a second copy of the same snippet)
+// requires every reference to that id — the step's own `id`, and any string
+// field elsewhere in the step pointing at a sibling step (e.g. a
+// `tunnel_step` reference) — to be rewritten to the remapped id.
+// remapSnippetValue walks the whole step's value tree substituting any string
+// that matches an old id; remapSnippetStep applies that walk and then pins
+// the top-level `id` to the final remapped id.
+function remapSnippetValue(value: unknown, idMap: Map<string, string>): unknown {
+  if (typeof value === 'string') {
+    return idMap.get(value) || value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => remapSnippetValue(item, idMap));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, remapSnippetValue(item, idMap)]),
+    );
+  }
+  return value;
+}
+
+function remapSnippetStep(step: StepDraft, id: string, idMap: Map<string, string>): StepDraft {
+  const remapped = remapSnippetValue(step, idMap) as StepDraft;
+  return { ...remapped, id };
+}
+
 // helper: apply a patch to one doc; no-op if the id is unknown.
 function patchDoc(
   set: (fn: (s: WorkspaceState) => Partial<WorkspaceState>) => void,
@@ -156,6 +190,7 @@ interface WorkspaceState {
   setSelectedNode(id: string, nodeId: string | null): void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setStepData(id: string, nodeId: string, value: any): void;
+  setRecipeDefaults(id: string, defaults: unknown): void;
   // ReactFlow drives node/edge mutations (drag, select, delete, connect)
   // through these three callbacks — see GraphPanel. Position/select/dimension
   // changes are cosmetic (buildRecipeFromFlow ignores node position), so only
@@ -165,6 +200,7 @@ interface WorkspaceState {
   onEdgesChange(id: string, changes: EdgeChange[]): void;
   onConnect(id: string, connection: Connection): void;
   addStep(id: string, kind: string): void;
+  addSnippet(id: string, snippetId: string): void;
   setRawContent(id: string, text: string): void;
   setRawMode(id: string, on: boolean): void;
   setNodeRunStatus(id: string, nodeIds: string[], status: RunStatus): void;
@@ -252,6 +288,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       dirty: true,
     }));
   },
+  setRecipeDefaults(id, defaults) {
+    patchDoc(set, id, (d) => ({ ...d, recipeDefaults: defaults, dirty: true }));
+  },
   onNodesChange(id, changes) {
     patchDoc(set, id, (d) => ({
       ...d,
@@ -287,6 +326,47 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           { id: newId, type: 'step', position: { x: 0, y: 0 }, data: { label: newId, kind } },
         ]),
         stepData: { ...d.stepData, [newId]: draft },
+        dirty: true,
+      };
+    });
+  },
+  addSnippet(id, snippetId) {
+    const snippet = recipeStudioSnippets.find((s) => s.id === snippetId);
+    if (!snippet) return; // unknown snippet id — no-op, matches other keyed actions above.
+    patchDoc(set, id, (d) => {
+      const usedIDs = new Set(d.nodes.map((n) => n.id));
+      const idMap = new Map<string, string>();
+      for (const step of snippet.steps) {
+        idMap.set(step.id, uniqueStepID(step.id, usedIDs));
+      }
+
+      const baseX = 100 + d.nodes.length * 220;
+      const newNodes = snippet.steps.map((step, index) => {
+        const newId = idMap.get(step.id)!;
+        return {
+          id: newId,
+          type: 'step',
+          position: { x: baseX + index * 220, y: 150 + (index % 2) * 90 },
+          data: { label: newId, kind: step.kind, host: step.host },
+        };
+      });
+      const newEdges = snippet.edges.map((edge) => {
+        const source = idMap.get(edge.source)!;
+        const target = idMap.get(edge.target)!;
+        return { id: `edge_from_${source}_to_${target}`, source, target };
+      });
+      const newStepData = Object.fromEntries(
+        snippet.steps.map((step) => {
+          const newId = idMap.get(step.id)!;
+          return [newId, remapSnippetStep(step, newId, idMap)];
+        }),
+      );
+
+      return {
+        ...d,
+        nodes: applyWaveLayout([...d.nodes, ...newNodes]),
+        edges: [...d.edges, ...newEdges],
+        stepData: { ...d.stepData, ...newStepData },
         dirty: true,
       };
     });

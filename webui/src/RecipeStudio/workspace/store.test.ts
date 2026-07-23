@@ -48,6 +48,7 @@ import { message } from 'antd';
 import { useWorkspaceStore } from './store';
 import { validateRecipeContent, fetchStoredRecipe, parseDiskRecipe, fixRecipeErrors } from '../../api/recipes';
 import { apiPost } from '../../api/core';
+import { recipeStudioSnippets } from '../useRecipeGraph';
 
 describe('openTerminal slot', () => {
   beforeEach(() => useWorkspaceStore.setState({ openTerminal: null }));
@@ -645,5 +646,112 @@ describe('fixWithAI', () => {
     expect(doc.stepData.s1.kind).toBe('run');
     // fixWithAI re-validates after applying the fix.
     expect(validateRecipeContent).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Ported from the old useRecipeStudioEngine.ts's addSnippet/remapSnippetStep/
+// remapSnippetValue — see store.ts's port of the same logic. A snippet's
+// step ids are only unique within the snippet definition
+// (recipeStudioSnippets, useRecipeGraph.ts), so inserting one into a doc that
+// already has a same-named node must remap the colliding id AND rewrite any
+// field elsewhere in the snippet that references it by that id.
+describe('addSnippet', () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({
+      docs: {
+        'deploy.cue': {
+          recipeId: 'deploy.cue', name: 'deploy',
+          // Deliberately collides with the 'tunnel_postgres_query' snippet's
+          // first step id ('pg_tunnel') below.
+          nodes: [{ id: 'pg_tunnel', type: 'step', position: { x: 0, y: 0 }, data: {} }],
+          edges: [],
+          stepData: { pg_tunnel: { id: 'pg_tunnel', kind: 'command', host: '*', command: 'echo hi' } },
+          recipeDefaults: {}, selectedNodeId: null,
+          rawMode: false, rawContent: '', originalCue: '',
+          validation: { state: 'idle', issues: [] }, runStatus: {}, dirty: false,
+          runStepId: null, runCount: 0,
+        },
+      },
+      active: 'deploy.cue',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+  });
+
+  it('remaps a colliding snippet step id to a unique id and rewrites internal references to it', () => {
+    // Sanity: this test hard-codes the 'tunnel_postgres_query' snippet's
+    // shape (its 'pg_tunnel'/'pg_check' step ids and the plugin.config.
+    // tunnel_step cross-reference) — assert it still exists with that id so
+    // a future edit to recipeStudioSnippets fails loudly here instead of
+    // silently invalidating this test's premise.
+    expect(recipeStudioSnippets.find((s) => s.id === 'tunnel_postgres_query')).toBeTruthy();
+
+    useWorkspaceStore.getState().addSnippet('deploy.cue', 'tunnel_postgres_query');
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    // pre-existing 'pg_tunnel' node + the snippet's 2 steps.
+    expect(doc.nodes).toHaveLength(3);
+    // every node id is unique — the colliding snippet step got remapped
+    // rather than silently overwriting/duplicating the existing node.
+    expect(new Set(doc.nodes.map((n) => n.id)).size).toBe(3);
+
+    const insertedIds = doc.nodes.map((n) => n.id).filter((id) => id !== 'pg_tunnel');
+    expect(insertedIds).toHaveLength(2);
+    const tunnelId = insertedIds.find((id) => id.startsWith('pg_tunnel'))!;
+    const checkId = insertedIds.find((id) => id === 'pg_check')!;
+    // the colliding id must NOT be reused verbatim.
+    expect(tunnelId).not.toBe('pg_tunnel');
+    expect(checkId).toBe('pg_check');
+
+    // stepData carries entries for both remapped ids.
+    expect(doc.stepData[tunnelId]).toBeTruthy();
+    expect(doc.stepData[tunnelId].id).toBe(tunnelId);
+    expect(doc.stepData[checkId]).toBeTruthy();
+    expect(doc.stepData[checkId].id).toBe(checkId);
+    // the pre-existing step is untouched.
+    expect(doc.stepData['pg_tunnel']).toEqual({ id: 'pg_tunnel', kind: 'command', host: '*', command: 'echo hi' });
+
+    // correctness of remapSnippetValue: the snippet's pg_check step
+    // references pg_tunnel's id via plugin.config.tunnel_step — that
+    // reference must follow the remap to the tunnel step's NEW id, not stay
+    // pointed at the stale 'pg_tunnel'.
+    expect(doc.stepData[checkId].plugin.config.tunnel_step).toBe(tunnelId);
+
+    // a new edge links the two remapped ids (not the stale ids).
+    expect(doc.edges).toContainEqual(
+      expect.objectContaining({ source: tunnelId, target: checkId }),
+    );
+
+    expect(doc.dirty).toBe(true);
+  });
+
+  it('an unknown snippet id is a no-op', () => {
+    useWorkspaceStore.getState().addSnippet('deploy.cue', 'does-not-exist');
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.nodes).toHaveLength(1);
+    expect(doc.dirty).toBe(false);
+  });
+
+  it('addSnippet on an unknown doc id is a no-op (no throw)', () => {
+    expect(() => useWorkspaceStore.getState().addSnippet('nope', 'tunnel_postgres_query')).not.toThrow();
+    expect(useWorkspaceStore.getState().docs['nope']).toBeUndefined();
+  });
+});
+
+describe('setRecipeDefaults', () => {
+  beforeEach(async () => {
+    useWorkspaceStore.setState({ docs: {}, active: null });
+    await useWorkspaceStore.getState().createDoc('deploy.cue');
+  });
+
+  it('updates doc.recipeDefaults and marks the doc dirty', () => {
+    useWorkspaceStore.getState().setRecipeDefaults('deploy.cue', { retries: 3 });
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.recipeDefaults).toEqual({ retries: 3 });
+    expect(doc.dirty).toBe(true);
+  });
+
+  it('on an unknown doc id is a no-op (no throw)', () => {
+    expect(() => useWorkspaceStore.getState().setRecipeDefaults('nope', { x: 1 })).not.toThrow();
+    expect(useWorkspaceStore.getState().docs['nope']).toBeUndefined();
   });
 });
