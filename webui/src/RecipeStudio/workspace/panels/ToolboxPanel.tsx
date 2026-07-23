@@ -26,7 +26,7 @@ export function ToolboxPanel(_props: IDockviewPanelProps) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, height: '100%', overflowY: 'auto' }}>
       {listStepKinds(schema).map((k: any) => (
         <Button key={k.kind} icon={<PlusOutlined />} onClick={() => addStep(active, k.kind)}>
           {k.label}

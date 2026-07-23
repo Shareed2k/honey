@@ -31,7 +31,7 @@ export function StepEditorPanel(_props: IDockviewPanelProps) {
   };
 
   return (
-    <div style={{ padding: 12 }}>
+    <div style={{ padding: 12, height: '100%', overflowY: 'auto' }}>
       <DynamicStepForm
         schema={stepSchemaForKind(schema, value?.kind)}
         value={value}
