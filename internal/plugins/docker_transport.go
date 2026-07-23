@@ -188,6 +188,8 @@ type dockerTransportConfig struct {
 	MaxBackoff time.Duration
 	Env        map[string]string // resolved allowed_env values, passed through as container env vars
 	Volumes    []string          // static bind mounts from manifest.Docker.Volumes, Docker bind syntax
+	InitMode   string            // "bind" or "embedded" (never empty; resolved in loadDockerPluginDir)
+	InitPath   string            // in-image honey-plugin-init path when InitMode=="embedded"
 }
 
 // newDockerTransport validates the plugin's cue source and wires the shim HTTP
@@ -264,7 +266,7 @@ func createAndStart(ctx context.Context, cli *client.Client, httpClient *http.Cl
 
 	containerCfg := &containertypes.Config{
 		Image:        cfg.Image,
-		Entrypoint:   []string{pluginInitBindPath},
+		Entrypoint:   entrypointForMode(cfg.InitMode, cfg.InitPath),
 		Env:          envSlice(cfg.Env),
 		ExposedPorts: networktypes.PortSet{pluginInitPort: struct{}{}},
 	}
@@ -341,14 +343,26 @@ func stopAndRemoveContainer(ctx context.Context, stopper containerStopper, remov
 	return errors.Join(stopErr, removeErr)
 }
 
-// buildBinds prepends the mandatory honey-plugin-init bind mount (read-only)
-// to the manifest's static docker.volumes entries, in that order — pure and
-// unit-tested directly, no Docker daemon needed to verify this construction.
+// buildBinds returns the container bind mounts. In bind mode it prepends the
+// read-only honey-plugin-init shim mount; an empty pluginInitHostPath (embedded
+// mode) yields no shim bind at all. docker.volumes follow in both modes. Pure
+// and unit-tested directly, no Docker daemon needed to verify this construction.
 func buildBinds(pluginInitHostPath string, volumes []string) []string {
 	binds := make([]string, 0, len(volumes)+1)
-	binds = append(binds, pluginInitHostPath+":"+pluginInitBindPath+":ro")
+	if pluginInitHostPath != "" {
+		binds = append(binds, pluginInitHostPath+":"+pluginInitBindPath+":ro")
+	}
 	binds = append(binds, volumes...)
 	return binds
+}
+
+// entrypointForMode picks the container entrypoint: the bind-mounted shim path
+// in bind mode, or the image's own embedded init path in embedded mode.
+func entrypointForMode(mode, initPath string) []string {
+	if mode == "embedded" {
+		return []string{initPath}
+	}
+	return []string{pluginInitBindPath}
 }
 
 // envSlice renders a name->value map as "NAME=value" entries for

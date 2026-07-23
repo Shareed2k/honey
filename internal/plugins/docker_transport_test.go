@@ -226,6 +226,37 @@ func TestBuildBinds_NoVolumes(t *testing.T) {
 	}
 }
 
+func TestBuildBinds_BindModePrependsShim(t *testing.T) {
+	got := buildBinds("/host/honey-plugin-init", []string{"/a:/b:ro"})
+	if len(got) != 2 || got[0] != "/host/honey-plugin-init:"+pluginInitBindPath+":ro" {
+		t.Fatalf("bind mode: got %v", got)
+	}
+	if got[1] != "/a:/b:ro" {
+		t.Errorf("volume not preserved: %v", got)
+	}
+}
+
+func TestBuildBinds_EmbeddedModeNoShim(t *testing.T) {
+	got := buildBinds("", []string{"/a:/b:ro"})
+	for _, b := range got {
+		if strings.Contains(b, pluginInitBindPath) {
+			t.Fatalf("embedded mode must not bind the shim, got %v", got)
+		}
+	}
+	if len(got) != 1 || got[0] != "/a:/b:ro" {
+		t.Errorf("embedded binds = %v, want just the volume", got)
+	}
+}
+
+func TestEntrypointForMode(t *testing.T) {
+	if ep := entrypointForMode("bind", "/ignored"); len(ep) != 1 || ep[0] != pluginInitBindPath {
+		t.Errorf("bind entrypoint = %v, want %q", ep, pluginInitBindPath)
+	}
+	if ep := entrypointForMode("embedded", "/usr/local/bin/honey-plugin-init"); len(ep) != 1 || ep[0] != "/usr/local/bin/honey-plugin-init" {
+		t.Errorf("embedded entrypoint = %v, want the init_path", ep)
+	}
+}
+
 func TestDockerTransport_CallRaw_InvalidJSONOutputFormatFails(t *testing.T) {
 	srv := newFakePluginInitServer(t, func(_ apiv1.ExecRequest) apiv1.ExecResponse {
 		return apiv1.ExecResponse{Output: "not json", ExitCode: 0}

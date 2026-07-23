@@ -189,17 +189,27 @@ func loadWasmPluginDir(ctx context.Context, dir string, manifest Manifest, hosts
 }
 
 // loadDockerPluginDir loads a runtime: docker plugin: reads its plugin.cue,
-// locates the honey-plugin-init binary to bind-mount, and starts the container.
+// resolves the docker.init mode, and starts the container. In bind mode
+// (default) it also locates the host honey-plugin-init binary to bind-mount
+// as the container entrypoint; in embedded mode the image supplies its own
+// init at manifest.Docker.InitPath, so no host binary is located or bound.
 func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hosts []string, paths map[string]string) (*loadedPlugin, error) {
 	cuePath := filepath.Join(dir, "plugin.cue")
 	cueBytes, err := safepath.ReadFile(cuePath)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: read %s: %w", cuePath, err)
 	}
-	initPath, err := locatePluginInitBinary()
-	if err != nil {
-		return nil, err
+	initMode := manifest.Docker.effectiveInitMode()
+
+	var initPath string
+	if initMode == "bind" {
+		p, err := locatePluginInitBinary()
+		if err != nil {
+			return nil, err
+		}
+		initPath = p
 	}
+	// embedded mode: no host shim binary; initPath stays "".
 
 	// Ensure the global plugin workspaces directory exists and mount it
 	homeDir, err := os.UserHomeDir()
@@ -229,6 +239,8 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 		MaxBackoff: maxBackoff,
 		Env:        resolveAllowedEnv(manifest.AllowedEnv),
 		Volumes:    volumes,
+		InitMode:   initMode,
+		InitPath:   manifest.Docker.InitPath,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)
