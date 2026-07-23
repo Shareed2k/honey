@@ -248,6 +248,45 @@ func TestBuildBinds_EmbeddedModeNoShim(t *testing.T) {
 	}
 }
 
+// TestShimPathForMode_EmbeddedSkipsBackend proves embedded mode short-circuits
+// before ever touching the backend: on a remote backend, ShimHostPath stages
+// the shim binary onto the host as a side effect, so calling it in embedded
+// mode (where the image supplies its own init) would be both wasted work and
+// — worse — would hand createContainer a non-empty shim path that buildBinds
+// would then bind-mount even though nothing needs it.
+func TestShimPathForMode_EmbeddedSkipsBackend(t *testing.T) {
+	fake := &fakeDockerBackend{shimPath: "/staged/honey-plugin-init"}
+
+	path, err := shimPathForMode(context.Background(), fake, "embedded")
+	if err != nil {
+		t.Fatalf("shimPathForMode: %v", err)
+	}
+	if path != "" {
+		t.Fatalf("path=%q want empty in embedded mode", path)
+	}
+	if calls := fake.shimHostPathCalls(); calls != 0 {
+		t.Fatalf("backend.ShimHostPath called %d times, want 0 in embedded mode", calls)
+	}
+}
+
+// TestShimPathForMode_BindDelegates proves bind (and absent/"") mode is
+// unchanged: it delegates straight to the backend and returns whatever it
+// resolves, preserving pre-fix behavior for local and remote backends alike.
+func TestShimPathForMode_BindDelegates(t *testing.T) {
+	fake := &fakeDockerBackend{shimPath: "/staged/honey-plugin-init"}
+
+	path, err := shimPathForMode(context.Background(), fake, "bind")
+	if err != nil {
+		t.Fatalf("shimPathForMode: %v", err)
+	}
+	if path != "/staged/honey-plugin-init" {
+		t.Fatalf("path=%q want the backend's resolved path", path)
+	}
+	if calls := fake.shimHostPathCalls(); calls != 1 {
+		t.Fatalf("backend.ShimHostPath called %d times, want exactly 1 in bind mode", calls)
+	}
+}
+
 func TestEntrypointForMode(t *testing.T) {
 	if ep := entrypointForMode("bind", "/ignored"); len(ep) != 1 || ep[0] != pluginInitBindPath {
 		t.Errorf("bind entrypoint = %v, want %q", ep, pluginInitBindPath)

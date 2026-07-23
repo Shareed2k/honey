@@ -184,5 +184,7 @@ func dockerConfigForRemote(lp *loadedPlugin) (dockerTransportConfig, error) {
 		MaxBackoff: maxBackoff,
 		Env:        resolveAllowedEnv(lp.manifest.AllowedEnv),
 		Volumes:    append([]string(nil), lp.manifest.Docker.Volumes...),
+		InitMode:   lp.manifest.Docker.effectiveInitMode(),
+		InitPath:   lp.manifest.Docker.InitPath,
 	}, nil
 }

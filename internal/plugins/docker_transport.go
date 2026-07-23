@@ -489,12 +489,26 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 	return t.callDirect(ctx, export, inBytes)
 }
 
+// shimPathForMode returns the daemon-host path of honey-plugin-init to
+// bind-mount, or "" in embedded mode (the image supplies its own init, so no
+// shim is staged or bound). Keeping the mode gate here — rather than in each
+// backend — makes embedded mode skip shim staging uniformly for local and
+// remote backends alike: a remote backend's ShimHostPath stages the binary
+// onto the target host as a side effect, and embedded mode needs to skip that
+// staging entirely, not just discard its result.
+func shimPathForMode(ctx context.Context, backend DockerBackend, mode string) (string, error) {
+	if mode == "embedded" {
+		return "", nil
+	}
+	return backend.ShimHostPath(ctx)
+}
+
 // createContainer resolves the shim binary's daemon-host path from the backend
 // (staging it onto a remote host if needed) and pulls/creates/starts the
 // plugin container. Used both for first-use start (CallRaw) and crash-recreate
 // (docker_restart.go).
 func (t *dockerTransport) createContainer(ctx context.Context) (containerID, addr string, err error) {
-	shimPath, err := t.backend.ShimHostPath(ctx)
+	shimPath, err := shimPathForMode(ctx, t.backend, t.createCfg.InitMode)
 	if err != nil {
 		return "", "", fmt.Errorf("plugins: resolve honey-plugin-init: %w", err)
 	}
