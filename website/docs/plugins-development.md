@@ -547,6 +547,45 @@ task build-honey-plugin-init
 
 Or point at a prebuilt binary with the `HONEY_PLUGIN_INIT_PATH` environment variable. Without one of these, loading a `runtime: docker` plugin fails with `honey-plugin-init not found at ... (build it via task build-honey-plugin-init or set HONEY_PLUGIN_INIT_PATH)`.
 
+### Embedded-init (registry-distributed) plugins
+
+Bind mode (above) requires the **operator's** machine to have `honey-plugin-init` built or available locally — fine for local dev, awkward for an image you publish for other people to `docker pull` and run as-is. For that case, set `docker.init: embedded` in the manifest: the image itself already carries `honey-plugin-init` as its entrypoint, so honey doesn't bind-mount or override anything — it just starts the container and talks to the shim already baked in.
+
+```yaml
+runtime: docker
+docker:
+  image: "ghcr.io/you/my-plugin@sha256:<digest>"
+  init: embedded          # image supplies honey-plugin-init; no host binary needed
+  init_path: /usr/local/bin/honey-plugin-init   # optional; this is the default
+```
+
+`docker.init: embedded` requires `docker.image` to be **digest-pinned** (`...@sha256:...`, not just a tag) — honey rejects the manifest at load otherwise. Only a digest guarantees every host pulls the exact bytes that were built and verified; a mutable tag can point at different content per architecture or be repointed later.
+
+Build the image with `honey-plugin-init` at `/usr/local/bin/honey-plugin-init` (or wherever `docker.init_path` says) using one of two patterns:
+
+**Pattern A — `COPY --from` the published base image** (recommended; the shim ships prebuilt, so there's nothing to compile):
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM your-base-image
+COPY --from=ghcr.io/shareed2k/honey-plugin-init:<ver> \
+    /usr/local/bin/honey-plugin-init /usr/local/bin/honey-plugin-init
+ENTRYPOINT ["/usr/local/bin/honey-plugin-init"]
+```
+
+**Pattern B — `ADD` the release binary directly** (no dependency on the base image):
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM your-base-image
+ARG TARGETARCH
+ADD https://github.com/shareed2k/honey/releases/download/v<ver>/honey-plugin-init-linux-${TARGETARCH} /usr/local/bin/honey-plugin-init
+RUN chmod 0755 /usr/local/bin/honey-plugin-init
+ENTRYPOINT ["/usr/local/bin/honey-plugin-init"]
+```
+
+Either way, **the final image must be a multi-arch manifest list** — build and push it with `docker buildx build --platform linux/amd64,linux/arm64 ... --push` covering every architecture your fleet runs. A single-arch image works fine on a matching host but fails at container start with an `exec format error` on a mismatched one (e.g. an amd64-only image pulled on an arm64 host). `docker manifest inspect <image>@sha256:...` shows whether a reference is a manifest list or a single-platform image before you ship it.
+
 ### Running a docker plugin on a remote host
 
 By default a `runtime: docker` plugin's container runs on the **operator's** Docker daemon. A recipe step's `host:` decides where instead:

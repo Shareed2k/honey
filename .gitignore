@@ -7,7 +7,9 @@ website/.npm-tmp/
 
 docs/*
 dist/
-build/
+build/*
+# Dockerfile is source, not a build artifact — track it despite build/* above.
+!build/honey-plugin-init.Dockerfile
 
 webui/node_modules/
 contrib/ansible/inventory_plugins/__pycache__
