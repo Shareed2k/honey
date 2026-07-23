@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { Node, NodeMouseHandler } from '@xyflow/react';
 import { ReactFlow, Background, Controls } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -15,6 +16,17 @@ export function GraphPanel({ params }: IDockviewPanelProps<{ recipeId: string }>
   const onEdgesChange = useWorkspaceStore((s) => s.onEdgesChange);
   const onConnect = useWorkspaceStore((s) => s.onConnect);
 
+  // Render-only merge of doc.runStatus into each node's data — CustomStepNode
+  // reads data.runStatus to color a node's border while a run is in flight
+  // (running/ok/err/skipped). onNodesChange still drives doc.nodes via the
+  // store; this array is only what's fed to <ReactFlow nodes=...>, so a drag/
+  // delete/connect still round-trips through the store's real nodes untouched
+  // by runStatus. Must run before the `!doc` early return (rules of hooks).
+  const nodes = useMemo(
+    () => doc?.nodes.map((n) => ({ ...n, data: { ...n.data, runStatus: doc.runStatus[n.id] } })) ?? [],
+    [doc?.nodes, doc?.runStatus],
+  );
+
   if (!doc) return <div style={{ padding: 16, color: '#8b949e' }}>No document for {recipeId}</div>;
 
   const onNodeClick: NodeMouseHandler = (_, node: Node) => setSelectedNode(recipeId, node.id);
@@ -22,7 +34,7 @@ export function GraphPanel({ params }: IDockviewPanelProps<{ recipeId: string }>
   return (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
       <ReactFlow
-        nodes={doc.nodes}
+        nodes={nodes}
         edges={doc.edges}
         nodeTypes={nodeTypes}
         onNodeClick={onNodeClick}

@@ -54,12 +54,14 @@ export function openRaw(api: DockviewApi, recipeId: string): void {
  *  - `records`: beside `toolbox`, to its right.
  *  - `stepeditor`: right-hand column, above `run`.
  *  - `run`: right-hand column, below `stepeditor`.
+ *  - `validation`: tabbed alongside `run` (same group).
  */
 export const DEFAULT_TOOL_PANELS = [
   { id: 'toolbox', component: 'toolbox', title: 'Toolbox' },
   { id: 'records', component: 'records', title: 'Records' },
   { id: 'stepeditor', component: 'stepeditor', title: 'Step' },
   { id: 'run', component: 'run', title: 'Run' },
+  { id: 'validation', component: 'validation', title: 'Validation' },
 ] as const;
 
 /**
@@ -91,6 +93,7 @@ const DEFAULT_TOOL_PANEL_POSITIONS: Partial<
   records: { referencePanel: 'toolbox', direction: 'within' },
   stepeditor: { direction: 'right' },
   run: { direction: 'below' },
+  validation: { referencePanel: 'run', direction: 'within' },
 };
 
 /**

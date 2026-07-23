@@ -11,6 +11,7 @@ import { ToolboxPanel } from './workspace/panels/ToolboxPanel';
 import { RunPanel } from './workspace/panels/RunPanel';
 import { RecordsPanel } from './workspace/panels/RecordsPanel';
 import { TerminalPanel } from './workspace/panels/TerminalPanel';
+import { ValidationPanel } from './workspace/panels/ValidationPanel';
 import { ActivityBar } from './workspace/ActivityBar';
 import { attachDockviewSync } from './workspace/useDockviewSync';
 import { applyDefaultLayout, openGraph } from './workspace/registry';
@@ -28,6 +29,7 @@ const components = {
   run: RunPanel,
   records: RecordsPanel,
   terminal: TerminalPanel,
+  validation: ValidationPanel,
 };
 
 interface RecipeStoreEntry {

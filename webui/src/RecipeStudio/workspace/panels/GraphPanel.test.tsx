@@ -111,4 +111,54 @@ describe('GraphPanel', () => {
     doc = useWorkspaceStore.getState().docs['deploy.cue'];
     expect(doc.edges).toHaveLength(0);
   });
+
+  // Regression test for the "run-status coloring lost" gap: GraphPanel used
+  // to pass doc.nodes straight through, so CustomStepNode's data.runStatus
+  // (which drives its running/ok/err/skipped border color) was never fed —
+  // setNodeRunStatus updated the store, but nothing merged it into what
+  // ReactFlow actually rendered. Asserting on the captured `nodes` prop
+  // (rather than just "the store has runStatus set") proves the merge
+  // actually reaches ReactFlow.
+  it('merges doc.runStatus into each rendered node\'s data.runStatus', () => {
+    useWorkspaceStore.setState((s) => ({
+      docs: {
+        ...s.docs,
+        'deploy.cue': {
+          ...s.docs['deploy.cue'],
+          nodes: [
+            { id: 'a', type: 'step', position: { x: 0, y: 0 }, data: { label: 'a' } },
+            { id: 'b', type: 'step', position: { x: 100, y: 0 }, data: { label: 'b' } },
+          ],
+          runStatus: { a: 'running', b: 'err' },
+        },
+      },
+    }));
+
+    render(<GraphPanel {...props('deploy.cue')} />);
+
+    const nodeA = capturedProps.nodes.find((n: { id: string }) => n.id === 'a');
+    const nodeB = capturedProps.nodes.find((n: { id: string }) => n.id === 'b');
+    expect(nodeA.data.runStatus).toBe('running');
+    expect(nodeB.data.runStatus).toBe('err');
+    // The merge is additive — original node data (e.g. label) survives.
+    expect(nodeA.data.label).toBe('a');
+  });
+
+  it('a node with no runStatus entry gets an undefined data.runStatus (no coloring)', () => {
+    useWorkspaceStore.setState((s) => ({
+      docs: {
+        ...s.docs,
+        'deploy.cue': {
+          ...s.docs['deploy.cue'],
+          nodes: [{ id: 'a', type: 'step', position: { x: 0, y: 0 }, data: {} }],
+          runStatus: {},
+        },
+      },
+    }));
+
+    render(<GraphPanel {...props('deploy.cue')} />);
+
+    const nodeA = capturedProps.nodes.find((n: { id: string }) => n.id === 'a');
+    expect(nodeA.data.runStatus).toBeUndefined();
+  });
 });

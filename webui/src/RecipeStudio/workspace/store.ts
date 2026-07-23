@@ -9,9 +9,9 @@ import {
   type Connection,
 } from '@xyflow/react';
 import type { DocState, RunStatus } from './types';
-import { fetchStoredRecipe, syncRecipeAST, validateRecipeContent } from '../../api/recipes';
+import { fetchStoredRecipe, fixRecipeErrors, syncRecipeAST, validateRecipeContent } from '../../api/recipes';
 import { apiPost } from '../../api/core';
-import type { ParsedRecipe } from '../../api/types/recipes';
+import type { ParsedRecipe, RecipeGraphPlan } from '../../api/types/recipes';
 import type { HostRecord } from '../../HostPicker';
 import {
   buildFlowFromRecipe,
@@ -27,6 +27,69 @@ import {
 // spans several call sites) — named here so `.map` over it keeps `id`/`position`
 // as known properties instead of losing them to index-signature spread erasure.
 type FlowNode = { id: string; position: { x: number; y: number }; data?: Record<string, unknown> };
+
+type ValidationIssue = { path?: string; kind?: string; message: string };
+
+// ---- validation -> node stamping ------------------------------------------
+// Ported from the old useRecipeStudioEngine.ts's graphWaveByNode/
+// applyValidationResultToNodes (see webui/src/RecipeStudio/useRecipeStudioEngine.ts),
+// adapted to the multi-doc store: instead of setNodes(...), these are pure
+// functions that validate()'s patchDoc callback folds into the same set() as
+// doc.validation, so a node's error/wave/layout update lands atomically with
+// the validation result that produced it.
+
+// Maps a RecipeGraphPlan's wave-ordered node groups to { nodeId: waveNumber }.
+// Only present on a successful (graph-mode) validation — see
+// recipes_validate_handlers.go's handleRecipesValidateContent, which only
+// populates `graph` after the recipe resolves past validation.
+function graphWaveByNode(graph: RecipeGraphPlan | undefined): Record<string, number> {
+  const waves = Array.isArray(graph?.waves) ? graph.waves : [];
+  const out: Record<string, number> = {};
+  waves.forEach((wave, waveIndex) => {
+    wave.forEach((node) => {
+      if (node?.id) out[node.id] = waveIndex + 1;
+    });
+  });
+  return out;
+}
+
+// Finds the validation issue (if any) that refers to a given node — matches
+// the same way the server's error messages reference a step: by node id, or
+// by a "step N" / "steps[N-1]" substring keyed off its position in the list.
+function errorForNode(issues: ValidationIssue[], nodeId: string, index: number): ValidationIssue | undefined {
+  return issues.find((issue) => {
+    const haystack = `${issue.path || ''} ${issue.message || ''}`;
+    return haystack.includes(nodeId) || haystack.includes(`step ${index + 1}`) || haystack.includes(`steps[${index}]`);
+  });
+}
+
+// Stamps validation errors + wave numbers onto a doc's nodes and re-lays them
+// out by wave. Wave comes from the graph plan when the server returned one;
+// otherwise falls back to the same edge-only wave computation switchToVisual
+// uses, so even a failing (non-graph) validation still shows sensible wave
+// columns instead of collapsing every node onto one.
+function stampValidationOnNodes(
+  nodes: FlowNode[],
+  edges: { source: string; target: string }[],
+  issues: ValidationIssue[],
+  graph: RecipeGraphPlan | undefined,
+): FlowNode[] {
+  const waveFromGraph = graphWaveByNode(graph);
+  const waveFromEdges = Object.keys(waveFromGraph).length > 0 ? {} : computeWavesFromEdges(nodes, edges);
+  const mapped = nodes.map((n, index) => {
+    const issue = errorForNode(issues, n.id, index);
+    const existingWave = n.data?.wave as number | undefined;
+    return {
+      ...n,
+      data: {
+        ...(n.data ?? {}),
+        wave: waveFromGraph[n.id] ?? waveFromEdges[n.id] ?? existingWave,
+        error: issue?.message,
+      },
+    };
+  });
+  return applyWaveLayout(mapped);
+}
 
 // helper: apply a patch to one doc; no-op if the id is unknown.
 function patchDoc(
@@ -114,6 +177,7 @@ interface WorkspaceState {
   switchToVisual(id: string): void;
 
   validate(id: string): Promise<void>;
+  fixWithAI(id: string): Promise<void>;
   save(
     id: string,
     options: { storage: string; path: string; commitMessage: string; gitUrl?: string; gitBranch?: string },
@@ -320,26 +384,61 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const res = await validateRecipeContent(recipe);
       if ('errors' in res) {
+        const issues: ValidationIssue[] = res.errors.map((e) => ({ path: e.path, kind: e.kind, message: e.message }));
         patchDoc(set, id, (d) => ({
           ...d,
-          validation: {
-            state: 'invalid',
-            issues: res.errors.map((e) => ({ path: e.path, kind: e.kind, message: e.message })),
-            risk: undefined,
-          },
+          validation: { state: 'invalid', issues, risk: undefined },
+          nodes: stampValidationOnNodes(d.nodes, d.edges, issues, undefined),
         }));
       } else {
         patchDoc(set, id, (d) => ({
           ...d,
           validation: { state: 'valid', issues: [], risk: res.risk },
+          nodes: stampValidationOnNodes(d.nodes, d.edges, [], res.graph),
         }));
       }
     } catch (err) {
+      const issues: ValidationIssue[] = [{ message: String(err) }];
       patchDoc(set, id, (d) => ({
         ...d,
-        validation: { state: 'invalid', issues: [{ message: String(err) }] },
+        validation: { state: 'invalid', issues },
+        nodes: stampValidationOnNodes(d.nodes, d.edges, issues, undefined),
       }));
     }
+  },
+
+  // Ported from the old useRecipeStudioEngine.ts's handleFixWithAI: sends the
+  // current recipe + its validation issues to the AI fix-up endpoint, then
+  // applies the result the same way switchToVisual applies a raw-JSON edit
+  // (rebuild nodes/edges/stepData via buildFlowFromRecipe, recompute waves,
+  // re-lay-out) — and always lands in visual mode so the fixed graph is
+  // immediately visible, matching the old engine's unconditional
+  // handleSwitchToVisual() call after applying an AI fix. rawContent is set
+  // too (not just nodes/edges) so a subsequent switchToRaw reflects the fix
+  // without a stale AST-sync round-trip. Re-validates afterward so the panel
+  // reflects the fix's outcome (still-failing issues, if any, or valid+risk).
+  async fixWithAI(id) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    const recipe = buildDocRecipe(doc);
+    const res = await fixRecipeErrors(recipe, doc.validation.issues, '');
+    const { nodes, edges, stepData } = buildFlowFromRecipe(res.recipe);
+    const waveByNode = computeWavesFromEdges(nodes, edges);
+    const withWave = (nodes as FlowNode[]).map((n) => ({
+      ...n,
+      data: { ...(n.data ?? {}), wave: waveByNode[n.id] ?? 1 },
+    }));
+    patchDoc(set, id, (d) => ({
+      ...d,
+      nodes: applyWaveLayout(withWave),
+      edges,
+      stepData,
+      recipeDefaults: (res.recipe as { defaults?: unknown }).defaults ?? {},
+      rawContent: JSON.stringify(res.recipe, null, 2),
+      rawMode: false,
+      dirty: true,
+    }));
+    await get().validate(id);
   },
 
   async save(id, options) {

@@ -23,6 +23,8 @@ vi.mock('../../api/recipes', () => ({
     JSON.stringify(recipeContent, null, 2)),
   // validate() below configures this per-test via mockResolvedValueOnce.
   validateRecipeContent: vi.fn(),
+  // fixWithAI tests below configure this per-test via mockResolvedValueOnce.
+  fixRecipeErrors: vi.fn(),
 }));
 vi.mock('../../api/core', () => ({
   apiPost: vi.fn(),
@@ -44,7 +46,7 @@ vi.mock('../useRecipeGraph', async (orig) => {
 
 import { message } from 'antd';
 import { useWorkspaceStore } from './store';
-import { validateRecipeContent, fetchStoredRecipe, parseDiskRecipe } from '../../api/recipes';
+import { validateRecipeContent, fetchStoredRecipe, parseDiskRecipe, fixRecipeErrors } from '../../api/recipes';
 import { apiPost } from '../../api/core';
 
 describe('openTerminal slot', () => {
@@ -513,5 +515,135 @@ describe('validate/save actions', () => {
     // The raw content never parses to a recipe object, so the parse-error
     // branch must return early instead of calling the server-side validator.
     expect(validateRecipeContent).not.toHaveBeenCalled();
+  });
+});
+
+// Ported from the old useRecipeStudioEngine.ts's applyValidationResultToNodes/
+// graphWaveByNode — validate() must fold the server's per-issue and
+// graph-wave data onto doc.nodes in the SAME patch that sets doc.validation,
+// so GraphPanel's node-error/wave coloring (CustomStepNode's data.error/
+// data.wave) stays in lockstep with the validation state that produced it.
+describe('validate() stamps node.data.error / node.data.wave', () => {
+  beforeEach(() => {
+    vi.mocked(validateRecipeContent).mockReset();
+    useWorkspaceStore.setState({
+      docs: {
+        'deploy.cue': {
+          recipeId: 'deploy.cue', name: 'deploy',
+          nodes: [
+            // step_a starts with a stale error from a previous failing
+            // validation — this run's issues don't mention it, so it must be
+            // CLEARED (not left stale).
+            { id: 'step_a', type: 'step', position: { x: 0, y: 0 }, data: { error: 'stale error' } },
+            { id: 'step_b', type: 'step', position: { x: 100, y: 0 }, data: {} },
+          ],
+          edges: [{ id: 'e1', source: 'step_a', target: 'step_b' }],
+          stepData: {}, recipeDefaults: {}, selectedNodeId: null,
+          rawMode: false, rawContent: '', originalCue: '',
+          validation: { state: 'idle', issues: [] }, runStatus: {}, dirty: false,
+          runStepId: null, runCount: 0,
+        },
+      },
+      active: 'deploy.cue',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+  });
+
+  it('a rejected recipe stamps the matching node with its error and clears a stale error on the passing node', async () => {
+    vi.mocked(validateRecipeContent).mockResolvedValueOnce({
+      errors: [{ path: 'steps.step_b', kind: 'validation', message: 'step_b: host is required' }],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    await useWorkspaceStore.getState().validate('deploy.cue');
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.validation.state).toBe('invalid');
+    const nodeA = doc.nodes.find((n) => n.id === 'step_a');
+    const nodeB = doc.nodes.find((n) => n.id === 'step_b');
+    // step_a wasn't referenced by any issue — its stale error is cleared.
+    expect(nodeA.data.error).toBeUndefined();
+    // step_b's id appears in the issue's path/message — it gets stamped.
+    expect(nodeB.data.error).toBe('step_b: host is required');
+  });
+
+  it('a valid recipe recomputes node wave from the returned graph and records risk', async () => {
+    vi.mocked(validateRecipeContent).mockResolvedValueOnce({
+      plan: '', steps: [],
+      graph: { type: 'graph', nodes: [], edges: [], waves: [[{ id: 'step_a' }], [{ id: 'step_b' }]] },
+      risk: { score: 7, level: 'High', findings: ['step_b runs as root'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    await useWorkspaceStore.getState().validate('deploy.cue');
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.validation.state).toBe('valid');
+    expect(doc.validation.risk).toEqual({ score: 7, level: 'High', findings: ['step_b runs as root'] });
+    const nodeA = doc.nodes.find((n) => n.id === 'step_a');
+    const nodeB = doc.nodes.find((n) => n.id === 'step_b');
+    // Wave numbers come from the graph's wave-ordered groups (1-indexed).
+    expect(nodeA.data.wave).toBe(1);
+    expect(nodeB.data.wave).toBe(2);
+    // A successful validation clears any previously-stamped error.
+    expect(nodeA.data.error).toBeUndefined();
+    expect(nodeB.data.error).toBeUndefined();
+  });
+});
+
+// Ported from the old useRecipeStudioEngine.ts's handleFixWithAI.
+describe('fixWithAI', () => {
+  beforeEach(async () => {
+    useWorkspaceStore.setState({ docs: {}, active: null });
+    await useWorkspaceStore.getState().createDoc('deploy.cue');
+    vi.mocked(fixRecipeErrors).mockReset();
+    vi.mocked(validateRecipeContent).mockReset();
+  });
+
+  it('calls fixRecipeErrors with the built recipe + current issues, and applies the fixed recipe to the doc', async () => {
+    useWorkspaceStore.setState((s) => ({
+      docs: {
+        ...s.docs,
+        'deploy.cue': {
+          ...s.docs['deploy.cue'],
+          validation: { state: 'invalid', issues: [{ message: 'bad step' }] },
+        },
+      },
+    }));
+
+    vi.mocked(fixRecipeErrors).mockResolvedValueOnce({
+      recipe: { name: 'deploy', type: 'graph', steps: [{ id: 'fixed1', run: { command: 'echo fixed' } }] },
+      explanation: 'fixed it',
+    });
+    // fixWithAI re-validates afterward — give it something to resolve to so
+    // the promise chain doesn't hang.
+    vi.mocked(validateRecipeContent).mockResolvedValueOnce({
+      plan: '', steps: [],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    await useWorkspaceStore.getState().fixWithAI('deploy.cue');
+
+    // Called with the doc's CURRENT recipe (built via buildDocRecipe from its
+    // nodes/edges/stepData — createDoc's mocked buildFlowFromRecipe/stepData
+    // stub, from the file-level vi.mock('../useRecipeGraph', ...) above,
+    // produces exactly this shape) and its current validation issues.
+    expect(fixRecipeErrors).toHaveBeenCalledTimes(1);
+    const [recipeArg, issuesArg] = vi.mocked(fixRecipeErrors).mock.calls[0];
+    expect(recipeArg).toEqual({ name: 'deploy', type: 'graph', steps: [{}], defaults: { x: 1 } });
+    expect(issuesArg).toEqual([{ message: 'bad step' }]);
+
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    // rawContent reflects the FIXED recipe returned by fixRecipeErrors, not
+    // the pre-fix one.
+    expect(doc.rawContent).toContain('fixed1');
+    expect(doc.rawMode).toBe(false);
+    expect(doc.dirty).toBe(true);
+    // nodes/stepData were rebuilt from the fixed recipe via buildFlowFromRecipe
+    // (stubbed to the fixed `s1`/`run` shape at the top of this file).
+    expect(doc.nodes).toHaveLength(1);
+    expect(doc.stepData.s1.kind).toBe('run');
+    // fixWithAI re-validates after applying the fix.
+    expect(validateRecipeContent).toHaveBeenCalledTimes(1);
   });
 });
