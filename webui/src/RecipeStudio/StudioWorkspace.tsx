@@ -93,7 +93,12 @@ export default function StudioWorkspace() {
 
     const disposers: (() => void)[] = [];
     disposers.push(attachDockviewSync(a, useWorkspaceStore.getState()));
-    const sync = attachWorkspaceSync(a, useWorkspaceStore.getState());
+    // Pass the store API itself (not a `.getState()` snapshot) — persistence's
+    // `save()` needs the LIVE active doc on every debounced save, and a
+    // snapshot's `.active` field would be frozen at this call's moment
+    // forever (zustand v5 replaces state via `Object.assign`, it doesn't
+    // mutate the old state object). See persistence.ts's `SyncStoreApi`.
+    const sync = attachWorkspaceSync(a, useWorkspaceStore);
     disposers.push(sync.dispose);
     disposeRef.current = () => disposers.forEach((d) => d());
 

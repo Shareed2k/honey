@@ -1,6 +1,7 @@
 import type { DockviewApi } from 'dockview';
 import { apiGet, apiPutJson } from '../../api/core';
 import { applyDefaultLayout, openRecipeIds } from './registry';
+import type { PersistedWorkspace } from './types';
 
 const DEBOUNCE_MS = 800;
 const WORKSPACE_PATH = '/api/v1/studio/workspace';
@@ -13,10 +14,24 @@ function isUntitled(id: string): boolean {
 // The slice of useWorkspaceStore that workspaceSync depends on — kept
 // narrow (rather than importing the full store type) so this module stays
 // decoupled from the rest of the store's surface.
-interface SyncStore {
+interface SyncState {
   createDoc(name: string): Promise<void>;
   setActive(id: string | null): void;
   active: string | null;
+}
+
+// The store API (rather than a `SyncState` snapshot) — i.e. something
+// exposing `getState()`, like `useWorkspaceStore` itself. zustand v5 replaces
+// state via `Object.assign` on every `setState`, so a one-time
+// `useWorkspaceStore.getState()` snapshot's `.active` field is frozen at
+// capture time and never reflects later `setActive` calls. Taking the store
+// API instead lets `save()` call `.getState()` fresh every time it runs, so
+// it always reads the CURRENT active doc rather than whatever was active the
+// moment `attachWorkspaceSync` was invoked. `createDoc`/`setActive` are
+// stable function references across state objects, so calling them off a
+// freshly-read `getState()` is equally safe.
+interface SyncStoreApi {
+  getState(): SyncState;
 }
 
 /**
@@ -39,7 +54,7 @@ interface SyncStore {
  */
 export function attachWorkspaceSync(
   api: DockviewApi,
-  store: SyncStore,
+  store: SyncStoreApi,
 ): { save(): void; dispose(): void } {
   let restoring = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -47,8 +62,11 @@ export function attachWorkspaceSync(
   const save = () => {
     if (restoring) return;
     const openRecipes = openRecipeIds(api).filter((id) => !isUntitled(id));
-    const active = store.active && !isUntitled(store.active) ? store.active : null;
-    void apiPutJson(WORKSPACE_PATH, { layout: api.toJSON(), openRecipes, active }).catch(() => {
+    // Read live, not off a stale snapshot — see `SyncStoreApi`'s doc comment.
+    const currentActive = store.getState().active;
+    const active = currentActive && !isUntitled(currentActive) ? currentActive : null;
+    const body: PersistedWorkspace = { layout: api.toJSON(), openRecipes, active };
+    void apiPutJson(WORKSPACE_PATH, body).catch(() => {
       // Best-effort persistence: keep dockview/store state as-is and let the
       // next successful save catch the workspace up.
     });
@@ -79,13 +97,13 @@ export function attachWorkspaceSync(
       const names: string[] = Array.isArray(data.openRecipes) ? data.openRecipes : [];
       for (const name of names.filter((n) => !isUntitled(n))) {
         try {
-          await store.createDoc(name);
+          await store.getState().createDoc(name);
         } catch {
           // Recipe no longer exists on disk — skip it, don't block the rest.
         }
       }
 
-      if (data.active) store.setActive(data.active);
+      if (data.active) store.getState().setActive(data.active);
     } finally {
       // dockview's `onDidLayoutChange` is an `AsapEvent` — `api.fromJSON`
       // above only *queues* its microtask (`queueMicrotask`), it doesn't fire
@@ -114,7 +132,16 @@ export function attachWorkspaceSync(
   return {
     save,
     dispose() {
-      if (timer) clearTimeout(timer);
+      // Flush a pending debounced save rather than dropping it — otherwise
+      // up to DEBOUNCE_MS worth of the final layout change (e.g. a drag
+      // right before navigating away) is lost. `save()` still no-ops if
+      // `restoring` is somehow true (dispose mid-restore), so this can't
+      // emit a spurious PUT — see `save()`'s own guard above.
+      if (timer) {
+        save();
+        clearTimeout(timer);
+        timer = null;
+      }
       disposable.dispose();
     },
   };

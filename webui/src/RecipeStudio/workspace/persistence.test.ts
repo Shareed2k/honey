@@ -1,19 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { create } from 'zustand';
 import type { DockviewApi } from 'dockview';
+import type { PersistedWorkspace } from './types';
 
-// Shape of the workspace JSON blob, used on both sides: the GET response
-// persistence.ts's `restore()` consumes, and the PUT body its `save()`
-// sends. Typed here (rather than left `unknown`/`any`) with `active` as
+// `PersistedWorkspace` (types.ts) is the shape of the workspace JSON blob,
+// used on both sides: the GET response persistence.ts's `restore()`
+// consumes, and the PUT body its `save()` sends. Its `active` field is
 // `string | null` — not narrowed to the default GET fixture's literal
 // `'a.cue'` — so per-test `get.mockResolvedValueOnce({ ..., active: null })`
 // overrides (e.g. the empty-openRecipes regression test below) type-check
 // against the same shape, and `putJson.mock.calls[0]` destructures into a
 // real tuple with `body.openRecipes`/`body.active` type-checked.
-interface WorkspaceBody {
-  layout: unknown;
-  openRecipes: string[];
-  active: string | null;
-}
 
 // vi.mock is hoisted above every other top-level statement in this file, so
 // its factory can only safely reference variables that are *also* hoisted —
@@ -22,23 +19,34 @@ interface WorkspaceBody {
 const { get, putJson } = vi.hoisted(() => ({
   get: vi.fn(async (_path: string) => ({
     ok: true,
-    json: async (): Promise<WorkspaceBody> => ({
+    json: async (): Promise<PersistedWorkspace> => ({
       layout: { grid: {} },
       openRecipes: ['a.cue'],
       active: 'a.cue',
     }),
   })),
-  putJson: vi.fn(async (_path: string, _body: WorkspaceBody) => ({ ok: true })),
+  putJson: vi.fn(async (_path: string, _body: PersistedWorkspace) => ({ ok: true })),
 }));
 vi.mock('../../api/core', () => ({ apiGet: get, apiPutJson: putJson }));
 
 const createDoc = vi.fn(async (_name: string) => {});
 const setActive = vi.fn((_id: string | null) => {});
 
-interface FakeStore {
+interface FakeState {
   createDoc(name: string): Promise<void>;
   setActive(id: string | null): void;
   active: string | null;
+}
+
+// Wraps a plain state literal in a `getState()` accessor — matches the store
+// API shape `attachWorkspaceSync` now requires (see persistence.ts's
+// `SyncStoreApi`). Fine for tests that don't need `active` to change mid-test
+// (a plain closed-over object is effectively a snapshot); the dedicated
+// "reads live active" test below uses a REAL zustand store instead, since
+// proving liveness requires state that can actually change out from under an
+// already-captured reference.
+function makeStoreApi(initial: FakeState): { getState(): FakeState } {
+  return { getState: () => initial };
 }
 
 // Minimal fake dockview api — only the members attachWorkspaceSync touches.
@@ -88,7 +96,7 @@ describe('attachWorkspaceSync', () => {
 
   it('debounces rapid layout changes into a single PUT', async () => {
     const api = makeApi();
-    const store: FakeStore = { createDoc, setActive, active: 'a.cue' };
+    const store = makeStoreApi({ createDoc, setActive, active: 'a.cue' });
     const sync = attachWorkspaceSync(asApi(api), store);
     await vi.runOnlyPendingTimersAsync(); // let restore() settle
     putJson.mockClear();
@@ -104,7 +112,7 @@ describe('attachWorkspaceSync', () => {
 
   it('restore() does not trigger a save (restoring flag suppresses it)', async () => {
     const api = makeApi();
-    const store: FakeStore = { createDoc, setActive, active: null };
+    const store = makeStoreApi({ createDoc, setActive, active: null });
     const sync = attachWorkspaceSync(asApi(api), store);
     await vi.runOnlyPendingTimersAsync();
 
@@ -118,7 +126,7 @@ describe('attachWorkspaceSync', () => {
   it('excludes untitled recipes from the PUT (openRecipes + active)', async () => {
     const api = makeApi();
     api.panels = [{ id: 'graph:a.cue' }, { id: 'graph:untitled-1.cue' }];
-    const store: FakeStore = { createDoc, setActive, active: 'untitled-1.cue' };
+    const store = makeStoreApi({ createDoc, setActive, active: 'untitled-1.cue' });
     const sync = attachWorkspaceSync(asApi(api), store);
     await vi.runOnlyPendingTimersAsync();
     putJson.mockClear();
@@ -153,7 +161,7 @@ describe('attachWorkspaceSync', () => {
       json: async () => ({ layout: { grid: {} }, openRecipes: [], active: null }),
     });
     const api = makeApi();
-    const store: FakeStore = { createDoc, setActive, active: null };
+    const store = makeStoreApi({ createDoc, setActive, active: null });
     const sync = attachWorkspaceSync(asApi(api), store);
 
     // Drive restore() to completion and past it: `fromJSON`'s queued event
@@ -178,7 +186,7 @@ describe('attachWorkspaceSync', () => {
       json: async () => ({ layout: { grid: {} }, openRecipes: ['a.cue'], active: 'a.cue' }),
     });
     const api = makeApi();
-    const store: FakeStore = { createDoc, setActive, active: null };
+    const store = makeStoreApi({ createDoc, setActive, active: null });
     const sync = attachWorkspaceSync(asApi(api), store);
 
     await vi.runOnlyPendingTimersAsync();
@@ -188,6 +196,66 @@ describe('attachWorkspaceSync', () => {
 
     expect(putJson).not.toHaveBeenCalled();
     sync.dispose();
+  });
+
+  // Regression test for finding #1 (persisted `active` is always stale):
+  // `attachWorkspaceSync` used to take a ONE-TIME `useWorkspaceStore.getState()`
+  // snapshot as `store`, then read `store.active` directly in `save()`.
+  // zustand v5 replaces state via `Object.assign` on every `setState` — it
+  // never mutates the old state object — so that captured snapshot's
+  // `.active` was frozen at attach-time forever, and every subsequent PUT
+  // wrote back whatever `active` was at attach (here: `null`, since the doc
+  // isn't selected until after attach), never the doc the user actually has
+  // open. A REAL zustand store is used (rather than `makeStoreApi`'s plain
+  // literal) because the bug is specifically about reading state THROUGH a
+  // live `getState()` after it changes — a fixed literal can't distinguish
+  // "reads live" from "reads a snapshot that happens to still be right".
+  it('save() reads the LIVE active doc, not a snapshot frozen at attach time', async () => {
+    const api = makeApi();
+    const liveStore = create<FakeState>((set) => ({
+      active: null,
+      createDoc,
+      setActive: (id) => set({ active: id }),
+    }));
+
+    const sync = attachWorkspaceSync(asApi(api), liveStore);
+    await vi.runOnlyPendingTimersAsync(); // let restore() settle
+    putJson.mockClear();
+
+    // Select a doc AFTER attach — this is the live update a frozen snapshot
+    // would miss.
+    liveStore.getState().setActive('some.cue');
+
+    api._fireLayout();
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(putJson).toHaveBeenCalledTimes(1);
+    const [, body] = putJson.mock.calls[0];
+    expect(body.active).toBe('some.cue');
+    sync.dispose();
+  });
+
+  // Regression test for finding #3 (dispose() drops a pending save):
+  // dispose() used to just clear the debounce timer, silently discarding up
+  // to DEBOUNCE_MS worth of the final layout change (e.g. navigating away
+  // right after a drag-resize).
+  it('dispose() flushes a pending debounced save instead of dropping it', async () => {
+    const api = makeApi();
+    const store = makeStoreApi({ createDoc, setActive, active: 'a.cue' });
+    const sync = attachWorkspaceSync(asApi(api), store);
+    await vi.runOnlyPendingTimersAsync(); // let restore() settle
+    putJson.mockClear();
+
+    api._fireLayout(); // arms the debounce timer; save() has not fired yet
+    sync.dispose();
+
+    expect(putJson).toHaveBeenCalledTimes(1);
+
+    // The timer must actually be cleared too — advancing past the debounce
+    // window shouldn't produce a second, duplicate PUT.
+    putJson.mockClear();
+    await vi.advanceTimersByTimeAsync(800);
+    expect(putJson).not.toHaveBeenCalled();
   });
 });
 

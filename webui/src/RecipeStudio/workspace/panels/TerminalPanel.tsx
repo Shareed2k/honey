@@ -17,12 +17,14 @@ type TerminalParams = {
 // A module-level const guarantees the same reference across renders.
 const NOOP = () => {};
 
-// Re-hosts the existing TerminalSession component (SSH/docker/k8s/PVE/
-// TrueNAS/VNC) inside a dockview panel. TerminalSession owns its own
-// xterm/WebSocket lifecycle via useEffect cleanup (see TerminalModal.tsx) —
-// so disposal on panel close is just React unmount, nothing extra needed
-// here. Spawned by the shell's `openTerminal` store slot (Task 12), one
-// panel per session.
+// Hosts the TerminalSession component (SSH/docker/k8s/PVE/TrueNAS/VNC) inside
+// a dockview panel. TerminalSession owns its own xterm/WebSocket lifecycle via
+// useEffect cleanup (see TerminalModal.tsx) — so disposal on panel close is
+// just React unmount, nothing extra needed here. Spawned by the shell's
+// `openTerminal` store slot (StudioWorkspace.tsx's `onReady`), which mints a
+// fresh `term:<uuid>` panel id on every call — each open is a brand new
+// session, never a re-host of an existing one, so multiple sessions can be
+// open concurrently.
 export function TerminalPanel({ params, api }: IDockviewPanelProps<TerminalParams>) {
   const { sshUser } = useHostSelection();
 
