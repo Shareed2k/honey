@@ -20,7 +20,7 @@ import { attachWorkspaceSync, resetLayout } from './workspace/persistence';
 import { EditorHeaderActions } from './workspace/EditorHeaderActions';
 import { useWorkspaceStore, uniqueDocName, uniqueStoreName } from './workspace/store';
 import { apiGet, apiPost } from '../api/core';
-import { generateRecipe, fetchRecipeStoreList, saveStoredRecipe } from '../api/recipes';
+import { generateRecipe, fetchRecipeStoreList, saveStoredRecipe, deleteStoredRecipe } from '../api/recipes';
 import type { HostRecord } from '../HostPicker';
 import GitLoadModal from './GitLoadModal';
 import { LibraryModal } from './LibraryModal';
@@ -172,13 +172,32 @@ export default function StudioWorkspace() {
   // server's CUE->recipe-JSON converter (GET /api/v1/recipes/store/{name})
   // instead of a client-side parse. uniqueStoreName guards the save against
   // silently clobbering an already-saved recipe with the same name.
+  //
+  // saveStoredRecipe writes the CUE to disk WITHOUT validating it — the
+  // server only parses it a moment later, in createDoc's
+  // GET /api/v1/recipes/store/{name}. If that parse fails (e.g. the content
+  // came from an untrusted git repo and isn't valid CUE), the save already
+  // succeeded, so without a rollback the broken file would be left behind in
+  // the store forever — reopenable via the Open dropdown, always erroring.
+  // Roll back by deleting the just-saved file, then re-throw so the
+  // Library/Git-load caller's toast still fires.
   const importCueIntoStore = async (baseName: string, content: string): Promise<string> => {
     const wantedName = ensureCueExtension(baseName);
     const existing = await fetchRecipeStoreList();
     const finalName = uniqueStoreName(wantedName, existing.map((e) => e.name));
     await saveStoredRecipe(finalName, content);
-    await createDoc(finalName);
-    if (api) openGraph(api, finalName);
+    try {
+      await createDoc(finalName);
+      if (api) openGraph(api, finalName);
+    } catch (err) {
+      try {
+        await deleteStoredRecipe(finalName);
+      } catch {
+        // Best-effort rollback — surface the original parse/open error below
+        // regardless of whether the cleanup delete itself succeeded.
+      }
+      throw err;
+    }
     // Keep the Open dropdown's list in sync with the store so the just-imported
     // recipe is reopenable without a page refresh.
     setRecipeList((prev) => (prev.some((e) => e.name === finalName) ? prev : [...prev, { name: finalName }]));

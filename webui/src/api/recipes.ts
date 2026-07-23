@@ -1,4 +1,4 @@
-import { apiHeaders, apiGet, apiPost } from './core';
+import { apiHeaders, apiGet, apiPost, apiDelete } from './core';
 import { RecipeListEntry, ParsedRecipe, RecipeGraphPlan, ValidationError, RecipesAIGraphResponse } from './types/recipes';
 import { ResolvedStep, RiskReport, LibraryCategory } from './types/core';
 
@@ -127,6 +127,20 @@ export async function fetchRecipeStoreList(): Promise<RecipeListEntry[]> {
  */
 export async function saveStoredRecipe(name: string, content: string): Promise<void> {
   const r = await apiPost(`/api/v1/recipes/store/${encodeURIComponent(name)}`, { content });
+  if (!r.ok) {
+    throw new Error(await r.text());
+  }
+}
+
+/**
+ * Deletes a recipe from the store via DELETE /api/v1/recipes/store/{name}
+ * (handleRecipesStoreDelete). Used to roll back a Library/Git-load import
+ * that saved content into the store but then failed to open (e.g. the saved
+ * content isn't valid CUE) — without this, the broken file would be left
+ * behind permanently, always erroring when reopened from the Open dropdown.
+ */
+export async function deleteStoredRecipe(name: string): Promise<void> {
+  const r = await apiDelete(`/api/v1/recipes/store/${encodeURIComponent(name)}`);
   if (!r.ok) {
     throw new Error(await r.text());
   }

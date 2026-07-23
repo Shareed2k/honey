@@ -54,6 +54,10 @@ vi.mock('../../api/core', async (importOriginal) => {
     apiGet: vi.fn(defaultApiGet),
     apiPost: vi.fn(),
     apiPutJson: vi.fn(async () => ({ ok: true })),
+    // Rollback path (see below): importCueIntoStore deletes the just-saved
+    // store file if the post-save createDoc/open fails. Defaults to success
+    // so the happy-path tests above (which never call it) aren't affected.
+    apiDelete: vi.fn(async () => ({ ok: true }) as Response),
   };
 });
 
@@ -79,7 +83,7 @@ vi.mock('../../contexts/AppContext', () => ({
 import StudioWorkspace from '../StudioWorkspace';
 import { useWorkspaceStore } from './store';
 import { HostSelectionProvider } from '../../contexts/HostSelectionContext';
-import { apiGet, apiPost } from '../../api/core';
+import { apiGet, apiPost, apiDelete } from '../../api/core';
 import { generateRecipe, fetchLibraryRecipes } from '../../api/recipes';
 
 beforeEach(() => {
@@ -87,6 +91,8 @@ beforeEach(() => {
   vi.mocked(apiGet).mockReset();
   vi.mocked(apiGet).mockImplementation(defaultApiGet);
   vi.mocked(apiPost).mockReset();
+  vi.mocked(apiDelete).mockReset();
+  vi.mocked(apiDelete).mockResolvedValue({ ok: true } as Response);
   vi.mocked(generateRecipe).mockReset();
   vi.mocked(fetchLibraryRecipes).mockReset();
 });
@@ -220,6 +226,43 @@ describe('StudioWorkspace — Library flow (import into the store, then open)', 
     await waitFor(() => {
       expect(useWorkspaceStore.getState().docs['lib-recipe-2.cue']).toBeTruthy();
     });
+    expect(useWorkspaceStore.getState().docs['lib-recipe.cue']).toBeFalsy();
+  });
+
+  it('rolls back the store save (deletes it) when the imported content fails to parse after saving', async () => {
+    vi.mocked(fetchLibraryRecipes).mockResolvedValue(libCategories);
+    vi.mocked(apiPost).mockResolvedValue({ ok: true } as Response);
+    // The store SAVE succeeds (saveStoredRecipe doesn't validate CUE), but the
+    // server fails to parse it on the subsequent by-name load createDoc does
+    // (GET /api/v1/recipes/store/{name}) — simulating invalid CUE from an
+    // untrusted git/library source.
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === '/api/v1/recipes/store/lib-recipe.cue') {
+        return { ok: false, text: async () => 'invalid CUE: unexpected token' } as unknown as Response;
+      }
+      return defaultApiGet(path);
+    });
+
+    renderShell();
+
+    fireEvent.click(await screen.findByRole('button', { name: /library/i }));
+    const card = await screen.findByText('lib-recipe');
+    fireEvent.click(card);
+
+    // The save happens first (this is the bug being guarded against — content
+    // is written before it's known to be valid CUE)...
+    await waitFor(() => {
+      expect(apiPost).toHaveBeenCalledWith('/api/v1/recipes/store/lib-recipe.cue', { content: 'CUE_LIBRARY_CONTENT' });
+    });
+
+    // ...but since the subsequent load fails, the just-saved file must be
+    // rolled back via DELETE rather than left behind as an orphaned, always-
+    // erroring entry in the store.
+    await waitFor(() => {
+      expect(apiDelete).toHaveBeenCalledWith('/api/v1/recipes/store/lib-recipe.cue');
+    });
+
+    // No doc should have been left open in the workspace.
     expect(useWorkspaceStore.getState().docs['lib-recipe.cue']).toBeFalsy();
   });
 });
