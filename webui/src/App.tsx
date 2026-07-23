@@ -14,7 +14,6 @@ import { FilesTab } from './tabs/FilesTab';
 import { TunnelsTab } from './tabs/TunnelsTab';
 import { LogsTab } from './tabs/LogsTab';
 import { ConfigTab } from './tabs/ConfigTab';
-import { ApiDocsTab } from './tabs/ApiDocsTab';
 import { SearchTab } from './tabs/SearchTab';
 import { FeedbackTab } from './tabs/FeedbackTab';
 import { AgentTab } from './tabs/AgentTab';
@@ -49,7 +48,6 @@ export function App() {
     { key: 'feedback', icon: <CommentOutlined />,       label: 'Logs Feedback' },
     { key: 'agent',    icon: <RobotOutlined />,         label: 'AI Agent' },
     { key: 'devices',  icon: <SafetyCertificateOutlined />, label: 'Devices' },
-    { key: 'api-docs', icon: <AppstoreOutlined />,      label: 'API Docs' },
   ];
 
   return (
@@ -117,7 +115,6 @@ export function App() {
             <LogsTab />
           </div>
 
-          {tab === 'api-docs' ? <ApiDocsTab /> : null}
           {tab === 'feedback' ? <FeedbackTab /> : null}
           {tab === 'agent' ? <AgentTab /> : null}
           {tab === 'devices' ? <DevicesTab /> : null}
