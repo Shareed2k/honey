@@ -177,6 +177,61 @@ describe('RunPanel subgraph filtering (step = target + ancestors, whole = all)',
   });
 });
 
+// Resume-from-here ("downstream" run mode): the built recipe must contain the
+// target step + its DESCENDANTS (forward BFS over edges), not its ancestors —
+// the mirror image of the "Run Step" (upstream/ancestors) filtering tested
+// above. Same linear graph shape (a -> b -> c) so both modes can be asserted
+// against the same fixture: targeting 'b' downstream should include b + c
+// (not a); targeting 'b' upstream should include a + b (not c).
+describe('RunPanel downstream vs upstream mode (Resume from here vs Run Step)', () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({
+      docs: {
+        'linear.cue': {
+          recipeId: 'linear.cue', name: 'linear',
+          nodes: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+          edges: [
+            { source: 'a', target: 'b' },
+            { source: 'b', target: 'c' },
+          ],
+          stepData: {
+            a: { id: 'a', kind: 'run', command: 'cmd-a' },
+            b: { id: 'b', kind: 'run', command: 'cmd-b' },
+            c: { id: 'c', kind: 'run', command: 'cmd-c' },
+          },
+          recipeDefaults: {}, selectedNodeId: null, rawMode: false, rawContent: '', originalCue: '',
+          validation: { state: 'idle', issues: [] }, runStatus: {}, dirty: false,
+          runStepId: 'b', runCount: 1, runMode: 'downstream', runExtraEnv: [],
+        },
+      },
+      active: 'linear.cue', schema: {},
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+  });
+
+  it('downstream mode (runStepId=b) builds b + its descendant c, NOT ancestor a', () => {
+    render(<RunPanel {...props()} />);
+
+    const captured = screen.getByTestId('captured-recipe').textContent ?? '';
+    // b has no depends (its only incoming edge, from a, was filtered out since
+    // a is not in the descendant set); c depends on b (the filtered-in edge).
+    expect(captured).toMatch(/^b:cmd-b:\|c:cmd-c:b$/);
+    expect(captured).not.toContain('cmd-a');
+  });
+
+  it('upstream mode (runStepId=b) builds a + b, NOT descendant c', () => {
+    useWorkspaceStore.setState((s) => ({
+      docs: { ...s.docs, 'linear.cue': { ...s.docs['linear.cue'], runMode: 'upstream' } },
+    }));
+
+    render(<RunPanel {...props()} />);
+
+    const captured = screen.getByTestId('captured-recipe').textContent ?? '';
+    expect(captured).toMatch(/^a:cmd-a:\|b:cmd-b:a$/);
+    expect(captured).not.toContain('cmd-c');
+  });
+});
+
 // Regression for the singleton-RunPanel stale-doc bug: RunPanel is mounted
 // once by the dockview shell and just follows `active` into `s.docs`, so
 // switching the active recipe tab does NOT remount RunPanel itself — only

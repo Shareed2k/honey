@@ -33,6 +33,8 @@ function blankDocState(id: string, overrides: Partial<DocState> = {}): DocState 
     dirty: false,
     runStepId: null,
     runCount: 0,
+    runMode: 'upstream',
+    runExtraEnv: [],
     ...overrides,
   };
 }

@@ -29,6 +29,14 @@ export interface DocState {
   // remounted via a `key` that changes on each run.
   runStepId: string | null;
   runCount: number;
+  // 'upstream' (default): the target step + its ancestors ("Run Step").
+  // 'downstream': the target step + its descendants ("Resume from here") —
+  // ignored when runStepId is null (whole-recipe run has no direction).
+  runMode: 'upstream' | 'downstream';
+  // Extra env vars gathered from the recipe's `defaults.prompts` gate (see
+  // useRunTrigger.tsx) right before the run that produced runStepId/runCount,
+  // threaded into the Run panel's WizardProvider as initialEnvOverrides.
+  runExtraEnv: { key: string; value: string }[];
 }
 
 export interface PersistedWorkspace {

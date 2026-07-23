@@ -6,6 +6,7 @@ import { useWorkspaceStore } from './store';
 import { recipeIdFromPanelId } from './registry';
 import StorageModal from '../StorageModal';
 import { useHostSelection } from '../../contexts/HostSelectionContext';
+import { useRunTrigger } from './useRunTrigger';
 
 /**
  * dockview `rightHeaderActionsComponent` — rendered in EVERY group's header.
@@ -21,8 +22,8 @@ export function EditorHeaderActions(props: IDockviewHeaderActionsProps) {
   const switchToVisual = useWorkspaceStore((s) => s.switchToVisual);
   const validate = useWorkspaceStore((s) => s.validate);
   const save = useWorkspaceStore((s) => s.save);
-  const startRun = useWorkspaceStore((s) => s.startRun);
   const { selectedRecords } = useHostSelection();
+  const { run, promptModal } = useRunTrigger(recipeId);
 
   if (!recipeId || !doc) return null;
 
@@ -31,7 +32,7 @@ export function EditorHeaderActions(props: IDockviewHeaderActionsProps) {
       message.warning('Select hosts in the Records panel first');
       return;
     }
-    startRun(recipeId, null);
+    run(null, 'upstream');
   };
 
   const handleValidate = async () => {
@@ -87,6 +88,7 @@ export function EditorHeaderActions(props: IDockviewHeaderActionsProps) {
         onCancel={() => setSaveVisible(false)}
         onSave={handleSave}
       />
+      {promptModal}
     </Space>
   );
 }

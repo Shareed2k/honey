@@ -165,7 +165,7 @@ function blankDoc(recipeId: string, name: string): DocState {
     // or an in-place mutation on one doc's `issues` would corrupt every other doc.
     validation: { state: 'idle', issues: [] },
     runStatus: {}, dirty: false,
-    runStepId: null, runCount: 0,
+    runStepId: null, runCount: 0, runMode: 'upstream', runExtraEnv: [],
   };
 }
 
@@ -206,7 +206,12 @@ interface WorkspaceState {
   setNodeRunStatus(id: string, nodeIds: string[], status: RunStatus): void;
   markDirty(id: string): void;
   resetDoc(id: string): void;
-  startRun(id: string, stepId: string | null): void;
+  startRun(
+    id: string,
+    stepId: string | null,
+    mode?: 'upstream' | 'downstream',
+    extraEnv?: { key: string; value: string }[],
+  ): void;
   bumpRun(id: string): void;
 
   switchToRaw(id: string): Promise<void>;
@@ -392,8 +397,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return blankDoc(d.recipeId, d.name);
     });
   },
-  startRun(id, stepId) {
-    patchDoc(set, id, (d) => ({ ...d, runStepId: stepId, runCount: d.runCount + 1 }));
+  startRun(id, stepId, mode = 'upstream', extraEnv = []) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      runStepId: stepId,
+      runMode: mode,
+      runExtraEnv: extraEnv,
+      runCount: d.runCount + 1,
+    }));
   },
   bumpRun(id) {
     patchDoc(set, id, (d) => ({ ...d, runCount: d.runCount + 1 }));

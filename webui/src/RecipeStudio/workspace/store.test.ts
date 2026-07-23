@@ -254,6 +254,33 @@ describe('run actions', () => {
     expect(() => useWorkspaceStore.getState().bumpRun('nope')).not.toThrow();
     expect(useWorkspaceStore.getState().docs['nope']).toBeUndefined();
   });
+
+  it('startRun defaults to runMode \'upstream\' and runExtraEnv [] when omitted', () => {
+    useWorkspaceStore.getState().startRun('deploy.cue', 's1');
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.runMode).toBe('upstream');
+    expect(doc.runExtraEnv).toEqual([]);
+  });
+
+  it('startRun with mode \'downstream\' sets runMode on the doc', () => {
+    useWorkspaceStore.getState().startRun('deploy.cue', 's1', 'downstream');
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.runMode).toBe('downstream');
+  });
+
+  it('startRun with extraEnv sets runExtraEnv on the doc', () => {
+    useWorkspaceStore.getState().startRun('deploy.cue', 's1', 'upstream', [{ key: 'FOO', value: 'bar' }]);
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.runExtraEnv).toEqual([{ key: 'FOO', value: 'bar' }]);
+  });
+
+  it('startRun called again with defaults omitted resets runMode/runExtraEnv back to defaults (not sticky from a prior call)', () => {
+    useWorkspaceStore.getState().startRun('deploy.cue', 's1', 'downstream', [{ key: 'FOO', value: 'bar' }]);
+    useWorkspaceStore.getState().startRun('deploy.cue', 's2');
+    const doc = useWorkspaceStore.getState().docs['deploy.cue'];
+    expect(doc.runMode).toBe('upstream');
+    expect(doc.runExtraEnv).toEqual([]);
+  });
 });
 
 describe('graph interaction actions (onConnect/onNodesChange/onEdgesChange)', () => {

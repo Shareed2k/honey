@@ -6,14 +6,15 @@ import { useWorkspaceStore } from '../store';
 import DynamicStepForm from '../../DynamicStepForm';
 import { stepSchemaForKind } from '../../../api/recipes';
 import { useHostSelection } from '../../../contexts/HostSelectionContext';
+import { useRunTrigger, type RunMode } from '../useRunTrigger';
 
 export function StepEditorPanel(_props: IDockviewPanelProps) {
   const active = useWorkspaceStore((s) => s.active);
   const schema = useWorkspaceStore((s) => s.schema);
   const doc = useWorkspaceStore((s) => (active ? s.docs[active] : undefined));
   const setStepData = useWorkspaceStore((s) => s.setStepData);
-  const startRun = useWorkspaceStore((s) => s.startRun);
   const { selectedRecords } = useHostSelection();
+  const { run, promptModal } = useRunTrigger(active);
 
   if (!doc || !doc.selectedNodeId) {
     return <div style={{ padding: 16, color: '#8b949e' }}>Select a step in the graph.</div>;
@@ -21,12 +22,12 @@ export function StepEditorPanel(_props: IDockviewPanelProps) {
   const nodeId = doc.selectedNodeId;
   const value = doc.stepData[nodeId];
 
-  const handleRunStep = () => {
+  const triggerRun = (mode: RunMode) => {
     if (selectedRecords.length === 0) {
       message.warning('Select hosts in the Records panel first');
       return;
     }
-    startRun(doc.recipeId, nodeId);
+    run(nodeId, mode);
   };
 
   return (
@@ -40,10 +41,18 @@ export function StepEditorPanel(_props: IDockviewPanelProps) {
         type="primary"
         icon={<PlayCircleOutlined />}
         style={{ marginTop: 16, width: '100%' }}
-        onClick={handleRunStep}
+        onClick={() => triggerRun('upstream')}
       >
         Run Step
       </Button>
+      <Button
+        icon={<PlayCircleOutlined />}
+        style={{ marginTop: 8, width: '100%' }}
+        onClick={() => triggerRun('downstream')}
+      >
+        Resume from here
+      </Button>
+      {promptModal}
     </div>
   );
 }

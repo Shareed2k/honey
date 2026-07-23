@@ -99,14 +99,64 @@ describe('StepEditorPanel', () => {
       warnSpy.mockRestore();
     });
 
-    it('starts a run for the active doc + selected node when hosts are selected', () => {
+    it('starts an upstream run for the active doc + selected node when hosts are selected and there are no prompts', () => {
       mockHostSelectionState.selectedRecords = [{ id: 'h1' }];
       const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun').mockImplementation(() => {});
 
       render(<StepEditorPanel {...props()} />);
       fireEvent.click(screen.getByRole('button', { name: /run step/i }));
 
-      expect(startRunSpy).toHaveBeenCalledWith('a.cue', 'node1');
+      expect(startRunSpy).toHaveBeenCalledWith('a.cue', 'node1', 'upstream', []);
+
+      startRunSpy.mockRestore();
+    });
+  });
+
+  describe('Resume from here', () => {
+    it('warns and does not start a run when no hosts are selected', () => {
+      mockHostSelectionState.selectedRecords = [];
+      const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun');
+      const warnSpy = vi.spyOn(message, 'warning').mockImplementation(() => '' as unknown as ReturnType<typeof message.warning>);
+
+      render(<StepEditorPanel {...props()} />);
+      fireEvent.click(screen.getByRole('button', { name: /resume from here/i }));
+
+      expect(warnSpy).toHaveBeenCalledWith('Select hosts in the Records panel first');
+      expect(startRunSpy).not.toHaveBeenCalled();
+
+      startRunSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+
+    it('starts a downstream run for the active doc + selected node when hosts are selected', () => {
+      mockHostSelectionState.selectedRecords = [{ id: 'h1' }];
+      const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun').mockImplementation(() => {});
+
+      render(<StepEditorPanel {...props()} />);
+      fireEvent.click(screen.getByRole('button', { name: /resume from here/i }));
+
+      expect(startRunSpy).toHaveBeenCalledWith('a.cue', 'node1', 'downstream', []);
+
+      startRunSpy.mockRestore();
+    });
+  });
+
+  describe('parameter prompt gate', () => {
+    it('opens the prompt modal instead of starting a run when recipeDefaults.prompts is non-empty', async () => {
+      mockHostSelectionState.selectedRecords = [{ id: 'h1' }];
+      useWorkspaceStore.setState((s) => ({
+        docs: {
+          ...s.docs,
+          'a.cue': { ...s.docs['a.cue'], recipeDefaults: { prompts: { region: { description: 'AWS region' } } } },
+        },
+      }));
+      const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun').mockImplementation(() => {});
+
+      render(<StepEditorPanel {...props()} />);
+      fireEvent.click(screen.getByRole('button', { name: /run step/i }));
+
+      expect(startRunSpy).not.toHaveBeenCalled();
+      expect(await screen.findByText('Recipe Parameters Required')).toBeTruthy();
 
       startRunSpy.mockRestore();
     });

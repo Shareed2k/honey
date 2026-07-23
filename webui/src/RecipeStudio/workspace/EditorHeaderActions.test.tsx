@@ -141,14 +141,36 @@ describe('EditorHeaderActions', () => {
       warnSpy.mockRestore();
     });
 
-    it('starts a whole-recipe run (stepId null) for the panel\'s recipe id when hosts are selected', () => {
+    it('starts a whole-recipe run (stepId null, mode upstream, extraEnv []) for the panel\'s recipe id when hosts are selected and there are no prompts', () => {
       mockHostSelectionState.selectedRecords = [{ id: 'h1' }];
       const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun').mockImplementation(() => {});
 
       renderWithTheme('graph:deploy.cue');
       fireEvent.click(screen.getByRole('button', { name: /run recipe/i }));
 
-      expect(startRunSpy).toHaveBeenCalledWith('deploy.cue', null);
+      expect(startRunSpy).toHaveBeenCalledWith('deploy.cue', null, 'upstream', []);
+
+      startRunSpy.mockRestore();
+    });
+
+    it('opens the parameter prompt modal instead of starting a run when recipeDefaults.prompts is non-empty', async () => {
+      mockHostSelectionState.selectedRecords = [{ id: 'h1' }];
+      useWorkspaceStore.setState((s) => ({
+        docs: {
+          ...s.docs,
+          'deploy.cue': {
+            ...s.docs['deploy.cue'],
+            recipeDefaults: { prompts: { region: { description: 'AWS region' } } },
+          },
+        },
+      }));
+      const startRunSpy = vi.spyOn(useWorkspaceStore.getState(), 'startRun').mockImplementation(() => {});
+
+      renderWithTheme('graph:deploy.cue');
+      fireEvent.click(screen.getByRole('button', { name: /run recipe/i }));
+
+      expect(startRunSpy).not.toHaveBeenCalled();
+      expect(await screen.findByText('Recipe Parameters Required')).toBeTruthy();
 
       startRunSpy.mockRestore();
     });
