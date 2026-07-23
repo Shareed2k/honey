@@ -171,6 +171,28 @@ function blankDoc(recipeId: string, name: string): DocState {
 
 let untitledCounter = 0;
 
+// Picks a doc key that won't clobber an already-open doc: `base` verbatim if
+// free, otherwise `<stem>-2<ext>`, `<stem>-3<ext>`, ... until one is free.
+// Exported so callers (the shell's Generate/Library/Git-load triggers) can
+// compute the SAME name createDocFromRecipe will key the doc under — since
+// createDocFromRecipe returns void, the caller needs to know the final key
+// up front (e.g. to open the matching graph panel right after creating the
+// doc). Both call this pure function against the same synchronous snapshot
+// of `docs`, so the result is guaranteed to agree.
+export function uniqueDocName(base: string, docs: Record<string, DocState>): string {
+  if (!docs[base]) return base;
+  const m = /^(.*?)(\.[^./]+)?$/.exec(base);
+  const stem = m?.[1] ?? base;
+  const ext = m?.[2] ?? '';
+  let i = 2;
+  let candidate = `${stem}-${i}${ext}`;
+  while (docs[candidate]) {
+    i += 1;
+    candidate = `${stem}-${i}${ext}`;
+  }
+  return candidate;
+}
+
 interface WorkspaceState {
   docs: Record<string, DocState>;
   active: string | null;
@@ -181,6 +203,12 @@ interface WorkspaceState {
   openTerminal: ((rec: HostRecord) => void) | null;
 
   createDoc(name: string): Promise<void>;
+  // Builds a doc from an in-memory recipe object (e.g. an AI-generated
+  // recipe, a parsed Library entry, or a git-loaded recipe) rather than
+  // loading one by stored name — the shared entry point for the Generate/
+  // Library/Git-load triggers (StudioWorkspace.tsx). Keyed by `name`, via
+  // `uniqueDocName` so it never silently clobbers an already-open doc.
+  createDocFromRecipe(name: string, recipeJson: unknown, rawCue?: string): void;
   newDoc(): string;
   freeDoc(id: string): void;
   setActive(id: string | null): void;
@@ -251,6 +279,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           stepData,
           recipeDefaults: recipeJson?.defaults ?? {},
           originalCue: data.raw_cue ?? '',
+        },
+      },
+    }));
+  },
+
+  createDocFromRecipe(name, recipeJson, rawCue) {
+    const finalName = uniqueDocName(name, get().docs);
+    const { nodes, edges, stepData } = buildFlowFromRecipe(recipeJson);
+    const defaults = (recipeJson as { defaults?: unknown } | null | undefined)?.defaults ?? {};
+    set((s) => ({
+      docs: {
+        ...s.docs,
+        [finalName]: {
+          ...blankDoc(finalName, recipeNameFromFilename(finalName)),
+          nodes: applyWaveLayout(nodes),
+          edges,
+          stepData,
+          recipeDefaults: defaults,
+          originalCue: rawCue ?? '',
+          dirty: true, // new/unsaved — never loaded from the store as-is.
         },
       },
     }));
