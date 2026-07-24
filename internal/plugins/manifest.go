@@ -72,6 +72,11 @@ type DockerRuntime struct {
 	// InitPath is the in-image path of honey-plugin-init when Init=="embedded".
 	// Defaults to defaultEmbeddedInitPath at load. Ignored in bind mode.
 	InitPath string `yaml:"init_path,omitempty"`
+	// Network selects the container network mode: "" (default, bridge — honey
+	// publishes the shim port to a loopback host port) or "host" (container
+	// shares the daemon host's network namespace to reach the host's loopback
+	// directly). "host" is operator-gated by plugins.allow_host_network.
+	Network string `yaml:"network,omitempty"`
 }
 
 // DockerRestartConfig tunes auto-restart of a crashed plugin container.
@@ -197,6 +202,11 @@ func loadManifest(path string) (Manifest, error) {
 			}
 		default:
 			return m, fmt.Errorf("manifest %s: docker.init must be \"bind\" or \"embedded\", got %q", path, m.Docker.Init)
+		}
+		switch strings.TrimSpace(m.Docker.Network) {
+		case "", "host":
+		default:
+			return m, fmt.Errorf("manifest %s: docker.network must be \"\" or \"host\", got %q", path, m.Docker.Network)
 		}
 		for i, v := range m.Docker.Volumes {
 			expanded, err := expandVolumeHostPath(v)

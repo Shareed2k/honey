@@ -128,6 +128,9 @@ func loadPluginDir(ctx context.Context, dir string, cfg config.PluginsEffective)
 		return nil, err
 	}
 	if manifest.effectiveRuntime() == "docker" {
+		if strings.TrimSpace(manifest.Docker.Network) == "host" && !cfg.AllowHostNetwork {
+			return nil, fmt.Errorf("plugins: %q requests docker.network: host but plugins.allow_host_network is not enabled", manifest.ID)
+		}
 		return loadDockerPluginDir(ctx, dir, manifest, hosts, paths)
 	}
 	return loadWasmPluginDir(ctx, dir, manifest, hosts, paths, cfg)

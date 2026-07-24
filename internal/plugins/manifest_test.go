@@ -272,6 +272,32 @@ docker:
 	}
 }
 
+func TestLoadManifest_NetworkEnum(t *testing.T) {
+	for _, tc := range []struct {
+		name, network string
+		wantErr       bool
+	}{
+		{"empty ok", "", false},
+		{"host ok", "host", false},
+		{"bridge rejected", "bridge", true},
+		{"garbage rejected", "sideband", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "id: p\ncapabilities: [custom_step]\nruntime: docker\ndocker:\n  image: \"img:tag\"\n"
+			if tc.network != "" {
+				body += "  network: " + tc.network + "\n"
+			}
+			_, err := loadManifest(writeManifest(t, body))
+			if tc.wantErr && err == nil {
+				t.Fatalf("network %q: want error", tc.network)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("network %q: unexpected error %v", tc.network, err)
+			}
+		})
+	}
+}
+
 func TestManagerDisabled(t *testing.T) {
 	m, err := NewManager(t.Context(), PluginsFromConfig(nil))
 	if err != nil {
