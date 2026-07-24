@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -294,6 +296,35 @@ func TestEntrypointForMode(t *testing.T) {
 	}
 	if ep := entrypointForMode("embedded", "/usr/local/bin/honey-plugin-init"); len(ep) != 1 || ep[0] != "/usr/local/bin/honey-plugin-init" {
 		t.Errorf("embedded entrypoint = %v, want the init_path", ep)
+	}
+}
+
+// TestLocalBackend_FreeLoopbackPort proves localBackend satisfies the
+// optional freeLoopbackPortAllocator capability (compile-time assertion) and
+// that FreeLoopbackPort returns a genuinely-bindable loopback port, distinct
+// across successive calls — the property the host-network shim-dial path
+// (later tasks) depends on.
+func TestLocalBackend_FreeLoopbackPort(t *testing.T) {
+	b, err := newLocalBackend("", "")
+	if err != nil {
+		t.Fatalf("newLocalBackend: %v", err)
+	}
+	defer b.Close()
+	var _ freeLoopbackPortAllocator = b // compile-time: localBackend satisfies it
+
+	p1, err := b.FreeLoopbackPort(context.Background())
+	if err != nil || p1 <= 0 || p1 > 65535 {
+		t.Fatalf("port1 = %d, err %v", p1, err)
+	}
+	// The returned port must be bindable (i.e. was actually free).
+	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p1))
+	if err != nil {
+		t.Fatalf("returned port %d not bindable: %v", p1, err)
+	}
+	l.Close()
+	p2, _ := b.FreeLoopbackPort(context.Background())
+	if p2 == p1 {
+		t.Errorf("expected distinct ports across calls, both %d", p1)
 	}
 }
 

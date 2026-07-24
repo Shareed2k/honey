@@ -106,6 +106,30 @@ func (b *localBackend) DialShim(ctx context.Context, network, address string) (n
 
 func (b *localBackend) Close() error { return b.cli.Close() }
 
+// freeLoopbackPortAllocator is an optional DockerBackend capability: it returns
+// a currently-free TCP port on the daemon host's loopback, for a host-network
+// plugin whose shim cannot use a published port mapping. It is a separate,
+// type-asserted interface (not a DockerBackend method) so DockerBackend stays
+// small — a bigger interface is a weaker abstraction.
+type freeLoopbackPortAllocator interface {
+	FreeLoopbackPort(ctx context.Context) (int, error)
+}
+
+var _ freeLoopbackPortAllocator = (*localBackend)(nil)
+
+// FreeLoopbackPort binds an ephemeral loopback port, reads it, and releases it.
+// The window between release and the container binding it is a benign TOCTOU:
+// if the port is taken in between, readiness simply times out and the operator
+// retries — not worth a lock for a rare, host-network-only path.
+func (b *localBackend) FreeLoopbackPort(_ context.Context) (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("plugins: allocate free loopback port: %w", err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
 // dockerTransport runs a plugin as a long-lived Docker container (for the
 // Manager's process lifetime, or a DockerHostSession's run lifetime for
 // remote hosts — not one container per call), reached over HTTP via the
