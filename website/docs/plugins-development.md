@@ -586,6 +586,30 @@ ENTRYPOINT ["/usr/local/bin/honey-plugin-init"]
 
 Either way, **the final image must be a multi-arch manifest list** — build and push it with `docker buildx build --platform linux/amd64,linux/arm64 ... --push` covering every architecture your fleet runs. A single-arch image works fine on a matching host but fails at container start with an `exec format error` on a mismatched one (e.g. an amd64-only image pulled on an arm64 host). `docker manifest inspect <image>@sha256:...` shows whether a reference is a manifest list or a single-platform image before you ship it.
 
+### Host networking (`docker.network: host`)
+
+By default a docker-runtime plugin's container runs on the normal Docker bridge network, isolated from the daemon host's own network stack. Set `docker.network: host` in the manifest to instead run the container with the daemon host's network namespace — the container sees (and can reach) exactly what the host itself can, including the host's own loopback interface:
+
+```yaml
+runtime: docker
+docker:
+  image: "pghero_diagnostics:latest"
+  network: host   # "" (default, bridge) | "host"
+```
+
+Host networking is **operator-gated**, off by default: the operator must opt in with `plugins.allow_host_network: true` in `honey.yaml`, separately from whatever the plugin's own manifest requests. A plugin manifest alone cannot turn this on — a plugin author asking for `network: host` is not the same as an operator granting it. If a loaded plugin requests `network: host` while the toggle is off, honey refuses to load it (error mentions `allow_host_network`).
+
+```yaml
+plugins:
+  allow_host_network: true   # required, or a docker.network: host plugin fails to load
+```
+
+**Why gated:** host networking is a privilege escalation relative to the normal container network sandbox — it hands the container the daemon host's full network namespace (every interface, every port the host can reach), not just an isolated bridge segment. Treat `plugins.allow_host_network: true` the same as any other operator-side widening of a plugin's trust boundary (alongside `docker.image`/`allowed_env`, see [Security](#security)).
+
+Even in host mode the shim itself only ever binds **loopback**: honey allocates a free port on `127.0.0.1` and tells the shim to bind that address directly (no port publishing — host networking has no published-ports concept to begin with). The container's other host-network privileges (reaching the host's other interfaces, other services bound to the host) are a side effect of the network mode, not something the shim itself uses.
+
+This is primarily a **Linux** feature. Docker Desktop and Colima run the daemon inside a VM, so their own "host" network mode is still scoped to that VM, not the real host — and both already expose `host.docker.internal` as a bridge-reachable gateway to the operator's loopback, which is simpler and works today (see the [Manifest fields](#manifest-fields-docker) example and [`pghero_tunnel_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/pghero_tunnel_demo.cue)). On plain Linux there is no such gateway and no bridge route to the operator's loopback at all, so `network: host` is the way to reach it: e.g. an operator-side recipe `tunnel:` step opens a local SSH port-forward on `127.0.0.1:15432`, and a host-networked plugin container reaches that same `127.0.0.1:15432` directly, because it shares the operator's loopback.
+
 ### Running a docker plugin on a remote host
 
 By default a `runtime: docker` plugin's container runs on the **operator's** Docker daemon. A recipe step's `host:` decides where instead:
@@ -799,6 +823,7 @@ The host calls `on_step_result` on the plugin with `phase`, host, and result pay
 - Secret material from `resolve_secret` flows into recipe env like any other secret backend.
 - Use `plugins.allowlist` in production to load only known plugin ids.
 - **`runtime: docker`**: the container image is arbitrary — pin a digest or a trusted registry, since honey runs whatever `docker.image` says with no sandboxing beyond normal container isolation. `allowed_env` values are passed straight into the container at creation (unlike WASM's per-call gated `get_env`), so treat `docker.image` + `allowed_env` together as the plugin's full trust boundary.
+- **`docker.network: host`**: widens that trust boundary further — the container gets the daemon host's full network namespace instead of an isolated bridge segment. Off by default; requires the operator to opt in with `plugins.allow_host_network: true`, independent of the plugin's own manifest. See [Host networking](#host-networking-dockernetwork-host).
 
 ## Related
 
