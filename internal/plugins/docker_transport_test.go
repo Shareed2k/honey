@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -296,6 +298,50 @@ func TestEntrypointForMode(t *testing.T) {
 	}
 	if ep := entrypointForMode("embedded", "/usr/local/bin/honey-plugin-init"); len(ep) != 1 || ep[0] != "/usr/local/bin/honey-plugin-init" {
 		t.Errorf("embedded entrypoint = %v, want the init_path", ep)
+	}
+}
+
+// TestBuildContainerConfig_BridgeMode proves the default (HostNetwork false)
+// path is byte-for-byte what createAndStart used to build inline: the shim
+// port exposed and published, no NetworkMode override, no -addr Cmd.
+func TestBuildContainerConfig_BridgeMode(t *testing.T) {
+	cc, hc := buildContainerConfig(dockerTransportConfig{
+		Image: "img", InitMode: "bind", Volumes: []string{"/a:/b:ro"},
+	}, "/host/shim", 0)
+	if hc.NetworkMode != "" {
+		t.Errorf("bridge NetworkMode = %q, want empty", hc.NetworkMode)
+	}
+	if _, ok := cc.ExposedPorts[pluginInitPort]; !ok {
+		t.Errorf("bridge must expose the shim port")
+	}
+	if len(hc.PortBindings) == 0 {
+		t.Errorf("bridge must publish the shim port")
+	}
+	if len(cc.Cmd) != 0 {
+		t.Errorf("bridge must not set -addr Cmd, got %v", cc.Cmd)
+	}
+	if len(cc.Entrypoint) != 1 || cc.Entrypoint[0] != pluginInitBindPath {
+		t.Errorf("bridge entrypoint = %v", cc.Entrypoint)
+	}
+}
+
+// TestBuildContainerConfig_HostMode proves docker.network: host containers
+// get NetworkMode "host", no exposed/published ports (there is nothing to
+// publish under host networking), and a -addr Cmd telling the shim to bind
+// the allocated port on loopback ONLY — never the host's routable interfaces.
+func TestBuildContainerConfig_HostMode(t *testing.T) {
+	cc, hc := buildContainerConfig(dockerTransportConfig{
+		Image: "img", InitMode: "bind", HostNetwork: true,
+	}, "/host/shim", 40404)
+	if hc.NetworkMode != "host" {
+		t.Fatalf("host NetworkMode = %q, want host", hc.NetworkMode)
+	}
+	if len(hc.PortBindings) != 0 || len(cc.ExposedPorts) != 0 {
+		t.Errorf("host mode must not publish/expose ports")
+	}
+	want := []string{"-addr", "127.0.0.1:40404"}
+	if !reflect.DeepEqual(cc.Cmd, want) {
+		t.Errorf("host Cmd = %v, want %v (loopback bind)", cc.Cmd, want)
 	}
 }
 
@@ -724,6 +770,37 @@ func TestCheckHealth_NoServerRetries(t *testing.T) {
 	ok, fatal := checkHealth(context.Background(), http.DefaultClient, "http://127.0.0.1:1")
 	if ok || fatal != nil {
 		t.Fatalf("unreachable must be (false, nil) to retry, got ok=%v fatal=%v", ok, fatal)
+	}
+}
+
+// TestWaitForReadyHost_PollsFixedLoopbackAddrDirectly proves the host-network
+// readiness path resolves to the caller-known 127.0.0.1:<port> address by
+// polling it directly (reusing checkHealth/pollUntilReady) — no
+// ContainerInspect involved, since host networking publishes no ports to
+// inspect. Modeled on TestCheckHealth_MatchIsReady, but through
+// waitForReadyHost and asserting the returned addr.
+func TestWaitForReadyHost_PollsFixedLoopbackAddrDirectly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiv1.HealthResponse{APIVersion: apiv1.APIVersion})
+	}))
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("parse test server port: %v", err)
+	}
+
+	addr, err := waitForReadyHost(context.Background(), srv.Client(), port)
+	if err != nil {
+		t.Fatalf("waitForReadyHost: %v", err)
+	}
+	want := "http://127.0.0.1:" + strconv.Itoa(port)
+	if addr != want {
+		t.Errorf("addr = %q, want %q", addr, want)
 	}
 }
 

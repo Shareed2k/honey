@@ -236,14 +236,15 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)
 	}
 	dt, err := newDockerTransport(ctx, backend, dockerTransportConfig{
-		Image:      manifest.Docker.Image,
-		PullPolicy: manifest.Docker.effectivePullPolicy(),
-		CueSource:  cueBytes,
-		MaxBackoff: maxBackoff,
-		Env:        resolveAllowedEnv(manifest.AllowedEnv),
-		Volumes:    volumes,
-		InitMode:   initMode,
-		InitPath:   manifest.Docker.InitPath,
+		Image:       manifest.Docker.Image,
+		PullPolicy:  manifest.Docker.effectivePullPolicy(),
+		CueSource:   cueBytes,
+		MaxBackoff:  maxBackoff,
+		Env:         resolveAllowedEnv(manifest.AllowedEnv),
+		Volumes:     volumes,
+		InitMode:    initMode,
+		InitPath:    manifest.Docker.InitPath,
+		HostNetwork: manifest.Docker.Network == "host",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)
