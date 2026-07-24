@@ -58,3 +58,35 @@ func TestDockerConfigForRemote_DefaultsToBindMode(t *testing.T) {
 		t.Fatalf("InitPath=%q want empty in bind mode", cfg.InitPath)
 	}
 }
+
+// TestDockerConfigForRemote_CarriesHostNetwork proves dockerConfigForRemote
+// carries docker.network: "host" into the dockerTransportConfig it builds —
+// without this, createContainer on the remote (DockerHostSession) path always
+// saw HostNetwork==false and silently fell back to bridge mode + published
+// ports regardless of what the manifest declared, defeating host-networking's
+// whole point on a remote docker daemon.
+func TestDockerConfigForRemote_CarriesHostNetwork(t *testing.T) {
+	lp := &loadedPlugin{manifest: Manifest{Docker: &DockerRuntime{Image: "img", Network: "host"}}}
+	cfg, err := dockerConfigForRemote(lp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.HostNetwork {
+		t.Errorf("HostNetwork not carried to remote config")
+	}
+}
+
+// TestDockerConfigForRemote_DefaultsHostNetworkFalse proves the absent/non-host
+// docker.network case (the common manifest shape) resolves to HostNetwork:
+// false rather than some zero-value ambiguity — mirrors the local loader's
+// (loadDockerPluginDir) equivalent default.
+func TestDockerConfigForRemote_DefaultsHostNetworkFalse(t *testing.T) {
+	lp := &loadedPlugin{manifest: Manifest{Docker: &DockerRuntime{Image: "img"}}}
+	cfg, err := dockerConfigForRemote(lp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HostNetwork {
+		t.Errorf("HostNetwork = true, want false when docker.network is unset")
+	}
+}

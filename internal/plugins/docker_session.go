@@ -178,13 +178,14 @@ func dockerConfigForRemote(lp *loadedPlugin) (dockerTransportConfig, error) {
 		return dockerTransportConfig{}, fmt.Errorf("plugins: invalid docker.restart.max_backoff: %w", err)
 	}
 	return dockerTransportConfig{
-		Image:      lp.manifest.Docker.Image,
-		PullPolicy: lp.manifest.Docker.effectivePullPolicy(),
-		CueSource:  lp.cueSource,
-		MaxBackoff: maxBackoff,
-		Env:        resolveAllowedEnv(lp.manifest.AllowedEnv),
-		Volumes:    append([]string(nil), lp.manifest.Docker.Volumes...),
-		InitMode:   lp.manifest.Docker.effectiveInitMode(),
-		InitPath:   lp.manifest.Docker.InitPath,
+		Image:       lp.manifest.Docker.Image,
+		PullPolicy:  lp.manifest.Docker.effectivePullPolicy(),
+		CueSource:   lp.cueSource,
+		MaxBackoff:  maxBackoff,
+		Env:         resolveAllowedEnv(lp.manifest.AllowedEnv),
+		Volumes:     append([]string(nil), lp.manifest.Docker.Volumes...),
+		InitMode:    lp.manifest.Docker.effectiveInitMode(),
+		InitPath:    lp.manifest.Docker.InitPath,
+		HostNetwork: lp.manifest.Docker.Network == "host",
 	}, nil
 }

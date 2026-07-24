@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -116,6 +117,54 @@ func normalizeDockerArch(uname string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported remote architecture %q for docker plugin", strings.TrimSpace(uname))
 	}
+}
+
+// remoteFreePortScript is a FIXED shell command with no interpolated input
+// (no variable, no user data — literally the same string every call), so it
+// carries no command-injection surface. It binds an ephemeral TCP socket on
+// the daemon host's loopback (port 0 lets the kernel pick a free one), prints
+// the OS-assigned port, and releases the socket. Python 3 ships on effectively
+// every Linux host that runs sshd, so no fallback interpreter is wired in.
+const remoteFreePortScript = `python3 -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'`
+
+// FreeLoopbackPort finds a free loopback TCP port on the remote daemon host by
+// running remoteFreePortScript over the (borrowed) SSH connection — the
+// counterpart to plugins.localBackend.FreeLoopbackPort for the remote
+// (DockerHostSession) path, and how createContainer pre-allocates the port a
+// host-network plugin's shim binds to when there's no published port mapping
+// to read back.
+//
+// b.host's static type is hostexec.HostClient, whose only run method is the
+// non-cancellable Run(string); ctx is honored only when the concrete client
+// also implements ctxCommandRunner (RunContext), which the real SSH client
+// does — mirrors the fallback batch_exec.go's RunOneRemoteSSH already uses.
+// Without that capability the command runs to completion regardless of ctx.
+func (b *dockerPluginSSHBackend) FreeLoopbackPort(ctx context.Context) (int, error) {
+	var (
+		out []byte
+		err error
+	)
+	if rc, ok := b.host.(ctxCommandRunner); ok {
+		out, err = rc.RunContext(ctx, remoteFreePortScript)
+	} else {
+		out, err = b.host.Run(remoteFreePortScript)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("allocate free loopback port on %s: %w", targetLabel(b.record), err)
+	}
+	return parseRemoteFreePort(out)
+}
+
+// parseRemoteFreePort extracts the port number remoteFreePortScript printed to
+// stdout. Pure (no host/SSH dependency), so it's unit-tested directly against
+// both well-formed output and garbage (a Python traceback, an empty string, an
+// out-of-range number) without a live SSH round-trip.
+func parseRemoteFreePort(out []byte) (int, error) {
+	port, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, fmt.Errorf("bad remote free-port output %q", strings.TrimSpace(string(out)))
+	}
+	return port, nil
 }
 
 // newDockerPluginSSHBackendFactory returns a factory that builds a remote
