@@ -90,6 +90,76 @@ func TestStreamCueRecipeStep_Reduce(t *testing.T) {
 	}
 }
 
+// tunnelCoordCaptureExecutor records the ExecutionOptions it was invoked with,
+// so tests can assert on fields the real StepExecutor never gets to see
+// (like TunnelCoord) without needing an actual SSH dial.
+type tunnelCoordCaptureExecutor struct {
+	opts *ExecutionOptions
+}
+
+func (e *tunnelCoordCaptureExecutor) ExecuteStream(_ context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	e.opts = &opts
+	for _, tgt := range req.Targets {
+		resCh <- HostExecResult{Name: tgt.Record.Name, Success: true}
+	}
+	return nil
+}
+
+func (e *tunnelCoordCaptureExecutor) ExecuteDryRun(_ context.Context, _ ExecutionRequest, _ ExecutionOptions, _ io.Writer) error {
+	return nil
+}
+
+// TestExecuteStep_PropagatesTunnelCoord is a regression test for a bug where
+// CueRun.ExecuteStep built its ExecutionOptions literal without copying
+// run.TunnelCoord over. Every non-loop step (e.g. a "tunnel" step, or a
+// plugin step using tunnel_step) then executed with a nil tunnel
+// coordinator, which made TunnelExecutor fail immediately with
+// "tunnel coordinator: nil" on any real recipe. The parallel loop-step path
+// (StreamCueLoopStep) already carried run.TunnelCoord over correctly; only
+// the direct, non-loop path missed it.
+func TestExecuteStep_PropagatesTunnelCoord(t *testing.T) {
+	old, err := GetStepExecutor(cuetry.KindTunnel)
+	if err != nil {
+		t.Fatalf("no tunnel executor registered: %v", err)
+	}
+	capture := &tunnelCoordCaptureExecutor{}
+	RegisterStepExecutor(cuetry.KindTunnel, capture)
+	defer RegisterStepExecutor(cuetry.KindTunnel, old)
+
+	step := &cuetry.TunnelStep{
+		StepBase: cuetry.StepBase{ID: "t1", Host: "*"},
+		Tunnel:   &cuetry.RecipeStepTunnel{RemotePort: 5432, LocalPort: 15432},
+	}
+
+	coord := NewRecipeTunnelCoordinator(nil)
+	defer coord.Close()
+
+	run := &CueRun{
+		Params: CueRecipeRunParams{
+			Recipe:  cuetry.Recipe{},
+			Records: []hosts.Record{{Name: "h1", PrimaryIP: "1.2.3.4"}},
+			Execute: true,
+		},
+		TunnelCoord: coord,
+	}
+
+	ch := make(chan HostExecResult, 10)
+	if _, err := StreamCueRecipeStep(context.Background(), run, 0, step, nil, ch); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	close(ch)
+
+	if capture.opts == nil {
+		t.Fatalf("tunnel step executor was never invoked")
+	}
+	if capture.opts.TunnelCoord == nil {
+		t.Fatalf("ExecutionOptions.TunnelCoord is nil; run.TunnelCoord was not propagated to the non-loop step executor")
+	}
+	if capture.opts.TunnelCoord != coord {
+		t.Fatalf("ExecutionOptions.TunnelCoord = %p, want %p (run.TunnelCoord)", capture.opts.TunnelCoord, coord)
+	}
+}
+
 func TestCueStepAllTargetsTransientTransportFailed(t *testing.T) {
 	t.Parallel()
 	if CueStepAllTargetsTransientTransportFailed(nil) {
