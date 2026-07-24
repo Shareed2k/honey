@@ -5,9 +5,10 @@
 // docker plugin on the operator machine (host "_") and connects to the tunnel's
 // operator-side loopback endpoint through host.docker.internal (Docker Desktop).
 //
-// Caveats (see docs): host.docker.internal is Docker-Desktop-only; on Linux the
-// honey docker-plugin container has no host-gateway route to the operator's
-// loopback. And the recipe tunnel must stay open for the dependent docker step.
+// Caveats (see docs): host.docker.internal is provided by Docker Desktop /
+// Colima only; on Linux the honey docker-plugin container has no host-gateway
+// route to the operator's loopback (use variant 2, docker.network: host,
+// below). And the recipe tunnel must stay open for the dependent docker step.
 //
 // Plan:
 //   honey cue-exec --config <cfg> examples/recipe/pghero_tunnel_demo.cue "bastion"

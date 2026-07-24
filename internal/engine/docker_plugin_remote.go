@@ -152,7 +152,11 @@ func (b *dockerPluginSSHBackend) FreeLoopbackPort(ctx context.Context) (int, err
 	if err != nil {
 		return 0, fmt.Errorf("allocate free loopback port on %s: %w", targetLabel(b.record), err)
 	}
-	return parseRemoteFreePort(out)
+	port, perr := parseRemoteFreePort(out)
+	if perr != nil {
+		return 0, fmt.Errorf("free loopback port on %s: %w", targetLabel(b.record), perr)
+	}
+	return port, nil
 }
 
 // parseRemoteFreePort extracts the port number remoteFreePortScript printed to

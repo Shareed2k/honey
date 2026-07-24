@@ -336,7 +336,7 @@ func createAndStart(ctx context.Context, cli *client.Client, httpClient *http.Cl
 
 	if cfg.HostNetwork {
 		zap.L().Warn("plugins: starting docker.network: host container — this grants the container the daemon host's full network namespace",
-			zap.String("image", cfg.Image))
+			zap.String("image", cfg.Image), zap.Int("port", port))
 	}
 
 	containerCfg, hostCfg := buildContainerConfig(cfg, shimHostPath, port)
