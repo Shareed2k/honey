@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { useWorkspaceStore } from '../store';
 
 const CodeEditor = lazy(() => import('../../../CodeEditor'));

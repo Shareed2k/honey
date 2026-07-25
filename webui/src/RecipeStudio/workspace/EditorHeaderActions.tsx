@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { IDockviewHeaderActionsProps } from 'dockview';
+import type { IDockviewHeaderActionsProps } from 'dockview-react';
 import { Button, Space, message } from 'antd';
 import { CodeOutlined, EyeOutlined, CheckCircleOutlined, SaveOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import { useWorkspaceStore } from './store';

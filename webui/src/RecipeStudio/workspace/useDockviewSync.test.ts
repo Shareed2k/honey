@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi } from 'dockview-react';
 import { attachDockviewSync } from './useDockviewSync';
 
 // Minimal fake panel — only the `id` field attachDockviewSync's handlers touch.

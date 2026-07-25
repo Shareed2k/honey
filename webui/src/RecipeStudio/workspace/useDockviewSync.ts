@@ -1,4 +1,4 @@
-import type { DockviewApi, IDockviewPanel } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { recipeIdFromPanelId } from './registry';
 
 interface SyncStore {

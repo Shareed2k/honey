@@ -1,4 +1,4 @@
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import type { ParsedRecipe } from '../../../api/types/recipes';
 import type { DocState } from '../types';
 import { useWorkspaceStore } from '../store';

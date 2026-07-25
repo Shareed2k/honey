@@ -1,6 +1,6 @@
 import { Button, Tooltip } from 'antd';
 import { AppstoreOutlined, CodeOutlined, PlayCircleOutlined, DatabaseOutlined, AlertOutlined, SettingOutlined } from '@ant-design/icons';
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi } from 'dockview-react';
 
 // Only tool panels that are actually registered today (Toolbox, Step editor,
 // Settings, Run, Records, Validation). Terminal joins this list once its

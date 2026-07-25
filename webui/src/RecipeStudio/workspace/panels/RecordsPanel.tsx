@@ -1,6 +1,6 @@
 import { Button, Space } from 'antd';
 import { CodeOutlined } from '@ant-design/icons';
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { HostPicker, recordKey, type HostRecord } from '../../../HostPicker';
 import { useHostSelection } from '../../../contexts/HostSelectionContext';
 import { useWorkspaceStore } from '../store';

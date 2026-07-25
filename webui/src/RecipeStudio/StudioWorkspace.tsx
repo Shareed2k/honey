@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from 'dockview';
+import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from 'dockview-react';
 import 'dockview/dist/styles/dockview.css';
 import './workspace/dockview-theme-honey.css';
 import { Button, Select, Space, message, Modal, Input } from 'antd';

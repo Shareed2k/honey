@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { create } from 'zustand';
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi } from 'dockview-react';
 import type { PersistedWorkspace } from './types';
 
 // `PersistedWorkspace` (types.ts) is the shape of the workspace JSON blob,

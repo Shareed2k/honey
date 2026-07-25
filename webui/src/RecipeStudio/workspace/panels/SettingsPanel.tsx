@@ -1,4 +1,4 @@
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { useWorkspaceStore } from '../store';
 import DynamicStepForm from '../../DynamicStepForm';
 import { stepSchemaForKind } from '../../../api/recipes';

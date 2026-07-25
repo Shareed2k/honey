@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DockviewApi, IDockviewPanel } from 'dockview';
+import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { recipeIdFromPanelId, openGraph, openRaw } from './registry';
 
 // Minimal fake satisfying only the members openGraph/openRaw touch. Cast

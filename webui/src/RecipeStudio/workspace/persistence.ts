@@ -1,4 +1,4 @@
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi } from 'dockview-react';
 import { apiGet, apiPutJson } from '../../api/core';
 import { applyDefaultLayout, openRecipeIds } from './registry';
 import type { PersistedWorkspace } from './types';
