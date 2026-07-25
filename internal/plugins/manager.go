@@ -128,6 +128,9 @@ func loadPluginDir(ctx context.Context, dir string, cfg config.PluginsEffective)
 		return nil, err
 	}
 	if manifest.effectiveRuntime() == "docker" {
+		if strings.TrimSpace(manifest.Docker.Network) == "host" && !cfg.AllowHostNetwork {
+			return nil, fmt.Errorf("plugins: %q requests docker.network: host but plugins.allow_host_network is not enabled", manifest.ID)
+		}
 		return loadDockerPluginDir(ctx, dir, manifest, hosts, paths)
 	}
 	return loadWasmPluginDir(ctx, dir, manifest, hosts, paths, cfg)
@@ -189,17 +192,27 @@ func loadWasmPluginDir(ctx context.Context, dir string, manifest Manifest, hosts
 }
 
 // loadDockerPluginDir loads a runtime: docker plugin: reads its plugin.cue,
-// locates the honey-plugin-init binary to bind-mount, and starts the container.
+// resolves the docker.init mode, and starts the container. In bind mode
+// (default) it also locates the host honey-plugin-init binary to bind-mount
+// as the container entrypoint; in embedded mode the image supplies its own
+// init at manifest.Docker.InitPath, so no host binary is located or bound.
 func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hosts []string, paths map[string]string) (*loadedPlugin, error) {
 	cuePath := filepath.Join(dir, "plugin.cue")
 	cueBytes, err := safepath.ReadFile(cuePath)
 	if err != nil {
 		return nil, fmt.Errorf("plugins: read %s: %w", cuePath, err)
 	}
-	initPath, err := locatePluginInitBinary()
-	if err != nil {
-		return nil, err
+	initMode := manifest.Docker.effectiveInitMode()
+
+	var initPath string
+	if initMode == "bind" {
+		p, err := locatePluginInitBinary()
+		if err != nil {
+			return nil, err
+		}
+		initPath = p
 	}
+	// embedded mode: no host shim binary; initPath stays "".
 
 	// Ensure the global plugin workspaces directory exists and mount it
 	homeDir, err := os.UserHomeDir()
@@ -223,12 +236,15 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)
 	}
 	dt, err := newDockerTransport(ctx, backend, dockerTransportConfig{
-		Image:      manifest.Docker.Image,
-		PullPolicy: manifest.Docker.effectivePullPolicy(),
-		CueSource:  cueBytes,
-		MaxBackoff: maxBackoff,
-		Env:        resolveAllowedEnv(manifest.AllowedEnv),
-		Volumes:    volumes,
+		Image:       manifest.Docker.Image,
+		PullPolicy:  manifest.Docker.effectivePullPolicy(),
+		CueSource:   cueBytes,
+		MaxBackoff:  maxBackoff,
+		Env:         resolveAllowedEnv(manifest.AllowedEnv),
+		Volumes:     volumes,
+		InitMode:    initMode,
+		InitPath:    manifest.Docker.InitPath,
+		HostNetwork: manifest.Docker.Network == "host",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)

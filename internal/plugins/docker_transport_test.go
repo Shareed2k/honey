@@ -4,8 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -223,6 +228,149 @@ func TestBuildBinds_NoVolumes(t *testing.T) {
 	want := []string{"/host/honey-plugin-init:/honey-plugin-init:ro"}
 	if len(got) != 1 || got[0] != want[0] {
 		t.Fatalf("binds=%v want=%v", got, want)
+	}
+}
+
+func TestBuildBinds_BindModePrependsShim(t *testing.T) {
+	got := buildBinds("/host/honey-plugin-init", []string{"/a:/b:ro"})
+	if len(got) != 2 || got[0] != "/host/honey-plugin-init:"+pluginInitBindPath+":ro" {
+		t.Fatalf("bind mode: got %v", got)
+	}
+	if got[1] != "/a:/b:ro" {
+		t.Errorf("volume not preserved: %v", got)
+	}
+}
+
+func TestBuildBinds_EmbeddedModeNoShim(t *testing.T) {
+	got := buildBinds("", []string{"/a:/b:ro"})
+	for _, b := range got {
+		if strings.Contains(b, pluginInitBindPath) {
+			t.Fatalf("embedded mode must not bind the shim, got %v", got)
+		}
+	}
+	if len(got) != 1 || got[0] != "/a:/b:ro" {
+		t.Errorf("embedded binds = %v, want just the volume", got)
+	}
+}
+
+// TestShimPathForMode_EmbeddedSkipsBackend proves embedded mode short-circuits
+// before ever touching the backend: on a remote backend, ShimHostPath stages
+// the shim binary onto the host as a side effect, so calling it in embedded
+// mode (where the image supplies its own init) would be both wasted work and
+// — worse — would hand createContainer a non-empty shim path that buildBinds
+// would then bind-mount even though nothing needs it.
+func TestShimPathForMode_EmbeddedSkipsBackend(t *testing.T) {
+	fake := &fakeDockerBackend{shimPath: "/staged/honey-plugin-init"}
+
+	path, err := shimPathForMode(context.Background(), fake, "embedded")
+	if err != nil {
+		t.Fatalf("shimPathForMode: %v", err)
+	}
+	if path != "" {
+		t.Fatalf("path=%q want empty in embedded mode", path)
+	}
+	if calls := fake.shimHostPathCalls(); calls != 0 {
+		t.Fatalf("backend.ShimHostPath called %d times, want 0 in embedded mode", calls)
+	}
+}
+
+// TestShimPathForMode_BindDelegates proves bind (and absent/"") mode is
+// unchanged: it delegates straight to the backend and returns whatever it
+// resolves, preserving pre-fix behavior for local and remote backends alike.
+func TestShimPathForMode_BindDelegates(t *testing.T) {
+	fake := &fakeDockerBackend{shimPath: "/staged/honey-plugin-init"}
+
+	path, err := shimPathForMode(context.Background(), fake, "bind")
+	if err != nil {
+		t.Fatalf("shimPathForMode: %v", err)
+	}
+	if path != "/staged/honey-plugin-init" {
+		t.Fatalf("path=%q want the backend's resolved path", path)
+	}
+	if calls := fake.shimHostPathCalls(); calls != 1 {
+		t.Fatalf("backend.ShimHostPath called %d times, want exactly 1 in bind mode", calls)
+	}
+}
+
+func TestEntrypointForMode(t *testing.T) {
+	if ep := entrypointForMode("bind", "/ignored"); len(ep) != 1 || ep[0] != pluginInitBindPath {
+		t.Errorf("bind entrypoint = %v, want %q", ep, pluginInitBindPath)
+	}
+	if ep := entrypointForMode("embedded", "/usr/local/bin/honey-plugin-init"); len(ep) != 1 || ep[0] != "/usr/local/bin/honey-plugin-init" {
+		t.Errorf("embedded entrypoint = %v, want the init_path", ep)
+	}
+}
+
+// TestBuildContainerConfig_BridgeMode proves the default (HostNetwork false)
+// path is byte-for-byte what createAndStart used to build inline: the shim
+// port exposed and published, no NetworkMode override, no -addr Cmd.
+func TestBuildContainerConfig_BridgeMode(t *testing.T) {
+	cc, hc := buildContainerConfig(dockerTransportConfig{
+		Image: "img", InitMode: "bind", Volumes: []string{"/a:/b:ro"},
+	}, "/host/shim", 0)
+	if hc.NetworkMode != "" {
+		t.Errorf("bridge NetworkMode = %q, want empty", hc.NetworkMode)
+	}
+	if _, ok := cc.ExposedPorts[pluginInitPort]; !ok {
+		t.Errorf("bridge must expose the shim port")
+	}
+	if len(hc.PortBindings) == 0 {
+		t.Errorf("bridge must publish the shim port")
+	}
+	if len(cc.Cmd) != 0 {
+		t.Errorf("bridge must not set -addr Cmd, got %v", cc.Cmd)
+	}
+	if len(cc.Entrypoint) != 1 || cc.Entrypoint[0] != pluginInitBindPath {
+		t.Errorf("bridge entrypoint = %v", cc.Entrypoint)
+	}
+}
+
+// TestBuildContainerConfig_HostMode proves docker.network: host containers
+// get NetworkMode "host", no exposed/published ports (there is nothing to
+// publish under host networking), and a -addr Cmd telling the shim to bind
+// the allocated port on loopback ONLY — never the host's routable interfaces.
+func TestBuildContainerConfig_HostMode(t *testing.T) {
+	cc, hc := buildContainerConfig(dockerTransportConfig{
+		Image: "img", InitMode: "bind", HostNetwork: true,
+	}, "/host/shim", 40404)
+	if hc.NetworkMode != "host" {
+		t.Fatalf("host NetworkMode = %q, want host", hc.NetworkMode)
+	}
+	if len(hc.PortBindings) != 0 || len(cc.ExposedPorts) != 0 {
+		t.Errorf("host mode must not publish/expose ports")
+	}
+	want := []string{"-addr", "127.0.0.1:40404"}
+	if !reflect.DeepEqual(cc.Cmd, want) {
+		t.Errorf("host Cmd = %v, want %v (loopback bind)", cc.Cmd, want)
+	}
+}
+
+// TestLocalBackend_FreeLoopbackPort proves localBackend satisfies the
+// optional freeLoopbackPortAllocator capability (compile-time assertion) and
+// that FreeLoopbackPort returns a genuinely-bindable loopback port, distinct
+// across successive calls — the property the host-network shim-dial path
+// (later tasks) depends on.
+func TestLocalBackend_FreeLoopbackPort(t *testing.T) {
+	b, err := newLocalBackend("", "")
+	if err != nil {
+		t.Fatalf("newLocalBackend: %v", err)
+	}
+	defer b.Close()
+	var _ freeLoopbackPortAllocator = b // compile-time: localBackend satisfies it
+
+	p1, err := b.FreeLoopbackPort(context.Background())
+	if err != nil || p1 <= 0 || p1 > 65535 {
+		t.Fatalf("port1 = %d, err %v", p1, err)
+	}
+	// The returned port must be bindable (i.e. was actually free).
+	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p1))
+	if err != nil {
+		t.Fatalf("returned port %d not bindable: %v", p1, err)
+	}
+	l.Close()
+	p2, _ := b.FreeLoopbackPort(context.Background())
+	if p2 == p1 {
+		t.Errorf("expected distinct ports across calls, both %d", p1)
 	}
 }
 
@@ -540,9 +688,9 @@ func TestDockerTransport_Close_NeverStartedIsNoop(t *testing.T) {
 
 func TestPollUntilReady_SucceedsWithinDeadline(t *testing.T) {
 	attempts := 0
-	checkFn := func() bool {
+	checkFn := func() (bool, error) {
 		attempts++
-		return attempts >= 3
+		return attempts >= 3, nil
 	}
 	err := pollUntilReady(context.Background(), time.Now().Add(time.Second), checkFn)
 	if err != nil {
@@ -554,7 +702,7 @@ func TestPollUntilReady_SucceedsWithinDeadline(t *testing.T) {
 }
 
 func TestPollUntilReady_TimesOutIfNeverReady(t *testing.T) {
-	checkFn := func() bool { return false }
+	checkFn := func() (bool, error) { return false, nil }
 	err := pollUntilReady(context.Background(), time.Now().Add(50*time.Millisecond), checkFn)
 	if err == nil {
 		t.Fatal("expected timeout error when checkFn never returns true")
@@ -564,10 +712,95 @@ func TestPollUntilReady_TimesOutIfNeverReady(t *testing.T) {
 func TestPollUntilReady_RespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	checkFn := func() bool { return false }
+	checkFn := func() (bool, error) { return false, nil }
 	err := pollUntilReady(ctx, time.Now().Add(time.Minute), checkFn)
 	if err == nil {
 		t.Fatal("expected error when context is already cancelled")
+	}
+}
+
+func TestPollUntilReady_FatalStopsImmediately(t *testing.T) {
+	calls := 0
+	err := pollUntilReady(context.Background(), time.Now().Add(5*time.Second), func() (bool, error) {
+		calls++
+		return false, fmt.Errorf("api_version mismatch")
+	})
+	if err == nil || !strings.Contains(err.Error(), "mismatch") {
+		t.Fatalf("want fatal mismatch error, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("fatal error must stop after 1 call, got %d", calls)
+	}
+}
+
+func TestPollUntilReady_ReadyAfterRetries(t *testing.T) {
+	calls := 0
+	err := pollUntilReady(context.Background(), time.Now().Add(5*time.Second), func() (bool, error) {
+		calls++
+		return calls >= 2, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}
+
+func TestCheckHealth_VersionMismatchIsFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiv1.HealthResponse{APIVersion: "honey.plugins/v999"})
+	}))
+	defer srv.Close()
+	ok, fatal := checkHealth(context.Background(), srv.Client(), srv.URL)
+	if ok || fatal == nil {
+		t.Fatalf("mismatch must be (false, fatal), got ok=%v fatal=%v", ok, fatal)
+	}
+}
+
+func TestCheckHealth_MatchIsReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiv1.HealthResponse{APIVersion: apiv1.APIVersion})
+	}))
+	defer srv.Close()
+	ok, fatal := checkHealth(context.Background(), srv.Client(), srv.URL)
+	if !ok || fatal != nil {
+		t.Fatalf("match must be (true, nil), got ok=%v fatal=%v", ok, fatal)
+	}
+}
+
+func TestCheckHealth_NoServerRetries(t *testing.T) {
+	ok, fatal := checkHealth(context.Background(), http.DefaultClient, "http://127.0.0.1:1")
+	if ok || fatal != nil {
+		t.Fatalf("unreachable must be (false, nil) to retry, got ok=%v fatal=%v", ok, fatal)
+	}
+}
+
+// TestWaitForReadyHost_PollsFixedLoopbackAddrDirectly proves the host-network
+// readiness path resolves to the caller-known 127.0.0.1:<port> address by
+// polling it directly (reusing checkHealth/pollUntilReady) — no
+// ContainerInspect involved, since host networking publishes no ports to
+// inspect. Modeled on TestCheckHealth_MatchIsReady, but through
+// waitForReadyHost and asserting the returned addr.
+func TestWaitForReadyHost_PollsFixedLoopbackAddrDirectly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiv1.HealthResponse{APIVersion: apiv1.APIVersion})
+	}))
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("parse test server port: %v", err)
+	}
+
+	addr, err := waitForReadyHost(context.Background(), srv.Client(), port)
+	if err != nil {
+		t.Fatalf("waitForReadyHost: %v", err)
+	}
+	want := "http://127.0.0.1:" + strconv.Itoa(port)
+	if addr != want {
+		t.Errorf("addr = %q, want %q", addr, want)
 	}
 }
 

@@ -248,6 +248,7 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		OutputCapture:     run.OutputCapture,
 		Facts:             run.Facts,
 		TriggeredHandlers: run.TriggeredHandlers,
+		TunnelCoord:       run.TunnelCoord,
 		DockerPluginSess:  run.DockerPluginSess,
 	}
 

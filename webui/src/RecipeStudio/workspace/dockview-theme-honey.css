@@ -1,0 +1,17 @@
+/* Honey dockview theme — maps dockview CSS vars to the antd dark palette. */
+.dockview-theme-honey {
+  height: 100%;
+  --dv-background-color: #0d1117;
+  --dv-paneview-active-outline-color: #FFC107;
+  --dv-tabs-and-actions-container-background-color: #001529;
+  --dv-activegroup-visiblepanel-tab-background-color: #0d1117;
+  --dv-activegroup-hiddenpanel-tab-background-color: #001529;
+  --dv-inactivegroup-visiblepanel-tab-background-color: #0d1117;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: #001529;
+  --dv-tab-divider-color: #1f2937;
+  --dv-activegroup-visiblepanel-tab-color: #f0f6fc;
+  --dv-inactivegroup-visiblepanel-tab-color: #8b949e;
+  --dv-separator-border: #1f2937;
+  --dv-paneview-header-border-color: #1f2937;
+  --dv-icon-hover-background-color: #1f2937;
+}

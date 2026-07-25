@@ -3,6 +3,7 @@ package plugins
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -174,6 +175,126 @@ docker:
 	}
 	if _, err := loadManifest(path); err == nil {
 		t.Fatal("expected error for a volume entry missing host:container syntax")
+	}
+}
+
+func writeManifest(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "plugin.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLoadManifest_InitDefaultsToBind(t *testing.T) {
+	m, err := loadManifest(writeManifest(t, `
+id: p
+capabilities: [custom_step]
+runtime: docker
+docker:
+  image: "img:tag"
+`))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := m.Docker.effectiveInitMode(); got != "bind" {
+		t.Errorf("effectiveInitMode = %q, want bind", got)
+	}
+}
+
+func TestLoadManifest_InitInvalidRejected(t *testing.T) {
+	_, err := loadManifest(writeManifest(t, `
+id: p
+capabilities: [custom_step]
+runtime: docker
+docker:
+  image: "img:tag"
+  init: sideload
+`))
+	if err == nil || !strings.Contains(err.Error(), `docker.init`) {
+		t.Fatalf("want docker.init error, got %v", err)
+	}
+}
+
+func TestLoadManifest_EmbeddedRequiresDigest(t *testing.T) {
+	_, err := loadManifest(writeManifest(t, `
+id: p
+capabilities: [custom_step]
+runtime: docker
+docker:
+  image: "ghcr.io/org/img:v1"
+  init: embedded
+`))
+	if err == nil || !strings.Contains(err.Error(), "digest-pinned") {
+		t.Fatalf("want digest-pinned error, got %v", err)
+	}
+}
+
+func TestLoadManifest_EmbeddedWithDigestOKAndDefaultsInitPath(t *testing.T) {
+	digest := "ghcr.io/org/img@sha256:" + strings.Repeat("a", 64)
+	m, err := loadManifest(writeManifest(t, `
+id: p
+capabilities: [custom_step]
+runtime: docker
+docker:
+  image: "`+digest+`"
+  init: embedded
+`))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if m.Docker.effectiveInitMode() != "embedded" {
+		t.Errorf("mode = %q, want embedded", m.Docker.effectiveInitMode())
+	}
+	if m.Docker.InitPath != defaultEmbeddedInitPath {
+		t.Errorf("InitPath = %q, want default %q", m.Docker.InitPath, defaultEmbeddedInitPath)
+	}
+}
+
+func TestLoadManifest_EmbeddedRespectsExplicitInitPath(t *testing.T) {
+	digest := "ghcr.io/org/img@sha256:" + strings.Repeat("b", 64)
+	m, err := loadManifest(writeManifest(t, `
+id: p
+capabilities: [custom_step]
+runtime: docker
+docker:
+  image: "`+digest+`"
+  init: embedded
+  init_path: "/opt/honey-plugin-init"
+`))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if m.Docker.InitPath != "/opt/honey-plugin-init" {
+		t.Errorf("InitPath = %q, want /opt/honey-plugin-init", m.Docker.InitPath)
+	}
+}
+
+func TestLoadManifest_NetworkEnum(t *testing.T) {
+	for _, tc := range []struct {
+		name, network string
+		wantErr       bool
+	}{
+		{"empty ok", "", false},
+		{"host ok", "host", false},
+		{"bridge rejected", "bridge", true},
+		{"garbage rejected", "sideband", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "id: p\ncapabilities: [custom_step]\nruntime: docker\ndocker:\n  image: \"img:tag\"\n"
+			if tc.network != "" {
+				body += "  network: " + tc.network + "\n"
+			}
+			_, err := loadManifest(writeManifest(t, body))
+			if tc.wantErr && err == nil {
+				t.Fatalf("network %q: want error", tc.network)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("network %q: unexpected error %v", tc.network, err)
+			}
+		})
 	}
 }
 

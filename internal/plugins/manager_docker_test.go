@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shareed2k/honey/internal/config"
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 )
 
@@ -122,6 +123,32 @@ docker:
 	}
 	if !strings.Contains(err.Error(), "plugin.cue") {
 		t.Fatalf("error=%q should originate from the plugin.cue read in loadDockerPluginDir, not from loadManifest's capabilities check", err.Error())
+	}
+}
+
+func TestLoadPluginDir_HostNetworkGate(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "plugin.yaml"),
+		"id: p\ncapabilities: [custom_step]\nruntime: docker\ndocker:\n  image: \"img@sha256:"+strings.Repeat("a", 64)+"\"\n  network: host\n")
+	writeFile(t, filepath.Join(dir, "plugin.cue"), `actions: noop: { argv: ["/bin/true"] }`)
+
+	_, err := loadPluginDir(context.Background(), dir, config.PluginsEffective{Enabled: true, AllowHostNetwork: false})
+	if err == nil || !strings.Contains(err.Error(), "allow_host_network") {
+		t.Fatalf("gate off: want allow_host_network error, got %v", err)
+	}
+	// With the toggle on, the gate passes (a later daemon/cue error is fine —
+	// assert only that it is NOT the gate error).
+	_, err = loadPluginDir(context.Background(), dir, config.PluginsEffective{Enabled: true, AllowHostNetwork: true})
+	if err != nil && strings.Contains(err.Error(), "allow_host_network") {
+		t.Fatalf("gate on: still blocked by gate: %v", err)
+	}
+}
+
+// writeFile writes body to path, failing the test on error.
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

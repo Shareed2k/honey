@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
 
 	"github.com/shareed2k/honey/internal/safepath"
@@ -63,6 +64,19 @@ type DockerRuntime struct {
 	// I/O (e.g. ffmpeg reading/writing files) under one predictable host root — not
 	// per-call dynamic mounts.
 	Volumes []string `yaml:"volumes,omitempty"`
+	// Init selects who provides honey-plugin-init: "" or "bind" (default) —
+	// honey bind-mounts the host binary and overrides the entrypoint; "embedded"
+	// — the image already contains honey-plugin-init as its entrypoint, so no
+	// host binary is needed (required for images distributed from a registry).
+	Init string `yaml:"init,omitempty"`
+	// InitPath is the in-image path of honey-plugin-init when Init=="embedded".
+	// Defaults to defaultEmbeddedInitPath at load. Ignored in bind mode.
+	InitPath string `yaml:"init_path,omitempty"`
+	// Network selects the container network mode: "" (default, bridge — honey
+	// publishes the shim port to a loopback host port) or "host" (container
+	// shares the daemon host's network namespace to reach the host's loopback
+	// directly). "host" is operator-gated by plugins.allow_host_network.
+	Network string `yaml:"network,omitempty"`
 }
 
 // DockerRestartConfig tunes auto-restart of a crashed plugin container.
@@ -95,6 +109,19 @@ func (d DockerRuntime) effectiveMaxBackoff() (time.Duration, error) {
 		return 30 * time.Second, nil
 	}
 	return time.ParseDuration(s)
+}
+
+// defaultEmbeddedInitPath is where honey expects honey-plugin-init inside an
+// embedded-init image unless docker.init_path overrides it.
+const defaultEmbeddedInitPath = "/usr/local/bin/honey-plugin-init"
+
+// effectiveInitMode returns "bind" or "embedded"; empty defaults to "bind".
+func (d DockerRuntime) effectiveInitMode() string {
+	m := strings.TrimSpace(d.Init)
+	if m == "" {
+		return "bind"
+	}
+	return m
 }
 
 // expandVolumeHostPath expands a leading "~" (bare or "~/...") in a
@@ -131,6 +158,18 @@ func isValidBindSpec(v string) bool {
 	return true
 }
 
+// imageIsDigestPinned reports whether image carries an @sha256:... digest,
+// parsed properly (not substring-matched) so a tag containing the substring
+// cannot pass. A canonical reference is Named + Digested.
+func imageIsDigestPinned(image string) bool {
+	ref, err := reference.ParseNormalizedNamed(strings.TrimSpace(image))
+	if err != nil {
+		return false
+	}
+	_, ok := ref.(reference.Canonical)
+	return ok
+}
+
 func loadManifest(path string) (Manifest, error) {
 	var m Manifest
 	b, err := safepath.ReadFile(path)
@@ -150,6 +189,24 @@ func loadManifest(path string) (Manifest, error) {
 	if m.effectiveRuntime() == "docker" {
 		if m.Docker == nil || strings.TrimSpace(m.Docker.Image) == "" {
 			return m, fmt.Errorf("manifest %s: runtime: docker requires docker.image", path)
+		}
+		switch m.Docker.effectiveInitMode() {
+		case "bind":
+			// current behavior; no extra requirements
+		case "embedded":
+			if !imageIsDigestPinned(m.Docker.Image) {
+				return m, fmt.Errorf("manifest %s: docker.init: embedded requires a digest-pinned image (…@sha256:…), got %q", path, m.Docker.Image)
+			}
+			if strings.TrimSpace(m.Docker.InitPath) == "" {
+				m.Docker.InitPath = defaultEmbeddedInitPath
+			}
+		default:
+			return m, fmt.Errorf("manifest %s: docker.init must be \"bind\" or \"embedded\", got %q", path, m.Docker.Init)
+		}
+		switch strings.TrimSpace(m.Docker.Network) {
+		case "", "host":
+		default:
+			return m, fmt.Errorf("manifest %s: docker.network must be \"\" or \"host\", got %q", path, m.Docker.Network)
 		}
 		for i, v := range m.Docker.Volumes {
 			expanded, err := expandVolumeHostPath(v)

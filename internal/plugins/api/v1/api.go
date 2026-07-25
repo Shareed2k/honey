@@ -6,6 +6,13 @@ import "encoding/json"
 // APIVersion is the JSON api_version field for honey.plugins/v1.
 const APIVersion = "honey.plugins/v1"
 
+// HealthResponse is the JSON body of honey-plugin-init's /healthz endpoint.
+// Honey compares APIVersion to its own APIVersion during readiness and
+// hard-fails on mismatch.
+type HealthResponse struct {
+	APIVersion string `json:"api_version"`
+}
+
 // CueTransformInput is passed to the cue_transform export.
 type CueTransformInput struct {
 	APIVersion string `json:"api_version"`

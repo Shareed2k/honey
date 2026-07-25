@@ -1,3 +1,4 @@
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { Layout, Menu, Typography, Alert, Button } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -7,7 +8,7 @@ import {
 } from '@ant-design/icons';
 import { RecipesTab } from './RecipesTab';
 import { AppsTab } from './AppsTab';
-import StudioWorkspace from './RecipeStudio/StudioWorkspace';
+const StudioWorkspace = lazy(() => import('./RecipeStudio/StudioWorkspace'));
 import { BackendsTab } from './tabs/BackendsTab';
 import { FilesTab } from './tabs/FilesTab';
 import { TunnelsTab } from './tabs/TunnelsTab';
@@ -25,6 +26,14 @@ export function App() {
   const { tab, setTab } = useNavigation();
   const { tokenMsg, meta, backends, backErr } = useAppContext();
   const { terminals, isTerminalModalOpen, setIsTerminalModalOpen } = useTerminal();
+
+  // Lazy-load Studio's heavy dockview bundle: fetch its chunk on first visit,
+  // then keep it mounted (display toggles) so dockview layout + open docs survive
+  // tab switches.
+  const [studioMounted, setStudioMounted] = useState(false);
+  useEffect(() => {
+    if (tab === 'studio') setStudioMounted(true);
+  }, [tab]);
 
   const menuItems: MenuProps['items'] = [
     { key: 'search',   icon: <SearchOutlined />,    label: 'Search' },
@@ -92,9 +101,13 @@ export function App() {
           {tab === 'recipes' ? <RecipesTab /> : null}
           {tab === 'tunnels' ? <TunnelsTab /> : null}
 
-          <div style={{ display: tab === 'studio' ? 'block' : 'none', height: '100%' }}>
-            <StudioWorkspace />
-          </div>
+          {studioMounted && (
+            <div style={{ display: tab === 'studio' ? 'block' : 'none', height: '100%' }}>
+              <Suspense fallback={<div style={{ padding: 16, color: '#8b949e' }}>Loading studio…</div>}>
+                <StudioWorkspace />
+              </Suspense>
+            </div>
+          )}
 
           {tab === 'apps' ? <AppsTab /> : null}
 
