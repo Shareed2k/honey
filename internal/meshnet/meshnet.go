@@ -83,6 +83,15 @@ type Config struct {
 	// as a relay for other peers. Only relevant if this instance is itself
 	// publicly reachable. Off by default.
 	ListenMesh bool
+
+	// ForceReachability overrides go-libp2p's AutoNAT reachability detection:
+	// "private" appends libp2p.ForceReachabilityPrivate() (this Host always
+	// treats itself as behind NAT, so AutoRelay reliably reserves a relay
+	// slot — needed when AutoNAT would otherwise conclude the Host is public
+	// and skip reserving, e.g. relay and Host on the same LAN); "public"
+	// appends ForceReachabilityPublic(); "" (default) leaves detection
+	// automatic. Any other value is ignored.
+	ForceReachability string
 }
 
 // MeshStatus is a small package-local diagnostics struct — deliberately not
@@ -191,6 +200,15 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 	if cfg.ListenMesh {
 		opts = append(opts, libp2p.EnableRelayService())
+	}
+	switch cfg.ForceReachability {
+	case "private":
+		// Force AutoNAT to treat this Host as behind NAT so AutoRelay always
+		// reserves a relay slot (fixes NO_RESERVATION when detection would
+		// otherwise wrongly conclude "public" — see Config.ForceReachability).
+		opts = append(opts, libp2p.ForceReachabilityPrivate())
+	case "public":
+		opts = append(opts, libp2p.ForceReachabilityPublic())
 	}
 
 	host, err := newHost(opts...)
@@ -319,7 +337,14 @@ func DialPeer(ctx context.Context, peerAddr string) (net.Conn, error) {
 		return nil, fmt.Errorf("meshnet: connect to peer %s: %w", info.ID, err)
 	}
 
-	stream, err := s.host.NewStream(ctx, info.ID, protocol.ID(ProtocolID))
+	// Allow opening the stream over a LIMITED (Circuit Relay v2) connection.
+	// Without this, NewStream blocks waiting for a direct (non-relay)
+	// connection — which only appears if DCUtR hole-punching succeeds — and
+	// times out ("failed to open stream: context deadline exceeded") whenever
+	// the peers can't hole-punch (e.g. relay-only paths, symmetric NAT, or a
+	// hairpinned same-LAN relay). The mesh stream is fine over the relay.
+	streamCtx := network.WithAllowLimitedConn(ctx, "honey-mesh")
+	stream, err := s.host.NewStream(streamCtx, info.ID, protocol.ID(ProtocolID))
 	if err != nil {
 		return nil, fmt.Errorf("meshnet: open stream to %s: %w", info.ID, err)
 	}

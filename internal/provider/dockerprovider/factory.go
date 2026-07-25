@@ -41,6 +41,10 @@ type dockerFactory struct {
 	cfg         ConfigProvider
 }
 
+// dockerFactory must satisfy ExecutorProvider (HandlesRecord + ExecutorFor) or
+// ResolveExecutor silently skips it and docker records fall through to SSH.
+var _ searchrun.ExecutorProvider = dockerFactory{}
+
 func (f dockerFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
 	locals := f.cfg.LocalBackends()
 	out := make([]hosts.Backend, 0, len(f.cfg.DockerBackends()))
@@ -96,6 +100,20 @@ func (f dockerFactory) BackendSlicePtr() any {
 func (f dockerFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (f dockerFactory) ProviderName() string { return "docker" }
+
+// HandlesRecord gates ExecutorFor: this factory serves docker container and
+// swarm-task records via the local Engine API. It claims such records regardless
+// of the client-side honey_upstream_backend routing tag -- honeyprovider is
+// ordered before this factory (see provider/all) and, when a matching honey
+// backend exists on this node, claims the record first for proxying; on the
+// upstream server (no such backend) honey declines and this factory resolves the
+// record locally. Without this method dockerFactory would not satisfy
+// searchrun.ExecutorProvider and every docker record would fall through to the
+// SSH fallback ("no host ip for ssh").
+func (f dockerFactory) HandlesRecord(r hosts.Record) bool {
+	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
+	return k == "container" || k == "swarm_task"
+}
 
 func (f dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor {
 	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))

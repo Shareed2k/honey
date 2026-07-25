@@ -78,8 +78,26 @@ No build step — just `plugin.yaml` (`runtime: docker`) + `plugin.cue` (actions
 | `duckdb` | `duckdb/duckdb:latest` | `query`, `export_parquet` |
 | `aws` | `amazon/aws-cli:latest` | `s3_ls`, `s3_cp`, `s3_rm`, `ec2_describe`, `ec2_start`, `ec2_stop` |
 | `gcloud` | `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` | `compute_list`, `compute_start`, `compute_stop`, `storage_ls`, `storage_cp`, `storage_rm` |
+| `k6` | `grafana/k6:latest` | `version`, `run`, `run_json` |
 
 `gcloud`'s image is **amd64-only** — fails with `exec format error` on Apple Silicon hosts unless your Docker daemon has qemu emulation registered. The other three are multi-arch.
+
+### k6 load testing
+
+`k6` reads its JS test script from **stdin** (no bind-mount): pass it as
+`config.script`, tune the run with `vus` / `duration` / `env` (each `env` entry
+becomes a `--env K=V` flag visible to the script as `__ENV.K`). `run` returns k6's
+human text summary; `run_json` appends a `handleSummary()` hook so stdout is a
+single JSON document a later step can parse with `env_from.extract` — e.g.
+`.metrics.http_req_duration.values."p(95)"` for p95 latency or
+`.metrics.http_req_failed.values.rate` for the failure rate. See
+[`examples/recipe/k6_loadtest.cue`](https://github.com/shareed2k/honey/tree/main/examples/recipe/k6_loadtest.cue).
+
+Two caveats: don't define `handleSummary` in your own script for `run_json`
+(duplicate export → k6 error), and avoid k6 **thresholds** if a downstream step
+needs the summary — a threshold breach makes k6 exit non-zero, and Honey only
+propagates a step's stdout to `env_from` when the step succeeded. Judge pass/fail
+in the reporting step from the extracted metrics instead.
 
 ## List installed plugins
 

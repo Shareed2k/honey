@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
+	"github.com/shareed2k/honey/internal/tun"
 )
 
 // clientTLSConfig builds the TLS config for a honey upstream connection: the
@@ -40,9 +42,19 @@ type Executor struct {
 	MeshAddr string
 }
 
+// Compile-time assertions that Client and Executor satisfy the hostexec
+// surface (including the six tunneling/forwarding methods added for proxy
+// parity: StartLocalForward, StartRemoteForward, StartDynamicForward,
+// StartUDPRelay, StartTunForward, and Executor.RunInteractive). If any
+// signature drifts from internal/hostexec/exec.go, this fails to compile.
+var (
+	_ hostexec.HostClient = (*Client)(nil)
+	_ hostexec.Executor   = (*Executor)(nil)
+)
+
 // Dial creates a new HostClient that proxies execution to the upstream Honey server.
 func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
-	return &Client{
+	c := &Client{
 		url:      e.URL,
 		token:    e.Token,
 		insecure: e.Insecure,
@@ -52,12 +64,26 @@ func (e *Executor) Dial(user string, r hosts.Record) (hostexec.HostClient, error
 		meshAddr: e.MeshAddr,
 		user:     user,
 		record:   r,
-	}, nil
-}
-
-// RunInteractive is not currently implemented for proxy proxying.
-func (e *Executor) RunInteractive(_ string, _ hosts.Record) error {
-	return fmt.Errorf("interactive proxying via honey upstream is not yet implemented")
+	}
+	// Default the testable dial seam to the real upstream dialer; tests
+	// construct a *Client directly and set dialUpstreamFn to a fake.
+	c.dialUpstreamFn = c.dialUpstream
+	// Default the testable command-run seam to the real c.Run; tests
+	// construct a *Client directly and set runFn to a fake.
+	c.runFn = c.Run
+	// Default the UDP-relay server-bridge stream-open seam to the real WS
+	// dialer; tests construct a *Client directly and set udpStreamOpener to
+	// a fake.
+	c.udpStreamOpener = &realUDPStreamOpener{c: c}
+	// Default the seams StartTunForward composes over (a local dynamic
+	// forward + internal/tun's tun2proxy runner) to their real
+	// implementations; tests construct a *Client directly and set
+	// startDynamicForwardFn/tunRunFn/getuidFn to fakes instead of requiring
+	// root, a real listener, and the real tun2proxy binary.
+	c.startDynamicForwardFn = c.StartDynamicForward
+	c.tunRunFn = tun.Run
+	c.getuidFn = os.Getuid
+	return c, nil
 }
 
 // RunTunnel runs a local port forward via the upstream Honey proxy.
@@ -136,11 +162,19 @@ func (e *Executor) DialUpstream(ctx context.Context, user string, r hosts.Record
 	}
 
 	hello := map[string]any{"ssh_user": user, "record": r, "target": address}
+	if err := conn.SetWriteDeadline(time.Now().Add(upstreamHandshakeTimeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	if err := conn.WriteJSON(hello); err != nil {
 		conn.Close()
 		return nil, err
 	}
 
+	if err := conn.SetReadDeadline(time.Now().Add(upstreamHandshakeTimeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	var resp map[string]any
 	if err := conn.ReadJSON(&resp); err != nil {
 		conn.Close()
@@ -149,6 +183,17 @@ func (e *Executor) DialUpstream(ctx context.Context, user string, r hosts.Record
 	if errStr, ok := resp["error"].(string); ok && errStr != "" {
 		conn.Close()
 		return nil, fmt.Errorf("upstream dial error: %s", errStr)
+	}
+
+	// Handshake complete: clear the deadlines so the long-lived data phase
+	// (returned as a net.Conn) is not bounded by the handshake timeout.
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return nil, err
 	}
 
 	return &wsConn{conn: conn}, nil
@@ -239,6 +284,44 @@ type Client struct {
 	meshAddr string
 	user     string
 	record   hosts.Record
+
+	// dialUpstreamFn is the seam used by StartLocalForward/StartDynamicForward
+	// to reach the upstream Honey proxy. Executor.Dial defaults it to
+	// c.dialUpstream; tests construct a *Client directly and inject a fake
+	// here instead of standing up a real WS server/mesh.
+	dialUpstreamFn upstreamDialer
+
+	// runFn is the seam used by StartUDPRelay to run commands on the
+	// upstream target (starting/killing the remote socat relay).
+	// Executor.Dial defaults it to c.Run; tests construct a *Client directly
+	// and inject a fake here instead of making a real c.Run HTTP round trip.
+	runFn func(cmd string) ([]byte, error)
+
+	// udpStreamOpener is the seam StartUDPRelay's server-bridge path
+	// (useSocat=false) uses to open a framed byte-stream to the server's
+	// /api/v1/ws/udp endpoint. Executor.Dial defaults it to
+	// &realUDPStreamOpener{c: c}; tests construct a *Client directly and
+	// inject a fake here instead of dialing a real WS/mesh connection.
+	udpStreamOpener udpStreamOpener
+
+	// startDynamicForwardFn is the seam StartTunForward composes over: it
+	// starts the local SOCKS5 proxy that internal/tun's tun2proxy subprocess
+	// dials through. Executor.Dial defaults it to c.StartDynamicForward;
+	// tests construct a *Client directly and inject a fake here instead of
+	// binding a real listener.
+	startDynamicForwardFn func(ctx context.Context, bind string, localPort int) (host string, port int, stop func(), err error)
+
+	// tunRunFn is the seam StartTunForward uses to run tun2proxy against the
+	// dynamic forward's SOCKS5 address. Executor.Dial defaults it to
+	// tun.Run; tests construct a *Client directly and inject a fake here
+	// instead of requiring root and the real tun2proxy binary.
+	tunRunFn func(ctx context.Context, cfg tun.Config) error
+
+	// getuidFn is the seam StartTunForward uses for its root guard.
+	// Executor.Dial defaults it to os.Getuid; tests construct a *Client
+	// directly and inject a fake here to exercise both branches without
+	// actually running as root.
+	getuidFn func() int
 }
 
 // doRequest sends a JSON POST request to the upstream Honey REST API.
@@ -646,31 +729,6 @@ func (c *Client) RemoveRemote(path string, recursive bool) error {
 	}
 
 	return nil
-}
-
-// StartLocalForward is not supported for upstream Honey proxying yet.
-func (c *Client) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (string, int, func(), error) {
-	return "", 0, nil, fmt.Errorf("StartLocalForward is not supported for upstream Honey proxying yet")
-}
-
-// StartRemoteForward is not supported for upstream Honey proxying yet.
-func (c *Client) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (string, func(), error) {
-	return "", nil, fmt.Errorf("StartRemoteForward is not supported for upstream Honey proxying yet")
-}
-
-// StartDynamicForward is not supported for upstream Honey proxying yet.
-func (c *Client) StartDynamicForward(_ context.Context, _ string, _ int) (string, int, func(), error) {
-	return "", 0, nil, fmt.Errorf("StartDynamicForward is not supported for upstream Honey proxying yet")
-}
-
-// StartUDPRelay is not supported for upstream Honey proxying yet.
-func (c *Client) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (string, int, func(), error) {
-	return "", 0, nil, fmt.Errorf("StartUDPRelay is not supported for upstream Honey proxying yet")
-}
-
-// StartTunForward is not supported for upstream Honey proxying yet.
-func (c *Client) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (string, func(), error) {
-	return "", nil, fmt.Errorf("StartTunForward is not supported for upstream Honey proxying yet")
 }
 
 // Close closes the proxy client.

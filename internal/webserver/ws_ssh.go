@@ -16,6 +16,7 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/provider/honeyprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 	"go.uber.org/zap"
@@ -140,6 +141,23 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		}
 		zap.L().Debug("web ssh: pty proxy fallback triggered")
 	}
+
+	// A record proxied through a honey upstream backend (mesh/direct) runs on
+	// the upstream server: proxy the whole terminal there via honeyprovider and
+	// let the server dispatch to the right native shell (docker exec / k8s exec
+	// / ssh). Must come before the kind dispatch below, which assumes a LOCAL
+	// native client and would fail with "unexpected client type
+	// *honeyprovider.Client" for a proxied docker/k8s record.
+	if hp := honeyUpstreamExecutorFor(s.opts.ExecRegistry, hello.Record); hp != nil {
+		defer s.trackWSConnection("honey_upstream")()
+		handleWebHoneyUpstreamTTY(context.Background(), conn, hp, user, hello.Record, cols, rows, recorder)
+		return
+	}
+	// Not proxied by this node (e.g. this IS the upstream server receiving a
+	// forwarded record): drop the stale upstream-routing meta so the kind
+	// dispatch below resolves to the local native executor instead of
+	// re-entering the honey factory with no matching backend.
+	delete(hello.Record.Meta, "honey_upstream_backend")
 
 	if isK8sPodWebTerminal(hello.Record) {
 		// Use a non-cancelled context: the HTTP request context can be cancelled after hijack
@@ -324,6 +342,86 @@ func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter,
 				recorder.RecordResize(c, rw)
 				select {
 				case resizeCh <- ui.DockerTerminalSize{Cols: c, Rows: rw}:
+				default:
+				}
+			}
+		}
+	}
+}
+
+// honeyUpstreamExecutorFor returns the honeyprovider Executor that should proxy
+// an interactive session for rec when this node routes rec through a configured
+// honey upstream backend (mesh/direct). It returns nil when rec is executed
+// locally on this node (e.g. this IS the upstream server: the record carries a
+// stale honey_upstream_backend meta but no matching backend exists here, so the
+// registry falls back to a non-honey executor).
+func honeyUpstreamExecutorFor(reg hostexec.Registry, rec hosts.Record) *honeyprovider.Executor {
+	if reg == nil {
+		return nil
+	}
+	ex, ok := reg.ForRecord(rec).(*honeyprovider.Executor)
+	if !ok {
+		return nil
+	}
+	return ex
+}
+
+// handleWebHoneyUpstreamTTY proxies a browser terminal for an upstream-backed
+// record to the honey server that owns it via honeyprovider's interactive
+// /ws/ssh proxy; the upstream server dispatches to the right native shell
+// (docker/k8s/ssh) on its side. Mirrors the docker/k8s web-tty lifecycle: pipe
+// browser stdin in, stream server stdout out, forward resizes, report closure.
+func handleWebHoneyUpstreamTTY(ctx context.Context, conn *websocket.Conn, ex *honeyprovider.Executor, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
+	stdinPipeR, stdinPipeW := io.Pipe()
+	resizeCh := make(chan [2]int, 32)
+	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
+	stdout := engine.WrapRecordingWriter(wsOut, recorder, "stdout")
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- ex.RunInteractiveStreams(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh)
+	}()
+
+	go pumpWebSocketToStdinUpstream(conn, stdinPipeW, resizeCh, recorder)
+
+	waitErr := <-waitDone
+	_ = stdinPipeW.Close()
+	if waitErr != nil && !benignDockerWSExit(waitErr) {
+		recorder.RecordError(waitErr)
+		_ = wsOut.writeText(`{"closed":true,"error":"` + escapeJSON(waitErr.Error()) + `"}`)
+	} else {
+		_ = wsOut.writeText(`{"closed":true}`)
+	}
+}
+
+// pumpWebSocketToStdinUpstream forwards browser WS frames to the upstream
+// interactive proxy: BinaryMessage -> stdin pipe, resize TextMessage -> resize
+// chan as [cols, rows]. Closes resizeCh on exit so the proxy's resize pump ends.
+func pumpWebSocketToStdinUpstream(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- [2]int, recorder *engine.SessionRecorder) {
+	defer close(resizeCh)
+	for {
+		mt, payload, err := conn.ReadMessage()
+		if err != nil {
+			recorder.RecordError(err)
+			_ = stdinPipeW.CloseWithError(err)
+			return
+		}
+		switch mt {
+		case websocket.BinaryMessage:
+			recorder.RecordData("stdin", payload)
+			if _, werr := stdinPipeW.Write(payload); werr != nil {
+				recorder.RecordError(werr)
+				return
+			}
+		case websocket.TextMessage:
+			var rz wsResize
+			if json.Unmarshal(payload, &rz) != nil || rz.Type != "resize" {
+				continue
+			}
+			if rz.Cols > 0 && rz.Rows > 0 {
+				recorder.RecordResize(rz.Cols, rz.Rows)
+				select {
+				case resizeCh <- [2]int{rz.Cols, rz.Rows}:
 				default:
 				}
 			}

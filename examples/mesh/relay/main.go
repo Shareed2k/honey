@@ -30,13 +30,31 @@ import (
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 )
 
 func main() {
 	listenAddr := flag.String("listen", "/ip4/0.0.0.0/udp/4001/quic-v1", "multiaddr to listen on")
 	identity := flag.String("identity", "", "base64 libp2p private key for a STABLE peer ID across restarts (overrides $RELAY_PRIVATE_KEY). Generate one with the keygen snippet in ../README.md. Leave empty for a random per-run identity (dev only).")
 	forcePublic := flag.Bool("force-public", false, "LOCAL TESTING ONLY: force AutoNAT to report this host as publicly reachable, without actually verifying it. Never use this on a real relay -- see 'Production notes' in ../README.md.")
+	unlimited := flag.Bool("unlimited", false, "disable Circuit Relay v2 per-connection limits (default 128KB data / 2min duration). Needed to carry BULK traffic (file transfer, long terminal sessions) through the relay when peers can't upgrade to a direct DCUtR connection. The relay then carries that data itself -- watch host bandwidth. Also settable via RELAY_UNLIMITED=1.")
 	flag.Parse()
+
+	if v := strings.TrimSpace(os.Getenv("RELAY_UNLIMITED")); v == "1" || v == "true" {
+		*unlimited = true
+	}
+
+	// Circuit Relay v2 service options. By default go-libp2p caps each relayed
+	// connection at 128KB data / 2min (relayv2.DefaultLimit) — fine for control
+	// traffic and connection setup, but it resets bulk streams (file transfer,
+	// long terminal sessions) that can't upgrade to a direct DCUtR connection.
+	// -unlimited (or RELAY_UNLIMITED=1) removes that cap so this relay carries
+	// the bulk itself.
+	var relayOpts []relayv2.Option
+	if *unlimited {
+		relayOpts = append(relayOpts, relayv2.WithInfiniteLimits())
+		fmt.Fprintln(os.Stderr, "relay per-connection limits DISABLED (-unlimited): this relay will carry bulk traffic itself -- watch host bandwidth.")
+	}
 
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(*listenAddr),
@@ -48,7 +66,7 @@ func main() {
 		// see hostctl's own task-7-report.md for the full source trace). For
 		// a real relay with a genuine public IP and an open/forwarded UDP
 		// port, AutoNAT detects this on its own -- no extra flag needed.
-		libp2p.EnableRelayService(),
+		libp2p.EnableRelayService(relayOpts...),
 	}
 
 	// A relay's peer ID is derived from its identity key and is baked into

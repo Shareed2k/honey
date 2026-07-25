@@ -63,7 +63,7 @@ recipe: {
 				id:     "watchtower"
 				action: "check_json"
 				// config: { containers: ["app", "db"] }  // optional; empty = all
-				kv_key: "json"
+				kv_key: "json_resp"
 			}
 		},
 		{

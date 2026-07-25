@@ -29,10 +29,11 @@ func startMeshIfConfigured(cfg *config.File) {
 		return
 	}
 	_ = meshnet.Start(context.Background(), meshnet.Config{
-		Enabled:    cfg.Mesh.Enabled,
-		PrivateKey: cfg.Mesh.PrivateKey,
-		RelayAddrs: cfg.Mesh.RelayAddrs,
-		ListenMesh: cfg.Mesh.ListenMesh,
+		Enabled:           cfg.Mesh.Enabled,
+		PrivateKey:        cfg.Mesh.PrivateKey,
+		RelayAddrs:        cfg.Mesh.RelayAddrs,
+		ListenMesh:        cfg.Mesh.ListenMesh,
+		ForceReachability: cfg.Mesh.ForceReachability,
 	})
 }
 

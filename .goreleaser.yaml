@@ -10,9 +10,12 @@ before:
     - go tool task download-onnx-runtime
     - go tool task build-honey-plugin-init
     - mkdir -p completions
-    - go run ./cmd/honey completion bash > completions/honey.bash
-    - go run ./cmd/honey completion zsh > completions/honey.zsh
-    - go run ./cmd/honey completion fish > completions/honey.fish
+    # Wrapped in `sh -c` so the `>` redirect is honored — goreleaser runs
+    # before-hooks without a shell, so an unwrapped redirect is passed as args
+    # (honey ignores them) and no file is written, breaking the nfpm completions.
+    - sh -c 'go run ./cmd/honey completion bash > completions/honey.bash'
+    - sh -c 'go run ./cmd/honey completion zsh > completions/honey.zsh'
+    - sh -c 'go run ./cmd/honey completion fish > completions/honey.fish'
 
 builds:
   - id: honey
