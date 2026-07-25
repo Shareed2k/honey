@@ -19,7 +19,12 @@ export default tseslint.config(
       'react-refresh': reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // react-hooks 7's `recommended` preset pulls in the new react-compiler
+      // rules (set-state-in-effect, immutability, refs, ...). Keep only the two
+      // classic rules to preserve the prior (react-hooks 5) lint behavior;
+      // adopting the compiler rules is a separate, deliberate refactor.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
