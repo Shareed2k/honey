@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { Node, NodeMouseHandler } from '@xyflow/react';
 import { ReactFlow, Background, Controls } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { useWorkspaceStore } from '../store';
 import CustomStepNode from '../../CustomStepNode';
 

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { ConfigProvider, theme } from 'antd';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { message } from 'antd';
-import type { IDockviewHeaderActionsProps, IDockviewPanel } from 'dockview';
+import type { IDockviewHeaderActionsProps, IDockviewPanel } from 'dockview-react';
 import { useWorkspaceStore } from './store';
 import { EditorHeaderActions } from './EditorHeaderActions';
 

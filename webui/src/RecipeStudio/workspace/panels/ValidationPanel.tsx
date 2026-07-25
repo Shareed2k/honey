@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { Alert, Button, message } from 'antd';
 import { CheckCircleOutlined } from '@ant-design/icons';
 import { useWorkspaceStore } from '../store';

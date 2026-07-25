@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { Button, message } from 'antd';
 import { PlayCircleOutlined } from '@ant-design/icons';
 import { useWorkspaceStore } from '../store';
