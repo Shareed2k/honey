@@ -9,7 +9,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	cloud.google.com/go/compute v1.64.0
 	cloud.google.com/go/storage v1.63.0
-	cuelang.org/go v0.17.0
+	cuelang.org/go v0.17.1
 	filippo.io/age v1.3.1
 	github.com/ClickHouse/clickhouse-go/v2 v2.47.0
 	github.com/Telmate/proxmox-api-go v0.0.0-20260705170205-4373c9183084
