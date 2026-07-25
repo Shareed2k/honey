@@ -1,190 +1,232 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, lazy, Suspense } from 'react';
-import { 
-  ReactFlow, 
-  Controls, 
-  Background
-} from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
-import './studio.css';
-import { Layout, Button, Drawer, Space, Typography, Select, message, Modal, Alert, Input } from 'antd';
-import { PlusOutlined, SaveOutlined, SyncOutlined, PlayCircleOutlined, CloudDownloadOutlined, UndoOutlined, SettingOutlined, CodeOutlined, ReadOutlined, FireOutlined } from '@ant-design/icons';
-
-import CustomStepNode from './CustomStepNode';
-import DynamicStepForm from './DynamicStepForm';
-import StorageModal from './StorageModal';
+import { useEffect, useRef, useState } from 'react';
+import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from 'dockview';
+import 'dockview/dist/styles/dockview.css';
+import './workspace/dockview-theme-honey.css';
+import { Button, Select, Space, message, Modal, Input } from 'antd';
+import { FileAddOutlined, FolderOpenOutlined, CloudDownloadOutlined, ReadOutlined, FireOutlined } from '@ant-design/icons';
+import { GraphPanel } from './workspace/panels/GraphPanel';
+import { RawEditorPanel } from './workspace/panels/RawEditorPanel';
+import { StepEditorPanel } from './workspace/panels/StepEditorPanel';
+import { ToolboxPanel } from './workspace/panels/ToolboxPanel';
+import { RunPanel } from './workspace/panels/RunPanel';
+import { RecordsPanel } from './workspace/panels/RecordsPanel';
+import { TerminalPanel } from './workspace/panels/TerminalPanel';
+import { ValidationPanel } from './workspace/panels/ValidationPanel';
+import { SettingsPanel } from './workspace/panels/SettingsPanel';
+import { ActivityBar } from './workspace/ActivityBar';
+import { attachDockviewSync } from './workspace/useDockviewSync';
+import { applyDefaultLayout, openGraph } from './workspace/registry';
+import { attachWorkspaceSync, resetLayout } from './workspace/persistence';
+import { EditorHeaderActions } from './workspace/EditorHeaderActions';
+import { useWorkspaceStore, uniqueDocName, uniqueStoreName } from './workspace/store';
+import { apiGet, apiPost } from '../api/core';
+import { generateRecipe, fetchRecipeStoreList, saveStoredRecipe, deleteStoredRecipe } from '../api/recipes';
+import type { HostRecord } from '../HostPicker';
 import GitLoadModal from './GitLoadModal';
 import { LibraryModal } from './LibraryModal';
-import { ParameterPromptModal } from './ParameterPromptModal';
-import { StepRun } from '../RecipesTab/StepRun';
-import { HostPicker, recordKey, type HostRecord } from '../HostPicker';
-import { apiPost } from '../api/core';
-import { listStepKinds, stepSchemaForKind } from '../api/recipes';
-import {
-  applyWaveLayout,
-  buildFlowFromRecipe,
-  recipeNameFromFilename,
-  recipeStudioSnippets,
-  collectAncestorNodeIDs
-} from './useRecipeGraph';
-import type { HostExecResultRow } from '../api/types/exec';
+import type { LibraryRecipe } from '../api/types/recipes';
 
-import { useHostSelection } from '../contexts/HostSelectionContext';
-import { useRecipeStudioEngine } from './useRecipeStudioEngine';
-
-const CodeEditor = lazy(() => import('../CodeEditor'));
-
-const { Header, Content, Sider } = Layout;
-const { Title, Text } = Typography;
-
-const nodeTypes = {
-  step: CustomStepNode,
+const components = {
+  graph: GraphPanel,
+  raweditor: RawEditorPanel,
+  stepeditor: StepEditorPanel,
+  toolbox: ToolboxPanel,
+  run: RunPanel,
+  records: RecordsPanel,
+  terminal: TerminalPanel,
+  validation: ValidationPanel,
+  settings: SettingsPanel,
 };
 
-type NodeRunStatus = 'running' | 'ok' | 'err' | 'skipped';
+interface RecipeStoreEntry {
+  name: string;
+}
+
+// The recipe store (recipestore.RecipeStore) requires a `.cue` filename — append
+// the extension when a Library entry's filename or a Git path's basename doesn't
+// already carry it, rather than letting the save 400.
+function ensureCueExtension(name: string): string {
+  return /\.cue$/i.test(name) ? name : `${name}.cue`;
+}
 
 export default function StudioWorkspace() {
-  const { records = [], selectedRecords = [], sshUser = 'root' } = useHostSelection();
-  
-  const engine = useRecipeStudioEngine();
-  const {
-    nodes, edges, stepData,
-    selectedNodeId, schema, recipeDefaults,
-    rawMode, rawContent,
-    validating, validationIssues, validationState, validationRisk,
-    fixBusy, generateBusy,
-    availableRecipes, selectedRecipe,
-    
-    setSelectedNodeId, setRecipeDefaults, setRawContent, setRawMode, setOriginalCue,
-    
-    onNodesChange, onEdgesChange, onConnect,
-    doLoadRecipe, handleStepDataChange,
-    handleSwitchToRaw, handleSwitchToVisual, setNodeRunStatus,
-    validateCurrentRecipe, addStepNode, addSnippet,
-    handleSaveRecipe, handleReset, doGitLoad,
-    handleFixWithAI, handleGenerateAI,
-    buildSubgraphRecipe, buildDownstreamRecipe,
-    
-    setNodes, setEdges, setStepData
-  } = engine;
+  const [api, setApi] = useState<DockviewApi | null>(null);
+  const disposeRef = useRef<(() => void) | null>(null);
+  const [recipeList, setRecipeList] = useState<RecipeStoreEntry[]>([]);
+  const setSchema = useWorkspaceStore((s) => s.setSchema);
+  const newDoc = useWorkspaceStore((s) => s.newDoc);
+  const createDoc = useWorkspaceStore((s) => s.createDoc);
+  const createDocFromRecipe = useWorkspaceStore((s) => s.createDocFromRecipe);
 
-  const [saveModalVisible, setSaveModalVisible] = useState(false);
-  const [gitLoadModalVisible, setGitLoadModalVisible] = useState(false);
-  const [runPanelOpen, setRunPanelOpen] = useState(false);
-  const [runStepId, setRunStepId] = useState<string | null>(null);
-  const [runCount, setRunCount] = useState(0);
-  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
-  
-  const [runHosts, setRunHosts] = useState<HostRecord[]>([]);
-  const [hostPickerOpen, setHostPickerOpen] = useState(false);
-  const [pendingRunStepId, setPendingRunStepId] = useState<string | null>(null);
-  const [modalSelectedKeys, setModalSelectedKeys] = useState<Record<string, boolean>>({});
-  
-  const [snippetChoice, setSnippetChoice] = useState<string | undefined>(undefined);
-  const [promptsOpen, setPromptsOpen] = useState(false);
-  const [pendingRun, setPendingRun] = useState<{stepId: string, hosts: HostRecord[]} | null>(null);
-  const [runExtraEnv, setRunExtraEnv] = useState<{key: string, value: string}[]>([]);
-  const [runMode, setRunMode] = useState<'upstream' | 'downstream'>('upstream');
-
-  const [generateModalOpen, setGenerateModalOpen] = useState(false);
-  const [intent, setIntent] = useState("");
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateIntent, setGenerateIntent] = useState('');
+  const [generateBusy, setGenerateBusy] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [gitLoadOpen, setGitLoadOpen] = useState(false);
 
-  const loadRecipe = (name: string | undefined) => {
-    if (!name) return;
-    if (nodes.length > 0 && selectedRecipe && name !== selectedRecipe) {
-      Modal.confirm({
-        title: 'Load new recipe?',
-        content: 'Current canvas will be discarded.',
-        okText: 'Discard & Load',
-        cancelText: 'Cancel',
-        onOk: () => doLoadRecipe(name),
-      });
-      return;
+  useEffect(() => {
+    apiGet('/api/v1/recipes/schema')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data && setSchema(data))
+      .catch(() => {});
+  }, [setSchema]);
+
+  useEffect(() => {
+    apiGet('/api/v1/recipes/store')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setRecipeList(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
+
+  const onReady = (event: DockviewReadyEvent) => {
+    const a = event.api;
+    setApi(a);
+    // First-run tool panel arrangement — toolbox on the left (Records tabbed
+    // alongside it), step editor to the right, run panel docked below the
+    // step editor. `graph`/`raweditor`/`terminal` panels open on demand
+    // (New/Open, Terminal action). If a workspace was previously saved,
+    // `attachWorkspaceSync`'s restore() replaces this via `api.fromJSON`
+    // below — laying these out first (before any sync is attached, so
+    // neither subscription sees these adds) just avoids a blank shell while
+    // the GET is in flight.
+    applyDefaultLayout(a);
+
+    const disposers: (() => void)[] = [];
+    disposers.push(attachDockviewSync(a, useWorkspaceStore.getState()));
+    // Pass the store API itself (not a `.getState()` snapshot) — persistence's
+    // `save()` needs the LIVE active doc on every debounced save, and a
+    // snapshot's `.active` field would be frozen at this call's moment
+    // forever (zustand v5 replaces state via `Object.assign`, it doesn't
+    // mutate the old state object). See persistence.ts's `SyncStoreApi`.
+    const sync = attachWorkspaceSync(a, useWorkspaceStore);
+    disposers.push(sync.dispose);
+    disposeRef.current = () => disposers.forEach((d) => d());
+
+    // Wire the store's `openTerminal` slot so the Records panel's Terminal
+    // action (decoupled from this module — see RecordsPanel.tsx) can spawn a
+    // Terminal panel here. Each call opens a new panel keyed by a fresh
+    // uuid, so multiple sessions can be open concurrently.
+    useWorkspaceStore.getState().setOpenTerminal((rec: HostRecord) => {
+      const id = `term:${crypto.randomUUID()}`;
+      a.addPanel({ id, component: 'terminal', params: { record: rec, pve: 'serial' }, title: rec.name ?? 'terminal' });
+    });
+  };
+
+  useEffect(
+    () => () => {
+      disposeRef.current?.();
+      useWorkspaceStore.getState().setOpenTerminal(null);
+    },
+    [],
+  );
+
+  const handleNew = () => {
+    const id = newDoc();
+    if (api) openGraph(api, id);
+  };
+
+  const handleOpen = (name: string) => {
+    createDoc(name)
+      .then(() => {
+        if (api) openGraph(api, name);
+      })
+      .catch((err) => message.error(`Failed to open ${name}: ${err instanceof Error ? err.message : err}`));
+  };
+
+  // Opens a new doc from an in-memory recipe object and focuses its graph
+  // panel — the shared tail end of the Generate/Library/Git-load flows below.
+  // `uniqueDocName` is computed here (against the CURRENT synchronous docs
+  // snapshot) rather than trusting `desiredName` verbatim, so the panel we
+  // open always matches the key createDocFromRecipe actually used, even if
+  // `desiredName` collided with an already-open doc.
+  const openNewRecipeDoc = (desiredName: string, recipeJson: unknown, rawCue?: string) => {
+    const finalName = uniqueDocName(desiredName, useWorkspaceStore.getState().docs);
+    createDocFromRecipe(finalName, recipeJson, rawCue);
+    if (api) openGraph(api, finalName);
+    return finalName;
+  };
+
+  // Ported from the old useRecipeStudioEngine.ts's handleGenerateAI: same
+  // generateRecipe(intent, model) call, with `model` left as the old
+  // hardcoded empty string (the old shell never surfaced a model picker
+  // either — see StudioWorkspace.tsx@0f1c4fb's Generate modal, which called
+  // handleGenerateAI(intent) with no model argument of its own).
+  const handleGenerate = async () => {
+    if (!generateIntent.trim()) return;
+    setGenerateBusy(true);
+    try {
+      const res = await generateRecipe(generateIntent, '');
+      const name = openNewRecipeDoc(`generated-${Date.now()}.cue`, res.recipe);
+      setGenerateOpen(false);
+      setGenerateIntent('');
+      message.success(`AI Generation applied: ${res.explanation || name}`);
+    } catch (err) {
+      message.error('AI Generation failed: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setGenerateBusy(false);
     }
-    doLoadRecipe(name);
   };
 
-  const onNodeClick = (_: any, node: any) => {
-    setSelectedNodeId(node.id);
-  };
-
-  const modalHosts = records.filter((r) => modalSelectedKeys[recordKey(r)]);
-
-  const prepareStepRun = (stepId: string, hosts: HostRecord[]) => {
-    const prompts = recipeDefaults?.prompts;
-    if (prompts && Object.keys(prompts).length > 0) {
-      setPendingRun({ stepId, hosts });
-      setPromptsOpen(true);
-      return;
+  // Shared tail end of the Library/Git-load "import" flows: both hand us raw
+  // CUE content from an external source (the recipe library, a git repo) that
+  // is NOT yet in our recipe store. Per the product decision, importing means
+  // SAVING it into the store first (so it behaves like any other stored
+  // recipe from then on — reopenable via the Open dropdown, diffable, etc.)
+  // and only then opening it visually — via createDoc(name), the same
+  // by-name load Open/Generate-via-store uses, which round-trips through the
+  // server's CUE->recipe-JSON converter (GET /api/v1/recipes/store/{name})
+  // instead of a client-side parse. uniqueStoreName guards the save against
+  // silently clobbering an already-saved recipe with the same name.
+  //
+  // saveStoredRecipe writes the CUE to disk WITHOUT validating it — the
+  // server only parses it a moment later, in createDoc's
+  // GET /api/v1/recipes/store/{name}. If that parse fails (e.g. the content
+  // came from an untrusted git repo and isn't valid CUE), the save already
+  // succeeded, so without a rollback the broken file would be left behind in
+  // the store forever — reopenable via the Open dropdown, always erroring.
+  // Roll back by deleting the just-saved file, then re-throw so the
+  // Library/Git-load caller's toast still fires.
+  const importCueIntoStore = async (baseName: string, content: string): Promise<string> => {
+    const wantedName = ensureCueExtension(baseName);
+    const existing = await fetchRecipeStoreList();
+    const finalName = uniqueStoreName(wantedName, existing.map((e) => e.name));
+    await saveStoredRecipe(finalName, content);
+    try {
+      await createDoc(finalName);
+      if (api) openGraph(api, finalName);
+    } catch (err) {
+      try {
+        await deleteStoredRecipe(finalName);
+      } catch {
+        // Best-effort rollback — surface the original parse/open error below
+        // regardless of whether the cleanup delete itself succeeded.
+      }
+      throw err;
     }
-    doPrepareStepRun(stepId, hosts, []);
+    // Keep the Open dropdown's list in sync with the store so the just-imported
+    // recipe is reopenable without a page refresh.
+    setRecipeList((prev) => (prev.some((e) => e.name === finalName) ? prev : [...prev, { name: finalName }]));
+    return finalName;
   };
 
-  const doPrepareStepRun = (stepId: string, hosts: HostRecord[], extraEnv: {key: string, value: string}[]) => {
-    const ids = collectAncestorNodeIDs(edges, stepId);
-    setNodeRunStatus(ids, 'running');
-    setRunHosts(hosts);
-    setRunStepId(stepId);
-    setRunCount((c) => c + 1);
-    setRunPanelOpen(true);
-    setRunExtraEnv(extraEnv);
-  };
-
-  const handleRunRow = (row: HostExecResultRow) => {
-    const stepId = row.StepID || (row.StepIndex ? nodes[row.StepIndex - 1]?.id : '');
-    if (!stepId) {
-      return;
-    }
-    const status: NodeRunStatus = row.Skipped ? 'skipped' : row.Success ? 'ok' : 'err';
-    setNodeRunStatus(new Set([stepId]), status);
-  };
-
-  const handleRunStep = (stepId: string) => {
-    setRunMode('upstream');
-    if (selectedRecords.length > 0) {
-      prepareStepRun(stepId, selectedRecords as HostRecord[]);
-    } else {
-      setPendingRunStepId(stepId);
-      setModalSelectedKeys({});
-      setHostPickerOpen(true);
-    }
-  };
-
-  const handleResumeStep = (stepId: string) => {
-    setRunMode('downstream');
-    if (selectedRecords.length > 0) {
-      prepareStepRun(stepId, selectedRecords as HostRecord[]);
-    } else {
-      setPendingRunStepId(stepId);
-      setModalSelectedKeys({});
-      setHostPickerOpen(true);
+  // A library entry's `.content` is raw CUE — import it into the store (see
+  // importCueIntoStore) rather than parsing it client-side into a throwaway,
+  // never-saved doc.
+  const handleLibrarySelect = async (libRecipe: LibraryRecipe) => {
+    setLibraryOpen(false);
+    try {
+      const finalName = await importCueIntoStore(libRecipe.filename || libRecipe.name, libRecipe.content);
+      message.success(`Imported ${libRecipe.name} into the store as ${finalName}`);
+    } catch (err) {
+      message.error('Failed to import library recipe: ' + (err instanceof Error ? err.message : String(err)));
     }
   };
 
-  const handleModalRun = () => {
-    if (modalHosts.length === 0) {
-      message.warning('Select at least one host to run on');
-      return;
-    }
-    prepareStepRun(pendingRunStepId!, modalHosts);
-    setHostPickerOpen(false);
-  };
-
-  const handleValidate = () => {
-    void validateCurrentRecipe(false);
-  };
-
-  const internalHandleReset = () => {
-    handleReset();
-    setRunPanelOpen(false);
-    setRunStepId(null);
-    setRunCount(0);
-    setSettingsDrawerOpen(false);
-    message.info('Canvas reset');
-  };
-
-  const internalHandleGitLoad = async (options: {
+  // POST the git coordinates to /api/v1/recipes/store/git-load (fetches file
+  // content from the given repo/branch/path — does NOT save it into the local
+  // store on its own), then import that content into the store the same way
+  // the Library flow does (see importCueIntoStore).
+  const handleGitLoad = async (options: {
     gitUrl: string;
     gitBranch: string;
     path: string;
@@ -192,370 +234,107 @@ export default function StudioWorkspace() {
     gitPass: string;
     gitSsh: string;
   }) => {
-    if (nodes.length > 0) {
-      Modal.confirm({
-        title: 'Load recipe from Git?',
-        content: 'Current canvas will be discarded.',
-        okText: 'Discard & Load',
-        cancelText: 'Cancel',
-        onOk: () => {
-          doGitLoad(options)
-            .then(() => setGitLoadModalVisible(false))
-            .catch(() => {});
-        },
-      });
-      return;
+    const payload = {
+      path: options.path,
+      git_url: options.gitUrl,
+      git_branch: options.gitBranch,
+      git_user: options.gitUser,
+      git_pass: options.gitPass === '••••••••' ? '' : options.gitPass,
+      git_ssh: options.gitSsh === '••••••••' ? '' : options.gitSsh,
+    };
+    try {
+      const loadRes = await apiPost('/api/v1/recipes/store/git-load', payload);
+      if (!loadRes.ok) throw new Error(await loadRes.text());
+      const { content } = await loadRes.json();
+
+      const baseName = options.path.split('/').pop() || options.path;
+      const finalName = await importCueIntoStore(baseName, content);
+      setGitLoadOpen(false);
+      message.success(`Imported ${options.path} into the store as ${finalName}`);
+    } catch (err) {
+      message.error('Failed to load git recipe: ' + (err instanceof Error ? err.message : String(err)));
+      throw err; // GitLoadModal keeps itself open on a rejected onLoad.
     }
-    doGitLoad(options)
-      .then(() => setGitLoadModalVisible(false))
-      .catch(() => {});
   };
 
   return (
-    <Layout style={{ height: '100vh', background: '#0f1115' }}>
-      <Header style={{ background: '#001529', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px' }}>
-        <Space size="small">
-          <Title level={5} style={{ color: '#fff', margin: 0 }}>CUE Recipe Studio</Title>
-          <Select
-            placeholder="Load existing recipe..."
-            style={{ width: 200 }}
-            value={selectedRecipe}
-            onChange={loadRecipe}
-            options={availableRecipes.map((r) => ({ value: r.name, label: r.name }))}
-            allowClear
-          />
-          <Button type="default" icon={<CloudDownloadOutlined />} onClick={() => setGitLoadModalVisible(true)}>
-            Load from Git
-          </Button>
-          <Button type="default" icon={<ReadOutlined />} onClick={() => setLibraryOpen(true)}>
-            Library
-          </Button>
-          <Button type="default" icon={<FireOutlined />} onClick={() => setGenerateModalOpen(true)}>
-            Generate
-          </Button>
-          <Button
-            type={rawMode ? 'primary' : 'default'}
-            icon={<CodeOutlined />}
-            onClick={rawMode ? handleSwitchToVisual : handleSwitchToRaw}
-          >
-            {rawMode ? 'Visual' : 'Raw'}
-          </Button>
-          <Button type="default" icon={<SettingOutlined />} onClick={() => setSettingsDrawerOpen(true)}>
-            Recipe Settings
-          </Button>
-          <Button type="default" icon={<UndoOutlined />} onClick={internalHandleReset}>
-            Reset
-          </Button>
-          <Button type="default" icon={<SyncOutlined />} loading={validating} onClick={handleValidate}>
-            Validate Graph
-          </Button>
-          <Button type="default" icon={<SaveOutlined />} onClick={() => setSaveModalVisible(true)}>
-            Save Recipe
-          </Button>
-        </Space>
-      </Header>
-
-      <div className="studio-validation-strip">
-        {validationState === 'validating' ? (
-          <Alert type="info" showIcon message="Validating recipe..." />
-        ) : validationIssues.length > 0 ? (
-          <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-            <Alert
-              type="error"
-              showIcon
-              message={`${validationIssues.length} validation issue${validationIssues.length === 1 ? '' : 's'}`}
-              description={
-                <ul className="studio-validation-list">
-                  {validationIssues.slice(0, 4).map((issue, index) => (
-                    <li key={`${issue.kind || 'issue'}-${index}`}>
-                      {issue.path ? `${issue.path}: ` : ''}
-                      {issue.message}
-                    </li>
-                  ))}
-                </ul>
-              }
-              style={{ flex: 1 }}
-            />
-            <Button
-              size="small"
-              type="primary"
-              style={{ marginLeft: 16, marginTop: 8 }}
-              loading={fixBusy}
-              onClick={() => handleFixWithAI()}
-            >
-              ✨ Fix with AI
+    <div style={{ display: 'flex', height: '100%', width: '100%' }}>
+      <ActivityBar api={api} />
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+        <div style={{ padding: '6px 12px', background: '#001529', borderBottom: '1px solid #1f2937' }}>
+          <Space>
+            <Button size="small" icon={<FileAddOutlined />} onClick={handleNew}>
+              New Recipe
             </Button>
-          </div>
-        ) : validationState === 'valid' ? (
-          <Alert type="success" showIcon message="Recipe is valid" />
-        ) : null}
-        
-        {validationRisk && validationRisk.score > 0 && (
-          <div style={{ marginTop: 8 }}>
-            <Alert
-              type={validationRisk.level === 'High' ? 'error' : validationRisk.level === 'Medium' ? 'warning' : 'info'}
-              showIcon
-              message={`Risk Level: ${validationRisk.level} (Score: ${validationRisk.score})`}
-              description={
-                <ul style={{ margin: 0, paddingLeft: 20, marginTop: 8 }}>
-                  {validationRisk.findings.map((f: string, i: number) => <li key={i}>{f}</li>)}
-                </ul>
-              }
+            <Select
+              size="small"
+              style={{ width: 220 }}
+              placeholder="Open recipe…"
+              suffixIcon={<FolderOpenOutlined />}
+              showSearch
+              optionFilterProp="label"
+              options={recipeList.map((r) => ({ value: r.name, label: r.name }))}
+              onSelect={handleOpen}
             />
-          </div>
-        )}
+            <Button size="small" icon={<CloudDownloadOutlined />} onClick={() => setGitLoadOpen(true)}>
+              Load from Git
+            </Button>
+            <Button size="small" icon={<ReadOutlined />} onClick={() => setLibraryOpen(true)}>
+              Library
+            </Button>
+            <Button size="small" icon={<FireOutlined />} onClick={() => setGenerateOpen(true)}>
+              Generate
+            </Button>
+            <Button size="small" onClick={() => api && resetLayout(api)}>
+              Reset Layout
+            </Button>
+          </Space>
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <DockviewReact
+            components={components}
+            rightHeaderActionsComponent={EditorHeaderActions}
+            onReady={onReady}
+            className="dockview-theme-honey"
+          />
+        </div>
       </div>
 
-      <Layout style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        <Sider width={220} style={{ background: '#001529', borderRight: '1px solid #1f2937', padding: '16px' }}>
-          <Title level={5} style={{ color: '#f0f6fc', marginTop: 0 }}>Toolbox (Drag/Click)</Title>
-          <Text style={{ color: '#8b949e' }}>Drop steps onto canvas</Text>
-          <Select
-            placeholder="Insert snippet"
-            style={{ width: '100%', marginTop: 12 }}
-            value={snippetChoice}
-            onChange={(value) => {
-              setSnippetChoice(value);
-              addSnippet(value);
-            }}
-            options={recipeStudioSnippets.map((snippet) => ({ value: snippet.id, label: snippet.label }))}
-            allowClear
-          />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-            {listStepKinds(schema).map((stepKind) => (
-              <Button
-                key={stepKind.kind}
-                type="default"
-                icon={<PlusOutlined />}
-                onClick={() => addStepNode(stepKind.kind)}
-              >
-                {stepKind.label}
-              </Button>
-            ))}
-          </div>
-        </Sider>
-
-        <Content style={{ position: 'relative', overflow: 'hidden', background: '#0d1117' }}>
-          {rawMode ? (
-            <Suspense fallback={<div style={{ padding: 16, color: '#8b949e' }}>Loading editor…</div>}>
-              <CodeEditor
-                value={rawContent}
-                onChange={setRawContent}
-                language="cue"
-                height="100%"
-              />
-            </Suspense>
-          ) : (
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodeClick={onNodeClick}
-              nodeTypes={nodeTypes}
-              fitView
-            >
-              <Controls className="studio-flow-controls" />
-              <Background />
-            </ReactFlow>
-          )}
-        </Content>
-      </Layout>
-
-      <Drawer
-        title={`Edit Step: ${selectedNodeId}`}
-        width={360}
-        open={selectedNodeId !== null}
-        onClose={() => setSelectedNodeId(null)}
-      >
-        {selectedNodeId && (
-          <>
-            <DynamicStepForm
-              schema={stepSchemaForKind(schema, stepData[selectedNodeId]?.kind)}
-              value={stepData[selectedNodeId]}
-              onChange={handleStepDataChange}
-            />
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              style={{ marginTop: 16, width: '100%' }}
-              onClick={() => handleRunStep(selectedNodeId!)}
-            >
-              Run Step
-            </Button>
-            <Button
-              type="default"
-              icon={<PlayCircleOutlined />}
-              style={{ marginTop: 8, width: '100%' }}
-              onClick={() => handleResumeStep(selectedNodeId!)}
-            >
-              Resume from here
-            </Button>
-          </>
-        )}
-      </Drawer>
-
-      {runPanelOpen && runStepId && stepData[runStepId] && (
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 300, background: '#1f2937', borderTop: '1px solid #30363d', zIndex: 10, overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 16px', background: '#0d1117' }}>
-            <Typography.Text strong style={{ color: '#fff' }}>Run: {runStepId}</Typography.Text>
-            <Button size="small" onClick={() => setRunPanelOpen(false)}>Close</Button>
-          </div>
-          <div style={{ padding: 16 }}>
-            <StepRun 
-              key={`${runStepId}-${runCount}`}
-              recipe={(runMode === 'downstream' ? buildDownstreamRecipe(runStepId) : buildSubgraphRecipe(runStepId)) as any}
-              recipeBasePath={null}
-              hosts={runHosts}
-              envOverrides={runExtraEnv}
-              sshUser={sshUser}
-              recordSession={false}
-              sessionRecordingAvailable={false}
-              onViewRecording={() => {}}
-              onRunAgain={() => {
-                if (runStepId) {
-                  setNodeRunStatus(collectAncestorNodeIDs(edges, runStepId), 'running');
-                }
-                setRunCount(c => c + 1);
-              }}
-              onStartNew={() => setRunPanelOpen(false)}
-              onRow={handleRunRow}
-              onStatusChange={(status) => {
-                if (status === 'err' && runStepId) {
-                  setNodeRunStatus(collectAncestorNodeIDs(edges, runStepId), 'err');
-                }
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      <Drawer
-        title="Recipe Settings (Defaults)"
-        width={360}
-        open={settingsDrawerOpen}
-        onClose={() => setSettingsDrawerOpen(false)}
-      >
-        <DynamicStepForm
-          schema={stepSchemaForKind(schema, 'defaults')}
-          value={recipeDefaults}
-          onChange={setRecipeDefaults}
-        />
-      </Drawer>
-
-      <StorageModal
-        visible={saveModalVisible}
-        currentRecipeName={selectedRecipe}
-        onCancel={() => setSaveModalVisible(false)}
-        onSave={(options) => {
-          handleSaveRecipe(options)
-            .then(() => setSaveModalVisible(false))
-            .catch((err) => message.error(err.message));
-        }}
+      {/*
+        Always mounted (mirrors LibraryModal below) rather than conditionally
+        rendered on `gitLoadOpen`: GitLoadModal's own studio-config prefill
+        effect only runs once per mount (guarded by its internal
+        `configLoaded` state), so conditionally mounting it re-fetched
+        /api/v1/recipes/studio-config on every reopen.
+      */}
+      <GitLoadModal
+        visible={gitLoadOpen}
+        onCancel={() => setGitLoadOpen(false)}
+        onLoad={handleGitLoad}
       />
-
-      {gitLoadModalVisible && (
-        <GitLoadModal
-          visible={gitLoadModalVisible}
-          onCancel={() => setGitLoadModalVisible(false)}
-          onLoad={internalHandleGitLoad}
-        />
-      )}
 
       <LibraryModal
         open={libraryOpen}
         onCancel={() => setLibraryOpen(false)}
-        onSelect={async (libRecipe) => {
-          setLibraryOpen(false);
-          try {
-            setRawContent(libRecipe.content);
-            setOriginalCue(libRecipe.content);
-            setRawMode(true);
-            setTimeout(async () => {
-               try {
-                 const parseRes = await apiPost('/api/v1/recipes/parse', { content: libRecipe.content });
-                 if (!parseRes.ok) throw new Error(await parseRes.text());
-                 const parseData = await parseRes.json();
-                 
-                 // Apply the parsed visual nodes, but DO NOT overwrite rawContent with JSON!
-                 const recipeJson = parseData.recipe;
-                 if (recipeJson.defaults) {
-                   setRecipeDefaults(recipeJson.defaults);
-                 } else {
-                   setRecipeDefaults({});
-                 }
-                 const { nodes: newNodes, edges: newEdges, stepData: newStepData } = buildFlowFromRecipe(recipeJson);
-                 setNodes(applyWaveLayout(newNodes));
-                 setEdges(newEdges);
-                 setStepData(newStepData);
-                 
-                 message.success(`Loaded ${libRecipe.name} from Library`);
-               } catch {
-                 message.success(`Loaded ${libRecipe.name} (Switch to visual manually after fixing validation if needed)`);
-               }
-            }, 50);
-          } catch (err) {
-            message.error("Failed to load library recipe: " + (err as Error).message);
-          }
-        }}
+        onSelect={handleLibrarySelect}
       />
 
-      <Modal maskClosable={false}         title="Select hosts to run on"
-        open={hostPickerOpen}
-        onCancel={() => setHostPickerOpen(false)}
-        onOk={handleModalRun}
-        okText="Run"
-        width={720}
-      >
-        <HostPicker
-          records={records}
-          selectedKeys={modalSelectedKeys}
-          pageSize={5}
-          onToggleRow={(rec) => {
-            const key = recordKey(rec);
-            setModalSelectedKeys((prev) => ({ ...prev, [key]: !prev[key] }));
-          }}
-        />
-      </Modal>
-
-      <ParameterPromptModal
-        open={promptsOpen}
-        prompts={recipeDefaults?.prompts || {}}
-        recipeName={recipeNameFromFilename(selectedRecipe)}
-        onCancel={() => setPromptsOpen(false)}
-        onSubmit={(vals) => {
-          setPromptsOpen(false);
-          const extra = Object.entries(vals).map(([k, v]) => ({ key: k, value: v }));
-          if (pendingRun) {
-            doPrepareStepRun(pendingRun.stepId, pendingRun.hosts, extra);
-            setPendingRun(null);
-          }
-        }}
-      />
-
-      <Modal maskClosable={false}         title="Generate Recipe with AI"
-        open={generateModalOpen}
-        onCancel={() => setGenerateModalOpen(false)}
+      <Modal
+        maskClosable={false}
+        title="Generate Recipe with AI"
+        open={generateOpen}
+        onCancel={() => setGenerateOpen(false)}
         okText="Generate"
         confirmLoading={generateBusy}
-        onOk={() => {
-          if (!intent.trim()) return;
-          handleGenerateAI(intent)
-            .then(() => {
-              setGenerateModalOpen(false);
-              setIntent("");
-            })
-            .catch(() => {});
-        }}
+        onOk={handleGenerate}
       >
         <Input.TextArea
-          value={intent}
-          onChange={(e) => setIntent(e.target.value)}
+          value={generateIntent}
+          onChange={(e) => setGenerateIntent(e.target.value)}
           placeholder="Describe what you want to automate... e.g., Restart all nginx pods"
           rows={4}
         />
       </Modal>
-    </Layout>
+    </div>
   );
 }

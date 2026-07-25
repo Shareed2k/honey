@@ -1,0 +1,630 @@
+import { create } from 'zustand';
+import { message } from 'antd';
+import {
+  applyNodeChanges,
+  applyEdgeChanges,
+  addEdge,
+  type NodeChange,
+  type EdgeChange,
+  type Connection,
+} from '@xyflow/react';
+import type { DocState, RunStatus } from './types';
+import { fetchStoredRecipe, fixRecipeErrors, syncRecipeAST, validateRecipeContent } from '../../api/recipes';
+import { apiPost } from '../../api/core';
+import type { ParsedRecipe, RecipeGraphPlan } from '../../api/types/recipes';
+import type { HostRecord } from '../../HostPicker';
+import {
+  buildFlowFromRecipe,
+  buildRecipeFromFlow,
+  computeWavesFromEdges,
+  applyWaveLayout,
+  recipeNameFromFilename,
+  createStepDraft,
+  uniqueStepID,
+  recipeStudioSnippets,
+  type StepDraft,
+} from '../useRecipeGraph';
+
+// Shape produced by buildFlowFromRecipe's `nodes` (typed `any[]` there since it
+// spans several call sites) — named here so `.map` over it keeps `id`/`position`
+// as known properties instead of losing them to index-signature spread erasure.
+type FlowNode = { id: string; position: { x: number; y: number }; data?: Record<string, unknown> };
+
+type ValidationIssue = { path?: string; kind?: string; message: string };
+
+// Stamps each node with its dependency wave (via computeWavesFromEdges)
+// BEFORE laying it out with applyWaveLayout. This ordering matters:
+// applyWaveLayout only *positions* nodes by whatever wave is already on
+// data.wave, falling back to a single `fallbackWave` for every node that
+// doesn't have one yet — so calling it on fresh nodes (e.g. straight out of
+// buildFlowFromRecipe, which never sets data.wave) stacks every node into one
+// column instead of staggering them by dependency depth. Shared by
+// createDoc/createDocFromRecipe/switchToVisual so every "load a recipe into
+// a doc" path lands the same staggered layout.
+function layoutFlowNodes(nodes: FlowNode[], edges: { source: string; target: string }[]): FlowNode[] {
+  const waveByNode = computeWavesFromEdges(nodes, edges);
+  const stamped = nodes.map((n) => ({
+    ...n,
+    data: { ...(n.data ?? {}), wave: waveByNode[n.id] ?? (n.data?.wave as number | undefined) ?? 1 },
+  }));
+  return applyWaveLayout(stamped);
+}
+
+// ---- validation -> node stamping ------------------------------------------
+// Ported from the old useRecipeStudioEngine.ts's graphWaveByNode/
+// applyValidationResultToNodes (see webui/src/RecipeStudio/useRecipeStudioEngine.ts),
+// adapted to the multi-doc store: instead of setNodes(...), these are pure
+// functions that validate()'s patchDoc callback folds into the same set() as
+// doc.validation, so a node's error/wave/layout update lands atomically with
+// the validation result that produced it.
+
+// Maps a RecipeGraphPlan's wave-ordered node groups to { nodeId: waveNumber }.
+// Only present on a successful (graph-mode) validation — see
+// recipes_validate_handlers.go's handleRecipesValidateContent, which only
+// populates `graph` after the recipe resolves past validation.
+function graphWaveByNode(graph: RecipeGraphPlan | undefined): Record<string, number> {
+  const waves = Array.isArray(graph?.waves) ? graph.waves : [];
+  const out: Record<string, number> = {};
+  waves.forEach((wave, waveIndex) => {
+    wave.forEach((node) => {
+      if (node?.id) out[node.id] = waveIndex + 1;
+    });
+  });
+  return out;
+}
+
+// Finds the validation issue (if any) that refers to a given node — matches
+// the same way the server's error messages reference a step: by node id, or
+// by a "step N" / "steps[N-1]" substring keyed off its position in the list.
+function errorForNode(issues: ValidationIssue[], nodeId: string, index: number): ValidationIssue | undefined {
+  return issues.find((issue) => {
+    const haystack = `${issue.path || ''} ${issue.message || ''}`;
+    return haystack.includes(nodeId) || haystack.includes(`step ${index + 1}`) || haystack.includes(`steps[${index}]`);
+  });
+}
+
+// Stamps validation errors + wave numbers onto a doc's nodes and re-lays them
+// out by wave. Wave comes from the graph plan when the server returned one;
+// otherwise falls back to the same edge-only wave computation switchToVisual
+// uses, so even a failing (non-graph) validation still shows sensible wave
+// columns instead of collapsing every node onto one.
+function stampValidationOnNodes(
+  nodes: FlowNode[],
+  edges: { source: string; target: string }[],
+  issues: ValidationIssue[],
+  graph: RecipeGraphPlan | undefined,
+): FlowNode[] {
+  const waveFromGraph = graphWaveByNode(graph);
+  const waveFromEdges = Object.keys(waveFromGraph).length > 0 ? {} : computeWavesFromEdges(nodes, edges);
+  const mapped = nodes.map((n, index) => {
+    const issue = errorForNode(issues, n.id, index);
+    const existingWave = n.data?.wave as number | undefined;
+    return {
+      ...n,
+      data: {
+        ...(n.data ?? {}),
+        wave: waveFromGraph[n.id] ?? waveFromEdges[n.id] ?? existingWave,
+        error: issue?.message,
+      },
+    };
+  });
+  return applyWaveLayout(mapped);
+}
+
+// ---- snippet insertion -----------------------------------------------------
+// Ported from the old useRecipeStudioEngine.ts's addSnippet/remapSnippetStep/
+// remapSnippetValue (see webui/src/RecipeStudio/useRecipeStudioEngine.ts). A
+// snippet's step ids (recipeStudioSnippets, useRecipeGraph.ts) are only
+// unique *within* the snippet definition, so inserting one into a doc that
+// already has a same-named node (or a second copy of the same snippet)
+// requires every reference to that id — the step's own `id`, and any string
+// field elsewhere in the step pointing at a sibling step (e.g. a
+// `tunnel_step` reference) — to be rewritten to the remapped id.
+// remapSnippetValue walks the whole step's value tree substituting any string
+// that matches an old id; remapSnippetStep applies that walk and then pins
+// the top-level `id` to the final remapped id.
+function remapSnippetValue(value: unknown, idMap: Map<string, string>): unknown {
+  if (typeof value === 'string') {
+    return idMap.get(value) || value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => remapSnippetValue(item, idMap));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, remapSnippetValue(item, idMap)]),
+    );
+  }
+  return value;
+}
+
+function remapSnippetStep(step: StepDraft, id: string, idMap: Map<string, string>): StepDraft {
+  const remapped = remapSnippetValue(step, idMap) as StepDraft;
+  return { ...remapped, id };
+}
+
+// helper: apply a patch to one doc; no-op if the id is unknown.
+function patchDoc(
+  set: (fn: (s: WorkspaceState) => Partial<WorkspaceState>) => void,
+  id: string,
+  patch: (d: DocState) => DocState,
+) {
+  set((s) => {
+    const doc = s.docs[id];
+    if (!doc) return {};
+    return { docs: { ...s.docs, [id]: patch(doc) } };
+  });
+}
+
+// Builds the same recipe-JSON shape switchToRaw/validate/save all need from a
+// doc's visual-mode state (nodes/edges/stepData [+ defaults]). Shared here so
+// the three call sites can't drift out of sync with each other.
+function buildDocRecipe(doc: DocState): Record<string, unknown> {
+  const base = buildRecipeFromFlow({
+    name: recipeNameFromFilename(doc.recipeId),
+    nodes: doc.nodes,
+    edges: doc.edges,
+    stepData: doc.stepData,
+  });
+  const recipe = base as unknown as Record<string, unknown>;
+  if (doc.recipeDefaults && Object.keys(doc.recipeDefaults as object).length > 0) {
+    recipe.defaults = doc.recipeDefaults;
+  }
+  return recipe;
+}
+
+function blankDoc(recipeId: string, name: string): DocState {
+  return {
+    recipeId, name,
+    nodes: [], edges: [], stepData: {}, recipeDefaults: {},
+    selectedNodeId: null,
+    rawMode: false, rawContent: '', originalCue: '',
+    // Fresh literal per call — must NOT share an array/object reference across docs,
+    // or an in-place mutation on one doc's `issues` would corrupt every other doc.
+    validation: { state: 'idle', issues: [] },
+    runStatus: {}, dirty: false,
+    runStepId: null, runCount: 0, runMode: 'upstream', runExtraEnv: [],
+  };
+}
+
+let untitledCounter = 0;
+
+// Shared suffixing scheme: `base` verbatim if `isTaken(base)` is false,
+// otherwise `<stem>-2<ext>`, `<stem>-3<ext>`, ... until one is free.
+function nextAvailableName(base: string, isTaken: (name: string) => boolean): string {
+  if (!isTaken(base)) return base;
+  const m = /^(.*?)(\.[^./]+)?$/.exec(base);
+  const stem = m?.[1] ?? base;
+  const ext = m?.[2] ?? '';
+  let i = 2;
+  let candidate = `${stem}-${i}${ext}`;
+  while (isTaken(candidate)) {
+    i += 1;
+    candidate = `${stem}-${i}${ext}`;
+  }
+  return candidate;
+}
+
+// Picks a doc key that won't clobber an already-open doc. Exported so callers
+// (the shell's Generate/Library/Git-load triggers) can compute the SAME name
+// createDocFromRecipe will key the doc under — since createDocFromRecipe
+// returns void, the caller needs to know the final key up front (e.g. to open
+// the matching graph panel right after creating the doc). Both call this pure
+// function against the same synchronous snapshot of `docs`, so the result is
+// guaranteed to agree.
+export function uniqueDocName(base: string, docs: Record<string, DocState>): string {
+  return nextAvailableName(base, (name) => Boolean(docs[name]));
+}
+
+// Picks a recipe-STORE filename that won't clobber an already-saved recipe —
+// same suffixing scheme as uniqueDocName, but checked against the store's
+// list of existing names (GET /api/v1/recipes/store, fetchRecipeStoreList)
+// rather than the workspace's open docs. Used by the shell's Library/Git-load
+// "import into the store" flows (StudioWorkspace.tsx) before POSTing content
+// to /api/v1/recipes/store/{name}, since that endpoint overwrites whatever is
+// already at `name` with no clobber warning of its own.
+export function uniqueStoreName(base: string, existingNames: Iterable<string>): string {
+  const taken = new Set(existingNames);
+  return nextAvailableName(base, (name) => taken.has(name));
+}
+
+interface WorkspaceState {
+  docs: Record<string, DocState>;
+  active: string | null;
+  schema: unknown;
+  // Set by the shell (Task 12) once the Terminal panel exists, so other
+  // panels (e.g. Records) can spawn a terminal without importing the
+  // Terminal panel directly. null until the shell wires it up.
+  openTerminal: ((rec: HostRecord) => void) | null;
+
+  createDoc(name: string): Promise<void>;
+  // Builds a doc from an in-memory recipe object (e.g. an AI-generated
+  // recipe, a parsed Library entry, or a git-loaded recipe) rather than
+  // loading one by stored name — the shared entry point for the Generate/
+  // Library/Git-load triggers (StudioWorkspace.tsx). Keyed by `name`, via
+  // `uniqueDocName` so it never silently clobbers an already-open doc.
+  createDocFromRecipe(name: string, recipeJson: unknown, rawCue?: string): void;
+  newDoc(): string;
+  freeDoc(id: string): void;
+  setActive(id: string | null): void;
+  setSchema(schema: unknown): void;
+  setOpenTerminal(fn: ((rec: HostRecord) => void) | null): void;
+
+  setSelectedNode(id: string, nodeId: string | null): void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  setStepData(id: string, nodeId: string, value: any): void;
+  setRecipeDefaults(id: string, defaults: unknown): void;
+  // ReactFlow drives node/edge mutations (drag, select, delete, connect)
+  // through these three callbacks — see GraphPanel. Position/select/dimension
+  // changes are cosmetic (buildRecipeFromFlow ignores node position), so only
+  // a node *removal* (which drops a step) marks the doc dirty; edge add/remove
+  // and new connections always change `depends`, so those always mark dirty.
+  onNodesChange(id: string, changes: NodeChange[]): void;
+  onEdgesChange(id: string, changes: EdgeChange[]): void;
+  onConnect(id: string, connection: Connection): void;
+  addStep(id: string, kind: string): void;
+  addSnippet(id: string, snippetId: string): void;
+  setRawContent(id: string, text: string): void;
+  setRawMode(id: string, on: boolean): void;
+  setNodeRunStatus(id: string, nodeIds: string[], status: RunStatus): void;
+  markDirty(id: string): void;
+  resetDoc(id: string): void;
+  startRun(
+    id: string,
+    stepId: string | null,
+    mode?: 'upstream' | 'downstream',
+    extraEnv?: { key: string; value: string }[],
+  ): void;
+  bumpRun(id: string): void;
+
+  switchToRaw(id: string): Promise<void>;
+  switchToVisual(id: string): void;
+
+  validate(id: string): Promise<void>;
+  fixWithAI(id: string): Promise<void>;
+  save(
+    id: string,
+    options: { storage: string; path: string; commitMessage: string; gitUrl?: string; gitBranch?: string },
+  ): Promise<void>;
+}
+
+export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
+  docs: {},
+  active: null,
+  schema: null,
+  openTerminal: null,
+
+  async createDoc(name) {
+    if (get().docs[name]) return; // idempotent — already open
+    // Load by name via GET /api/v1/recipes/store/{name} — resolved against the
+    // configured recipe store, no path validation. The old
+    // POST /api/v1/recipes/parse (parseDiskRecipe) requires an absolute path
+    // present in the server's allow-list, so a bare filename like "foo.cue"
+    // is rejected with "recipe path not allowed".
+    const data = await fetchStoredRecipe(name);
+    const recipeJson = data.recipe;
+    const { nodes, edges, stepData } = buildFlowFromRecipe(recipeJson);
+    set((s) => ({
+      docs: {
+        ...s.docs,
+        [name]: {
+          ...blankDoc(name, recipeNameFromFilename(name)),
+          nodes: layoutFlowNodes(nodes, edges),
+          edges,
+          stepData,
+          recipeDefaults: recipeJson?.defaults ?? {},
+          originalCue: data.raw_cue ?? '',
+        },
+      },
+    }));
+  },
+
+  createDocFromRecipe(name, recipeJson, rawCue) {
+    const finalName = uniqueDocName(name, get().docs);
+    const { nodes, edges, stepData } = buildFlowFromRecipe(recipeJson);
+    const defaults = (recipeJson as { defaults?: unknown } | null | undefined)?.defaults ?? {};
+    set((s) => ({
+      docs: {
+        ...s.docs,
+        [finalName]: {
+          ...blankDoc(finalName, recipeNameFromFilename(finalName)),
+          nodes: layoutFlowNodes(nodes, edges),
+          edges,
+          stepData,
+          recipeDefaults: defaults,
+          originalCue: rawCue ?? '',
+          dirty: true, // new/unsaved — never loaded from the store as-is.
+        },
+      },
+    }));
+  },
+
+  newDoc() {
+    const id = `untitled-${++untitledCounter}.cue`;
+    set((s) => ({ docs: { ...s.docs, [id]: blankDoc(id, id) } }));
+    return id;
+  },
+
+  freeDoc(id) {
+    set((s) => {
+      const docs = { ...s.docs };
+      delete docs[id];
+      const active = s.active === id ? null : s.active;
+      return { docs, active };
+    });
+  },
+
+  setActive(id) {
+    set({ active: id });
+  },
+
+  setSchema(schema) {
+    set({ schema });
+  },
+
+  setOpenTerminal(fn) {
+    set({ openTerminal: fn });
+  },
+
+  setSelectedNode(id, nodeId) {
+    patchDoc(set, id, (d) => ({ ...d, selectedNodeId: nodeId }));
+  },
+  setStepData(id, nodeId, value) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      stepData: { ...d.stepData, [nodeId]: value },
+      dirty: true,
+    }));
+  },
+  setRecipeDefaults(id, defaults) {
+    patchDoc(set, id, (d) => ({ ...d, recipeDefaults: defaults, dirty: true }));
+  },
+  onNodesChange(id, changes) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      nodes: applyNodeChanges(changes, d.nodes),
+      // position/select/dimension changes don't touch step order or `depends`
+      // — only a removal drops a step, so only that marks the doc dirty.
+      dirty: d.dirty || changes.some((c) => c.type === 'remove'),
+    }));
+  },
+  onEdgesChange(id, changes) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      edges: applyEdgeChanges(changes, d.edges),
+      dirty: true,
+    }));
+  },
+  onConnect(id, connection) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      edges: addEdge(connection, d.edges),
+      dirty: true,
+    }));
+  },
+  addStep(id, kind) {
+    patchDoc(set, id, (d) => {
+      const used = new Set(d.nodes.map((n) => n.id));
+      const newId = uniqueStepID(kind, used);
+      const draft = createStepDraft(kind, newId);
+      return {
+        ...d,
+        nodes: applyWaveLayout([
+          ...d.nodes,
+          { id: newId, type: 'step', position: { x: 0, y: 0 }, data: { label: newId, kind } },
+        ]),
+        stepData: { ...d.stepData, [newId]: draft },
+        dirty: true,
+      };
+    });
+  },
+  addSnippet(id, snippetId) {
+    const snippet = recipeStudioSnippets.find((s) => s.id === snippetId);
+    if (!snippet) return; // unknown snippet id — no-op, matches other keyed actions above.
+    patchDoc(set, id, (d) => {
+      const usedIDs = new Set(d.nodes.map((n) => n.id));
+      const idMap = new Map<string, string>();
+      for (const step of snippet.steps) {
+        idMap.set(step.id, uniqueStepID(step.id, usedIDs));
+      }
+
+      const baseX = 100 + d.nodes.length * 220;
+      const newNodes = snippet.steps.map((step, index) => {
+        const newId = idMap.get(step.id)!;
+        return {
+          id: newId,
+          type: 'step',
+          position: { x: baseX + index * 220, y: 150 + (index % 2) * 90 },
+          data: { label: newId, kind: step.kind, host: step.host },
+        };
+      });
+      const newEdges = snippet.edges.map((edge) => {
+        const source = idMap.get(edge.source)!;
+        const target = idMap.get(edge.target)!;
+        return { id: `edge_from_${source}_to_${target}`, source, target };
+      });
+      const newStepData = Object.fromEntries(
+        snippet.steps.map((step) => {
+          const newId = idMap.get(step.id)!;
+          return [newId, remapSnippetStep(step, newId, idMap)];
+        }),
+      );
+
+      return {
+        ...d,
+        nodes: applyWaveLayout([...d.nodes, ...newNodes]),
+        edges: [...d.edges, ...newEdges],
+        stepData: { ...d.stepData, ...newStepData },
+        dirty: true,
+      };
+    });
+  },
+  setRawContent(id, text) {
+    patchDoc(set, id, (d) => ({ ...d, rawContent: text, dirty: true }));
+  },
+  setRawMode(id, on) {
+    patchDoc(set, id, (d) => ({ ...d, rawMode: on }));
+  },
+  setNodeRunStatus(id, nodeIds, status) {
+    patchDoc(set, id, (d) => {
+      const runStatus = { ...d.runStatus };
+      for (const nid of nodeIds) runStatus[nid] = status;
+      return { ...d, runStatus };
+    });
+  },
+  markDirty(id) {
+    patchDoc(set, id, (d) => ({ ...d, dirty: true }));
+  },
+  resetDoc(id) {
+    patchDoc(set, id, (d) => {
+      return blankDoc(d.recipeId, d.name);
+    });
+  },
+  startRun(id, stepId, mode = 'upstream', extraEnv = []) {
+    patchDoc(set, id, (d) => ({
+      ...d,
+      runStepId: stepId,
+      runMode: mode,
+      runExtraEnv: extraEnv,
+      runCount: d.runCount + 1,
+    }));
+  },
+  bumpRun(id) {
+    patchDoc(set, id, (d) => ({ ...d, runCount: d.runCount + 1 }));
+  },
+
+  async switchToRaw(id) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    const visualJSON = buildDocRecipe(doc);
+    let newRaw: string;
+    if (doc.originalCue) {
+      try {
+        newRaw = await syncRecipeAST(doc.originalCue, visualJSON);
+      } catch (syncErr) {
+        console.warn('AST sync failed, falling back to JSON:', syncErr);
+        newRaw = JSON.stringify(visualJSON, null, 2);
+      }
+    } else {
+      newRaw = JSON.stringify(visualJSON, null, 2);
+    }
+    patchDoc(set, id, (d) => ({ ...d, rawContent: newRaw, rawMode: true, selectedNodeId: null }));
+  },
+
+  switchToVisual(id) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    try {
+      const parsed = JSON.parse(doc.rawContent);
+      const { nodes, edges, stepData } = buildFlowFromRecipe(parsed);
+      patchDoc(set, id, (d) => ({
+        ...d,
+        nodes: layoutFlowNodes(nodes, edges),
+        edges,
+        stepData,
+        recipeDefaults: parsed.defaults ?? {},
+        rawMode: false,
+      }));
+    } catch {
+      message.error('Invalid JSON — fix errors before switching to visual mode');
+    }
+  },
+
+  async validate(id) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    patchDoc(set, id, (d) => ({ ...d, validation: { ...d.validation, state: 'validating' } }));
+
+    let recipe: ParsedRecipe;
+    if (doc.rawMode) {
+      try {
+        recipe = JSON.parse(doc.rawContent) as ParsedRecipe;
+      } catch {
+        patchDoc(set, id, (d) => ({
+          ...d,
+          validation: { state: 'invalid', issues: [{ message: 'invalid JSON' }] },
+        }));
+        return;
+      }
+    } else {
+      recipe = buildDocRecipe(doc) as unknown as ParsedRecipe;
+    }
+
+    try {
+      const res = await validateRecipeContent(recipe);
+      if ('errors' in res) {
+        const issues: ValidationIssue[] = res.errors.map((e) => ({ path: e.path, kind: e.kind, message: e.message }));
+        patchDoc(set, id, (d) => ({
+          ...d,
+          validation: { state: 'invalid', issues, risk: undefined },
+          nodes: stampValidationOnNodes(d.nodes, d.edges, issues, undefined),
+        }));
+      } else {
+        patchDoc(set, id, (d) => ({
+          ...d,
+          validation: { state: 'valid', issues: [], risk: res.risk },
+          nodes: stampValidationOnNodes(d.nodes, d.edges, [], res.graph),
+        }));
+      }
+    } catch (err) {
+      const issues: ValidationIssue[] = [{ message: String(err) }];
+      patchDoc(set, id, (d) => ({
+        ...d,
+        validation: { state: 'invalid', issues },
+        nodes: stampValidationOnNodes(d.nodes, d.edges, issues, undefined),
+      }));
+    }
+  },
+
+  // Ported from the old useRecipeStudioEngine.ts's handleFixWithAI: sends the
+  // current recipe + its validation issues to the AI fix-up endpoint, then
+  // applies the result the same way switchToVisual applies a raw-JSON edit
+  // (rebuild nodes/edges/stepData via buildFlowFromRecipe, recompute waves,
+  // re-lay-out) — and always lands in visual mode so the fixed graph is
+  // immediately visible, matching the old engine's unconditional
+  // handleSwitchToVisual() call after applying an AI fix. rawContent is set
+  // too (not just nodes/edges) so a subsequent switchToRaw reflects the fix
+  // without a stale AST-sync round-trip. Re-validates afterward so the panel
+  // reflects the fix's outcome (still-failing issues, if any, or valid+risk).
+  async fixWithAI(id) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    const recipe = buildDocRecipe(doc);
+    const res = await fixRecipeErrors(recipe, doc.validation.issues, '');
+    const { nodes, edges, stepData } = buildFlowFromRecipe(res.recipe);
+    const waveByNode = computeWavesFromEdges(nodes, edges);
+    const withWave = (nodes as FlowNode[]).map((n) => ({
+      ...n,
+      data: { ...(n.data ?? {}), wave: waveByNode[n.id] ?? 1 },
+    }));
+    patchDoc(set, id, (d) => ({
+      ...d,
+      nodes: applyWaveLayout(withWave),
+      edges,
+      stepData,
+      recipeDefaults: (res.recipe as { defaults?: unknown }).defaults ?? {},
+      rawContent: JSON.stringify(res.recipe, null, 2),
+      rawMode: false,
+      dirty: true,
+    }));
+    await get().validate(id);
+  },
+
+  async save(id, options) {
+    const doc = get().docs[id];
+    if (!doc) return;
+    const contentStr = doc.rawMode
+      ? doc.rawContent
+      : JSON.stringify(buildDocRecipe(doc), null, 2);
+
+    let url = `/api/v1/recipes/store/${encodeURIComponent(options.path)}`;
+    if (options.storage === 'git') {
+      url += `?git_url=${encodeURIComponent(options.gitUrl || '')}&git_branch=${encodeURIComponent(options.gitBranch || '')}`;
+    }
+    const res = await apiPost(url, { content: contentStr });
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
+    patchDoc(set, id, (d) => ({ ...d, dirty: false }));
+  },
+}));

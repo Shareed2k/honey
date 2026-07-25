@@ -130,7 +130,7 @@ function collectScrollback(term: Terminal, maxLines: number): string {
   return out.join('\n');
 }
 
-function TerminalSession({
+export function TerminalSession({
   sessionId,
   record,
   sshUser,
