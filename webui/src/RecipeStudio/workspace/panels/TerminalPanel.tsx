@@ -1,4 +1,4 @@
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { TerminalSession, type PveConsoleMode, type TrueNASConsoleMode } from '../../../TerminalModal';
 import type { HostRecord } from '../../../HostPicker';
 import { useHostSelection } from '../../../contexts/HostSelectionContext';

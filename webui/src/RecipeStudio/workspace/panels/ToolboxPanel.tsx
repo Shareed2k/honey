@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Button, Modal, Select } from 'antd';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import type { IDockviewPanelProps } from 'dockview';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { useWorkspaceStore } from '../store';
 import { listStepKinds } from '../../../api/recipes';
 import { recipeStudioSnippets } from '../../useRecipeGraph';

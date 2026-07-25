@@ -1,4 +1,4 @@
-import type { DockviewApi } from 'dockview';
+import type { DockviewApi } from 'dockview-react';
 
 /**
  * Parses a dockview panel id produced by `openGraph`/`openRaw` back into the
