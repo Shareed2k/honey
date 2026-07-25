@@ -17,6 +17,7 @@ type Plugins struct {
 	TimeoutMS         int      `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
 	NetworkDeny       *bool    `yaml:"network_deny,omitempty" json:"network_deny,omitempty"`
 	NetworkAllowHosts []string `yaml:"network_allow_hosts,omitempty" json:"network_allow_hosts,omitempty"`
+	AllowHostNetwork  bool     `yaml:"allow_host_network,omitempty" json:"allow_host_network,omitempty"`
 }
 
 // PluginsEffective holds resolved plugin settings for runtime.
@@ -28,6 +29,7 @@ type PluginsEffective struct {
 	TimeoutMS         int
 	NetworkDeny       bool
 	NetworkAllowHosts []string
+	AllowHostNetwork  bool
 }
 
 const (
@@ -66,6 +68,7 @@ func (p Plugins) WithDefaults() PluginsEffective {
 	if len(p.NetworkAllowHosts) > 0 {
 		e.NetworkAllowHosts = append([]string(nil), p.NetworkAllowHosts...)
 	}
+	e.AllowHostNetwork = p.AllowHostNetwork
 	return e
 }
 

@@ -1,0 +1,10 @@
+id: pghero_diagnostics
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  # Built by hand (honey has no build step):
+  #   docker build -t honey-plugin-pghero:latest examples/plugins/pghero_diagnostics/
+  image: "honey-plugin-pghero:latest"
+  pull_policy: if_not_present

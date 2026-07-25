@@ -1,10 +1,28 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 )
+
+func TestHealthzReportsAPIVersion(t *testing.T) {
+	rec := httptest.NewRecorder()
+	healthzHandler(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body apiv1.HealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.APIVersion != apiv1.APIVersion {
+		t.Errorf("api_version = %q, want %q", body.APIVersion, apiv1.APIVersion)
+	}
+}
 
 func TestRunArgv_Success(t *testing.T) {
 	resp := runArgv(apiv1.ExecRequest{Argv: []string{"echo", "-n", "hello"}})

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -106,6 +107,30 @@ func (b *localBackend) DialShim(ctx context.Context, network, address string) (n
 
 func (b *localBackend) Close() error { return b.cli.Close() }
 
+// freeLoopbackPortAllocator is an optional DockerBackend capability: it returns
+// a currently-free TCP port on the daemon host's loopback, for a host-network
+// plugin whose shim cannot use a published port mapping. It is a separate,
+// type-asserted interface (not a DockerBackend method) so DockerBackend stays
+// small — a bigger interface is a weaker abstraction.
+type freeLoopbackPortAllocator interface {
+	FreeLoopbackPort(ctx context.Context) (int, error)
+}
+
+var _ freeLoopbackPortAllocator = (*localBackend)(nil)
+
+// FreeLoopbackPort binds an ephemeral loopback port, reads it, and releases it.
+// The window between release and the container binding it is a benign TOCTOU:
+// if the port is taken in between, readiness simply times out and the operator
+// retries — not worth a lock for a rare, host-network-only path.
+func (b *localBackend) FreeLoopbackPort(_ context.Context) (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("plugins: allocate free loopback port: %w", err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
 // dockerTransport runs a plugin as a long-lived Docker container (for the
 // Manager's process lifetime, or a DockerHostSession's run lifetime for
 // remote hosts — not one container per call), reached over HTTP via the
@@ -188,6 +213,18 @@ type dockerTransportConfig struct {
 	MaxBackoff time.Duration
 	Env        map[string]string // resolved allowed_env values, passed through as container env vars
 	Volumes    []string          // static bind mounts from manifest.Docker.Volumes, Docker bind syntax
+	InitMode   string            // "bind" or "embedded" (never empty; resolved in loadDockerPluginDir)
+	InitPath   string            // in-image honey-plugin-init path when InitMode=="embedded"
+
+	// HostNetwork runs the container with NetworkMode "host" instead of the
+	// default bridge network — no ports are exposed/published, and the shim
+	// is instead told (via buildContainerConfig's Cmd) to bind an
+	// operator-allocated loopback port directly. Set from
+	// manifest.Docker.Network == "host" in loadDockerPluginDir, which is
+	// itself gated on plugins.allow_host_network (see manager.go). Host
+	// networking grants the container the daemon host's full network
+	// namespace, so this is never the default.
+	HostNetwork bool
 }
 
 // newDockerTransport validates the plugin's cue source and wires the shim HTTP
@@ -248,32 +285,61 @@ func (t *dockerTransport) ensureStarted(ctx context.Context, createFn createAndS
 	return nil
 }
 
+// buildContainerConfig builds the container + host config for a plugin. Pure
+// (no daemon call), so it is unit-tested directly like buildBinds/
+// entrypointForMode.
+//
+// Bridge mode (cfg.HostNetwork false): the shim port is exposed and
+// published to an ephemeral 127.0.0.1 host port — unchanged, byte-for-byte,
+// from the original inline construction this replaces.
+//
+// Host mode (cfg.HostNetwork true): NetworkMode "host", no port
+// exposing/publishing (host networking shares the daemon host's network
+// namespace directly, so there is nothing to publish), and the shim is told
+// to bind 127.0.0.1:<port> — LOOPBACK ONLY, never the host's routable
+// interfaces — via Cmd, which the shim's ENTRYPOINT appends as flags.
+func buildContainerConfig(cfg dockerTransportConfig, shimHostPath string, port int) (*containertypes.Config, *containertypes.HostConfig) {
+	cc := &containertypes.Config{
+		Image:      cfg.Image,
+		Entrypoint: entrypointForMode(cfg.InitMode, cfg.InitPath),
+		Env:        envSlice(cfg.Env),
+	}
+	hc := &containertypes.HostConfig{Binds: buildBinds(shimHostPath, cfg.Volumes)}
+	if cfg.HostNetwork {
+		hc.NetworkMode = "host"
+		cc.Cmd = []string{"-addr", "127.0.0.1:" + strconv.Itoa(port)}
+		return cc, hc
+	}
+	cc.ExposedPorts = networktypes.PortSet{pluginInitPort: struct{}{}}
+	hc.PortBindings = networktypes.PortMap{
+		pluginInitPort: {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: ""}},
+	}
+	return cc, hc
+}
+
 // createAndStart pulls (if needed), creates, starts a plugin container and
 // waits for honey-plugin-init inside it to become reachable. Shared by
 // dockerTransport's first-use start (CallRaw) and docker_restart.go's recreate
-// loop. shimHostPath is the daemon-host path of the honey-plugin-init binary
-// to bind-mount (from the backend); httpClient is the shim HTTP client (its
-// transport dials through the same backend, so readiness polling works
-// against a remote daemon too).
-func createAndStart(ctx context.Context, cli *client.Client, httpClient *http.Client, shimHostPath string, cfg dockerTransportConfig) (containerID, addr string, err error) {
+// loop (via createContainer, its createAndStartFunc seam). shimHostPath is the
+// daemon-host path of the honey-plugin-init binary to bind-mount (from the
+// backend); httpClient is the shim HTTP client (its transport dials through
+// the same backend, so readiness polling works against a remote daemon too).
+// port is the pre-allocated loopback port for cfg.HostNetwork (0, unused,
+// otherwise) — see createContainer, which type-asserts the backend to
+// freeLoopbackPortAllocator and allocates it before calling in here.
+func createAndStart(ctx context.Context, cli *client.Client, httpClient *http.Client, shimHostPath string, port int, cfg dockerTransportConfig) (containerID, addr string, err error) {
 	if cfg.PullPolicy == "always" {
 		if pullErr := pullImage(ctx, cli, cfg.Image); pullErr != nil {
 			return "", "", pullErr
 		}
 	}
 
-	containerCfg := &containertypes.Config{
-		Image:        cfg.Image,
-		Entrypoint:   []string{pluginInitBindPath},
-		Env:          envSlice(cfg.Env),
-		ExposedPorts: networktypes.PortSet{pluginInitPort: struct{}{}},
+	if cfg.HostNetwork {
+		zap.L().Warn("plugins: starting docker.network: host container — this grants the container the daemon host's full network namespace",
+			zap.String("image", cfg.Image), zap.Int("port", port))
 	}
-	hostCfg := &containertypes.HostConfig{
-		Binds: buildBinds(shimHostPath, cfg.Volumes),
-		PortBindings: networktypes.PortMap{
-			pluginInitPort: {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: ""}},
-		},
-	}
+
+	containerCfg, hostCfg := buildContainerConfig(cfg, shimHostPath, port)
 	createOpts := client.ContainerCreateOptions{Config: containerCfg, HostConfig: hostCfg}
 
 	resp, createErr := cli.ContainerCreate(ctx, createOpts)
@@ -292,7 +358,11 @@ func createAndStart(ctx context.Context, cli *client.Client, httpClient *http.Cl
 		return "", "", cleanupFailedContainer(ctx, cli, resp.ID, wrapped)
 	}
 
-	addr, err = waitForReady(ctx, cli, httpClient, resp.ID)
+	if cfg.HostNetwork {
+		addr, err = waitForReadyHost(ctx, httpClient, port)
+	} else {
+		addr, err = waitForReady(ctx, cli, httpClient, resp.ID)
+	}
 	if err != nil {
 		return "", "", cleanupFailedContainer(ctx, cli, resp.ID, err)
 	}
@@ -341,14 +411,26 @@ func stopAndRemoveContainer(ctx context.Context, stopper containerStopper, remov
 	return errors.Join(stopErr, removeErr)
 }
 
-// buildBinds prepends the mandatory honey-plugin-init bind mount (read-only)
-// to the manifest's static docker.volumes entries, in that order — pure and
-// unit-tested directly, no Docker daemon needed to verify this construction.
+// buildBinds returns the container bind mounts. In bind mode it prepends the
+// read-only honey-plugin-init shim mount; an empty pluginInitHostPath (embedded
+// mode) yields no shim bind at all. docker.volumes follow in both modes. Pure
+// and unit-tested directly, no Docker daemon needed to verify this construction.
 func buildBinds(pluginInitHostPath string, volumes []string) []string {
 	binds := make([]string, 0, len(volumes)+1)
-	binds = append(binds, pluginInitHostPath+":"+pluginInitBindPath+":ro")
+	if pluginInitHostPath != "" {
+		binds = append(binds, pluginInitHostPath+":"+pluginInitBindPath+":ro")
+	}
 	binds = append(binds, volumes...)
 	return binds
+}
+
+// entrypointForMode picks the container entrypoint: the bind-mounted shim path
+// in bind mode, or the image's own embedded init path in embedded mode.
+func entrypointForMode(mode, initPath string) []string {
+	if mode == "embedded" {
+		return []string{initPath}
+	}
+	return []string{pluginInitBindPath}
 }
 
 // envSlice renders a name->value map as "NAME=value" entries for
@@ -386,19 +468,23 @@ func pullImage(ctx context.Context, cli *client.Client, image string) error {
 // Docker-specific "how do I check" glue.
 func waitForReady(ctx context.Context, cli *client.Client, httpClient *http.Client, containerID string) (string, error) {
 	var addr string
-	checkFn := func() bool {
+	checkFn := func() (bool, error) {
 		inspect, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 		if err != nil || inspect.Container.NetworkSettings == nil {
-			return false
+			return false, nil
 		}
 		for _, binding := range inspect.Container.NetworkSettings.Ports[pluginInitPort] {
 			candidate := fmt.Sprintf("http://127.0.0.1:%s", binding.HostPort)
-			if pingReady(ctx, httpClient, candidate) {
+			ready, fatal := checkHealth(ctx, httpClient, candidate)
+			if fatal != nil {
+				return false, fatal
+			}
+			if ready {
 				addr = candidate
-				return true
+				return true, nil
 			}
 		}
-		return false
+		return false, nil
 	}
 	if err := pollUntilReady(ctx, time.Now().Add(60*time.Second), checkFn); err != nil {
 		return "", fmt.Errorf("plugins: container %s: %w", containerID, err)
@@ -406,15 +492,36 @@ func waitForReady(ctx context.Context, cli *client.Client, httpClient *http.Clie
 	return addr, nil
 }
 
-// pollUntilReady calls checkFn every 200ms until it returns true, the
-// deadline passes, or ctx is done. Pure retry-loop logic with no Docker
-// dependency, so its deadline/cancellation behavior gets fast, direct unit
+// waitForReadyHost polls the shim directly on its known loopback address (host
+// networking publishes no ports, so there is nothing to inspect — unlike
+// waitForReady, which discovers the published host port via
+// ContainerInspect). Reuses the same checkHealth (api_version handshake) +
+// pollUntilReady retry loop as the bridge path.
+func waitForReadyHost(ctx context.Context, httpClient *http.Client, port int) (string, error) {
+	addr := "http://127.0.0.1:" + strconv.Itoa(port)
+	checkFn := func() (bool, error) { return checkHealth(ctx, httpClient, addr) }
+	if err := pollUntilReady(ctx, time.Now().Add(60*time.Second), checkFn); err != nil {
+		return "", fmt.Errorf("plugins: host-network shim on %s: %w", addr, err)
+	}
+	return addr, nil
+}
+
+// pollUntilReady calls checkFn every 200ms until it reports ready, returns a
+// fatal error, the deadline passes, or ctx is done. A non-nil fatal error
+// (e.g. an api_version mismatch from checkHealth) aborts the loop
+// immediately instead of being retried — that failure will never resolve
+// itself by waiting longer. Pure retry-loop logic with no Docker dependency,
+// so its deadline/cancellation/fatal-abort behavior gets fast, direct unit
 // tests instead of relying solely on Task 9's real-Docker integration test
 // (architecture-review fix: this loop previously had no test coverage of
 // its own).
-func pollUntilReady(ctx context.Context, deadline time.Time, checkFn func() bool) error {
+func pollUntilReady(ctx context.Context, deadline time.Time, checkFn func() (bool, error)) error {
 	for {
-		if checkFn() {
+		ready, fatal := checkFn()
+		if fatal != nil {
+			return fatal
+		}
+		if ready {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -428,17 +535,32 @@ func pollUntilReady(ctx context.Context, deadline time.Time, checkFn func() bool
 	}
 }
 
-func pingReady(ctx context.Context, httpClient *http.Client, addr string) bool {
+// checkHealth GETs /healthz and classifies the result three ways:
+//
+//	(false, nil)   — not reachable / not 200 yet → keep retrying
+//	(false, fatal) — reachable but api_version mismatches honey → STOP, hard-fail
+//	(true,  nil)   — reachable and api_version matches → ready
+func checkHealth(ctx context.Context, httpClient *http.Client, addr string) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/healthz", nil)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return false
+		return false, nil // not up yet
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return false, nil
+	}
+	var body apiv1.HealthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false, nil // partial/old server mid-boot — retry
+	}
+	if body.APIVersion != apiv1.APIVersion {
+		return false, fmt.Errorf("honey-plugin-init api_version mismatch (honey expects %q, image reports %q); rebuild the image with a matching honey-plugin-init", apiv1.APIVersion, body.APIVersion)
+	}
+	return true, nil
 }
 
 // CallRaw dispatches on export to one of two calling conventions that
@@ -475,16 +597,40 @@ func (t *dockerTransport) CallRaw(ctx context.Context, export string, inBytes []
 	return t.callDirect(ctx, export, inBytes)
 }
 
+// shimPathForMode returns the daemon-host path of honey-plugin-init to
+// bind-mount, or "" in embedded mode (the image supplies its own init, so no
+// shim is staged or bound). Keeping the mode gate here — rather than in each
+// backend — makes embedded mode skip shim staging uniformly for local and
+// remote backends alike: a remote backend's ShimHostPath stages the binary
+// onto the target host as a side effect, and embedded mode needs to skip that
+// staging entirely, not just discard its result.
+func shimPathForMode(ctx context.Context, backend DockerBackend, mode string) (string, error) {
+	if mode == "embedded" {
+		return "", nil
+	}
+	return backend.ShimHostPath(ctx)
+}
+
 // createContainer resolves the shim binary's daemon-host path from the backend
 // (staging it onto a remote host if needed) and pulls/creates/starts the
 // plugin container. Used both for first-use start (CallRaw) and crash-recreate
 // (docker_restart.go).
 func (t *dockerTransport) createContainer(ctx context.Context) (containerID, addr string, err error) {
-	shimPath, err := t.backend.ShimHostPath(ctx)
+	shimPath, err := shimPathForMode(ctx, t.backend, t.createCfg.InitMode)
 	if err != nil {
 		return "", "", fmt.Errorf("plugins: resolve honey-plugin-init: %w", err)
 	}
-	return createAndStart(ctx, t.backend.Client(), t.httpClient, shimPath, t.createCfg)
+	port := 0
+	if t.createCfg.HostNetwork {
+		alloc, ok := t.backend.(freeLoopbackPortAllocator)
+		if !ok {
+			return "", "", fmt.Errorf("plugins: docker.network: host for %q: backend does not support host-network port allocation", t.createCfg.Image)
+		}
+		if port, err = alloc.FreeLoopbackPort(ctx); err != nil {
+			return "", "", fmt.Errorf("plugins: allocate host-network port for %q: %w", t.createCfg.Image, err)
+		}
+	}
+	return createAndStart(ctx, t.backend.Client(), t.httpClient, shimPath, port, t.createCfg)
 }
 
 // callDirect is the direct-call convention: export is the CUE action name,

@@ -22,11 +22,26 @@ type fakeDockerBackend struct {
 
 	mu        sync.Mutex
 	dialCalls int
+	shimCalls int
 }
 
 func (b *fakeDockerBackend) Client() *client.Client { return nil }
 
-func (b *fakeDockerBackend) ShimHostPath(context.Context) (string, error) { return b.shimPath, nil }
+func (b *fakeDockerBackend) ShimHostPath(context.Context) (string, error) {
+	b.mu.Lock()
+	b.shimCalls++
+	b.mu.Unlock()
+	return b.shimPath, nil
+}
+
+// shimHostPathCalls reports how many times ShimHostPath was called — used to
+// prove embedded mode skips shim resolution entirely rather than merely
+// discarding its result.
+func (b *fakeDockerBackend) shimHostPathCalls() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.shimCalls
+}
 
 func (b *fakeDockerBackend) DialShim(ctx context.Context, network, _ string) (net.Conn, error) {
 	b.mu.Lock()

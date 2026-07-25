@@ -28,6 +28,7 @@ require (
 	github.com/coregx/coregex v0.12.22
 	github.com/creack/pty v1.1.24
 	github.com/creasty/defaults v1.8.0
+	github.com/distribution/reference v0.6.0
 	github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9
 	github.com/extism/go-pdk v1.1.3
 	github.com/extism/go-sdk v1.7.1
@@ -232,7 +233,6 @@ require (
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/denis-tingaikin/go-header v0.5.0 // indirect
-	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/docker/go-connections v0.7.0 // indirect
