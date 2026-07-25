@@ -23,7 +23,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.54.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.0
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.43.0
-	github.com/aws/smithy-go v1.27.3
+	github.com/aws/smithy-go v1.27.4
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/coregx/coregex v0.12.22
 	github.com/creack/pty v1.1.24
