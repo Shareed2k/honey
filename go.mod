@@ -107,7 +107,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
-	k8s.io/client-go v0.36.2
+	k8s.io/client-go v0.36.3
 	k8s.io/klog/v2 v2.140.0
 	mvdan.cc/sh/v3 v3.13.2-0.20260510185049-f5c6e2779117
 )
