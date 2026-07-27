@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/transport/spdy"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/k8sdebug"
@@ -340,6 +341,77 @@ func (k *K8sPodExecutor) RunInteractive(user string, r hosts.Record) error {
 		return fmt.Errorf("k8s interactive session not configured")
 	}
 	return k.interactive.RunInteractive(user, r)
+}
+
+// K8sPodExecutor satisfies the interactive-TTY seam so the web/CLI terminal
+// paths can open a pod shell through Registry.ForRecord without down-casting to
+// a native client.
+var _ hostexec.InteractiveStreamer = (*K8sPodExecutor)(nil)
+
+// RunInteractiveStreams runs an interactive pod shell over the caller's streams
+// (e.g. a web terminal's WebSocket pipes). Under a TTY stdout and stderr are a
+// single stream (a PTY merges them), so both are routed to stdout. resize
+// [cols, rows] pairs drive SPDY terminal-size updates.
+func (k *K8sPodExecutor) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
+	hc, err := k.Dial(user, r)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = hc.Close() }()
+	pc, ok := hc.(*K8sNativeClient)
+	if !ok {
+		return fmt.Errorf("k8s interactive: unexpected client type %T", hc)
+	}
+	env, _ := cuetry.EffectiveEnvForRun(context.Background(), false, nil, &cuetry.StepBase{}, nil, nil, &r)
+	shCmd, _ := cuetry.ShellExportPrefixForRemote(env, "sh")
+	return pc.ExecInPod(ctx, []string{"sh", "-c", shCmd}, stdin, stdout, stdout, true, newColsRowsSizeQueue(cols, rows, resize))
+}
+
+// colsRowsSizeQueue adapts a [cols, rows] resize stream to
+// remotecommand.TerminalSizeQueue: Next returns the initial size first, then
+// each incoming pair, and nil once the channel closes.
+type colsRowsSizeQueue struct {
+	initial *remotecommand.TerminalSize
+	ch      <-chan [2]int
+}
+
+func newColsRowsSizeQueue(cols, rows int, ch <-chan [2]int) *colsRowsSizeQueue {
+	return &colsRowsSizeQueue{initial: podTermSize(cols, rows), ch: ch}
+}
+
+func (q *colsRowsSizeQueue) Next() *remotecommand.TerminalSize {
+	if q.initial != nil {
+		s := q.initial
+		q.initial = nil
+		return s
+	}
+	if q.ch == nil {
+		return nil
+	}
+	sz, ok := <-q.ch
+	if !ok {
+		return nil
+	}
+	return podTermSize(sz[0], sz[1])
+}
+
+// podTermSize clamps cols/rows into the uint16 terminal-size range (defaulting
+// unset dimensions to 80x24) so the conversion is always in bounds.
+func podTermSize(cols, rows int) *remotecommand.TerminalSize {
+	w, h := cols, rows
+	if w < 1 {
+		w = 80
+	}
+	if h < 1 {
+		h = 24
+	}
+	if w > 65535 {
+		w = 65535
+	}
+	if h > 65535 {
+		h = 65535
+	}
+	return &remotecommand.TerminalSize{Width: uint16(w), Height: uint16(h)}
 }
 
 // RunTunnel performs k8s port-forwarding via the SPDY API.

@@ -3,6 +3,7 @@ package k8sprovider
 import (
 	"testing"
 
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -31,5 +32,21 @@ func TestK8sFactory_HandlesRecord(t *testing.T) {
 				t.Fatalf("HandlesRecord(%q) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// The executor returned for a pod must satisfy hostexec.InteractiveStreamer so
+// RunK8sPodWebTTY can route through the seam (Registry.ForRecord + type assert)
+// instead of down-casting to *K8sPodExecutor. A pod reached over the honey mesh
+// resolves to honeyprovider's executor, which also implements the interface.
+func TestK8sFactory_ExecutorForPodIsInteractiveStreamer(t *testing.T) {
+	f := k8sFactory{}
+	pod := hosts.Record{Provider: "k8s", Meta: map[string]string{"kind": "pod", "namespace": "default", "pod_name": "x"}}
+	ex := f.ExecutorFor(pod, nil)
+	if ex == nil {
+		t.Fatalf("ExecutorFor(pod) = nil, want executor")
+	}
+	if _, ok := ex.(hostexec.InteractiveStreamer); !ok {
+		t.Fatalf("ExecutorFor(pod) = %T, does not implement hostexec.InteractiveStreamer", ex)
 	}
 }

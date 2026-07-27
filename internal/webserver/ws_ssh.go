@@ -21,7 +21,6 @@ import (
 	"github.com/shareed2k/honey/internal/ui"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
-	"k8s.io/client-go/tools/remotecommand"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -163,7 +162,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		// Use a non-cancelled context: the HTTP request context can be cancelled after hijack
 		// in some setups, which would abort the SPDY exec stream immediately.
 		defer s.trackWSConnection("k8s")()
-		handleWebK8sTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
+		handleWebK8sTTY(context.Background(), conn, hello.Record, cols, rows, recorder, s.opts.ExecRegistry)
 		return
 	}
 
@@ -429,17 +428,16 @@ func pumpWebSocketToStdinUpstream(conn *websocket.Conn, stdinPipeW *io.PipeWrite
 	}
 }
 
-func handleWebK8sTTY(ctx context.Context, conn *websocket.Conn, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
+func handleWebK8sTTY(ctx context.Context, conn *websocket.Conn, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder, reg hostexec.Registry) {
 	stdinPipeR, stdinPipeW := io.Pipe()
-	resizeCh := make(chan *remotecommand.TerminalSize, 32)
+	resizeCh := make(chan [2]int, 32)
 	outWriter := &wsWriter{conn: conn, mu: &sync.Mutex{}}
 	stdout := engine.WrapRecordingWriter(outWriter, recorder, "stdout")
-	stderr := engine.WrapRecordingWriter(outWriter, recorder, "stderr")
 	stdin := io.Reader(stdinPipeR)
 
 	waitDone := make(chan error, 1)
 	go func() {
-		waitDone <- ui.RunK8sPodWebTTY(ctx, rec, stdin, stdout, stderr, cols, rows, resizeCh)
+		waitDone <- ui.RunK8sPodWebTTY(ctx, rec, stdin, stdout, cols, rows, resizeCh, reg)
 	}()
 
 	go pumpWebSocketToStdinK8s(conn, stdinPipeW, resizeCh, recorder)
@@ -454,7 +452,7 @@ func handleWebK8sTTY(ctx context.Context, conn *websocket.Conn, rec hosts.Record
 	}
 }
 
-func pumpWebSocketToStdinK8s(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- *remotecommand.TerminalSize, recorder *engine.SessionRecorder) {
+func pumpWebSocketToStdinK8s(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- [2]int, recorder *engine.SessionRecorder) {
 	defer close(resizeCh)
 	for {
 		mt, payload, err := conn.ReadMessage()
@@ -476,10 +474,10 @@ func pumpWebSocketToStdinK8s(conn *websocket.Conn, stdinPipeW *io.PipeWriter, re
 				continue
 			}
 			c, rw := rz.Cols, rz.Rows
-			if sz := ui.ResizeFromColsRows(c, rw); sz != nil {
+			if c > 0 && rw > 0 {
 				recorder.RecordResize(c, rw)
 				select {
-				case resizeCh <- sz:
+				case resizeCh <- [2]int{c, rw}:
 				default:
 				}
 			}
