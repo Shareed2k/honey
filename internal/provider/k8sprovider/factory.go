@@ -93,13 +93,15 @@ func (f k8sFactory) ProviderName() string { return "k8s" }
 // server honey declines and this factory resolves the pod locally. Without this
 // method k8sFactory would not satisfy searchrun.ExecutorProvider and pod records
 // would fall through to the SSH fallback.
-func (f k8sFactory) HandlesRecord(r hosts.Record) bool {
-	return r.Meta["kind"] == "pod"
-}
+// handles is the single record-kind predicate shared by HandlesRecord and
+// ExecutorFor, so the pod check has one definition instead of two.
+func (f k8sFactory) handles(r hosts.Record) bool { return r.Meta["kind"] == "pod" }
+
+func (f k8sFactory) HandlesRecord(r hosts.Record) bool { return f.handles(r) }
 
 func (f k8sFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
-	if r.Meta["kind"] == "pod" {
-		return &K8sPodExecutor{interactive: f.interactive}
+	if !f.handles(r) {
+		return nil
 	}
-	return nil
+	return &K8sPodExecutor{interactive: f.interactive}
 }
