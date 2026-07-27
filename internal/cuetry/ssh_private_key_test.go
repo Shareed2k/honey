@@ -55,3 +55,20 @@ func TestParseRemoteRecipe_sshPrivateKeyWhitespace(t *testing.T) {
 		t.Fatalf("want ssh_private_key validation error, got %v", err)
 	}
 }
+
+// TestValidateParsedRecipe_sshPrivateKeyWhitespace guards against the JSON exec
+// path drifting laxer than the CUE path: both go through validateRecipeSemantics,
+// so ValidateParsedRecipe must reject a whitespace-only defaults.ssh_private_key
+// exactly as ParseRemoteRecipe does. Before the two validators were unified, the
+// JSON path silently skipped the defaults ssh_private_key and retry checks.
+func TestValidateParsedRecipe_sshPrivateKeyWhitespace(t *testing.T) {
+	t.Parallel()
+	r := Recipe{
+		Name:     "x",
+		Defaults: &RecipeDefaults{SSHPrivateKey: "  "},
+		Steps:    wrapAll(&CommandStep{StepBase: StepBase{Host: "*"}, Command: "true"}),
+	}
+	if err := ValidateParsedRecipe(r, nil); err == nil || !strings.Contains(err.Error(), "ssh_private_key") {
+		t.Fatalf("JSON path must reject whitespace defaults.ssh_private_key like the CUE path; got %v", err)
+	}
+}

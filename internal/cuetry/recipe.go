@@ -610,56 +610,69 @@ func parseRemoteRecipeAfterTransform(cueBytes []byte, records []hosts.Record, se
 		return out, fmt.Errorf("cuetry: decode: %w", err)
 	}
 	defaultRenderHosts(out.Steps)
-	if out.Defaults != nil && strings.TrimSpace(out.Defaults.RunAs) != "" {
-		if err := ValidateRunAsUser(out.Defaults.RunAs); err != nil {
-			return out, fmt.Errorf("cuetry: defaults.run_as: %w", err)
-		}
-	}
-	if out.Defaults != nil && len(out.Defaults.Env) > 0 {
-		if err := ValidateRecipeEnvMap(out.Defaults.Env); err != nil {
-			return out, fmt.Errorf("cuetry: defaults.env: %w", err)
-		}
-	}
-	if out.Defaults != nil && len(out.Defaults.Secrets) > 0 {
-		if err := ValidateRecipeSecretsRefMapPrefixes(out.Defaults.Secrets, secretPrefixes); err != nil {
-			return out, fmt.Errorf("cuetry: defaults.secrets: %w", err)
-		}
-		if err := OverlapEnvSecrets(out.Defaults.Env, out.Defaults.Secrets); err != nil {
-			return out, fmt.Errorf("cuetry: defaults: %w", err)
-		}
-	}
-	if out.Defaults != nil {
-		if err := validateSSHPrivateKeyField("defaults", out.Defaults.SSHPrivateKey); err != nil {
-			return out, err
-		}
-		if err := validateMaxParallelField("defaults", out.Defaults.MaxParallel); err != nil {
-			return out, err
-		}
-		if out.Defaults.Retry != nil {
-			cfg := EffectiveRetry(&StepBase{}, out.Defaults)
-			if err := ValidateRetry(cfg); err != nil {
-				return out, fmt.Errorf("cuetry: defaults.retry: %w", err)
-			}
-		}
-	}
-	mode, err := RecipeExecutionMode(out)
-	if err != nil {
-		return out, err
-	}
-	nSteps := len(out.Steps)
-	for i, st := range out.Steps {
-		vc := StepValidateCtx{Index: i, NumSteps: nSteps, Defaults: out.Defaults, Records: records, SecretPrefixes: secretPrefixes, Mode: mode}
-		if err := validateDecodedRecipeStep(vc, st); err != nil {
-			return out, err
-		}
-	}
-	if err := validateRecipeTunnelRefs(out.Steps); err != nil {
-		return out, err
-	}
-	if err := ValidateRecipeGraph(out); err != nil {
+	if err := validateRecipeSemantics(out, records, secretPrefixes); err != nil {
 		return out, err
 	}
 	return out, nil
+}
+
+// validateRecipeSemantics runs the recipe-level and per-step validators shared by
+// the CUE parse path (parseRemoteRecipeAfterTransform) and the pre-decoded/JSON
+// path (ValidateParsedRecipe). Keeping a single implementation prevents the two
+// entry points from drifting: historically the JSON path silently skipped the
+// defaults ssh_private_key and defaults.retry checks the CUE path performed, so a
+// recipe submitted as JSON was validated less strictly than the identical CUE
+// recipe. secretPrefixes is the set of allowed plugin secret-ref prefixes (nil
+// when the caller has no plugins; ValidateRecipeSecretsRefMapPrefixes(m, nil) is
+// identical to the old ValidateRecipeSecretsRefMap(m)).
+func validateRecipeSemantics(r Recipe, records []hosts.Record, secretPrefixes []string) error {
+	if r.Defaults != nil && strings.TrimSpace(r.Defaults.RunAs) != "" {
+		if err := ValidateRunAsUser(r.Defaults.RunAs); err != nil {
+			return fmt.Errorf("cuetry: defaults.run_as: %w", err)
+		}
+	}
+	if r.Defaults != nil && len(r.Defaults.Env) > 0 {
+		if err := ValidateRecipeEnvMap(r.Defaults.Env); err != nil {
+			return fmt.Errorf("cuetry: defaults.env: %w", err)
+		}
+	}
+	if r.Defaults != nil && len(r.Defaults.Secrets) > 0 {
+		if err := ValidateRecipeSecretsRefMapPrefixes(r.Defaults.Secrets, secretPrefixes); err != nil {
+			return fmt.Errorf("cuetry: defaults.secrets: %w", err)
+		}
+		if err := OverlapEnvSecrets(r.Defaults.Env, r.Defaults.Secrets); err != nil {
+			return fmt.Errorf("cuetry: defaults: %w", err)
+		}
+	}
+	if r.Defaults != nil {
+		if err := validateSSHPrivateKeyField("defaults", r.Defaults.SSHPrivateKey); err != nil {
+			return err
+		}
+		if err := validateMaxParallelField("defaults", r.Defaults.MaxParallel); err != nil {
+			return err
+		}
+		if r.Defaults.Retry != nil {
+			cfg := EffectiveRetry(&StepBase{}, r.Defaults)
+			if err := ValidateRetry(cfg); err != nil {
+				return fmt.Errorf("cuetry: defaults.retry: %w", err)
+			}
+		}
+	}
+	mode, err := RecipeExecutionMode(r)
+	if err != nil {
+		return err
+	}
+	nSteps := len(r.Steps)
+	for i, st := range r.Steps {
+		vc := StepValidateCtx{Index: i, NumSteps: nSteps, Defaults: r.Defaults, Records: records, SecretPrefixes: secretPrefixes, Mode: mode}
+		if err := validateDecodedRecipeStep(vc, st); err != nil {
+			return err
+		}
+	}
+	if err := validateRecipeTunnelRefs(r.Steps); err != nil {
+		return err
+	}
+	return ValidateRecipeGraph(r)
 }
 
 func validateSSHPrivateKeyField(where, path string) error {
@@ -742,44 +755,7 @@ func ValidateRemoteRecipe(cueBytes []byte) error {
 // It does not re-parse CUE text, so callers that bypass the CUE compiler must
 // invoke this to ensure the Recipe is well-formed before handing it to a runner.
 func ValidateParsedRecipe(r Recipe, records []hosts.Record) error {
-	if r.Defaults != nil && strings.TrimSpace(r.Defaults.RunAs) != "" {
-		if err := ValidateRunAsUser(r.Defaults.RunAs); err != nil {
-			return fmt.Errorf("cuetry: defaults.run_as: %w", err)
-		}
-	}
-	if r.Defaults != nil && len(r.Defaults.Env) > 0 {
-		if err := ValidateRecipeEnvMap(r.Defaults.Env); err != nil {
-			return fmt.Errorf("cuetry: defaults.env: %w", err)
-		}
-	}
-	if r.Defaults != nil && len(r.Defaults.Secrets) > 0 {
-		if err := ValidateRecipeSecretsRefMap(r.Defaults.Secrets); err != nil {
-			return fmt.Errorf("cuetry: defaults.secrets: %w", err)
-		}
-		if err := OverlapEnvSecrets(r.Defaults.Env, r.Defaults.Secrets); err != nil {
-			return fmt.Errorf("cuetry: defaults: %w", err)
-		}
-	}
-	if r.Defaults != nil {
-		if err := validateMaxParallelField("defaults", r.Defaults.MaxParallel); err != nil {
-			return err
-		}
-	}
-	mode, err := RecipeExecutionMode(r)
-	if err != nil {
-		return err
-	}
-	nSteps := len(r.Steps)
-	for i, st := range r.Steps {
-		vc := StepValidateCtx{Index: i, NumSteps: nSteps, Defaults: r.Defaults, Records: records, Mode: mode}
-		if err := validateDecodedRecipeStep(vc, st); err != nil {
-			return err
-		}
-	}
-	if err := validateRecipeTunnelRefs(r.Steps); err != nil {
-		return err
-	}
-	return ValidateRecipeGraph(r)
+	return validateRecipeSemantics(r, records, nil)
 }
 
 func formatCueErr(err error) error {
