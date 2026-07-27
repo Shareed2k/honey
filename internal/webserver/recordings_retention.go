@@ -21,6 +21,27 @@ type recordingRetentionState struct {
 	retentionText string
 }
 
+func (r *recordingRetentionState) setRetention(maxAge time.Duration, text string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.retention = maxAge
+	r.retentionText = text
+}
+
+func (r *recordingRetentionState) recordPurge(deleted int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastPurgeAt = time.Now().UTC()
+	r.lastDeleted = deleted
+}
+
+// lastPurge returns the most recent purge time and whether a purge has run.
+func (r *recordingRetentionState) lastPurge() (time.Time, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastPurgeAt, !r.lastPurgeAt.IsZero()
+}
+
 func (s *Server) recordingRetentionMaxAge() (time.Duration, string) {
 	if s.opts.Config == nil {
 		return 0, ""
@@ -41,17 +62,11 @@ func (s *Server) startRecordingRetention(ctx context.Context) {
 	if maxAge <= 0 || strings.TrimSpace(s.opts.RecordDir) == "" {
 		return
 	}
-	s.retentionState.mu.Lock()
-	s.retentionState.retention = maxAge
-	s.retentionState.retentionText = text
-	s.retentionState.mu.Unlock()
+	s.retentionState.setRetention(maxAge, text)
 
 	run := func() {
 		res, err := recordings.PurgeExpired(s.opts.RecordDir, maxAge)
-		s.retentionState.mu.Lock()
-		s.retentionState.lastPurgeAt = time.Now().UTC()
-		s.retentionState.lastDeleted = res.Deleted
-		s.retentionState.mu.Unlock()
+		s.retentionState.recordPurge(res.Deleted)
 		if err != nil {
 			zap.L().Warn("recording retention sweep failed", zap.Error(err))
 		}

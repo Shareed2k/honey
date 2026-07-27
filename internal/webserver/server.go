@@ -591,11 +591,9 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	if maxAge, text := s.recordingRetentionMaxAge(); maxAge > 0 && text != "" {
 		meta.SessionRecordingRetention = text
 	}
-	s.retentionState.mu.Lock()
-	if !s.retentionState.lastPurgeAt.IsZero() {
-		meta.SessionRecordingLastPurge = s.retentionState.lastPurgeAt.Format(time.RFC3339)
+	if t, ok := s.retentionState.lastPurge(); ok {
+		meta.SessionRecordingLastPurge = t.Format(time.RFC3339)
 	}
-	s.retentionState.mu.Unlock()
 	if addr := strings.TrimSpace(s.opts.MetricsListenAddr); addr != "" {
 		meta.MetricsURL = "http://" + addr + "/metrics"
 	}
