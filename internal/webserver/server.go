@@ -129,10 +129,9 @@ type Server struct {
 
 	commandRunner *engine.CommandRunner
 
-	// deviceCA + enroll back the mTLS device-enrollment endpoints. Both are nil
-	// when no state dir is available (enrollment disabled).
-	deviceCA *DeviceCA
-	enroll   *enrollStore
+	// enrollAPI owns the mTLS device-enrollment endpoints; its CA/store are nil
+	// (endpoints report 503) when no state dir is available.
+	enrollAPI *EnrollAPI
 
 	// remoteListenerFor obtains the reverse listener on the target side for the
 	// /api/v1/ws/remote-forward handler. nil selects defaultRemoteListener (the
@@ -224,12 +223,17 @@ func NewServer(opts Options) (*Server, error) {
 	s.workspace = workspacestore.New(workspaceStoreDir(s.opts.ConfigPath))
 
 	// Device mTLS enrollment: load-or-create a device CA under the state dir.
-	// Non-fatal — endpoints report 503 when unavailable.
+	// Non-fatal — endpoints report 503 when unavailable (nil CA/store).
+	var deviceCA *DeviceCA
 	if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
 		if ca, caErr := LoadOrCreateDeviceCA(stateDir); caErr == nil {
-			s.deviceCA = ca
-			s.enroll = newEnrollStore()
+			deviceCA = ca
 		}
+	}
+	if deviceCA != nil {
+		s.enrollAPI = NewEnrollAPI(deviceCA, newEnrollStore())
+	} else {
+		s.enrollAPI = NewEnrollAPI(nil, nil)
 	}
 
 	if err := s.routes(); err != nil {
@@ -363,8 +367,8 @@ func (s *Server) routes() error {
 		r.Get("/webhooks/{app_name}/{webhook_name}/deliveries", recipesAPI.handleWebhookDeliveries)
 
 		// Device mTLS enrollment: mint a one-time code (operator) + list issued devices.
-		r.Post("/devices/enroll-code", s.handleMintEnrollCode)
-		r.Get("/devices", s.handleListDevices)
+		r.Post("/devices/enroll-code", s.enrollAPI.handleMintEnrollCode)
+		r.Get("/devices", s.enrollAPI.handleListDevices)
 
 		r.Route("/studio", func(sr chi.Router) {
 			sr.Get("/workspace", s.handleGetStudioWorkspace)
@@ -374,7 +378,7 @@ func (s *Server) routes() error {
 
 	// Device enrollment is authenticated by the one-time code, not the session
 	// token, so it mounts outside the main auth group.
-	s.router.Post("/api/v1/devices/enroll", s.handleDeviceEnroll)
+	s.router.Post("/api/v1/devices/enroll", s.enrollAPI.handleDeviceEnroll)
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
 	s.router.With(recipesAPI.webhookRateLimit).
