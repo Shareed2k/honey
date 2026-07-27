@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -109,6 +110,12 @@ type RunRequest struct {
 	PluginPolicy PluginLifecycle
 }
 
+// ErrTargetResolution marks a failure to resolve a RunRequest.Target into host
+// records (search error or empty result), so callers can distinguish a bad
+// target (a 400-class caller error) from an execution failure. Test with
+// errors.Is.
+var ErrTargetResolution = errors.New("target resolution failed")
+
 // resolveTargets resolves hosts via SearchHosts if req.Records is empty and req.Target is provided.
 func (r *RecipeRunner) resolveTargets(ctx context.Context, req *RunRequest) error {
 	if len(req.Records) > 0 || req.Target == nil {
@@ -119,10 +126,10 @@ func (r *RecipeRunner) resolveTargets(ctx context.Context, req *RunRequest) erro
 	}
 	out, err := hostapi.SearchHosts(ctx, req.Target, r.opts.ExecRegistry, r.opts.SearchRegistry)
 	if err != nil {
-		return fmt.Errorf("search hosts: %w", err)
+		return fmt.Errorf("%w: search hosts: %w", ErrTargetResolution, err)
 	}
 	if len(out.Records) == 0 {
-		return fmt.Errorf("no target hosts found")
+		return fmt.Errorf("%w: no target hosts found", ErrTargetResolution)
 	}
 	req.Records = out.Records
 	return nil

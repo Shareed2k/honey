@@ -267,19 +267,17 @@ func (api *RecipesAPI) enqueueWebhookAsync(webhookName, sshUser string, searchIn
 // executeWebhookSync runs host search + recipe synchronously and returns the
 // per-host results. Search/target failures are wrapped with errWebhookBadTarget.
 func (api *RecipesAPI) executeWebhookSync(ctx context.Context, webhookName, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string) ([]engine.HostExecResult, error) {
-	searchOut, err := hostapi.SearchHosts(ctx, searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
-	if err != nil {
-		return nil, errors.Join(errWebhookBadTarget, fmt.Errorf("search hosts: %w", err))
-	}
-	if len(searchOut.Records) == 0 {
-		return nil, errors.Join(errWebhookBadTarget, fmt.Errorf("no target hosts found"))
-	}
-
+	// Hand the runner the Target and let it resolve hosts — the same deep module
+	// the web and scheduler paths use — instead of re-implementing host search
+	// here. engine.ErrTargetResolution (search failure / no hosts) maps to the
+	// caller-facing 400 via errWebhookBadTarget. (The async path still searches
+	// up front because it needs the record count for the recording metadata and
+	// a recording id before the queued run starts.)
 	ch, err := api.runner.Execute(ctx, engine.RunRequest{
 		Recipe:           recipe,
 		RecipeSourcePath: recipePath,
 		RecipeDir:        filepath.Dir(recipePath),
-		Records:          searchOut.Records,
+		Target:           searchIn,
 		SSHUser:          sshUser,
 		ActorID:          actor,
 		Env:              envMap,
@@ -289,10 +287,13 @@ func (api *RecipesAPI) executeWebhookSync(ctx context.Context, webhookName, sshU
 		PluginPolicy:     engine.LifecycleShared,
 	})
 	if err != nil {
+		if errors.Is(err, engine.ErrTargetResolution) {
+			return nil, errors.Join(errWebhookBadTarget, err)
+		}
 		return nil, err
 	}
 
-	results := make([]engine.HostExecResult, 0, len(searchOut.Records))
+	results := make([]engine.HostExecResult, 0)
 	var runFailed bool
 	for res := range ch {
 		if res.Provider == "engine" && res.Name == "recipe-run" && !res.Success {
