@@ -681,11 +681,5 @@ func httpError(w http.ResponseWriter, err error, code int) {
 }
 
 func (s *Server) sshUser(requested string) string {
-	user := strings.TrimSpace(requested)
-	if user == "" {
-		if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
-			user = cfg.Defaults.SSHUser
-		}
-	}
-	return user
+	return sshUserFor(s.opts.Config, requested)
 }

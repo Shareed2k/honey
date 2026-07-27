@@ -112,26 +112,10 @@ type CueExecExecuteResponse struct {
 }
 
 func (s *Server) allowedRecipePathSet() map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, p := range config.ListDefaultRecipes() {
-		if cp, err := filepath.Abs(filepath.Clean(p)); err == nil {
-			out[cp] = struct{}{}
-		}
+	if s == nil {
+		return allowedRecipePathSetFor(nil, "")
 	}
-	if s != nil && s.opts.Config != nil {
-		for _, app := range s.opts.Config.Apps {
-			p := strings.TrimSpace(app.TargetRecipe)
-			if p != "" {
-				if !filepath.IsAbs(p) && s.opts.ConfigPath != "" {
-					p = filepath.Join(filepath.Dir(s.opts.ConfigPath), p)
-				}
-				if cp, err := filepath.Abs(filepath.Clean(p)); err == nil {
-					out[cp] = struct{}{}
-				}
-			}
-		}
-	}
-	return out
+	return allowedRecipePathSetFor(s.opts.Config, s.opts.ConfigPath)
 }
 
 func normalizeRecipePath(p string) (string, error) {
