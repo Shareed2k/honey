@@ -5,18 +5,16 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/provider/dockerprovider"
 )
 
-// DockerTerminalSize is a cols/rows pair for docker exec resize.
-// It is an alias for dockerprovider.DockerTerminalSize.
-type DockerTerminalSize = dockerprovider.DockerTerminalSize
-
-// RunDockerWebTTY runs an interactive shell in a container with TTY over stdin/stdout.
+// RunDockerWebTTY runs an interactive shell in a container with TTY over
+// stdin/stdout. It routes through the executor seam (Registry.ForRecord +
+// hostexec.InteractiveStreamer) instead of dialing and down-casting to a
+// concrete native client, so a container reached over the honey mesh is proxied
+// by honeyprovider rather than failing with "unexpected client type". resize
+// carries [cols, rows] pairs.
 func RunDockerWebTTY(
 	ctx context.Context,
 	user string,
@@ -24,20 +22,12 @@ func RunDockerWebTTY(
 	stdin io.Reader,
 	stdout io.Writer,
 	cols, rows int,
-	resizeCh <-chan DockerTerminalSize,
+	resize <-chan [2]int,
 	reg hostexec.Registry,
 ) error {
-	client, err := reg.ForRecord(r).Dial(user, r)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = client.Close() }()
-
-	dc, ok := client.(*engine.DockerNativeClient)
+	is, ok := reg.ForRecord(r).(hostexec.InteractiveStreamer)
 	if !ok {
-		return fmt.Errorf("unexpected client type %T", client)
+		return fmt.Errorf("no interactive terminal available for record %q", r.Name)
 	}
-
-	execEnv, _ := cuetry.EnvForDockerInteractive(&r)
-	return dc.ExecInteractive(ctx, dockerprovider.DockerInteractiveShellCmd(dc), execEnv, stdin, stdout, cols, rows, resizeCh)
+	return is.RunInteractiveStreams(ctx, user, r, stdin, stdout, cols, rows, resize)
 }

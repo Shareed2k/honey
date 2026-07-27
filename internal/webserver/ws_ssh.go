@@ -288,7 +288,7 @@ func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, 
 		return
 	}
 	stdinPipeR, stdinPipeW := io.Pipe()
-	resizeCh := make(chan ui.DockerTerminalSize, 32)
+	resizeCh := make(chan [2]int, 32)
 	stdout := engine.WrapRecordingWriter(wsOut, recorder, "stdout")
 
 	waitDone := make(chan error, 1)
@@ -316,7 +316,7 @@ func benignDockerWSExit(err error) bool {
 	return strings.Contains(msg, "context canceled") || strings.Contains(msg, "use of closed network connection")
 }
 
-func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- ui.DockerTerminalSize, recorder *engine.SessionRecorder) {
+func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- [2]int, recorder *engine.SessionRecorder) {
 	defer close(resizeCh)
 	for {
 		mt, payload, err := conn.ReadMessage()
@@ -341,7 +341,7 @@ func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter,
 			if c > 0 && rw > 0 {
 				recorder.RecordResize(c, rw)
 				select {
-				case resizeCh <- ui.DockerTerminalSize{Cols: c, Rows: rw}:
+				case resizeCh <- [2]int{c, rw}:
 				default:
 				}
 			}

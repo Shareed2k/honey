@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"golang.org/x/term"
@@ -183,6 +184,11 @@ func runInteractiveWS(
 	wg.Wait()
 	return runErr
 }
+
+// honeyprovider.Executor satisfies the hostexec.InteractiveStreamer seam via
+// RunInteractiveStreams (it forwards the session over the mesh; the upstream
+// server dispatches to the right native shell).
+var _ hostexec.InteractiveStreamer = (*Executor)(nil)
 
 // RunInteractiveStreams proxies an interactive terminal session for r through
 // the upstream Honey server's /ws/ssh endpoint, carrying the supplied

@@ -51,3 +51,19 @@ type Executor interface {
 	RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error
 	DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)
 }
+
+// InteractiveStreamer is optionally implemented by executors that can run an
+// interactive TTY over caller-provided streams — the web terminal's WebSocket
+// pipes, or a recorded session — instead of the process's own os.Stdin/Stdout.
+// honeyprovider forwards it over the mesh (the upstream server dispatches to the
+// right native shell); native providers (docker/k8s) run it locally. resize
+// carries [cols, rows] pairs and is closed by the caller when the session ends.
+//
+// It is a capability interface, resolved from Registry.ForRecord via a type
+// assertion: a provider that has no interactive TTY simply does not implement
+// it. This lets one seam serve the web/CLI/mesh terminal paths uniformly instead
+// of each caller dispatching by record kind and down-casting to a concrete
+// native client.
+type InteractiveStreamer interface {
+	RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error
+}

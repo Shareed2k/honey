@@ -3,6 +3,7 @@ package dockerprovider
 import (
 	"testing"
 
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -10,6 +11,20 @@ import (
 // dockerFactory must satisfy ExecutorProvider so ResolveExecutor consults it;
 // otherwise docker records fall through to the SSH fallback.
 var _ searchrun.ExecutorProvider = dockerFactory{}
+
+// TestDockerExecutor_isInteractiveStreamer guards that a resolved docker
+// executor exposes the interactive-TTY seam, so the web/CLI terminal launchers
+// can drive it via Registry.ForRecord without down-casting to a native client.
+func TestDockerExecutor_isInteractiveStreamer(t *testing.T) {
+	ex := dockerFactory{}.ExecutorFor(
+		hosts.Record{Provider: "docker", Meta: map[string]string{"kind": "container", "container_id": "abc"}}, nil)
+	if ex == nil {
+		t.Fatal("ExecutorFor returned nil for a container record")
+	}
+	if _, ok := ex.(hostexec.InteractiveStreamer); !ok {
+		t.Fatalf("docker executor %T does not implement hostexec.InteractiveStreamer", ex)
+	}
+}
 
 func TestDockerFactory_HandlesRecord(t *testing.T) {
 	f := dockerFactory{}
