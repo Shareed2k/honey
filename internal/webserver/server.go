@@ -121,9 +121,9 @@ type Server struct {
 
 	retentionState recordingRetentionState
 
-	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
-	pveQemuVncMu   sync.Mutex
-	pveQemuVncByID map[string]pveQemuVncOfferSession
+	// pveVNC holds one-time vncproxy offers for /ws/pve-qemu-vnc (see POST
+	// /api/v1/pve-qemu-vnc-offer); it owns its own lock.
+	pveVNC *pveVNCStore
 
 	recipesAPI *RecipesAPI
 
@@ -191,6 +191,7 @@ func NewServer(opts Options) (*Server, error) {
 		plugins:         pc,
 		fileClientCache: engine.NewClientCache(),
 		udpDialer:       realUDPDialer{},
+		pveVNC:          newPveVNCStore(),
 		commandRunner: engine.NewCommandRunner(engine.CommandRunnerOptions{
 			ExecRegistry:   opts.ExecRegistry,
 			SearchRegistry: opts.SearchRegistry,

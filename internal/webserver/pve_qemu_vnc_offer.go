@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -39,6 +40,41 @@ type pveQemuVncOfferSession struct {
 	Port        string
 	Ticket      string
 	Expires     time.Time
+}
+
+// pveVNCStore holds one-time PVE QEMU vncproxy offers keyed by session id. Offers
+// are single-use (take deletes) and short-lived. It owns its own lock so the
+// handlers no longer reach into raw Server mutex/map fields.
+type pveVNCStore struct {
+	mu   sync.Mutex
+	byID map[string]pveQemuVncOfferSession
+}
+
+func newPveVNCStore() *pveVNCStore {
+	return &pveVNCStore{byID: make(map[string]pveQemuVncOfferSession)}
+}
+
+// put stores an offer under id.
+func (p *pveVNCStore) put(id string, sess pveQemuVncOfferSession) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.byID[id] = sess
+}
+
+// take returns and removes the offer for id. ok is false when the id is unknown
+// or the offer has expired (an expired offer is deleted either way).
+func (p *pveVNCStore) take(id string, now time.Time) (pveQemuVncOfferSession, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	sess, ok := p.byID[id]
+	if !ok {
+		return pveQemuVncOfferSession{}, false
+	}
+	delete(p.byID, id)
+	if now.After(sess.Expires) {
+		return pveQemuVncOfferSession{}, false
+	}
+	return sess, true
 }
 
 func randomSessionID() (string, error) {
@@ -111,12 +147,7 @@ func (s *Server) handlePveQemuVncOffer(w http.ResponseWriter, r *http.Request) {
 		Expires:     time.Now().Add(pveQemuVncOfferTTL),
 	}
 
-	s.pveQemuVncMu.Lock()
-	if s.pveQemuVncByID == nil {
-		s.pveQemuVncByID = make(map[string]pveQemuVncOfferSession)
-	}
-	s.pveQemuVncByID[id] = sess
-	s.pveQemuVncMu.Unlock()
+	s.pveVNC.put(id, sess)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(PveQemuVncOfferResponse{
@@ -139,26 +170,11 @@ func (s *Server) handleWebProxmoxQemuVNC(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	s.pveQemuVncMu.Lock()
-	if s.pveQemuVncByID == nil {
-		s.pveQemuVncMu.Unlock()
-		http.Error(w, `{"error":"unknown or expired vnc_session"}`, http.StatusBadRequest)
-		return
-	}
-	sess, ok := s.pveQemuVncByID[sid]
+	sess, ok := s.pveVNC.take(sid, time.Now())
 	if !ok {
-		s.pveQemuVncMu.Unlock()
 		http.Error(w, `{"error":"unknown or expired vnc_session"}`, http.StatusBadRequest)
 		return
 	}
-	if time.Now().After(sess.Expires) {
-		delete(s.pveQemuVncByID, sid)
-		s.pveQemuVncMu.Unlock()
-		http.Error(w, `{"error":"unknown or expired vnc_session"}`, http.StatusBadRequest)
-		return
-	}
-	delete(s.pveQemuVncByID, sid)
-	s.pveQemuVncMu.Unlock()
 
 	b, ok := proxmoxprovider.BackendByName(sess.BackendName)
 	if !ok {
