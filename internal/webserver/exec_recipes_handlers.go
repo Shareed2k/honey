@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
@@ -549,6 +548,7 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		RecipeDir:        recipeDir,
 		Records:          jobs,
 		SSHUser:          user,
+		Source:           "web",
 		ActorID:          actorFromCtx(r.Context()),
 		ApprovalID:       body.ApprovalID,
 		BiometricToken:   strings.TrimSpace(r.Header.Get("X-Honey-Biometric")),
@@ -591,27 +591,10 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 		req.Recorder = rec
 		ch, err := api.runner.Execute(r.Context(), req)
 		if err != nil {
-			if pending, ok := errors.AsType[*engine.ErrPendingApproval](err); ok {
-				_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-					Source:     "web",
-					Actor:      req.ActorID,
-					Action:     "recipe_run",
-					Target:     req.Recipe.Name,
-					Decision:   "require_approval",
-					ApprovalID: pending.ID,
-				})
-			}
 			writeExecError(w, err)
 			return
 		}
-		_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-			Source:     "web",
-			Actor:      req.ActorID,
-			Action:     "recipe_run",
-			Target:     req.Recipe.Name,
-			Decision:   "allow",
-			ApprovalID: req.ApprovalID,
-		})
+		// recipe_run admission audit is emitted by the runner (see admitRecipe).
 		if rec != nil {
 			if id := rec.RecordingID(); id != "" {
 				w.Header().Set("X-Honey-Recording-Id", id)
@@ -625,27 +608,10 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 	req.RecordLabel = "web-cue-exec"
 	ch, err := api.runner.Execute(r.Context(), req)
 	if err != nil {
-		if pending, ok := errors.AsType[*engine.ErrPendingApproval](err); ok {
-			_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-				Source:     "web",
-				Actor:      req.ActorID,
-				Action:     "recipe_run",
-				Target:     req.Recipe.Name,
-				Decision:   "require_approval",
-				ApprovalID: pending.ID,
-			})
-		}
 		writeExecError(w, err)
 		return
 	}
-	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-		Source:     "web",
-		Actor:      req.ActorID,
-		Action:     "recipe_run",
-		Target:     req.Recipe.Name,
-		Decision:   "allow",
-		ApprovalID: req.ApprovalID,
-	})
+	// recipe_run admission audit is emitted by the runner (see admitRecipe).
 	results := make([]engine.HostExecResult, 0, len(jobs))
 	for res := range ch {
 		results = append(results, res)

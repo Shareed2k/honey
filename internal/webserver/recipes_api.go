@@ -123,6 +123,7 @@ func NewRecipesAPI(
 		Biometric:      biometric,
 		SearchRegistry: opts.SearchRegistry,
 		PluginCache:    plugins,
+		AuditSink:      opts.AuditSink,
 	})
 	return api
 }
