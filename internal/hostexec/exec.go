@@ -67,3 +67,15 @@ type Executor interface {
 type InteractiveStreamer interface {
 	RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error
 }
+
+// ProxyExecutor is optionally implemented by an executor that forwards a session
+// to another node (e.g. the honey mesh) instead of running it on this node. When
+// Registry.ForRecord resolves to a proxy, callers route the whole interactive
+// session to it up front — ahead of any local provider-specific console — so a
+// mesh-routed record is handled on the node that owns it. Native executors do not
+// implement it (equivalently, IsProxy would be false), which is how a dispatcher
+// tells "forward this elsewhere" from "run it here" without naming a provider or
+// inspecting routing metadata.
+type ProxyExecutor interface {
+	IsProxy() bool
+}

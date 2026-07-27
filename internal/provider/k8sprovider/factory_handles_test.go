@@ -36,9 +36,9 @@ func TestK8sFactory_HandlesRecord(t *testing.T) {
 }
 
 // The executor returned for a pod must satisfy hostexec.InteractiveStreamer so
-// RunK8sPodWebTTY can route through the seam (Registry.ForRecord + type assert)
-// instead of down-casting to *K8sPodExecutor. A pod reached over the honey mesh
-// resolves to honeyprovider's executor, which also implements the interface.
+// the web/TUI terminal can route through the seam (Registry.ForRecord + type
+// assert) instead of down-casting to *K8sPodExecutor. A pod reached over the
+// honey mesh resolves to honeyprovider's executor, which also implements it.
 func TestK8sFactory_ExecutorForPodIsInteractiveStreamer(t *testing.T) {
 	f := k8sFactory{}
 	pod := hosts.Record{Provider: "k8s", Meta: map[string]string{"kind": "pod", "namespace": "default", "pod_name": "x"}}
