@@ -79,3 +79,14 @@ type InteractiveStreamer interface {
 type ProxyExecutor interface {
 	IsProxy() bool
 }
+
+// IsProxy reports whether ex forwards sessions to another node (e.g. the honey
+// mesh) rather than executing them locally — that is, it implements ProxyExecutor
+// and says so. A nil executor or a native (local) executor returns false. It is
+// the shared decision point for the web and TUI terminal dispatchers, which route
+// a mesh-resolved record wholesale to its owning node before attempting any local
+// provider console or native shell.
+func IsProxy(ex Executor) bool {
+	pe, ok := ex.(ProxyExecutor)
+	return ok && pe.IsProxy()
+}

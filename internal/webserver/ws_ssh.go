@@ -146,7 +146,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	// provider or strips routing metadata to make resolution work.
 	rec := hello.Record
 	ex := s.opts.ExecRegistry.ForRecord(rec)
-	if isProxyExecutor(ex) {
+	if hostexec.IsProxy(ex) {
 		defer s.trackWSConnection("honey_upstream")()
 		serveWebInteractive(conn, ex, user, rec, cols, rows, recorder)
 		return
@@ -184,15 +184,6 @@ func benignDockerWSExit(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "context canceled") || strings.Contains(msg, "use of closed network connection")
-}
-
-// isProxyExecutor reports whether ex forwards a session to another node (the
-// honey mesh) instead of running it locally, so the dispatcher routes the whole
-// terminal to it ahead of any local provider console. A nil executor or a native
-// (local) executor that does not implement hostexec.ProxyExecutor is not a proxy.
-func isProxyExecutor(ex hostexec.Executor) bool {
-	pe, ok := ex.(hostexec.ProxyExecutor)
-	return ok && pe.IsProxy()
 }
 
 // serveWebInteractive runs the browser terminal for rec through ex when it

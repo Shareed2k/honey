@@ -26,19 +26,20 @@ func (localExecutor) DialUpstream(context.Context, string, hosts.Record, string)
 	return nil, nil
 }
 
-// TestIsProxyExecutor verifies the web terminal's local-vs-proxy routing decision:
-// a mesh-forwarding executor (honeyprovider) is proxied wholesale, while a nil or
-// native executor is handled locally. This is what replaced the honey-upstream
-// band-aid: the dispatcher asks the seam "do you forward this elsewhere?" via
-// hostexec.ProxyExecutor instead of type-asserting a concrete provider.
-func TestIsProxyExecutor(t *testing.T) {
-	if isProxyExecutor(nil) {
+// TestIsProxy verifies the shared local-vs-proxy routing decision used by both
+// the web and TUI terminal dispatchers: a mesh-forwarding executor (honeyprovider)
+// is proxied wholesale, while a nil or native executor is handled locally. This is
+// what replaced the honey-upstream band-aids: the dispatcher asks the seam "do you
+// forward this elsewhere?" via hostexec.ProxyExecutor instead of type-asserting a
+// concrete provider or inspecting the honey_upstream_backend routing tag.
+func TestIsProxy(t *testing.T) {
+	if hostexec.IsProxy(nil) {
 		t.Fatal("nil executor: want false (local fallback)")
 	}
-	if isProxyExecutor(localExecutor{}) {
+	if hostexec.IsProxy(localExecutor{}) {
 		t.Fatal("native executor: want false (runs locally)")
 	}
-	if !isProxyExecutor(&honeyprovider.Executor{URL: "http://mesh-peer/"}) {
+	if !hostexec.IsProxy(&honeyprovider.Executor{URL: "http://mesh-peer/"}) {
 		t.Fatal("honeyprovider executor: want true (forwarded over the mesh)")
 	}
 }
