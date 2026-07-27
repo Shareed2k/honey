@@ -111,6 +111,22 @@ func TestSSHFallbackExecutor_DialUpstream_DialError(t *testing.T) {
 	}
 }
 
+// TestSSHFallbackExecutor_RunInteractiveStreams_DialError asserts the seam's
+// interactive path fails fast (surfacing the dial error) when the record cannot
+// be dialed, without touching the network or blocking on the resize channel.
+func TestSSHFallbackExecutor_RunInteractiveStreams_DialError(t *testing.T) {
+	e := &sshFallbackExecutor{}
+	rec := hosts.Record{} // no PrimaryIP -> Dial fails fast, no network I/O
+
+	err := e.RunInteractiveStreams(context.Background(), "", rec, strings.NewReader(""), io.Discard, 80, 24, nil)
+	if err == nil {
+		t.Fatal("expected error for record with no host ip")
+	}
+	if !strings.Contains(err.Error(), "no host ip for ssh") {
+		t.Fatalf("expected dial error %q, got: %v", "no host ip for ssh", err)
+	}
+}
+
 // compile-time interface check: sshDialConn must satisfy net.Conn.
 var _ net.Conn = (*sshDialConn)(nil)
 
