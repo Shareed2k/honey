@@ -1025,96 +1025,51 @@ func dialHoneyWithAuth(userOverride, hostAlias string, overridePort int, exclusi
 	if hostAlias == "" {
 		return nil, fmt.Errorf("empty host")
 	}
-	leafCfg, err := lookupHostSSHConfig(hostAlias, userOverride)
+	// Resolve the target + its ProxyJump chain once (each host's SSH config is
+	// looked up a single time and reused for both auth and dialing).
+	plan, err := resolveDialPlan(lookupHostSSHConfig, userOverride, hostAlias, overridePort, exclusiveAuth)
 	if err != nil {
 		return nil, err
 	}
-	hkFinal, err := hostKeyCallbackForHostSSH(leafCfg)
+	// Resolve the leaf host-key callback up front so a bad known-hosts config
+	// fails before any hop is dialed (matches the pre-refactor ordering).
+	hkFinal, err := hostKeyCallbackForHostSSH(plan.leaf.cfg)
 	if err != nil {
 		return nil, err
-	}
-	final := leafCfg.resolved
-	if overridePort > 0 && overridePort < 65536 {
-		final.port = overridePort
-	}
-	var auth goph.Auth
-	if exclusiveAuth != nil {
-		auth = exclusiveAuth
-	} else {
-		idFiles := append([]string(nil), leafCfg.identityPaths...)
-		for _, hop := range parseProxyJumpChain(leafCfg.proxyJump) {
-			explicitUser, hopAlias, _, _, perr := parseJumpSpec(hop)
-			if perr != nil || hopAlias == "" {
-				continue
-			}
-			hopCfg, ierr := lookupHostSSHConfig(hopAlias, explicitUser)
-			if ierr != nil {
-				return nil, ierr
-			}
-			idFiles = append(idFiles, hopCfg.identityPaths...)
-		}
-		auth, err = buildAuthWithIdentityFiles(idFiles)
-		if err != nil {
-			return nil, err
-		}
 	}
 
-	jumps := parseProxyJumpChain(leafCfg.proxyJump)
-	stack := make([]*ssh.Client, 0, len(jumps)+1)
+	stack := make([]*ssh.Client, 0, len(plan.hops)+1)
 	var cur *ssh.Client
-
-	for _, hopSpec := range jumps {
-		explicitUser, hopHost, specPort, portFromSpec, perr := parseJumpSpec(hopSpec)
-		if perr != nil {
-			closeSSHStack(stack)
-			return nil, perr
-		}
-		hopCfg, herr := lookupHostSSHConfig(hopHost, explicitUser)
+	for _, hop := range plan.hops {
+		hkHop, herr := hostKeyCallbackForHostSSH(hop.cfg)
 		if herr != nil {
 			closeSSHStack(stack)
 			return nil, herr
 		}
-		res := hopCfg.resolved
-		hkHop, herr := hostKeyCallbackForHostSSH(hopCfg)
-		if herr != nil {
-			closeSSHStack(stack)
-			return nil, herr
-		}
-		hopPort := res.port
-		if portFromSpec {
-			hopPort = specPort
-		}
-		hopAddr := net.JoinHostPort(res.host, strconv.Itoa(hopPort))
+		cfg := clientConfig(hop.user, plan.auth, hkHop)
 		if cur == nil {
-			c, derr := ssh.Dial("tcp", hopAddr, clientConfig(res.user, auth, hkHop))
+			c, derr := sshDialDirect(hop.addr(), cfg)
 			if derr != nil {
 				closeSSHStack(stack)
-				return nil, fmt.Errorf("proxyjump hop %q: %w", hopSpec, derr)
+				return nil, fmt.Errorf("proxyjump hop %q: %w", hop.addr(), derr)
 			}
 			stack = append(stack, c)
 			cur = c
 			continue
 		}
-		rawConn, derr := cur.Dial("tcp", hopAddr)
+		next, derr := sshDialVia(cur, hop.addr(), cfg)
 		if derr != nil {
 			closeSSHStack(stack)
-			return nil, fmt.Errorf("proxyjump dial %q: %w", hopSpec, derr)
+			return nil, fmt.Errorf("proxyjump dial %q: %w", hop.addr(), derr)
 		}
-		ncc, chans, reqs, nerr := ssh.NewClientConn(rawConn, hopAddr, clientConfig(res.user, auth, hkHop))
-		if nerr != nil {
-			_ = rawConn.Close()
-			closeSSHStack(stack)
-			return nil, fmt.Errorf("proxyjump handshake %q: %w", hopSpec, nerr)
-		}
-		next := ssh.NewClient(ncc, chans, reqs)
 		stack = append(stack, next)
 		cur = next
 	}
 
 	var leaf *ssh.Client
-	finalAddr := net.JoinHostPort(final.host, strconv.Itoa(final.port))
-	if len(jumps) == 0 {
-		leaf, err = ssh.Dial("tcp", finalAddr, clientConfig(final.user, auth, hkFinal))
+	finalCfg := clientConfig(plan.leaf.user, plan.auth, hkFinal)
+	if len(plan.hops) == 0 {
+		leaf, err = sshDialDirect(plan.leaf.addr(), finalCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -1122,25 +1077,18 @@ func dialHoneyWithAuth(userOverride, hostAlias string, overridePort int, exclusi
 		if cur == nil {
 			return nil, fmt.Errorf("internal: proxyjump without first hop")
 		}
-		rawConn, derr := cur.Dial("tcp", finalAddr)
-		if derr != nil {
+		leaf, err = sshDialVia(cur, plan.leaf.addr(), finalCfg)
+		if err != nil {
 			closeSSHStack(stack)
-			return nil, fmt.Errorf("dial target via proxyjump: %w", derr)
+			return nil, fmt.Errorf("dial target via proxyjump: %w", err)
 		}
-		ncc, chans, reqs, nerr := ssh.NewClientConn(rawConn, finalAddr, clientConfig(final.user, auth, hkFinal))
-		if nerr != nil {
-			_ = rawConn.Close()
-			closeSSHStack(stack)
-			return nil, fmt.Errorf("target ssh handshake: %w", nerr)
-		}
-		leaf = ssh.NewClient(ncc, chans, reqs)
 	}
 
 	gcfg := &goph.Config{
-		User:     final.user,
-		Addr:     final.host,
-		Port:     uint(final.port),
-		Auth:     auth,
+		User:     plan.leaf.user,
+		Addr:     plan.leaf.host,
+		Port:     uint(plan.leaf.port),
+		Auth:     plan.auth,
 		Timeout:  goph.DefaultTimeout,
 		Callback: hkFinal,
 	}
