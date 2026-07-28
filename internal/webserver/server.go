@@ -139,6 +139,10 @@ type Server struct {
 	// start, stop), driving the shared tunnel manager.
 	tunnelsAPI *TunnelsAPI
 
+	// proxyAPI owns the app-proxy session endpoints (list, start, stop), driving
+	// the shared proxy manager.
+	proxyAPI *ProxyAPI
+
 	commandRunner *engine.CommandRunner
 
 	// enrollAPI owns the mTLS device-enrollment endpoints; its CA/store are nil
@@ -275,6 +279,7 @@ func (s *Server) routes() error {
 	s.filesAPI = NewFilesAPI(s.opts, s.metrics, s.fileClientCache, s.sshUser)
 	s.postgresAPI = NewPostgresAPI(s.opts, s.pgPools, s.proxy)
 	s.tunnelsAPI = NewTunnelsAPI(s.opts, s.tunnels, s.sshUser)
+	s.proxyAPI = NewProxyAPI(s.opts, s.proxy, s.fileClientCache)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -357,9 +362,9 @@ func (s *Server) routes() error {
 		r.Get("/schedules", s.handleSchedulesList)
 
 		r.Route("/proxy", func(pr chi.Router) {
-			pr.Get("/sessions", s.handleProxySessionsGet)
-			pr.Post("/start", s.handleProxySessionStart)
-			pr.Delete("/sessions/{id}", s.handleProxySessionDelete)
+			pr.Get("/sessions", s.proxyAPI.handleProxySessionsGet)
+			pr.Post("/start", s.proxyAPI.handleProxySessionStart)
+			pr.Delete("/sessions/{id}", s.proxyAPI.handleProxySessionDelete)
 		})
 
 		r.Route("/postgres", func(pgr chi.Router) {
