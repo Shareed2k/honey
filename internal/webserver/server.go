@@ -135,6 +135,10 @@ type Server struct {
 	// resolving the backing proxy session via the shared proxy manager.
 	postgresAPI *PostgresAPI
 
+	// tunnelsAPI owns the in-process SSH -L port-forward endpoints (list, logs,
+	// start, stop), driving the shared tunnel manager.
+	tunnelsAPI *TunnelsAPI
+
 	commandRunner *engine.CommandRunner
 
 	// enrollAPI owns the mTLS device-enrollment endpoints; its CA/store are nil
@@ -270,6 +274,7 @@ func (s *Server) routes() error {
 
 	s.filesAPI = NewFilesAPI(s.opts, s.metrics, s.fileClientCache, s.sshUser)
 	s.postgresAPI = NewPostgresAPI(s.opts, s.pgPools, s.proxy)
+	s.tunnelsAPI = NewTunnelsAPI(s.opts, s.tunnels, s.sshUser)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -293,10 +298,10 @@ func (s *Server) routes() error {
 		r.Post("/host-ports", s.handleHostPorts)
 
 		r.Route("/tunnels", func(tr chi.Router) {
-			tr.Get("/", s.handleTunnelsGet)
-			tr.Get("/{id}/logs", s.handleTunnelsLogs)
-			tr.Post("/", s.handleTunnelsPost)
-			tr.Delete("/{id}", s.handleTunnelsDelete)
+			tr.Get("/", s.tunnelsAPI.handleTunnelsGet)
+			tr.Get("/{id}/logs", s.tunnelsAPI.handleTunnelsLogs)
+			tr.Post("/", s.tunnelsAPI.handleTunnelsPost)
+			tr.Delete("/{id}", s.tunnelsAPI.handleTunnelsDelete)
 		})
 
 		r.Route("/config", func(cr chi.Router) {

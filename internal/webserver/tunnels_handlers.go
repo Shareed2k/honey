@@ -168,6 +168,22 @@ func (m *tunnelManager) stop(id string) error {
 	return nil
 }
 
+// TunnelsAPI owns the in-process SSH -L port-forward endpoints (list, logs,
+// start, stop), isolating them from the main Server so the tunnels feature
+// carries its own deps (mirrors FilesAPI/PostgresAPI/EnrollAPI, architecture
+// candidate arch-08). It drives a tunnelManager and resolves records through the
+// executor registry; sshUser is injected (Server.sshUser is shared Server-wide).
+type TunnelsAPI struct {
+	opts    Options
+	tunnels *tunnelManager
+	sshUser func(string) string
+}
+
+// NewTunnelsAPI wires the tunnel manager and the shared ssh-user resolver.
+func NewTunnelsAPI(opts Options, tunnels *tunnelManager, sshUser func(string) string) *TunnelsAPI {
+	return &TunnelsAPI{opts: opts, tunnels: tunnels, sshUser: sshUser}
+}
+
 // handleTunnelsLogs returns buffered log text for an SSH -L tunnel.
 // @Summary Tunnel logs
 // @Tags tunnels
@@ -178,16 +194,16 @@ func (m *tunnelManager) stop(id string) error {
 // @Failure 404 {object} map[string]string
 // @Router /api/v1/tunnels/{id}/logs [get]
 // @Security BearerAuth
-func (s *Server) handleTunnelsLogs(w http.ResponseWriter, r *http.Request) {
+func (a *TunnelsAPI) handleTunnelsLogs(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		httpError(w, fmt.Errorf("missing tunnel id"), http.StatusBadRequest)
 		return
 	}
 
-	s.tunnels.mu.Lock()
-	t, ok := s.tunnels.tunnels[id]
-	s.tunnels.mu.Unlock()
+	a.tunnels.mu.Lock()
+	t, ok := a.tunnels.tunnels[id]
+	a.tunnels.mu.Unlock()
 
 	if !ok {
 		httpError(w, fmt.Errorf("tunnel not found"), http.StatusNotFound)
@@ -210,9 +226,9 @@ func (s *Server) handleTunnelsLogs(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} TunnelsListResponse
 // @Router /api/v1/tunnels [get]
 // @Security BearerAuth
-func (s *Server) handleTunnelsGet(w http.ResponseWriter, _ *http.Request) {
+func (a *TunnelsAPI) handleTunnelsGet(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(TunnelsListResponse{Tunnels: s.tunnels.list()})
+	_ = json.NewEncoder(w).Encode(TunnelsListResponse{Tunnels: a.tunnels.list()})
 }
 
 // handleTunnelsPost starts an SSH -L style tunnel in-process.
@@ -225,7 +241,7 @@ func (s *Server) handleTunnelsGet(w http.ResponseWriter, _ *http.Request) {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/tunnels [post]
 // @Security BearerAuth
-func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
+func (a *TunnelsAPI) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
 	var req StartTunnelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, fmt.Errorf("invalid json"), http.StatusBadRequest)
@@ -237,8 +253,8 @@ func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := s.sshUser(req.SSHUser)
-	tunnel := s.tunnels.start(user, req.Record, req.Mapping, s.opts.ExecRegistry)
+	user := a.sshUser(req.SSHUser)
+	tunnel := a.tunnels.start(user, req.Record, req.Mapping, a.opts.ExecRegistry)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(TunnelStartResponse{Tunnel: *tunnel})
@@ -254,14 +270,14 @@ func (s *Server) handleTunnelsPost(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} map[string]string
 // @Router /api/v1/tunnels/{id} [delete]
 // @Security BearerAuth
-func (s *Server) handleTunnelsDelete(w http.ResponseWriter, r *http.Request) {
+func (a *TunnelsAPI) handleTunnelsDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		httpError(w, fmt.Errorf("missing tunnel id"), http.StatusBadRequest)
 		return
 	}
 
-	if err := s.tunnels.stop(id); err != nil {
+	if err := a.tunnels.stop(id); err != nil {
 		httpError(w, err, http.StatusNotFound)
 		return
 	}
