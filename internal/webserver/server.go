@@ -127,6 +127,10 @@ type Server struct {
 
 	recipesAPI *RecipesAPI
 
+	// filesAPI owns the file-management endpoints (upload, browse, copy,
+	// agent transfer, stat/mkdir/remove, streamed up/download).
+	filesAPI *FilesAPI
+
 	commandRunner *engine.CommandRunner
 
 	// enrollAPI owns the mTLS device-enrollment endpoints; its CA/store are nil
@@ -260,6 +264,8 @@ func (s *Server) routes() error {
 	s.recipesAPI = NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache)
 	recipesAPI := s.recipesAPI
 
+	s.filesAPI = NewFilesAPI(s.opts, s.metrics, s.fileClientCache, s.sshUser)
+
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
 
@@ -298,17 +304,17 @@ func (s *Server) routes() error {
 			cr.Put("/", s.handleConfigPut)
 		})
 
-		r.Post("/upload", s.handleUpload)
+		r.Post("/upload", s.filesAPI.handleUpload)
 		r.Route("/files", func(fr chi.Router) {
-			fr.Post("/local/list", s.handleFilesLocalList)
-			fr.Post("/remote/list", s.handleFilesRemoteList)
-			fr.Post("/copy", s.handleFilesCopy)
-			fr.Post("/agent-transfer", s.handleFilesAgentTransfer)
-			fr.Post("/remote/stat", s.handleFilesRemoteStat)
-			fr.Post("/remote/mkdir", s.handleFilesRemoteMkdir)
-			fr.Post("/remote/remove", s.handleFilesRemoteRemove)
-			fr.Post("/remote/upload", s.handleFilesRemoteUpload)
-			fr.Get("/remote/download", s.handleFilesRemoteDownload)
+			fr.Post("/local/list", s.filesAPI.handleFilesLocalList)
+			fr.Post("/remote/list", s.filesAPI.handleFilesRemoteList)
+			fr.Post("/copy", s.filesAPI.handleFilesCopy)
+			fr.Post("/agent-transfer", s.filesAPI.handleFilesAgentTransfer)
+			fr.Post("/remote/stat", s.filesAPI.handleFilesRemoteStat)
+			fr.Post("/remote/mkdir", s.filesAPI.handleFilesRemoteMkdir)
+			fr.Post("/remote/remove", s.filesAPI.handleFilesRemoteRemove)
+			fr.Post("/remote/upload", s.filesAPI.handleFilesRemoteUpload)
+			fr.Get("/remote/download", s.filesAPI.handleFilesRemoteDownload)
 		})
 
 		r.Route("/recordings", func(rcr chi.Router) {

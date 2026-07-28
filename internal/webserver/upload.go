@@ -39,8 +39,8 @@ type UploadRequestMeta struct {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/upload [post]
 // @Security BearerAuth
-func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(s.opts.MaxUploadSize); err != nil {
+func (f *FilesAPI) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(f.opts.MaxUploadSize); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
@@ -62,13 +62,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("invalid remote_path"), http.StatusBadRequest)
 		return
 	}
-	user := s.sshUser(meta.SSHUser)
-	f, hdr, err := r.FormFile("file")
+	user := f.sshUser(meta.SSHUser)
+	uploadFile, hdr, err := r.FormFile("file")
 	if err != nil {
 		httpError(w, fmt.Errorf("file: %w", err), http.StatusBadRequest)
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = uploadFile.Close() }()
 
 	tmpDir, err := os.MkdirTemp("", "honey-web-upload-*")
 	if err != nil {
@@ -86,7 +86,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
-	if _, err := io.Copy(out, io.LimitReader(f, s.opts.MaxUploadSize)); err != nil {
+	if _, err := io.Copy(out, io.LimitReader(uploadFile, f.opts.MaxUploadSize)); err != nil {
 		_ = out.Close()
 		httpError(w, err, http.StatusInternalServerError)
 		return
@@ -109,7 +109,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Query().Get("stream") == "1" {
-		s.handleUploadStream(w, user, rec, localPath, meta.RemotePath, st.Size())
+		f.handleUploadStream(w, user, rec, localPath, meta.RemotePath, st.Size())
 		return
 	}
 
@@ -133,7 +133,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUploadStream streams NDJSON progress while copying the saved file to the host over SFTP.
-func (s *Server) handleUploadStream(w http.ResponseWriter, user string, rec hosts.Record, localPath, remotePath string, fileSize int64) {
+func (f *FilesAPI) handleUploadStream(w http.ResponseWriter, user string, rec hosts.Record, localPath, remotePath string, fileSize int64) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, `{"error":"streaming upload requires http.Flusher"}`, http.StatusInternalServerError)
@@ -171,7 +171,7 @@ func (s *Server) handleUploadStream(w http.ResponseWriter, user string, rec host
 		writeLine(map[string]any{"phase": "sftp", "sent_bytes": written, "total_bytes": total})
 	}
 
-	res := engine.RunOneSFTPUploadWithProgress(user, rec, localPath, remotePath, s.fileClientCache, progress)
+	res := engine.RunOneSFTPUploadWithProgress(user, rec, localPath, remotePath, f.fileClientCache, progress)
 	if !res.Success {
 		writeLine(map[string]any{
 			"phase":   "error",

@@ -116,8 +116,8 @@ type FilesCopyResponse struct {
 	Remote string `json:"remote"`
 }
 
-func (s *Server) localFilesRoot() string {
-	if root := strings.TrimSpace(s.opts.LocalFilesRoot); root != "" {
+func (f *FilesAPI) localFilesRoot() string {
+	if root := strings.TrimSpace(f.opts.LocalFilesRoot); root != "" {
 		return root
 	}
 	return ui.DefaultLocalFilesRoot()
@@ -133,7 +133,7 @@ func (s *Server) localFilesRoot() string {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/files/local/list [post]
 // @Security BearerAuth
-func (s *Server) handleFilesLocalList(w http.ResponseWriter, r *http.Request) {
+func (f *FilesAPI) handleFilesLocalList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -143,7 +143,7 @@ func (s *Server) handleFilesLocalList(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	root := s.localFilesRoot()
+	root := f.localFilesRoot()
 	resolved, entries, err := ui.ListLocalDirUnderRoot(root, req.Path)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -168,7 +168,7 @@ func (s *Server) handleFilesLocalList(w http.ResponseWriter, r *http.Request) {
 // @Failure 502 {object} map[string]string
 // @Router /api/v1/files/remote/list [post]
 // @Security BearerAuth
-func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
+func (f *FilesAPI) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -178,7 +178,7 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	user := s.sshUser(req.SSHUser)
+	user := f.sshUser(req.SSHUser)
 	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
@@ -187,7 +187,7 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "."
 	}
-	entries, err := ui.RemoteListDir(user, req.Record, path, s.fileClientCache)
+	entries, err := ui.RemoteListDir(user, req.Record, path, f.fileClientCache)
 	if err != nil {
 		httpError(w, err, http.StatusBadGateway)
 		return
@@ -210,7 +210,7 @@ func (s *Server) handleFilesRemoteList(w http.ResponseWriter, r *http.Request) {
 // @Failure 502 {object} map[string]string
 // @Router /api/v1/files/copy [post]
 // @Security BearerAuth
-func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
+func (f *FilesAPI) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -220,12 +220,12 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	user := s.sshUser(req.SSHUser)
+	user := f.sshUser(req.SSHUser)
 	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable (need IP, k8s pod, or docker container)"), http.StatusBadRequest)
 		return
 	}
-	localAbs, err := safepath.JoinUnder(s.localFilesRoot(), req.LocalPath)
+	localAbs, err := safepath.JoinUnder(f.localFilesRoot(), req.LocalPath)
 	if err != nil {
 		httpError(w, fmt.Errorf("local path: %w", err), http.StatusBadRequest)
 		return
@@ -247,13 +247,13 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 			httpError(w, fmt.Errorf("directory upload is not supported in this action"), http.StatusBadRequest)
 			return
 		}
-		copyErr = ui.RemoteCopyLocalToRemote(user, req.Record, localAbs, remotePath, s.fileClientCache)
+		copyErr = ui.RemoteCopyLocalToRemote(user, req.Record, localAbs, remotePath, f.fileClientCache)
 	case "remote_to_local":
 		if mkErr := os.MkdirAll(filepath.Dir(localAbs), 0o750); mkErr != nil {
 			httpError(w, mkErr, http.StatusInternalServerError)
 			return
 		}
-		copyErr = ui.RemoteCopyRemoteToLocal(user, req.Record, remotePath, localAbs, s.fileClientCache)
+		copyErr = ui.RemoteCopyRemoteToLocal(user, req.Record, remotePath, localAbs, f.fileClientCache)
 	default:
 		httpError(w, fmt.Errorf("invalid direction: %q", req.Direction), http.StatusBadRequest)
 		return
@@ -280,7 +280,7 @@ func (s *Server) handleFilesCopy(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]string
 // @Router /api/v1/files/agent-transfer [post]
 // @Security BearerAuth
-func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request) {
+func (f *FilesAPI) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -290,8 +290,8 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	user := s.sshUser(req.SSHUser)
-	signingHints, err := engine.ResolveAgentTransferSigningHints(s.opts.ConfigPath, req.Cloud, req.CloudBackendRef)
+	user := f.sshUser(req.SSHUser)
+	signingHints, err := engine.ResolveAgentTransferSigningHints(f.opts.ConfigPath, req.Cloud, req.CloudBackendRef)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -299,7 +299,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	if len(req.Credentials) > 0 {
 		zap.L().Warn("ignoring direct credentials in honey-managed credential mode", zap.Int("count", len(req.Credentials)))
 	}
-	transferCfg := engine.LoadTransferConfigFromConfigPath(s.opts.ConfigPath)
+	transferCfg := engine.LoadTransferConfigFromConfigPath(f.opts.ConfigPath)
 	zap.L().Debug(
 		"web agent transfer request received",
 		zap.String("source_name", req.SourceRecord.Name),
@@ -326,11 +326,11 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		}
 		_, err := engine.RunAgentTransferWithFallback(
 			r.Context(),
-			s.fileClientCache,
+			f.fileClientCache,
 			user,
 			strings.TrimSpace(req.AgentLocalPath),
-			strings.TrimSpace(s.opts.AgentBinaryPath),
-			strings.TrimSpace(s.opts.AgentBuildCacheDir),
+			strings.TrimSpace(f.opts.AgentBinaryPath),
+			strings.TrimSpace(f.opts.AgentBuildCacheDir),
 			strings.TrimSpace(req.AgentRemoteDir),
 			req.SourceRecord,
 			req.DestRecord,
@@ -351,12 +351,12 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 				Timestamp: time.Now().UTC(),
 			})
 		}
-		if s.metrics != nil {
+		if f.metrics != nil {
 			status := "ok"
 			if err != nil {
 				status = "error"
 			}
-			s.metrics.ObserveAgentTransfer(status, time.Since(transferStart))
+			f.metrics.ObserveAgentTransfer(status, time.Since(transferStart))
 		}
 		return
 	}
@@ -364,11 +364,11 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 	transferStart := time.Now()
 	events, err := engine.RunAgentTransferWithFallback(
 		r.Context(),
-		s.fileClientCache,
+		f.fileClientCache,
 		user,
 		strings.TrimSpace(req.AgentLocalPath),
-		strings.TrimSpace(s.opts.AgentBinaryPath),
-		strings.TrimSpace(s.opts.AgentBuildCacheDir),
+		strings.TrimSpace(f.opts.AgentBinaryPath),
+		strings.TrimSpace(f.opts.AgentBuildCacheDir),
 		strings.TrimSpace(req.AgentRemoteDir),
 		req.SourceRecord,
 		req.DestRecord,
@@ -382,8 +382,8 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		nil,
 	)
 	if err != nil {
-		if s.metrics != nil {
-			s.metrics.ObserveAgentTransfer("error", time.Since(transferStart))
+		if f.metrics != nil {
+			f.metrics.ObserveAgentTransfer("error", time.Since(transferStart))
 		}
 		status := http.StatusBadGateway
 		if engine.IsAgentTransferValidationError(err) {
@@ -392,8 +392,8 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 		httpError(w, fmt.Errorf("agent transfer: %w", err), status)
 		return
 	}
-	if s.metrics != nil {
-		s.metrics.ObserveAgentTransfer("ok", time.Since(transferStart))
+	if f.metrics != nil {
+		f.metrics.ObserveAgentTransfer("ok", time.Since(transferStart))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(FilesAgentTransferResponse{Events: events})
@@ -410,7 +410,7 @@ func (s *Server) handleFilesAgentTransfer(w http.ResponseWriter, r *http.Request
 // @Failure 502 {object} map[string]string
 // @Router /api/v1/files/remote/stat [post]
 // @Security BearerAuth
-func (s *Server) handleFilesRemoteStat(w http.ResponseWriter, r *http.Request) {
+func (f *FilesAPI) handleFilesRemoteStat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -420,12 +420,12 @@ func (s *Server) handleFilesRemoteStat(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	user := s.sshUser(req.SSHUser)
+	user := f.sshUser(req.SSHUser)
 	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable"), http.StatusBadRequest)
 		return
 	}
-	entry, err := ui.RemoteStat(user, req.Record, req.Path, s.fileClientCache)
+	entry, err := ui.RemoteStat(user, req.Record, req.Path, f.fileClientCache)
 	if err != nil {
 		httpError(w, err, http.StatusBadGateway)
 		return
@@ -445,7 +445,7 @@ func (s *Server) handleFilesRemoteStat(w http.ResponseWriter, r *http.Request) {
 // @Failure 502 {object} map[string]string
 // @Router /api/v1/files/remote/mkdir [post]
 // @Security BearerAuth
-func (s *Server) handleFilesRemoteMkdir(w http.ResponseWriter, r *http.Request) {
+func (f *FilesAPI) handleFilesRemoteMkdir(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -455,12 +455,12 @@ func (s *Server) handleFilesRemoteMkdir(w http.ResponseWriter, r *http.Request) 
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	user := s.sshUser(req.SSHUser)
+	user := f.sshUser(req.SSHUser)
 	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable"), http.StatusBadRequest)
 		return
 	}
-	err := ui.RemoteMkdirAll(user, req.Record, req.Path, s.fileClientCache)
+	err := ui.RemoteMkdirAll(user, req.Record, req.Path, f.fileClientCache)
 	if err != nil {
 		httpError(w, err, http.StatusBadGateway)
 		return
@@ -480,7 +480,7 @@ func (s *Server) handleFilesRemoteMkdir(w http.ResponseWriter, r *http.Request) 
 // @Failure 502 {object} map[string]string
 // @Router /api/v1/files/remote/remove [post]
 // @Security BearerAuth
-func (s *Server) handleFilesRemoteRemove(w http.ResponseWriter, r *http.Request) {
+func (f *FilesAPI) handleFilesRemoteRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -490,12 +490,12 @@ func (s *Server) handleFilesRemoteRemove(w http.ResponseWriter, r *http.Request)
 		httpError(w, fmt.Errorf("json: %w", err), http.StatusBadRequest)
 		return
 	}
-	user := s.sshUser(req.SSHUser)
+	user := f.sshUser(req.SSHUser)
 	if !req.Record.IsConnectable() {
 		httpError(w, fmt.Errorf("record is not connectable"), http.StatusBadRequest)
 		return
 	}
-	err := ui.RemoteRemove(user, req.Record, req.Path, req.Recursive, s.fileClientCache)
+	err := ui.RemoteRemove(user, req.Record, req.Path, req.Recursive, f.fileClientCache)
 	if err != nil {
 		httpError(w, err, http.StatusBadGateway)
 		return
