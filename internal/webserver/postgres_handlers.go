@@ -15,6 +15,23 @@ import (
 	"github.com/shareed2k/honey/internal/proxy"
 )
 
+// PostgresAPI owns the Postgres data-browser endpoints (catalog + query),
+// isolating them from the main Server so the feature carries its own deps
+// (mirrors FilesAPI/EnrollAPI/RecipesAPI, architecture candidate arch-08). It
+// reads the proxy session registry to resolve a running postgres tunnel, then
+// queries through the pool manager.
+type PostgresAPI struct {
+	opts    Options
+	pgPools *postgres.PoolManager
+	proxy   *proxy.Manager
+}
+
+// NewPostgresAPI wires the pool manager and the shared proxy manager (used to
+// look up the postgres tunnel session backing each request).
+func NewPostgresAPI(opts Options, pgPools *postgres.PoolManager, proxyMgr *proxy.Manager) *PostgresAPI {
+	return &PostgresAPI{opts: opts, pgPools: pgPools, proxy: proxyMgr}
+}
+
 type postgresCatalogResponse struct {
 	Databases []string            `json:"databases"`
 	Schemas   []string            `json:"schemas"`
@@ -35,18 +52,18 @@ type postgresQueryResponse struct {
 	Rows []map[string]any `json:"rows"`
 }
 
-func (s *Server) handlePostgresCatalog(w http.ResponseWriter, r *http.Request) {
+func (p *PostgresAPI) handlePostgresCatalog(w http.ResponseWriter, r *http.Request) {
 	sid := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	if sid == "" {
 		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
 		return
 	}
-	sess, err := s.getProxySessionByID(sid)
+	sess, err := p.getProxySessionByID(sid)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 		return
 	}
-	dsn, err := postgresDSNForSession(r.Context(), s.opts.Config, sess, "")
+	dsn, err := postgresDSNForSession(r.Context(), p.opts.Config, sess, "")
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 		return
@@ -54,7 +71,7 @@ func (s *Server) handlePostgresCatalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	repo := postgres.NewCatalogRepository(s.pgPools)
+	repo := postgres.NewCatalogRepository(p.pgPools)
 
 	dbs, err := repo.GetDatabases(ctx, dsn)
 	if err != nil {
@@ -88,7 +105,7 @@ func (s *Server) handlePostgresCatalog(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-func (s *Server) handlePostgresQuery(w http.ResponseWriter, r *http.Request) {
+func (p *PostgresAPI) handlePostgresQuery(w http.ResponseWriter, r *http.Request) {
 	var req postgresQueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
@@ -98,12 +115,12 @@ func (s *Server) handlePostgresQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"session_id and sql required"}`, http.StatusBadRequest)
 		return
 	}
-	sess, err := s.getProxySessionByID(req.SessionID)
+	sess, err := p.getProxySessionByID(req.SessionID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 		return
 	}
-	dsn, err := postgresDSNForSession(r.Context(), s.opts.Config, sess, req.Database)
+	dsn, err := postgresDSNForSession(r.Context(), p.opts.Config, sess, req.Database)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 		return
@@ -118,7 +135,7 @@ func (s *Server) handlePostgresQuery(w http.ResponseWriter, r *http.Request) {
 	if req.TimeoutMS > 0 {
 		timeout = time.Duration(req.TimeoutMS) * time.Millisecond
 	}
-	res, err := postgres.Query(r.Context(), s.pgPools, dsn, query, nil, postgres.QueryOpts{Timeout: timeout, Readonly: readonly})
+	res, err := postgres.Query(r.Context(), p.pgPools, dsn, query, nil, postgres.QueryOpts{Timeout: timeout, Readonly: readonly})
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 		return
@@ -127,8 +144,8 @@ func (s *Server) handlePostgresQuery(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(postgresQueryResponse{Rows: res.Rows})
 }
 
-func (s *Server) getProxySessionByID(id string) (*proxy.Session, error) {
-	sessions, err := s.proxy.List()
+func (p *PostgresAPI) getProxySessionByID(id string) (*proxy.Session, error) {
+	sessions, err := p.proxy.List()
 	if err != nil {
 		return nil, err
 	}

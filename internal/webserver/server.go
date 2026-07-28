@@ -131,6 +131,10 @@ type Server struct {
 	// agent transfer, stat/mkdir/remove, streamed up/download).
 	filesAPI *FilesAPI
 
+	// postgresAPI owns the Postgres data-browser endpoints (catalog, query),
+	// resolving the backing proxy session via the shared proxy manager.
+	postgresAPI *PostgresAPI
+
 	commandRunner *engine.CommandRunner
 
 	// enrollAPI owns the mTLS device-enrollment endpoints; its CA/store are nil
@@ -265,6 +269,7 @@ func (s *Server) routes() error {
 	recipesAPI := s.recipesAPI
 
 	s.filesAPI = NewFilesAPI(s.opts, s.metrics, s.fileClientCache, s.sshUser)
+	s.postgresAPI = NewPostgresAPI(s.opts, s.pgPools, s.proxy)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -353,8 +358,8 @@ func (s *Server) routes() error {
 		})
 
 		r.Route("/postgres", func(pgr chi.Router) {
-			pgr.Get("/catalog", s.handlePostgresCatalog)
-			pgr.Post("/query", s.handlePostgresQuery)
+			pgr.Get("/catalog", s.postgresAPI.handlePostgresCatalog)
+			pgr.Post("/query", s.postgresAPI.handlePostgresQuery)
 		})
 
 		r.Route("/logs", func(lr chi.Router) {
