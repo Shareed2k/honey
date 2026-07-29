@@ -218,10 +218,10 @@ allow if {
 	s := newTestServer(t, Options{Enforcer: enf})
 	req := httptest.NewRequest("GET", "/api/v1/ws/udp", nil)
 
-	if err := s.gateUDPRelay(req, "10.0.0.5:53"); err != nil {
+	if err := s.forwardingAPI.gateUDPRelay(req, "10.0.0.5:53"); err != nil {
 		t.Fatalf("allowed target should pass: %v", err)
 	}
-	if err := s.gateUDPRelay(req, "1.2.3.4:53"); err == nil {
+	if err := s.forwardingAPI.gateUDPRelay(req, "1.2.3.4:53"); err == nil {
 		t.Fatal("disallowed target should be denied")
 	}
 }

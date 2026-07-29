@@ -126,7 +126,7 @@ func TestHandleWebUDPRelay(t *testing.T) {
 
 	target := newFakeUDPTarget()
 	fd := &fakeUDPDialer{target: target}
-	s.udpDialer = fd
+	s.forwardingAPI.udpDialer = fd
 
 	ts := httptest.NewServer(s.router)
 	defer ts.Close()
@@ -176,7 +176,7 @@ func TestHandleWebUDPRelay_InvalidTarget(t *testing.T) {
 	require.NoError(t, err)
 
 	fd := &fakeUDPDialer{target: newFakeUDPTarget()}
-	s.udpDialer = fd
+	s.forwardingAPI.udpDialer = fd
 
 	ts := httptest.NewServer(s.router)
 	defer ts.Close()
@@ -214,7 +214,7 @@ allow if input.action == "api_request"`
 	s := newTestServer(t, Options{Enforcer: enf})
 
 	fd := &fakeUDPDialer{target: newFakeUDPTarget()}
-	s.udpDialer = fd
+	s.forwardingAPI.udpDialer = fd
 
 	ts := httptest.NewServer(s.router)
 	defer ts.Close()
@@ -243,7 +243,7 @@ func TestHandleWebUDPRelay_DialError(t *testing.T) {
 	require.NoError(t, err)
 
 	fd := &fakeUDPDialer{dialErr: errors.New("connection refused")}
-	s.udpDialer = fd
+	s.forwardingAPI.udpDialer = fd
 
 	ts := httptest.NewServer(s.router)
 	defer ts.Close()

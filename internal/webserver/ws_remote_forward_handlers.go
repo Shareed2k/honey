@@ -65,8 +65,8 @@ type WSRemoteForwardHello struct {
 // @Tags tunnels
 // @Router /api/v1/ws/remote-forward [get]
 // @Security BearerAuth
-func (s *Server) handleWebRemoteForward(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
+func (a *ForwardingAPI) handleWebRemoteForward(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -88,15 +88,15 @@ func (s *Server) handleWebRemoteForward(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	user := s.sshUser(hello.SSHUser)
+	user := a.sshUser(hello.SSHUser)
 	if !hello.Record.IsConnectable() {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"record is not connectable"}`))
 		return
 	}
 
-	listenerFor := s.remoteListenerFor
+	listenerFor := a.remoteListenerFor
 	if listenerFor == nil {
-		listenerFor = s.defaultRemoteListener
+		listenerFor = a.defaultRemoteListener
 	}
 
 	ln, cleanup, err := listenerFor(user, hello.Record, hello.RemoteBind, hello.RemoteListen)
@@ -118,11 +118,11 @@ func (s *Server) handleWebRemoteForward(w http.ResponseWriter, r *http.Request) 
 // defaultRemoteListener obtains a reverse listener on the target side by
 // resolving the record's executor, dialing a leaf *ssh.Client and calling
 // Listen on it. The returned cleanup releases the underlying HostClient.
-func (s *Server) defaultRemoteListener(user string, r hosts.Record, bind string, port int) (net.Listener, func(), error) {
-	if s.opts.ExecRegistry == nil {
+func (a *ForwardingAPI) defaultRemoteListener(user string, r hosts.Record, bind string, port int) (net.Listener, func(), error) {
+	if a.opts.ExecRegistry == nil {
 		return nil, nil, fmt.Errorf("no exec registry configured")
 	}
-	executor := s.opts.ExecRegistry.ForRecord(r)
+	executor := a.opts.ExecRegistry.ForRecord(r)
 	if executor == nil {
 		return nil, nil, fmt.Errorf("no executor found for record")
 	}

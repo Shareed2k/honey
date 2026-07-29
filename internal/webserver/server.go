@@ -24,7 +24,6 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
 	plugincache "github.com/shareed2k/honey/internal/plugincache"
@@ -149,15 +148,9 @@ type Server struct {
 	// (endpoints report 503) when no state dir is available.
 	enrollAPI *EnrollAPI
 
-	// remoteListenerFor obtains the reverse listener on the target side for the
-	// /api/v1/ws/remote-forward handler. nil selects defaultRemoteListener (the
-	// leaf.Listen path); tests inject an in-memory listener to avoid real SSH.
-	remoteListenerFor func(user string, r hosts.Record, bind string, port int) (net.Listener, func(), error)
-
-	// udpDialer obtains the UDP target connection for the /api/v1/ws/udp
-	// handler. Defaulted to realUDPDialer{} below; tests inject a fake to
-	// avoid opening real UDP sockets.
-	udpDialer udpDialer
+	// forwardingAPI owns the WebSocket forwarding/relay endpoints (ws/tunnel,
+	// ws/remote-forward, ws/udp) and their test-injectable seams.
+	forwardingAPI *ForwardingAPI
 }
 
 // NewServer builds handlers with the given auth token.
@@ -206,7 +199,6 @@ func NewServer(opts Options) (*Server, error) {
 		webhookQueue:    q,
 		plugins:         pc,
 		fileClientCache: engine.NewClientCache(),
-		udpDialer:       realUDPDialer{},
 		pveVNC:          newPveVNCStore(),
 		commandRunner: engine.NewCommandRunner(engine.CommandRunnerOptions{
 			ExecRegistry:   opts.ExecRegistry,
@@ -280,6 +272,7 @@ func (s *Server) routes() error {
 	s.postgresAPI = NewPostgresAPI(s.opts, s.pgPools, s.proxy)
 	s.tunnelsAPI = NewTunnelsAPI(s.opts, s.tunnels, s.sshUser)
 	s.proxyAPI = NewProxyAPI(s.opts, s.proxy, s.fileClientCache)
+	s.forwardingAPI = NewForwardingAPI(s.opts, s.authorized, s.sshUser)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -352,9 +345,9 @@ func (s *Server) routes() error {
 		r.Post("/terminal-assist", s.handleTerminalAssist)
 		r.Get("/terminal-assist/models", s.handleTerminalAssistModels)
 		r.Post("/pve-qemu-vnc-offer", s.handlePveQemuVncOffer)
-		r.Get("/ws/tunnel", s.handleWebTunnel)
-		r.Get("/ws/remote-forward", s.handleWebRemoteForward)
-		r.Get("/ws/udp", s.handleWebUDPRelay)
+		r.Get("/ws/tunnel", s.forwardingAPI.handleWebTunnel)
+		r.Get("/ws/remote-forward", s.forwardingAPI.handleWebRemoteForward)
+		r.Get("/ws/udp", s.forwardingAPI.handleWebUDPRelay)
 		r.Get("/ws/exec", s.handleWebExec)
 
 		r.Post("/agent", s.handleAgent)
