@@ -8,13 +8,13 @@ import (
 	"strings"
 
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/all"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/ui"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -97,10 +97,10 @@ func (e *sshFallbackExecutor) RunInteractive(user string, r hosts.Record) error 
 }
 
 // RunInteractiveStreams runs an interactive SSH PTY shell over the caller's
-// streams (e.g. a web terminal's WebSocket pipes) instead of os.Stdin/os.Stdout,
-// so the executor seam owns the ssh.Session plumbing rather than the handler.
-// Under a PTY the remote merges stderr into stdout, so both route to stdout.
-// resize carries [cols, rows] pairs, forwarded to the session as WindowChange.
+// streams (e.g. a web terminal's WebSocket pipes) instead of os.Stdin/os.Stdout.
+// It delegates to ui.RunSSHInteractiveStreams so the SSH PTY plumbing lives in
+// one place, shared with the webserver's universal SSH fallback. resize carries
+// [cols, rows] pairs.
 func (e *sshFallbackExecutor) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
 	user = strings.TrimSpace(user)
 	if user == "" {
@@ -108,82 +108,7 @@ func (e *sshFallbackExecutor) RunInteractiveStreams(ctx context.Context, user st
 			user = u
 		}
 	}
-	hc, err := e.Dial(user, r)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = hc.Close() }()
-	leafer, ok := hc.(interface{ LeafSSH() *ssh.Client })
-	if !ok {
-		return fmt.Errorf("ssh interactive: client has no leaf")
-	}
-	leaf := leafer.LeafSSH()
-	if leaf == nil {
-		return fmt.Errorf("ssh interactive: leaf client unavailable")
-	}
-	sess, err := leaf.NewSession()
-	if err != nil {
-		return fmt.Errorf("ssh interactive: new session: %w", err)
-	}
-	defer func() { _ = sess.Close() }()
-
-	var shellCmd string
-	if env, eerr := cuetry.EffectiveEnvForRun(ctx, false, nil, &cuetry.StepBase{}, nil, nil, &r); eerr == nil && len(env) > 0 {
-		for k, v := range env {
-			_ = sess.Setenv(k, v)
-		}
-		shellCmd, _ = cuetry.ShellExportPrefixForRemote(env, `exec "${SHELL:-sh}" -l || exec "${SHELL:-sh}"`)
-	}
-
-	if cols <= 0 {
-		cols = 80
-	}
-	if rows <= 0 {
-		rows = 24
-	}
-	modes := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
-	if err := sess.RequestPty("xterm-256color", rows, cols, modes); err != nil {
-		return fmt.Errorf("ssh interactive: request pty: %w", err)
-	}
-	sess.Stdin = stdin
-	sess.Stdout = stdout
-	sess.Stderr = stdout
-
-	if shellCmd != "" {
-		if err := sess.Start(shellCmd); err != nil {
-			return fmt.Errorf("ssh interactive: start shell: %w", err)
-		}
-	} else {
-		if err := sess.Shell(); err != nil {
-			return fmt.Errorf("ssh interactive: shell: %w", err)
-		}
-	}
-
-	// Forward terminal resizes until the session ends. done (closed on return)
-	// and ctx both stop the goroutine, so it never outlives the session even if
-	// the caller never closes resize.
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			case <-ctx.Done():
-				_ = sess.Close()
-				return
-			case sz, ok := <-resize:
-				if !ok {
-					return
-				}
-				if sz[0] > 0 && sz[1] > 0 {
-					_ = sess.WindowChange(sz[1], sz[0])
-				}
-			}
-		}
-	}()
-
-	return sess.Wait()
+	return ui.RunSSHInteractiveStreams(ctx, user, r, stdin, stdout, cols, rows, resize)
 }
 
 func (e *sshFallbackExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {

@@ -3,7 +3,6 @@ package webserver
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/truenasshell"
+	"github.com/shareed2k/honey/internal/ui"
 	"go.uber.org/zap"
 )
 
@@ -192,13 +192,29 @@ func benignDockerWSExit(err error) bool {
 func serveWebInteractive(conn *websocket.Conn, ex hostexec.Executor, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
 	is, ok := ex.(hostexec.InteractiveStreamer)
 	if !ok {
-		err := fmt.Errorf("no interactive terminal available for record %q", rec.Name)
-		recorder.RecordError(err)
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
-		return
+		// The resolved executor can't stream a terminal — e.g. a registry that
+		// only wires exec/tunnel, or a plain SSH host the registry doesn't claim
+		// interactively. Fall back to a direct leaf-SSH shell, the universal path
+		// a host always had before the seam unified the dispatch (independent of
+		// the exec registry).
+		is = sshFallbackStreamer{}
 	}
 	handleWebInteractiveStreams(context.Background(), conn, is, user, rec, cols, rows, recorder)
 }
+
+// sshFallbackStreamer is the universal SSH terminal: it dials the record's leaf
+// SSH directly (ui.RunSSHInteractiveStreams), independent of the executor
+// registry. Used by serveWebInteractive when Registry.ForRecord yields a
+// non-interactive executor, preserving the pre-seam behavior that any host with
+// an IP gets a shell. The SSH PTY plumbing itself lives once in the ui package,
+// shared with cli's sshFallbackExecutor.
+type sshFallbackStreamer struct{}
+
+func (sshFallbackStreamer) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
+	return ui.RunSSHInteractiveStreams(ctx, user, r, stdin, stdout, cols, rows, resize)
+}
+
+var _ hostexec.InteractiveStreamer = sshFallbackStreamer{}
 
 // interactiveWSKind labels the local shell path for connection metrics.
 func interactiveWSKind(rec hosts.Record) string {
