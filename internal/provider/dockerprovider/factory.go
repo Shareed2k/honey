@@ -110,17 +110,21 @@ func (f dockerFactory) ProviderName() string { return "docker" }
 // record locally. Without this method dockerFactory would not satisfy
 // searchrun.ExecutorProvider and every docker record would fall through to the
 // SSH fallback ("no host ip for ssh").
-func (f dockerFactory) HandlesRecord(r hosts.Record) bool {
+// handles is the single record-kind predicate shared by HandlesRecord and
+// ExecutorFor, so the "which records does docker serve" decision has one
+// definition instead of the same kind check copied into both methods.
+func (f dockerFactory) handles(r hosts.Record) bool {
 	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
 	return k == "container" || k == "swarm_task"
 }
 
+func (f dockerFactory) HandlesRecord(r hosts.Record) bool { return f.handles(r) }
+
 func (f dockerFactory) ExecutorFor(r hosts.Record, reg hostexec.Registry) hostexec.Executor {
-	k := strings.ToLower(strings.TrimSpace(r.Meta["kind"]))
-	if k == "container" || k == "swarm_task" {
-		return &DockerExecutor{reg: reg, interactive: f.interactive}
+	if !f.handles(r) {
+		return nil
 	}
-	return nil
+	return &DockerExecutor{reg: reg, interactive: f.interactive}
 }
 
 func (f dockerFactory) ReconfigureFromConfig() {
