@@ -278,6 +278,7 @@ func (m *Manager) executeSchedule(
 		RecipeDir:        filepath.Dir(recipePath),
 		Target:           searchIn,
 		SSHUser:          sshUser,
+		Source:           "scheduler",
 		ActorID:          "cron:" + appName,
 		Env:              cliEnv,
 		AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath),

@@ -19,7 +19,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/apps"
-	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
@@ -242,6 +241,7 @@ func (api *RecipesAPI) enqueueWebhookAsync(webhookName, sshUser string, searchIn
 			RecipeDir:        filepath.Dir(recipePath),
 			Records:          searchOut.Records,
 			SSHUser:          sshUser,
+			Source:           "webhook",
 			ActorID:          actor,
 			Env:              envMap,
 			AISystemPrompt:   aiPrompt,
@@ -281,6 +281,7 @@ func (api *RecipesAPI) executeWebhookSync(ctx context.Context, webhookName, sshU
 		RecipeDir:        filepath.Dir(recipePath),
 		Records:          searchOut.Records,
 		SSHUser:          sshUser,
+		Source:           "webhook",
 		ActorID:          actor,
 		Env:              envMap,
 		AISystemPrompt:   aiPrompt,
@@ -420,13 +421,8 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 
 	actor := api.resolveWebhookActor(r, webhook, body, appName)
-	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-		Source:   "webhook",
-		Actor:    actor,
-		Action:   "recipe_run",
-		Target:   recipe.Name,
-		Decision: "allow",
-	})
+	// recipe_run admission audit is emitted by the runner (see admitRecipe),
+	// verdict-aware and covering both the sync and async execution below.
 
 	// ---- Async path: return 202 immediately; search + execution run in the queue. ----
 	if isAsync {

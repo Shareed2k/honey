@@ -139,27 +139,26 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	if exists {
 		// Health check if it's an SSH client
 		if hc, ok := client.(*sshclient.HoneyClient); ok {
-			if leaf := hc.LeafSSH(); leaf != nil {
-				_, _, err := leaf.SendRequest("keepalive@openssh.com", true, nil)
-				if err != nil {
-					zap.L().Warn(
-						"ssh client cache keepalive failed, discarding client",
-						zap.String("provider", r.Provider),
-						zap.String("host_name", r.Name),
-						zap.String("host_ip", r.PrimaryIP),
-						zap.String("user", user),
-						zap.Error(err),
-					)
+			// hc.Healthy() runs the same timeout-guarded keepalive the pool uses;
+			// a nil leaf reports healthy (nothing to probe).
+			if err := hc.Healthy(); err != nil {
+				zap.L().Warn(
+					"ssh client cache keepalive failed, discarding client",
+					zap.String("provider", r.Provider),
+					zap.String("host_name", r.Name),
+					zap.String("host_ip", r.PrimaryIP),
+					zap.String("user", user),
+					zap.Error(err),
+				)
 
-					// Remove from cache and close
-					c.mu.Lock()
-					delete(c.clients, key)
-					c.mu.Unlock()
-					_ = client.Close()
+				// Remove from cache and close
+				c.mu.Lock()
+				delete(c.clients, key)
+				c.mu.Unlock()
+				_ = client.Close()
 
-					// Proceed as cache miss
-					exists = false
-				}
+				// Proceed as cache miss
+				exists = false
 			}
 		}
 

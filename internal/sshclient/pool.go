@@ -216,6 +216,20 @@ func sendKeepalive(ssh *gossh.Client) error {
 	}
 }
 
+// Healthy reports whether the HoneyClient's underlying SSH connection still
+// answers a keepalive within poolKeepaliveTimeout. A nil leaf (no active SSH
+// client to probe) is reported healthy. Both the pool's keepalive loop and the
+// engine ClientCache liveness check resolve to the same timeout-guarded
+// sendKeepalive, so a half-dead socket cannot hang either caller — previously
+// the ClientCache probe issued a raw SendRequest with no timeout guard.
+func (h *HoneyClient) Healthy() error {
+	leaf := h.LeafSSH()
+	if leaf == nil {
+		return nil
+	}
+	return sendKeepalive(leaf)
+}
+
 func (sp *SSHPool) rebuildAll(ctx context.Context) {
 	sp.rebuildMu.Lock()
 	if time.Since(sp.lastRebuild) < rebuildDebounce {

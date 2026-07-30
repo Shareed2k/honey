@@ -143,18 +143,26 @@ func TestNewServer_nilAuditSinkBecomesNoop(t *testing.T) {
 // fakeRunner satisfies recipeRunnerIface for audit-event tests. Execute returns
 // the pre-configured channel and error; DryRun returns a static plan.
 type fakeRunner struct {
-	ch  <-chan engine.HostExecResult
-	err error
+	ch      <-chan engine.HostExecResult
+	err     error
+	lastReq engine.RunRequest // captured so tests can assert what the handler forwarded
 }
 
-func (f *fakeRunner) DryRun(_ context.Context, _ engine.RunRequest) (string, error) {
+func (f *fakeRunner) DryRun(_ context.Context, req engine.RunRequest) (string, error) {
+	f.lastReq = req
 	return "dry-run plan", nil
 }
 
-func (f *fakeRunner) Execute(_ context.Context, _ engine.RunRequest) (<-chan engine.HostExecResult, error) {
+func (f *fakeRunner) Execute(_ context.Context, req engine.RunRequest) (<-chan engine.HostExecResult, error) {
+	f.lastReq = req
 	return f.ch, f.err
 }
-func (f *fakeRunner) ExecuteAndWait(_ context.Context, _ engine.RunRequest) error { return nil }
+
+func (f *fakeRunner) ExecuteAndWait(_ context.Context, req engine.RunRequest) error {
+	f.lastReq = req
+	return nil
+}
+
 func (f *fakeRunner) AssessCommandRisk(_ context.Context, _ engine.RunRequest) []engine.StepRisk {
 	return nil
 }
@@ -176,11 +184,16 @@ func cueExecBody(recipeName string, execute bool) string {
 		`,"ssh_user":"ops","records":[{"provider":"static","name":"h1","primary_ip":"1.1.1.1"}]}`
 }
 
-func TestHandleCueExec_emitsAuditEvent_allow(t *testing.T) {
+// recipe_run admission auditing lives in the RecipeRunner (see engine
+// TestAdmitRecipe_audits_*). At the handler layer we assert the complementary
+// facts: the handler forwards the correct Source into the RunRequest and does
+// NOT emit the recipe_run event itself (which would double-audit).
+func TestHandleCueExec_forwardsSourceWeb(t *testing.T) {
 	t.Parallel()
 	sink := &captureSink{}
 	s := newTestServer(t, Options{AuditSink: sink})
-	s.recipesAPI.runner = &fakeRunner{ch: closedResultChan()}
+	fr := &fakeRunner{ch: closedResultChan()}
+	s.recipesAPI.runner = fr
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cue-exec", strings.NewReader(cueExecBody("myrecipe", true)))
 	req.Header.Set("Content-Type", "application/json")
@@ -188,31 +201,20 @@ func TestHandleCueExec_emitsAuditEvent_allow(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.router.ServeHTTP(w, req)
 
-	events := sink.all()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 audit event, got %d (status=%d body=%s)", len(events), w.Code, w.Body)
+	if n := len(sink.all()); n != 0 {
+		t.Fatalf("handler must not emit recipe_run audit (runner does); got %d (status=%d body=%s)", n, w.Code, w.Body)
 	}
-	e := events[0]
-	if e.Action != "recipe_run" {
-		t.Errorf("Action = %q, want %q", e.Action, "recipe_run")
-	}
-	if e.Decision != "allow" {
-		t.Errorf("Decision = %q, want %q", e.Decision, "allow")
-	}
-	if e.Target != "myrecipe" {
-		t.Errorf("Target = %q, want %q", e.Target, "myrecipe")
-	}
-	if e.Source != "web" {
-		t.Errorf("Source = %q, want %q", e.Source, "web")
+	if fr.lastReq.Source != "web" {
+		t.Errorf("forwarded Source = %q, want %q", fr.lastReq.Source, "web")
 	}
 }
 
-func TestHandleCueExec_emitsAuditEvent_requireApproval(t *testing.T) {
+func TestHandleCueExec_pendingApprovalReturns202(t *testing.T) {
 	t.Parallel()
 	sink := &captureSink{}
 	s := newTestServer(t, Options{AuditSink: sink})
-	pendingErr := &engine.ErrPendingApproval{ID: "appr-abc", Reason: "risky op"}
-	s.recipesAPI.runner = &fakeRunner{err: pendingErr}
+	fr := &fakeRunner{err: &engine.ErrPendingApproval{ID: "appr-abc", Reason: "risky op"}}
+	s.recipesAPI.runner = fr
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cue-exec", strings.NewReader(cueExecBody("deploy.cue", true)))
 	req.Header.Set("Content-Type", "application/json")
@@ -221,24 +223,13 @@ func TestHandleCueExec_emitsAuditEvent_requireApproval(t *testing.T) {
 	s.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d body=%s", w.Code, w.Body)
+		t.Fatalf("expected 202 on pending approval, got %d body=%s", w.Code, w.Body)
 	}
-	events := sink.all()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 audit event, got %d", len(events))
+	if n := len(sink.all()); n != 0 {
+		t.Fatalf("handler must not emit recipe_run audit; got %d", n)
 	}
-	e := events[0]
-	if e.Action != "recipe_run" {
-		t.Errorf("Action = %q, want %q", e.Action, "recipe_run")
-	}
-	if e.Decision != "require_approval" {
-		t.Errorf("Decision = %q, want %q", e.Decision, "require_approval")
-	}
-	if e.ApprovalID != "appr-abc" {
-		t.Errorf("ApprovalID = %q, want %q", e.ApprovalID, "appr-abc")
-	}
-	if e.Target != "deploy.cue" {
-		t.Errorf("Target = %q, want %q", e.Target, "deploy.cue")
+	if fr.lastReq.Source != "web" {
+		t.Errorf("forwarded Source = %q, want %q", fr.lastReq.Source, "web")
 	}
 }
 
@@ -322,34 +313,30 @@ recipe: {
 }
 `
 
-func TestHandleRecipeWebhook_emitsAuditEvent_sync(t *testing.T) {
+// Sync webhook runs the recipe inline via runner.Execute, so we can assert the
+// handler forwarded Source="webhook" (the recipe_run audit itself is verified in
+// the engine tests). The handler must not emit the event itself.
+func TestHandleRecipeWebhook_forwardsSourceWebhook_sync(t *testing.T) {
 	sink := &captureSink{}
-	s := newWebhookTestServer(t, webhookSyncCUE, "dynamic:localhost", sink, &fakeRunner{ch: closedResultChan()})
+	fr := &fakeRunner{ch: closedResultChan()}
+	s := newWebhookTestServer(t, webhookSyncCUE, "dynamic:localhost", sink, fr)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/myapp/deploy", strings.NewReader("{}"))
 	w := httptest.NewRecorder()
 	s.router.ServeHTTP(w, req)
 
-	events := sink.all()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 audit event, got %d (status=%d body=%s)", len(events), w.Code, w.Body)
+	if n := len(sink.all()); n != 0 {
+		t.Fatalf("handler must not emit recipe_run audit (runner does); got %d (status=%d body=%s)", n, w.Code, w.Body)
 	}
-	e := events[0]
-	if e.Action != "recipe_run" {
-		t.Errorf("Action = %q, want %q", e.Action, "recipe_run")
-	}
-	if e.Source != "webhook" {
-		t.Errorf("Source = %q, want %q", e.Source, "webhook")
-	}
-	if e.Target != "hook-recipe" {
-		t.Errorf("Target = %q, want %q", e.Target, "hook-recipe")
-	}
-	if e.Decision != "allow" {
-		t.Errorf("Decision = %q, want %q", e.Decision, "allow")
+	if fr.lastReq.Source != "webhook" {
+		t.Errorf("forwarded Source = %q, want %q", fr.lastReq.Source, "webhook")
 	}
 }
 
-func TestHandleRecipeWebhook_emitsAuditEvent_async(t *testing.T) {
+// Async webhook enqueues the run and returns 202 immediately; the run (and its
+// recipe_run audit) happens later in the queue goroutine, so we only assert the
+// synchronous handler contract here.
+func TestHandleRecipeWebhook_asyncReturns202(t *testing.T) {
 	sink := &captureSink{}
 	s := newWebhookTestServer(t, webhookAsyncCUE, "dynamic:localhost", sink, &fakeRunner{})
 
@@ -359,20 +346,6 @@ func TestHandleRecipeWebhook_emitsAuditEvent_async(t *testing.T) {
 
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d body=%s", w.Code, w.Body)
-	}
-	events := sink.all()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 audit event, got %d", len(events))
-	}
-	e := events[0]
-	if e.Action != "recipe_run" {
-		t.Errorf("Action = %q, want %q", e.Action, "recipe_run")
-	}
-	if e.Source != "webhook" {
-		t.Errorf("Source = %q, want %q", e.Source, "webhook")
-	}
-	if e.Target != "hook-recipe" {
-		t.Errorf("Target = %q, want %q", e.Target, "hook-recipe")
 	}
 }
 
@@ -444,11 +417,12 @@ func TestHandleRecipesStoreDelete_emitsAuditEvent(t *testing.T) {
 	}
 }
 
-func TestHandleCueExec_emitsAuditEvent_allowWithApprovalID(t *testing.T) {
+func TestHandleCueExec_forwardsApprovalID(t *testing.T) {
 	t.Parallel()
 	sink := &captureSink{}
 	s := newTestServer(t, Options{AuditSink: sink})
-	s.recipesAPI.runner = &fakeRunner{ch: closedResultChan()}
+	fr := &fakeRunner{ch: closedResultChan()}
+	s.recipesAPI.runner = fr
 
 	body := `{"recipe_content":{"name":"deploy.cue","steps":[{"host":"*","command":"echo hi"}]},` +
 		`"execute":true,"ssh_user":"ops","records":[{"provider":"static","name":"h1","primary_ip":"1.1.1.1"}],` +
@@ -459,15 +433,10 @@ func TestHandleCueExec_emitsAuditEvent_allowWithApprovalID(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.router.ServeHTTP(w, req)
 
-	events := sink.all()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 audit event, got %d", len(events))
+	if fr.lastReq.ApprovalID != "appr-xyz" {
+		t.Errorf("forwarded ApprovalID = %q, want %q", fr.lastReq.ApprovalID, "appr-xyz")
 	}
-	e := events[0]
-	if e.Decision != "allow" {
-		t.Errorf("Decision = %q, want %q", e.Decision, "allow")
-	}
-	if e.ApprovalID != "appr-xyz" {
-		t.Errorf("ApprovalID = %q, want %q", e.ApprovalID, "appr-xyz")
+	if fr.lastReq.Source != "web" {
+		t.Errorf("forwarded Source = %q, want %q", fr.lastReq.Source, "web")
 	}
 }
