@@ -105,8 +105,26 @@ func (s *Server) handleAppsList(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleProxySessionsGet(w http.ResponseWriter, _ *http.Request) {
-	sessions, err := s.proxy.List()
+// ProxyAPI owns the app-proxy session endpoints (list, start, stop), isolating
+// them from the main Server so the feature carries its own deps (mirrors
+// FilesAPI/PostgresAPI/TunnelsAPI/EnrollAPI, architecture candidate arch-08). It
+// drives the proxy manager and resolves an app's dialer through the client cache
+// + registries (opts). The /apps catalog listing stays on Server: it bridges the
+// recipe module (recipesAPI.recipeWebhookNames), which this session module does
+// not depend on.
+type ProxyAPI struct {
+	opts            Options
+	proxy           *proxy.Manager
+	fileClientCache *engine.ClientCache
+}
+
+// NewProxyAPI wires the proxy manager and the shared SSH client cache.
+func NewProxyAPI(opts Options, proxyMgr *proxy.Manager, fileClientCache *engine.ClientCache) *ProxyAPI {
+	return &ProxyAPI{opts: opts, proxy: proxyMgr, fileClientCache: fileClientCache}
+}
+
+func (a *ProxyAPI) handleProxySessionsGet(w http.ResponseWriter, _ *http.Request) {
+	sessions, err := a.proxy.List()
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -116,7 +134,7 @@ func (s *Server) handleProxySessionsGet(w http.ResponseWriter, _ *http.Request) 
 		sessions = []proxy.Session{}
 	}
 	for i := range sessions {
-		sessions[i] = sanitizeSessionForAPI(s.opts.Config, sessions[i])
+		sessions[i] = sanitizeSessionForAPI(a.opts.Config, sessions[i])
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -125,19 +143,19 @@ func (s *Server) handleProxySessionsGet(w http.ResponseWriter, _ *http.Request) 
 	})
 }
 
-func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request) {
+func (a *ProxyAPI) handleProxySessionStart(w http.ResponseWriter, r *http.Request) {
 	var req proxyStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "invalid request"}`, http.StatusBadRequest)
 		return
 	}
 
-	if s.opts.Config == nil || s.opts.Config.Apps == nil {
+	if a.opts.Config == nil || a.opts.Config.Apps == nil {
 		http.Error(w, `{"error": "no apps configured"}`, http.StatusBadRequest)
 		return
 	}
 
-	app, ok := s.opts.Config.Apps[req.App]
+	app, ok := a.opts.Config.Apps[req.App]
 	if !ok {
 		http.Error(w, fmt.Sprintf(`{"error": "app %s not found"}`, req.App), http.StatusNotFound)
 		return
@@ -151,7 +169,7 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 		req.Providers = app.Provider
 	}
 	upstreamWasEncrypted := appsecret.IsEncryptedUpstream(app.Upstream)
-	resolvedUpstream, err := appsecret.ResolveUpstream(r.Context(), s.opts.Config, app.Upstream)
+	resolvedUpstream, err := appsecret.ResolveUpstream(r.Context(), a.opts.Config, app.Upstream)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusBadRequest)
 		return
@@ -167,13 +185,13 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 
 	if app.Target == "" && app.TargetRegex == "" {
 		// Use direct dialer
-		sess, err := s.proxy.Start(context.Background(), app, proxy.DirectDialer{}, nil)
+		sess, err := a.proxy.Start(context.Background(), app, proxy.DirectDialer{}, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		out := sanitizeSessionForAPI(s.opts.Config, *sess)
+		out := sanitizeSessionForAPI(a.opts.Config, *sess)
 		if upstreamWasEncrypted {
 			out.App.Upstream = encryptedUpstreamRedaction
 		}
@@ -182,13 +200,13 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Resolve the target for SSH Dialing
-	dialer, closer, err := resolveAppDialer(r.Context(), s.opts.Config, s.opts.ConfigPath, app, req.SSHUser, req, s.fileClientCache, s.opts.ExecRegistry, s.opts.SearchRegistry)
+	dialer, closer, err := resolveAppDialer(r.Context(), a.opts.Config, a.opts.ConfigPath, app, req.SSHUser, req, a.fileClientCache, a.opts.ExecRegistry, a.opts.SearchRegistry)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
-	sess, err := s.proxy.Start(context.Background(), app, dialer, closer)
+	sess, err := a.proxy.Start(context.Background(), app, dialer, closer)
 	if err != nil {
 		if closer != nil {
 			_ = closer.Close() // Cleanup if start failed
@@ -198,16 +216,16 @@ func (s *Server) handleProxySessionStart(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	out := sanitizeSessionForAPI(s.opts.Config, *sess)
+	out := sanitizeSessionForAPI(a.opts.Config, *sess)
 	if upstreamWasEncrypted {
 		out.App.Upstream = encryptedUpstreamRedaction
 	}
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-func (s *Server) handleProxySessionDelete(w http.ResponseWriter, r *http.Request) {
+func (a *ProxyAPI) handleProxySessionDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := s.proxy.Stop(id); err != nil {
+	if err := a.proxy.Stop(id); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": %q}`, err.Error()), http.StatusInternalServerError)
 		return
 	}

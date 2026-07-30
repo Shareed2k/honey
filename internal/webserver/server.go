@@ -24,7 +24,6 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
-	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
 	plugincache "github.com/shareed2k/honey/internal/plugincache"
@@ -121,28 +120,37 @@ type Server struct {
 
 	retentionState recordingRetentionState
 
-	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
-	pveQemuVncMu   sync.Mutex
-	pveQemuVncByID map[string]pveQemuVncOfferSession
+	// pveVNC holds one-time vncproxy offers for /ws/pve-qemu-vnc (see POST
+	// /api/v1/pve-qemu-vnc-offer); it owns its own lock.
+	pveVNC *pveVNCStore
 
 	recipesAPI *RecipesAPI
 
+	// filesAPI owns the file-management endpoints (upload, browse, copy,
+	// agent transfer, stat/mkdir/remove, streamed up/download).
+	filesAPI *FilesAPI
+
+	// postgresAPI owns the Postgres data-browser endpoints (catalog, query),
+	// resolving the backing proxy session via the shared proxy manager.
+	postgresAPI *PostgresAPI
+
+	// tunnelsAPI owns the in-process SSH -L port-forward endpoints (list, logs,
+	// start, stop), driving the shared tunnel manager.
+	tunnelsAPI *TunnelsAPI
+
+	// proxyAPI owns the app-proxy session endpoints (list, start, stop), driving
+	// the shared proxy manager.
+	proxyAPI *ProxyAPI
+
 	commandRunner *engine.CommandRunner
 
-	// deviceCA + enroll back the mTLS device-enrollment endpoints. Both are nil
-	// when no state dir is available (enrollment disabled).
-	deviceCA *DeviceCA
-	enroll   *enrollStore
+	// enrollAPI owns the mTLS device-enrollment endpoints; its CA/store are nil
+	// (endpoints report 503) when no state dir is available.
+	enrollAPI *EnrollAPI
 
-	// remoteListenerFor obtains the reverse listener on the target side for the
-	// /api/v1/ws/remote-forward handler. nil selects defaultRemoteListener (the
-	// leaf.Listen path); tests inject an in-memory listener to avoid real SSH.
-	remoteListenerFor func(user string, r hosts.Record, bind string, port int) (net.Listener, func(), error)
-
-	// udpDialer obtains the UDP target connection for the /api/v1/ws/udp
-	// handler. Defaulted to realUDPDialer{} below; tests inject a fake to
-	// avoid opening real UDP sockets.
-	udpDialer udpDialer
+	// forwardingAPI owns the WebSocket forwarding/relay endpoints (ws/tunnel,
+	// ws/remote-forward, ws/udp) and their test-injectable seams.
+	forwardingAPI *ForwardingAPI
 }
 
 // NewServer builds handlers with the given auth token.
@@ -191,7 +199,7 @@ func NewServer(opts Options) (*Server, error) {
 		webhookQueue:    q,
 		plugins:         pc,
 		fileClientCache: engine.NewClientCache(),
-		udpDialer:       realUDPDialer{},
+		pveVNC:          newPveVNCStore(),
 		commandRunner: engine.NewCommandRunner(engine.CommandRunnerOptions{
 			ExecRegistry:   opts.ExecRegistry,
 			SearchRegistry: opts.SearchRegistry,
@@ -224,12 +232,17 @@ func NewServer(opts Options) (*Server, error) {
 	s.workspace = workspacestore.New(workspaceStoreDir(s.opts.ConfigPath))
 
 	// Device mTLS enrollment: load-or-create a device CA under the state dir.
-	// Non-fatal — endpoints report 503 when unavailable.
+	// Non-fatal — endpoints report 503 when unavailable (nil CA/store).
+	var deviceCA *DeviceCA
 	if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
 		if ca, caErr := LoadOrCreateDeviceCA(stateDir); caErr == nil {
-			s.deviceCA = ca
-			s.enroll = newEnrollStore()
+			deviceCA = ca
 		}
+	}
+	if deviceCA != nil {
+		s.enrollAPI = NewEnrollAPI(deviceCA, newEnrollStore())
+	} else {
+		s.enrollAPI = NewEnrollAPI(nil, nil)
 	}
 
 	if err := s.routes(); err != nil {
@@ -255,6 +268,12 @@ func (s *Server) routes() error {
 	s.recipesAPI = NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache)
 	recipesAPI := s.recipesAPI
 
+	s.filesAPI = NewFilesAPI(s.opts, s.metrics, s.fileClientCache, s.sshUser)
+	s.postgresAPI = NewPostgresAPI(s.opts, s.pgPools, s.proxy)
+	s.tunnelsAPI = NewTunnelsAPI(s.opts, s.tunnels, s.sshUser)
+	s.proxyAPI = NewProxyAPI(s.opts, s.proxy, s.fileClientCache)
+	s.forwardingAPI = NewForwardingAPI(s.opts, s.authorized, s.sshUser)
+
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
 
@@ -277,10 +296,10 @@ func (s *Server) routes() error {
 		r.Post("/host-ports", s.handleHostPorts)
 
 		r.Route("/tunnels", func(tr chi.Router) {
-			tr.Get("/", s.handleTunnelsGet)
-			tr.Get("/{id}/logs", s.handleTunnelsLogs)
-			tr.Post("/", s.handleTunnelsPost)
-			tr.Delete("/{id}", s.handleTunnelsDelete)
+			tr.Get("/", s.tunnelsAPI.handleTunnelsGet)
+			tr.Get("/{id}/logs", s.tunnelsAPI.handleTunnelsLogs)
+			tr.Post("/", s.tunnelsAPI.handleTunnelsPost)
+			tr.Delete("/{id}", s.tunnelsAPI.handleTunnelsDelete)
 		})
 
 		r.Route("/config", func(cr chi.Router) {
@@ -293,17 +312,17 @@ func (s *Server) routes() error {
 			cr.Put("/", s.handleConfigPut)
 		})
 
-		r.Post("/upload", s.handleUpload)
+		r.Post("/upload", s.filesAPI.handleUpload)
 		r.Route("/files", func(fr chi.Router) {
-			fr.Post("/local/list", s.handleFilesLocalList)
-			fr.Post("/remote/list", s.handleFilesRemoteList)
-			fr.Post("/copy", s.handleFilesCopy)
-			fr.Post("/agent-transfer", s.handleFilesAgentTransfer)
-			fr.Post("/remote/stat", s.handleFilesRemoteStat)
-			fr.Post("/remote/mkdir", s.handleFilesRemoteMkdir)
-			fr.Post("/remote/remove", s.handleFilesRemoteRemove)
-			fr.Post("/remote/upload", s.handleFilesRemoteUpload)
-			fr.Get("/remote/download", s.handleFilesRemoteDownload)
+			fr.Post("/local/list", s.filesAPI.handleFilesLocalList)
+			fr.Post("/remote/list", s.filesAPI.handleFilesRemoteList)
+			fr.Post("/copy", s.filesAPI.handleFilesCopy)
+			fr.Post("/agent-transfer", s.filesAPI.handleFilesAgentTransfer)
+			fr.Post("/remote/stat", s.filesAPI.handleFilesRemoteStat)
+			fr.Post("/remote/mkdir", s.filesAPI.handleFilesRemoteMkdir)
+			fr.Post("/remote/remove", s.filesAPI.handleFilesRemoteRemove)
+			fr.Post("/remote/upload", s.filesAPI.handleFilesRemoteUpload)
+			fr.Get("/remote/download", s.filesAPI.handleFilesRemoteDownload)
 		})
 
 		r.Route("/recordings", func(rcr chi.Router) {
@@ -326,9 +345,9 @@ func (s *Server) routes() error {
 		r.Post("/terminal-assist", s.handleTerminalAssist)
 		r.Get("/terminal-assist/models", s.handleTerminalAssistModels)
 		r.Post("/pve-qemu-vnc-offer", s.handlePveQemuVncOffer)
-		r.Get("/ws/tunnel", s.handleWebTunnel)
-		r.Get("/ws/remote-forward", s.handleWebRemoteForward)
-		r.Get("/ws/udp", s.handleWebUDPRelay)
+		r.Get("/ws/tunnel", s.forwardingAPI.handleWebTunnel)
+		r.Get("/ws/remote-forward", s.forwardingAPI.handleWebRemoteForward)
+		r.Get("/ws/udp", s.forwardingAPI.handleWebUDPRelay)
 		r.Get("/ws/exec", s.handleWebExec)
 
 		r.Post("/agent", s.handleAgent)
@@ -336,14 +355,14 @@ func (s *Server) routes() error {
 		r.Get("/schedules", s.handleSchedulesList)
 
 		r.Route("/proxy", func(pr chi.Router) {
-			pr.Get("/sessions", s.handleProxySessionsGet)
-			pr.Post("/start", s.handleProxySessionStart)
-			pr.Delete("/sessions/{id}", s.handleProxySessionDelete)
+			pr.Get("/sessions", s.proxyAPI.handleProxySessionsGet)
+			pr.Post("/start", s.proxyAPI.handleProxySessionStart)
+			pr.Delete("/sessions/{id}", s.proxyAPI.handleProxySessionDelete)
 		})
 
 		r.Route("/postgres", func(pgr chi.Router) {
-			pgr.Get("/catalog", s.handlePostgresCatalog)
-			pgr.Post("/query", s.handlePostgresQuery)
+			pgr.Get("/catalog", s.postgresAPI.handlePostgresCatalog)
+			pgr.Post("/query", s.postgresAPI.handlePostgresQuery)
 		})
 
 		r.Route("/logs", func(lr chi.Router) {
@@ -363,8 +382,8 @@ func (s *Server) routes() error {
 		r.Get("/webhooks/{app_name}/{webhook_name}/deliveries", recipesAPI.handleWebhookDeliveries)
 
 		// Device mTLS enrollment: mint a one-time code (operator) + list issued devices.
-		r.Post("/devices/enroll-code", s.handleMintEnrollCode)
-		r.Get("/devices", s.handleListDevices)
+		r.Post("/devices/enroll-code", s.enrollAPI.handleMintEnrollCode)
+		r.Get("/devices", s.enrollAPI.handleListDevices)
 
 		r.Route("/studio", func(sr chi.Router) {
 			sr.Get("/workspace", s.handleGetStudioWorkspace)
@@ -374,7 +393,7 @@ func (s *Server) routes() error {
 
 	// Device enrollment is authenticated by the one-time code, not the session
 	// token, so it mounts outside the main auth group.
-	s.router.Post("/api/v1/devices/enroll", s.handleDeviceEnroll)
+	s.router.Post("/api/v1/devices/enroll", s.enrollAPI.handleDeviceEnroll)
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
 	s.router.With(recipesAPI.webhookRateLimit).
@@ -586,11 +605,9 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	if maxAge, text := s.recordingRetentionMaxAge(); maxAge > 0 && text != "" {
 		meta.SessionRecordingRetention = text
 	}
-	s.retentionState.mu.Lock()
-	if !s.retentionState.lastPurgeAt.IsZero() {
-		meta.SessionRecordingLastPurge = s.retentionState.lastPurgeAt.Format(time.RFC3339)
+	if t, ok := s.retentionState.lastPurge(); ok {
+		meta.SessionRecordingLastPurge = t.Format(time.RFC3339)
 	}
-	s.retentionState.mu.Unlock()
 	if addr := strings.TrimSpace(s.opts.MetricsListenAddr); addr != "" {
 		meta.MetricsURL = "http://" + addr + "/metrics"
 	}

@@ -64,11 +64,26 @@ func (s *enrollStore) list() []DeviceRecord {
 	return out
 }
 
+// EnrollAPI owns the mTLS device-enrollment endpoints (mint code / enroll /
+// list). ca and store are nil-together when no state dir is available, in which
+// case the endpoints report 503. Extracted from Server so the enrollment feature
+// carries its own dependencies (mirrors RecipesAPI).
+type EnrollAPI struct {
+	ca    *DeviceCA
+	store *enrollStore
+}
+
+// NewEnrollAPI wires the device CA and enroll store. Pass (nil, nil) when
+// enrollment is unavailable.
+func NewEnrollAPI(ca *DeviceCA, store *enrollStore) *EnrollAPI {
+	return &EnrollAPI{ca: ca, store: store}
+}
+
 // handleMintEnrollCode (authenticated) creates a one-time enrollment code the
 // operator hands to a device (rendered as a QR). Returns the CA fingerprint so
 // the device can pin it during enrollment.
-func (s *Server) handleMintEnrollCode(w http.ResponseWriter, r *http.Request) {
-	if s.deviceCA == nil || s.enroll == nil {
+func (a *EnrollAPI) handleMintEnrollCode(w http.ResponseWriter, r *http.Request) {
+	if a.ca == nil || a.store == nil {
 		httpError(w, fmt.Errorf("device enrollment not available (no state dir)"), http.StatusServiceUnavailable)
 		return
 	}
@@ -81,14 +96,14 @@ func (s *Server) handleMintEnrollCode(w http.ResponseWriter, r *http.Request) {
 		cn = "device:" + randToken(6)
 	}
 	code := randToken(32)
-	s.enroll.codes.Set(code, cn, ttlcache.DefaultTTL)
+	a.store.codes.Set(code, cn, ttlcache.DefaultTTL)
 
 	writeJSON(w, map[string]any{
 		"code":           code,
 		"cn":             cn,
 		"enroll_path":    "/api/v1/devices/enroll",
-		"ca_fingerprint": s.deviceCA.Fingerprint(),
-		"ca_pem":         string(s.deviceCA.CertPEM()),
+		"ca_fingerprint": a.ca.Fingerprint(),
+		"ca_pem":         string(a.ca.CertPEM()),
 		"expires_in":     int(enrollCodeTTL.Seconds()),
 	})
 }
@@ -96,8 +111,8 @@ func (s *Server) handleMintEnrollCode(w http.ResponseWriter, r *http.Request) {
 // handleDeviceEnroll (code-authenticated, no session token) validates a one-time
 // code, signs the submitted CSR into a short-lived client cert, and returns it
 // with the CA chain. Mounted outside the auth group.
-func (s *Server) handleDeviceEnroll(w http.ResponseWriter, r *http.Request) {
-	if s.deviceCA == nil || s.enroll == nil {
+func (a *EnrollAPI) handleDeviceEnroll(w http.ResponseWriter, r *http.Request) {
+	if a.ca == nil || a.store == nil {
 		httpError(w, fmt.Errorf("device enrollment not available (no state dir)"), http.StatusServiceUnavailable)
 		return
 	}
@@ -110,13 +125,13 @@ func (s *Server) handleDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item := s.enroll.codes.Get(strings.TrimSpace(body.Code))
+	item := a.store.codes.Get(strings.TrimSpace(body.Code))
 	if item == nil {
 		http.Error(w, `{"error":"invalid or expired enrollment code"}`, http.StatusUnauthorized)
 		return
 	}
 	cn := item.Value()
-	s.enroll.codes.Delete(strings.TrimSpace(body.Code)) // single use
+	a.store.codes.Delete(strings.TrimSpace(body.Code)) // single use
 
 	block, _ := pem.Decode([]byte(body.CSR))
 	if block == nil {
@@ -128,31 +143,31 @@ func (s *Server) handleDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("parse CSR: %w", err), http.StatusBadRequest)
 		return
 	}
-	certPEM, err := s.deviceCA.Sign(csr, cn, deviceCertTTL)
+	certPEM, err := a.ca.Sign(csr, cn, deviceCertTTL)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
 	if b, _ := pem.Decode(certPEM); b != nil {
 		if cert, perr := x509.ParseCertificate(b.Bytes); perr == nil {
-			s.enroll.record(cn, cert)
+			a.store.record(cn, cert)
 		}
 	}
 
 	writeJSON(w, map[string]any{
 		"cn":   cn,
 		"cert": string(certPEM),
-		"ca":   string(s.deviceCA.CertPEM()),
+		"ca":   string(a.ca.CertPEM()),
 	})
 }
 
 // handleListDevices (authenticated) lists issued device certs.
-func (s *Server) handleListDevices(w http.ResponseWriter, _ *http.Request) {
-	if s.enroll == nil {
+func (a *EnrollAPI) handleListDevices(w http.ResponseWriter, _ *http.Request) {
+	if a.store == nil {
 		writeJSON(w, map[string]any{"devices": []DeviceRecord{}})
 		return
 	}
-	writeJSON(w, map[string]any{"devices": s.enroll.list()})
+	writeJSON(w, map[string]any{"devices": a.store.list()})
 }
 
 func randToken(nBytes int) string {

@@ -14,13 +14,13 @@ import (
 	"testing"
 )
 
-func testServerWithCA(t *testing.T) *Server {
+func testEnrollAPI(t *testing.T) *EnrollAPI {
 	t.Helper()
 	ca, err := LoadOrCreateDeviceCA(t.TempDir())
 	if err != nil {
 		t.Fatalf("LoadOrCreateDeviceCA: %v", err)
 	}
-	return &Server{deviceCA: ca, enroll: newEnrollStore()}
+	return NewEnrollAPI(ca, newEnrollStore())
 }
 
 // newTestCSR returns a PEM CSR for CN (the CN is overridden by the server from
@@ -39,11 +39,11 @@ func newTestCSR(t *testing.T) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
 }
 
-func mintCode(t *testing.T, s *Server, cn string) string {
+func mintCode(t *testing.T, a *EnrollAPI, cn string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"cn": cn})
 	rec := httptest.NewRecorder()
-	s.handleMintEnrollCode(rec, httptest.NewRequest(http.MethodPost, "/api/v1/devices/enroll-code", strings.NewReader(string(body))))
+	a.handleMintEnrollCode(rec, httptest.NewRequest(http.MethodPost, "/api/v1/devices/enroll-code", strings.NewReader(string(body))))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("mint: got %d, body %s", rec.Code, rec.Body.String())
 	}
@@ -59,20 +59,20 @@ func mintCode(t *testing.T, s *Server, cn string) string {
 	return out.Code
 }
 
-func enroll(t *testing.T, s *Server, code, csr string) *httptest.ResponseRecorder {
+func enroll(t *testing.T, a *EnrollAPI, code, csr string) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"code": code, "csr": csr})
 	rec := httptest.NewRecorder()
-	s.handleDeviceEnroll(rec, httptest.NewRequest(http.MethodPost, "/api/v1/devices/enroll", strings.NewReader(string(body))))
+	a.handleDeviceEnroll(rec, httptest.NewRequest(http.MethodPost, "/api/v1/devices/enroll", strings.NewReader(string(body))))
 	return rec
 }
 
 func TestDeviceEnrollFlow(t *testing.T) {
-	s := testServerWithCA(t)
-	code := mintCode(t, s, "device:abc")
+	a := testEnrollAPI(t)
+	code := mintCode(t, a, "device:abc")
 	csr := newTestCSR(t)
 
-	rec := enroll(t, s, code, csr)
+	rec := enroll(t, a, code, csr)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("enroll: got %d, body %s", rec.Code, rec.Body.String())
 	}
@@ -109,36 +109,36 @@ func TestDeviceEnrollFlow(t *testing.T) {
 	}
 
 	// A device record was captured.
-	if got := len(s.enroll.list()); got != 1 {
+	if got := len(a.store.list()); got != 1 {
 		t.Fatalf("device records = %d, want 1", got)
 	}
 }
 
 func TestDeviceEnrollCodeSingleUse(t *testing.T) {
-	s := testServerWithCA(t)
-	code := mintCode(t, s, "")
+	a := testEnrollAPI(t)
+	code := mintCode(t, a, "")
 	csr := newTestCSR(t)
 
-	if rec := enroll(t, s, code, csr); rec.Code != http.StatusOK {
+	if rec := enroll(t, a, code, csr); rec.Code != http.StatusOK {
 		t.Fatalf("first enroll: got %d", rec.Code)
 	}
 	// Same code again → rejected (single use).
-	if rec := enroll(t, s, code, csr); rec.Code != http.StatusUnauthorized {
+	if rec := enroll(t, a, code, csr); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("reused code: got %d, want 401", rec.Code)
 	}
 }
 
 func TestDeviceEnrollBadCode(t *testing.T) {
-	s := testServerWithCA(t)
-	if rec := enroll(t, s, "nope", newTestCSR(t)); rec.Code != http.StatusUnauthorized {
+	a := testEnrollAPI(t)
+	if rec := enroll(t, a, "nope", newTestCSR(t)); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("bad code: got %d, want 401", rec.Code)
 	}
 }
 
 func TestDeviceEnrollDisabled(t *testing.T) {
-	s := &Server{} // no CA / enroll store
+	a := NewEnrollAPI(nil, nil) // disabled: nil CA and store
 	rec := httptest.NewRecorder()
-	s.handleDeviceEnroll(rec, httptest.NewRequest(http.MethodPost, "/api/v1/devices/enroll", strings.NewReader(`{}`)))
+	a.handleDeviceEnroll(rec, httptest.NewRequest(http.MethodPost, "/api/v1/devices/enroll", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("disabled: got %d, want 503", rec.Code)
 	}

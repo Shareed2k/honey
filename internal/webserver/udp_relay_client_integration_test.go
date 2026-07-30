@@ -34,7 +34,7 @@ func TestUDPRelay_ClientServer_Integration(t *testing.T) {
 
 	target := newFakeUDPTarget()
 	fd := &fakeUDPDialer{target: target}
-	s.udpDialer = fd
+	s.forwardingAPI.udpDialer = fd
 
 	ts := httptest.NewServer(s.router)
 	defer ts.Close()

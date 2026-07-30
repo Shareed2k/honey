@@ -73,7 +73,7 @@ func TestHandleWebRemoteForward(t *testing.T) {
 	ln := newFakeRemoteListener(fakeAddr)
 	var cleanupCalled bool
 	var cleanupMu sync.Mutex
-	s.remoteListenerFor = func(_ string, _ hosts.Record, _ string, _ int) (net.Listener, func(), error) {
+	s.forwardingAPI.remoteListenerFor = func(_ string, _ hosts.Record, _ string, _ int) (net.Listener, func(), error) {
 		return ln, func() {
 			cleanupMu.Lock()
 			cleanupCalled = true

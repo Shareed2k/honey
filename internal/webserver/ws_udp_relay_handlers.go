@@ -64,13 +64,13 @@ var _ udpDialer = (*realUDPDialer)(nil)
 // endpoint-level authMiddleware (which sees only the path), this passes the
 // caller-controlled target host:port so a policy can restrict WHICH address
 // the server will dial. target must already have passed ValidateTarget.
-func (s *Server) gateUDPRelay(r *http.Request, target string) error {
-	if s.opts.Enforcer == nil {
+func (a *ForwardingAPI) gateUDPRelay(r *http.Request, target string) error {
+	if a.opts.Enforcer == nil {
 		return nil
 	}
 	host, port, _ := net.SplitHostPort(target)
-	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
-	d, err := s.opts.Enforcer.Evaluate(r.Context(), map[string]any{
+	actor := userFromRequest(r, a.opts.TrustedProxyNets, a.opts.JWTPubKey)
+	d, err := a.opts.Enforcer.Evaluate(r.Context(), map[string]any{
 		"action": "udp_relay",
 		"actor":  actor,
 		"target": map[string]any{
@@ -128,8 +128,8 @@ type WSUDPRelayHello struct {
 // @Tags tunnels
 // @Router /api/v1/ws/udp [get]
 // @Security BearerAuth
-func (s *Server) handleWebUDPRelay(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
+func (a *ForwardingAPI) handleWebUDPRelay(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -157,7 +157,7 @@ func (s *Server) handleWebUDPRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.gateUDPRelay(r, target); err != nil {
+	if err := a.gateUDPRelay(r, target); err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
 		return
 	}
@@ -165,7 +165,7 @@ func (s *Server) handleWebUDPRelay(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	dialer := s.udpDialer
+	dialer := a.udpDialer
 	if dialer == nil {
 		dialer = realUDPDialer{}
 	}
