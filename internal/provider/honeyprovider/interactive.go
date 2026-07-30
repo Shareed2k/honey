@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/sshclient"
 	"golang.org/x/term"
@@ -183,6 +184,22 @@ func runInteractiveWS(
 	wg.Wait()
 	return runErr
 }
+
+// honeyprovider.Executor satisfies the hostexec.InteractiveStreamer seam via
+// RunInteractiveStreams (it forwards the session over the mesh; the upstream
+// server dispatches to the right native shell) and hostexec.ProxyExecutor, so
+// dispatchers route a mesh-resolved record to it wholesale before attempting any
+// local provider console.
+var (
+	_ hostexec.InteractiveStreamer = (*Executor)(nil)
+	_ hostexec.ProxyExecutor       = (*Executor)(nil)
+)
+
+// IsProxy reports that this executor forwards sessions to the upstream node that
+// owns the record rather than executing them locally. ForRecord only resolves to
+// a honeyprovider.Executor when this node has a matching honey backend for the
+// record's routing tag, so it is always a proxy.
+func (e *Executor) IsProxy() bool { return true }
 
 // RunInteractiveStreams proxies an interactive terminal session for r through
 // the upstream Honey server's /ws/ssh endpoint, carrying the supplied

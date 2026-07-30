@@ -3,44 +3,46 @@ package webserver
 import (
 	"context"
 	"io"
+	"net"
 	"testing"
 
-	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/provider/honeyprovider"
 )
 
-// fakeUpstreamRegistry is a minimal hostexec.Registry whose ForRecord returns a
-// preset executor, for exercising honeyUpstreamExecutorFor's routing decision.
-type fakeUpstreamRegistry struct{ ex hostexec.Executor }
+// localExecutor is a native hostexec.Executor that runs records on this node; it
+// deliberately does NOT implement hostexec.ProxyExecutor, so isProxyExecutor must
+// treat it as local.
+type localExecutor struct{}
 
-func (f fakeUpstreamRegistry) ForRecord(hosts.Record) hostexec.Executor { return f.ex }
-func (fakeUpstreamRegistry) Reconfigure(*config.File)                   {}
-func (fakeUpstreamRegistry) RunSSHTunnel(context.Context, string, string, int, string, io.Writer) error {
+func (localExecutor) Dial(string, hosts.Record) (hostexec.HostClient, error) { return nil, nil }
+func (localExecutor) RunInteractive(string, hosts.Record) error              { return nil }
+func (localExecutor) RunTunnel(context.Context, string, hosts.Record, string, io.Writer) error {
 	return nil
 }
-func (fakeUpstreamRegistry) BorrowSSH(string, hosts.Record) (any, bool) { return nil, false }
 
-func TestHoneyUpstreamExecutorFor(t *testing.T) {
-	rec := hosts.Record{Name: "x", Meta: map[string]string{"honey_upstream_backend": "dokploy"}}
+func (localExecutor) DialUpstream(context.Context, string, hosts.Record, string) (net.Conn, error) {
+	return nil, nil
+}
 
-	// nil registry -> not proxied.
-	if got := honeyUpstreamExecutorFor(nil, rec); got != nil {
-		t.Fatalf("nil registry: want nil, got %v", got)
+// TestIsProxy verifies the shared local-vs-proxy routing decision used by both
+// the web and TUI terminal dispatchers: a mesh-forwarding executor (honeyprovider)
+// is proxied wholesale, while a nil or native executor is handled locally. This is
+// what replaced the honey-upstream band-aids: the dispatcher asks the seam "do you
+// forward this elsewhere?" via hostexec.ProxyExecutor instead of type-asserting a
+// concrete provider or inspecting the honey_upstream_backend routing tag.
+func TestIsProxy(t *testing.T) {
+	if hostexec.IsProxy(nil) {
+		t.Fatal("nil executor: want false (local fallback)")
 	}
-
-	// This node runs the record locally (registry resolves to a non-honey
-	// executor / nil) -> not proxied, so the caller strips the stale meta and
-	// dispatches natively.
-	if got := honeyUpstreamExecutorFor(fakeUpstreamRegistry{ex: nil}, rec); got != nil {
-		t.Fatalf("non-honey executor: want nil, got %v", got)
+	if hostexec.IsProxy(localExecutor{}) {
+		t.Fatal("native executor: want false (runs locally)")
 	}
-
-	// This node routes the record through a honey upstream backend -> return
-	// the honeyprovider Executor so the terminal is proxied to it.
-	want := &honeyprovider.Executor{URL: "http://mesh-peer/"}
-	if got := honeyUpstreamExecutorFor(fakeUpstreamRegistry{ex: want}, rec); got != want {
-		t.Fatalf("honey executor: want %p, got %p", want, got)
+	if !hostexec.IsProxy(&honeyprovider.Executor{URL: "http://mesh-peer/"}) {
+		t.Fatal("honeyprovider executor: want true (forwarded over the mesh)")
 	}
 }
+
+// compile-time check: the fake native executor really satisfies hostexec.Executor.
+var _ hostexec.Executor = localExecutor{}

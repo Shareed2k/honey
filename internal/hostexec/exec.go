@@ -51,3 +51,42 @@ type Executor interface {
 	RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error
 	DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error)
 }
+
+// InteractiveStreamer is optionally implemented by executors that can run an
+// interactive TTY over caller-provided streams — the web terminal's WebSocket
+// pipes, or a recorded session — instead of the process's own os.Stdin/Stdout.
+// honeyprovider forwards it over the mesh (the upstream server dispatches to the
+// right native shell); native providers (docker/k8s) run it locally. resize
+// carries [cols, rows] pairs and is closed by the caller when the session ends.
+//
+// It is a capability interface, resolved from Registry.ForRecord via a type
+// assertion: a provider that has no interactive TTY simply does not implement
+// it. This lets one seam serve the web/CLI/mesh terminal paths uniformly instead
+// of each caller dispatching by record kind and down-casting to a concrete
+// native client.
+type InteractiveStreamer interface {
+	RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error
+}
+
+// ProxyExecutor is optionally implemented by an executor that forwards a session
+// to another node (e.g. the honey mesh) instead of running it on this node. When
+// Registry.ForRecord resolves to a proxy, callers route the whole interactive
+// session to it up front — ahead of any local provider-specific console — so a
+// mesh-routed record is handled on the node that owns it. Native executors do not
+// implement it (equivalently, IsProxy would be false), which is how a dispatcher
+// tells "forward this elsewhere" from "run it here" without naming a provider or
+// inspecting routing metadata.
+type ProxyExecutor interface {
+	IsProxy() bool
+}
+
+// IsProxy reports whether ex forwards sessions to another node (e.g. the honey
+// mesh) rather than executing them locally — that is, it implements ProxyExecutor
+// and says so. A nil executor or a native (local) executor returns false. It is
+// the shared decision point for the web and TUI terminal dispatchers, which route
+// a mesh-resolved record wholesale to its owning node before attempting any local
+// provider console or native shell.
+func IsProxy(ex Executor) bool {
+	pe, ok := ex.(ProxyExecutor)
+	return ok && pe.IsProxy()
+}

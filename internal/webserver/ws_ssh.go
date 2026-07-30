@@ -3,7 +3,6 @@ package webserver
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -12,16 +11,12 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/provider/honeyprovider"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/ssh"
-	"k8s.io/client-go/tools/remotecommand"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -142,170 +137,45 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		zap.L().Debug("web ssh: pty proxy fallback triggered")
 	}
 
-	// A record proxied through a honey upstream backend (mesh/direct) runs on
-	// the upstream server: proxy the whole terminal there via honeyprovider and
-	// let the server dispatch to the right native shell (docker exec / k8s exec
-	// / ssh). Must come before the kind dispatch below, which assumes a LOCAL
-	// native client and would fail with "unexpected client type
-	// *honeyprovider.Client" for a proxied docker/k8s record.
-	if hp := honeyUpstreamExecutorFor(s.opts.ExecRegistry, hello.Record); hp != nil {
+	// Interactive terminal dispatch runs entirely through the executor seam.
+	//
+	// A record this node proxies to another node (honey mesh/direct) is
+	// forwarded wholesale first: the terminating server resolves it locally and
+	// dispatches to the right native shell/console. hostexec.ProxyExecutor is how
+	// the seam declares "I forward this elsewhere", so the webserver never names a
+	// provider or strips routing metadata to make resolution work.
+	rec := hello.Record
+	ex := s.opts.ExecRegistry.ForRecord(rec)
+	if hostexec.IsProxy(ex) {
 		defer s.trackWSConnection("honey_upstream")()
-		handleWebHoneyUpstreamTTY(context.Background(), conn, hp, user, hello.Record, cols, rows, recorder)
-		return
-	}
-	// Not proxied by this node (e.g. this IS the upstream server receiving a
-	// forwarded record): drop the stale upstream-routing meta so the kind
-	// dispatch below resolves to the local native executor instead of
-	// re-entering the honey factory with no matching backend.
-	delete(hello.Record.Meta, "honey_upstream_backend")
-
-	if isK8sPodWebTerminal(hello.Record) {
-		// Use a non-cancelled context: the HTTP request context can be cancelled after hijack
-		// in some setups, which would abort the SPDY exec stream immediately.
-		defer s.trackWSConnection("k8s")()
-		handleWebK8sTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
+		serveWebInteractive(conn, ex, user, rec, cols, rows, recorder)
 		return
 	}
 
-	if hello.Record.IsDocker() {
-		defer s.trackWSConnection("docker")()
-		handleWebDockerTTY(context.Background(), conn, user, hello.Record, cols, rows, recorder, s.opts.ExecRegistry)
-		return
-	}
-
-	if isProxmoxSerialWebPVE(hello.Record) {
+	// Provider-specific consoles (serial/API bridges, not exec shells) are served
+	// by the node that owns the record, ahead of the generic exec seam below.
+	if isProxmoxSerialWebPVE(rec) {
 		defer s.trackWSConnection("pve_serial")()
-		handleWebProxmoxPVESerialTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
+		handleWebProxmoxPVESerialTTY(context.Background(), conn, rec, cols, rows, recorder)
 		return
 	}
-
-	if truenasshell.ShouldUseTrueNASShell(hello.Record, hello.Console) {
+	if truenasshell.ShouldUseTrueNASShell(rec, hello.Console) {
 		defer s.trackWSConnection("truenas_shell")()
-		handleWebTrueNASShellTTY(context.Background(), conn, hello.Record, cols, rows, recorder)
+		handleWebTrueNASShellTTY(context.Background(), conn, rec, cols, rows, recorder)
 		return
 	}
 
-	defer s.trackWSConnection("ssh")()
-	client, cleanup, err := ui.DialSSHLeafForRecord(user, hello.Record)
-	if err != nil {
-		recorder.RecordError(err)
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
-		return
-	}
-	defer cleanup()
-
-	sess, err := client.NewSession()
-	if err != nil {
-		recorder.RecordError(err)
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
-		return
-	}
-	defer func() { _ = sess.Close() }()
-
-	var shellCmd string
-	env, err := cuetry.EffectiveEnvForRun(context.Background(), false, nil, &cuetry.StepBase{}, nil, nil, &hello.Record)
-	if err == nil && len(env) > 0 {
-		for k, v := range env {
-			_ = sess.Setenv(k, v)
-		}
-		shellCmd, _ = cuetry.ShellExportPrefixForRemote(env, `exec "${SHELL:-sh}" -l || exec "${SHELL:-sh}"`)
-	}
-
-	modes := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
-	if err := sess.RequestPty("xterm-256color", rows, cols, modes); err != nil {
-		recorder.RecordError(err)
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
-		return
-	}
-
-	stdinPipeR, stdinPipeW := io.Pipe()
-	sess.Stdin = stdinPipeR
-	outWriter := &wsWriter{conn: conn, mu: &sync.Mutex{}}
-	sess.Stdout = engine.WrapRecordingWriter(outWriter, recorder, "stdout")
-	sess.Stderr = engine.WrapRecordingWriter(outWriter, recorder, "stderr")
-
-	if shellCmd != "" {
-		if err := sess.Start(shellCmd); err != nil {
-			recorder.RecordError(err)
-			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
-			return
-		}
-	} else {
-		if err := sess.Shell(); err != nil {
-			recorder.RecordError(err)
-			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
-			return
-		}
-	}
-
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- sess.Wait()
-	}()
-
-	go pumpWebSocketToStdin(conn, stdinPipeW, sess, recorder)
-
-	waitErr := <-waitDone
-	_ = stdinPipeW.Close()
-	if waitErr != nil {
-		recorder.RecordError(waitErr)
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true,"error":"`+escapeJSON(waitErr.Error())+`"}`))
-	} else {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true}`))
-	}
+	// docker / k8s / ssh all resolve to a hostexec.InteractiveStreamer via the
+	// seam; a non-cancelled context is used so a post-hijack request-context
+	// cancel cannot abort a SPDY/exec stream immediately.
+	defer s.trackWSConnection(interactiveWSKind(rec))()
+	serveWebInteractive(conn, ex, user, rec, cols, rows, recorder)
 }
 
 // shouldUseWebPtyProxy reports whether to wrap the session in local tmux/zellij so a
 // browser refresh can re-attach (SSH, Docker, Kubernetes pods, and TrueNAS API shells).
 func shouldUseWebPtyProxy(hello WSHello) bool {
 	return strings.TrimSpace(hello.SessionID) != ""
-}
-
-func isK8sPodWebTerminal(rec hosts.Record) bool {
-	if rec.Provider != "k8s" {
-		return false
-	}
-	if !strings.EqualFold(rec.Meta["kind"], "pod") {
-		return false
-	}
-	if strings.TrimSpace(rec.Meta["namespace"]) == "" || strings.TrimSpace(rec.Meta["pod_name"]) == "" {
-		return false
-	}
-	return true
-}
-
-func handleWebDockerTTY(ctx context.Context, conn *websocket.Conn, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder, reg hostexec.Registry) {
-	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
-	if strings.TrimSpace(rec.Meta["container_id"]) == "" {
-		err := fmt.Errorf("docker record missing container_id")
-		recorder.RecordError(err)
-		_ = wsOut.writeText(`{"error":"` + escapeJSON(err.Error()) + `"}`)
-		return
-	}
-	if err := engine.DialDockerCheck(user, rec, reg); err != nil {
-		recorder.RecordError(err)
-		_ = wsOut.writeText(`{"error":"` + escapeJSON(err.Error()) + `"}`)
-		return
-	}
-	stdinPipeR, stdinPipeW := io.Pipe()
-	resizeCh := make(chan ui.DockerTerminalSize, 32)
-	stdout := engine.WrapRecordingWriter(wsOut, recorder, "stdout")
-
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- ui.RunDockerWebTTY(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh, reg)
-	}()
-
-	go pumpWebSocketToStdinDocker(conn, stdinPipeW, resizeCh, recorder)
-
-	waitErr := <-waitDone
-	_ = stdinPipeW.Close()
-	if waitErr != nil && !benignDockerWSExit(waitErr) {
-		recorder.RecordError(waitErr)
-		_ = wsOut.writeText(`{"closed":true,"error":"` + escapeJSON(waitErr.Error()) + `"}`)
-	} else {
-		_ = wsOut.writeText(`{"closed":true}`)
-	}
 }
 
 func benignDockerWSExit(err error) bool {
@@ -316,62 +186,53 @@ func benignDockerWSExit(err error) bool {
 	return strings.Contains(msg, "context canceled") || strings.Contains(msg, "use of closed network connection")
 }
 
-func pumpWebSocketToStdinDocker(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- ui.DockerTerminalSize, recorder *engine.SessionRecorder) {
-	defer close(resizeCh)
-	for {
-		mt, payload, err := conn.ReadMessage()
-		if err != nil {
-			recorder.RecordError(err)
-			_ = stdinPipeW.CloseWithError(err)
-			return
-		}
-		switch mt {
-		case websocket.BinaryMessage:
-			recorder.RecordData("stdin", payload)
-			if _, werr := stdinPipeW.Write(payload); werr != nil {
-				recorder.RecordError(werr)
-				return
-			}
-		case websocket.TextMessage:
-			var rz wsResize
-			if json.Unmarshal(payload, &rz) != nil || rz.Type != "resize" {
-				continue
-			}
-			c, rw := rz.Cols, rz.Rows
-			if c > 0 && rw > 0 {
-				recorder.RecordResize(c, rw)
-				select {
-				case resizeCh <- ui.DockerTerminalSize{Cols: c, Rows: rw}:
-				default:
-				}
-			}
-		}
-	}
-}
-
-// honeyUpstreamExecutorFor returns the honeyprovider Executor that should proxy
-// an interactive session for rec when this node routes rec through a configured
-// honey upstream backend (mesh/direct). It returns nil when rec is executed
-// locally on this node (e.g. this IS the upstream server: the record carries a
-// stale honey_upstream_backend meta but no matching backend exists here, so the
-// registry falls back to a non-honey executor).
-func honeyUpstreamExecutorFor(reg hostexec.Registry, rec hosts.Record) *honeyprovider.Executor {
-	if reg == nil {
-		return nil
-	}
-	ex, ok := reg.ForRecord(rec).(*honeyprovider.Executor)
+// serveWebInteractive runs the browser terminal for rec through ex when it
+// supports interactive streaming (docker/k8s/ssh locally, or the honey proxy for
+// a mesh-routed record), or reports a clear error when no such path exists.
+func serveWebInteractive(conn *websocket.Conn, ex hostexec.Executor, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
+	is, ok := ex.(hostexec.InteractiveStreamer)
 	if !ok {
-		return nil
+		// The resolved executor can't stream a terminal — e.g. a registry that
+		// only wires exec/tunnel, or a plain SSH host the registry doesn't claim
+		// interactively. Fall back to a direct leaf-SSH shell, the universal path
+		// a host always had before the seam unified the dispatch (independent of
+		// the exec registry).
+		is = sshFallbackStreamer{}
 	}
-	return ex
+	handleWebInteractiveStreams(context.Background(), conn, is, user, rec, cols, rows, recorder)
 }
 
-// handleWebHoneyUpstreamTTY proxies a browser terminal for an upstream-backed
-// record to the honey server that owns it via honeyprovider's interactive
-// /ws/ssh proxy; the upstream server dispatches to the right native shell
-// (docker/k8s/ssh) on its side. Mirrors the docker/k8s web-tty lifecycle: pipe
-// browser stdin in, stream server stdout out, forward resizes, report closure.
-func handleWebHoneyUpstreamTTY(ctx context.Context, conn *websocket.Conn, ex *honeyprovider.Executor, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
+// sshFallbackStreamer is the universal SSH terminal: it dials the record's leaf
+// SSH directly (ui.RunSSHInteractiveStreams), independent of the executor
+// registry. Used by serveWebInteractive when Registry.ForRecord yields a
+// non-interactive executor, preserving the pre-seam behavior that any host with
+// an IP gets a shell. The SSH PTY plumbing itself lives once in the ui package,
+// shared with cli's sshFallbackExecutor.
+type sshFallbackStreamer struct{}
+
+func (sshFallbackStreamer) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
+	return ui.RunSSHInteractiveStreams(ctx, user, r, stdin, stdout, cols, rows, resize)
+}
+
+var _ hostexec.InteractiveStreamer = sshFallbackStreamer{}
+
+// interactiveWSKind labels the local shell path for connection metrics.
+func interactiveWSKind(rec hosts.Record) string {
+	if rec.Provider == "k8s" && strings.EqualFold(rec.Meta["kind"], "pod") {
+		return "k8s"
+	}
+	if rec.IsDocker() {
+		return "docker"
+	}
+	return "ssh"
+}
+
+// handleWebInteractiveStreams runs a browser terminal against any executor that
+// implements hostexec.InteractiveStreamer: pipe browser stdin in, stream stdout
+// out, forward resizes as [cols,rows], report closure. This one lifecycle covers
+// docker, k8s, ssh, and the honey upstream proxy (which forwards to the server
+// that owns the record and dispatches to the right native shell there).
+func handleWebInteractiveStreams(ctx context.Context, conn *websocket.Conn, is hostexec.InteractiveStreamer, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
 	stdinPipeR, stdinPipeW := io.Pipe()
 	resizeCh := make(chan [2]int, 32)
 	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
@@ -379,10 +240,10 @@ func handleWebHoneyUpstreamTTY(ctx context.Context, conn *websocket.Conn, ex *ho
 
 	waitDone := make(chan error, 1)
 	go func() {
-		waitDone <- ex.RunInteractiveStreams(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh)
+		waitDone <- is.RunInteractiveStreams(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh)
 	}()
 
-	go pumpWebSocketToStdinUpstream(conn, stdinPipeW, resizeCh, recorder)
+	go pumpWebSocketToStreams(conn, stdinPipeW, resizeCh, recorder)
 
 	waitErr := <-waitDone
 	_ = stdinPipeW.Close()
@@ -394,10 +255,10 @@ func handleWebHoneyUpstreamTTY(ctx context.Context, conn *websocket.Conn, ex *ho
 	}
 }
 
-// pumpWebSocketToStdinUpstream forwards browser WS frames to the upstream
-// interactive proxy: BinaryMessage -> stdin pipe, resize TextMessage -> resize
-// chan as [cols, rows]. Closes resizeCh on exit so the proxy's resize pump ends.
-func pumpWebSocketToStdinUpstream(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- [2]int, recorder *engine.SessionRecorder) {
+// pumpWebSocketToStreams forwards browser WS frames to an InteractiveStreamer:
+// BinaryMessage -> stdin pipe, resize TextMessage -> resize chan as [cols, rows].
+// Closes resizeCh on exit so the executor's resize consumer ends.
+func pumpWebSocketToStreams(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- [2]int, recorder *engine.SessionRecorder) {
 	defer close(resizeCh)
 	for {
 		mt, payload, err := conn.ReadMessage()
@@ -424,93 +285,6 @@ func pumpWebSocketToStdinUpstream(conn *websocket.Conn, stdinPipeW *io.PipeWrite
 				case resizeCh <- [2]int{rz.Cols, rz.Rows}:
 				default:
 				}
-			}
-		}
-	}
-}
-
-func handleWebK8sTTY(ctx context.Context, conn *websocket.Conn, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
-	stdinPipeR, stdinPipeW := io.Pipe()
-	resizeCh := make(chan *remotecommand.TerminalSize, 32)
-	outWriter := &wsWriter{conn: conn, mu: &sync.Mutex{}}
-	stdout := engine.WrapRecordingWriter(outWriter, recorder, "stdout")
-	stderr := engine.WrapRecordingWriter(outWriter, recorder, "stderr")
-	stdin := io.Reader(stdinPipeR)
-
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- ui.RunK8sPodWebTTY(ctx, rec, stdin, stdout, stderr, cols, rows, resizeCh)
-	}()
-
-	go pumpWebSocketToStdinK8s(conn, stdinPipeW, resizeCh, recorder)
-
-	waitErr := <-waitDone
-	_ = stdinPipeW.Close()
-	if waitErr != nil {
-		recorder.RecordError(waitErr)
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true,"error":"`+escapeJSON(waitErr.Error())+`"}`))
-	} else {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true}`))
-	}
-}
-
-func pumpWebSocketToStdinK8s(conn *websocket.Conn, stdinPipeW *io.PipeWriter, resizeCh chan<- *remotecommand.TerminalSize, recorder *engine.SessionRecorder) {
-	defer close(resizeCh)
-	for {
-		mt, payload, err := conn.ReadMessage()
-		if err != nil {
-			recorder.RecordError(err)
-			_ = stdinPipeW.CloseWithError(err)
-			return
-		}
-		switch mt {
-		case websocket.BinaryMessage:
-			recorder.RecordData("stdin", payload)
-			if _, werr := stdinPipeW.Write(payload); werr != nil {
-				recorder.RecordError(werr)
-				return
-			}
-		case websocket.TextMessage:
-			var rz wsResize
-			if json.Unmarshal(payload, &rz) != nil || rz.Type != "resize" {
-				continue
-			}
-			c, rw := rz.Cols, rz.Rows
-			if sz := ui.ResizeFromColsRows(c, rw); sz != nil {
-				recorder.RecordResize(c, rw)
-				select {
-				case resizeCh <- sz:
-				default:
-				}
-			}
-		}
-	}
-}
-
-func pumpWebSocketToStdin(conn *websocket.Conn, stdinPipeW *io.PipeWriter, sess *ssh.Session, recorder *engine.SessionRecorder) {
-	for {
-		mt, payload, err := conn.ReadMessage()
-		if err != nil {
-			recorder.RecordError(err)
-			_ = stdinPipeW.CloseWithError(err)
-			return
-		}
-		switch mt {
-		case websocket.BinaryMessage:
-			recorder.RecordData("stdin", payload)
-			if _, werr := stdinPipeW.Write(payload); werr != nil {
-				recorder.RecordError(werr)
-				return
-			}
-		case websocket.TextMessage:
-			var rz wsResize
-			if json.Unmarshal(payload, &rz) != nil || rz.Type != "resize" {
-				continue
-			}
-			c, rw := rz.Cols, rz.Rows
-			if c > 0 && rw > 0 {
-				recorder.RecordResize(c, rw)
-				_ = sess.WindowChange(rw, c)
 			}
 		}
 	}
@@ -551,7 +325,7 @@ func newWebSessionRecorder(recordDir string, requestRecord bool, rec hosts.Recor
 	}
 	mode := "ssh"
 	switch {
-	case isK8sPodWebTerminal(rec):
+	case rec.Provider == "k8s" && strings.EqualFold(rec.Meta["kind"], "pod"):
 		mode = "k8s"
 	case rec.IsDocker():
 		mode = "docker"

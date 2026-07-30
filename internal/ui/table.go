@@ -1400,15 +1400,14 @@ func runTrueNASShellWithRecording(r hosts.Record, recordOpts *engine.SessionReco
 }
 
 func runSSHWithRecording(reg hostexec.Registry, user string, r hosts.Record, recordOpts *engine.SessionRecorderOptions) error {
-	// A record proxied through a honey upstream backend runs on the upstream
-	// server: delegate to the honeyprovider Executor's interactive proxy, which
-	// forwards the record over /ws/ssh so the server dispatches to the right
-	// native shell (docker exec / k8s exec / ssh). Must precede the kind dispatch
-	// below, which assumes a LOCAL native client -- the k8s branch in particular
-	// dials K8sPodExecutor directly, bypassing the registry, so without this a
-	// mesh k8s pod would hit the local kubeconfig instead of proxying.
-	if reg != nil && r.Meta["honey_upstream_backend"] != "" {
-		if ex := reg.ForRecord(r); ex != nil {
+	// A record this node proxies to another node (honey mesh) runs on the node
+	// that owns it: forward the whole terminal via the proxy executor, which the
+	// upstream server dispatches to the right native shell (docker/k8s/ssh).
+	// hostexec.IsProxy keeps this decision at the seam and must precede the kind
+	// dispatch below, which dials native clients directly (the k8s branch bypasses
+	// the registry) and would otherwise hit the local docker socket / kubeconfig.
+	if reg != nil {
+		if ex := reg.ForRecord(r); hostexec.IsProxy(ex) {
 			return ex.RunInteractive(user, r)
 		}
 	}

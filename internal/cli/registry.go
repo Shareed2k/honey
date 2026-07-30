@@ -14,6 +14,7 @@ import (
 	"github.com/shareed2k/honey/internal/provider/all"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/ui"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -58,6 +59,11 @@ func (r *executionRouter) BorrowSSH(_ string, _ hosts.Record) (any, bool) {
 
 type sshFallbackExecutor struct{}
 
+// sshFallbackExecutor is the seam's interactive path for plain SSH records, so a
+// web/TUI terminal resolves it through Registry.ForRecord + InteractiveStreamer
+// like docker/k8s instead of the caller inlining raw ssh.Session plumbing.
+var _ hostexec.InteractiveStreamer = (*sshFallbackExecutor)(nil)
+
 func (e *sshFallbackExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
 	user = strings.TrimSpace(user)
 	if user == "" {
@@ -88,6 +94,21 @@ func (e *sshFallbackExecutor) RunInteractive(user string, r hosts.Record) error 
 		}
 	}
 	return engine.RunSSHInteractive(user, r, nil)
+}
+
+// RunInteractiveStreams runs an interactive SSH PTY shell over the caller's
+// streams (e.g. a web terminal's WebSocket pipes) instead of os.Stdin/os.Stdout.
+// It delegates to ui.RunSSHInteractiveStreams so the SSH PTY plumbing lives in
+// one place, shared with the webserver's universal SSH fallback. resize carries
+// [cols, rows] pairs.
+func (e *sshFallbackExecutor) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+			user = u
+		}
+	}
+	return ui.RunSSHInteractiveStreams(ctx, user, r, stdin, stdout, cols, rows, resize)
 }
 
 func (e *sshFallbackExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {

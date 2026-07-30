@@ -20,6 +20,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/safepath"
@@ -71,6 +72,58 @@ func (e *DockerExecutor) RunInteractive(user string, r hosts.Record) error {
 		return fmt.Errorf("interactive session not configured")
 	}
 	return e.interactive.RunInteractive(user, r, e.reg)
+}
+
+// DockerExecutor satisfies the interactive-TTY seam so the web/CLI terminal
+// paths can run a container shell through Registry.ForRecord without knowing the
+// concrete client type.
+var _ hostexec.InteractiveStreamer = (*DockerExecutor)(nil)
+
+// RunInteractiveStreams runs an interactive container shell over the caller's
+// streams (e.g. a web terminal's WebSocket pipes). It dials the container and
+// drives DockerNativeClient.ExecInteractive; resize [cols, rows] pairs are
+// adapted to the docker resize type.
+func (e *DockerExecutor) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
+	hc, err := e.Dial(user, r)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = hc.Close() }()
+	dc, ok := hc.(*DockerNativeClient)
+	if !ok {
+		return fmt.Errorf("docker interactive: unexpected client type %T", hc)
+	}
+	execEnv, _ := cuetry.EnvForDockerInteractive(&r)
+	return dc.ExecInteractive(ctx, DockerInteractiveShellCmd(dc), execEnv, stdin, stdout, cols, rows, colsRowsToDockerResize(ctx, resize))
+}
+
+// colsRowsToDockerResize adapts a neutral [cols, rows] resize stream to the
+// docker resize type. The forwarding goroutine exits when the source channel
+// closes or ctx is cancelled, so it never leaks.
+func colsRowsToDockerResize(ctx context.Context, in <-chan [2]int) <-chan DockerTerminalSize {
+	if in == nil {
+		return nil
+	}
+	out := make(chan DockerTerminalSize)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case sz, ok := <-in:
+				if !ok {
+					return
+				}
+				select {
+				case out <- DockerTerminalSize{Cols: sz[0], Rows: sz[1]}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out
 }
 
 // DialDockerCheck verifies that a docker record can reach the Engine API (dial + close).
