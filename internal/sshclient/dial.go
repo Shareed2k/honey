@@ -793,10 +793,12 @@ func errNoSSHAuth() error {
 // then HONEY_SSH_IDENTITY_FILES, then default ~/.ssh key names (see defaultSSHIdentityKeyBaseNames).
 func buildAuthWithIdentityFiles(extraFiles []string) (goph.Auth, error) {
 	var methods []ssh.AuthMethod
-	if goph.HasAgent() {
-		if ag, err := goph.UseAgent(); err == nil {
-			methods = append(methods, ag...)
-		}
+	// Use one shared, serialized agent connection instead of goph.UseAgent (which
+	// opens and leaks a new agent socket per dial). See honeyAgent: a per-dial
+	// connection storm at high fan-out wedges real ssh-agents and stalls the whole
+	// exec.
+	if am, ok := honeyAgentAuthMethod(); ok {
+		methods = append(methods, am)
 	}
 	seen := make(map[string]struct{})
 	var err error

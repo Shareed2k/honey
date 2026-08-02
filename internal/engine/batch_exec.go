@@ -111,15 +111,18 @@ func runExecWatchdog(stop <-chan struct{}, p *execProgress, total int64) {
 				// ~30s of zero progress with workers in flight → dump once.
 				if stalledTicks >= 3 && !dumped {
 					dumped = true
-					zap.L().Warn("exec batch STALLED — dumping goroutine stacks",
+					zap.L().Warn("exec batch STALLED — dumping goroutine summary",
 						zap.Int64("done", done),
 						zap.Int64("total", total),
 						zap.Int64("inflight", inflight))
-					buf := make([]byte, 1<<20)
+					buf := make([]byte, 2<<20)
 					n := runtime.Stack(buf, true)
+					hist, sample := summarizeStuckGoroutines(buf[:n])
 					fmt.Fprintf(os.Stderr,
-						"\n=== HONEY EXEC STALL: %d/%d done, %d in flight — GOROUTINE DUMP ===\n%s\n=== END HONEY EXEC STALL DUMP ===\n",
-						done, total, inflight, buf[:n])
+						"\n=== HONEY EXEC STALL: %d/%d done, %d in flight ===\n"+
+							"[blocking histogram: count | state | first honey/goph/crypto/agent frame]\n%s\n"+
+							"[one representative stuck sshclient goroutine]\n%s\n=== END HONEY EXEC STALL ===\n",
+						done, total, inflight, hist, sample)
 				}
 			} else {
 				stalledTicks = 0
@@ -127,6 +130,86 @@ func runExecWatchdog(stop <-chan struct{}, p *execProgress, total int64) {
 			lastDone = done
 		}
 	}
+}
+
+// summarizeStuckGoroutines condenses a full runtime.Stack dump into a compact,
+// pasteable picture of where a stalled batch is blocked: a histogram keyed by
+// "goroutine state + the first frame in honey/goph/crypto/agent code" (so all N
+// workers wedged in the same call collapse to one line), plus one full
+// representative sshclient stack for the exact call chain. A raw dump of
+// hundreds of goroutines overflows a terminal and hides the answer.
+func summarizeStuckGoroutines(dump []byte) (histogram, sample string) {
+	pkgHints := []string{
+		"shareed2k/honey/internal/sshclient",
+		"shareed2k/honey/internal/engine",
+		"melbahja/goph",
+		"crypto/ssh/agent",
+		"golang.org/x/crypto/ssh",
+	}
+	blocks := strings.Split(string(dump), "\n\ngoroutine ")
+	counts := map[string]int{}
+	var order []string
+	for i, b := range blocks {
+		if i > 0 {
+			b = "goroutine " + b
+		}
+		b = strings.TrimRight(b, "\n")
+		if strings.TrimSpace(b) == "" {
+			continue
+		}
+		lines := strings.Split(b, "\n")
+		state := ""
+		if l := strings.IndexByte(lines[0], '['); l >= 0 {
+			if r := strings.IndexByte(lines[0][l:], ']'); r >= 0 {
+				state = lines[0][l+1 : l+r]
+			}
+		}
+		if c := strings.IndexByte(state, ','); c >= 0 {
+			state = strings.TrimSpace(state[:c]) // drop "..., 2 minutes"
+		}
+		topFrame, hintFrame := "", ""
+		for k := 1; k < len(lines); k++ {
+			ln := lines[k]
+			if ln == "" || strings.HasPrefix(ln, "\t") {
+				continue // file:line detail line
+			}
+			fn := ln
+			if p := strings.IndexByte(fn, '('); p > 0 {
+				fn = fn[:p]
+			}
+			fn = strings.TrimSpace(fn)
+			if topFrame == "" {
+				topFrame = fn
+			}
+			for _, h := range pkgHints {
+				if strings.Contains(ln, h) {
+					hintFrame = fn
+					break
+				}
+			}
+			if hintFrame != "" {
+				break
+			}
+		}
+		frame := hintFrame
+		if frame == "" {
+			frame = topFrame
+		}
+		key := state + "  " + frame
+		if counts[key] == 0 {
+			order = append(order, key)
+		}
+		counts[key]++
+		if sample == "" && strings.Contains(b, "internal/sshclient") {
+			sample = b
+		}
+	}
+	sort.Slice(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
+	var sb strings.Builder
+	for _, k := range order {
+		fmt.Fprintf(&sb, "%5d  %s\n", counts[k], k)
+	}
+	return sb.String(), sample
 }
 
 // evictCachedSSHClient removes a dead pooled client (if any) and pauses before redial.

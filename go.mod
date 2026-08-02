@@ -74,6 +74,7 @@ require (
 	github.com/pkg/sftp v1.13.11
 	github.com/prometheus/alertmanager v0.33.1
 	github.com/prometheus/client_golang v1.24.1
+	github.com/prometheus/common v0.70.1
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/shirou/gopsutil/v4 v4.26.6
 	github.com/spf13/cobra v1.10.2
@@ -85,6 +86,7 @@ require (
 	github.com/things-go/go-socks5 v0.1.1
 	github.com/tidwall/gjson v1.19.0
 	github.com/webriots/rate v1.0.0
+	github.com/xanzy/ssh-agent v0.3.3
 	github.com/xjasonlyu/tun2socks/v2 v2.7.0
 	github.com/yalue/onnxruntime_go v1.31.0
 	github.com/zalando/go-keyring v0.2.8
@@ -521,7 +523,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/exporter-toolkit v0.16.0 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260420112717-c39628bde8b5 // indirect
@@ -606,7 +607,6 @@ require (
 	github.com/vektah/gqlparser/v2 v2.5.34 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/xen0n/gosmopolitan v1.3.0 // indirect
