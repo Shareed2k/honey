@@ -171,69 +171,68 @@ func TestValidateMacro(t *testing.T) {
 		{
 			name: "valid exec",
 			macro: Macro{
-				Kind:    "exec",
-				Target:  "web-*",
-				Command: "uptime",
+				Kind:          "exec",
+				MacroSelector: MacroSelector{Target: "web-*"},
+				MacroExec:     MacroExec{Command: "uptime"},
 			},
 			wantErr: "",
 		},
 		{
 			name: "exec missing command",
 			macro: Macro{
-				Kind:   "exec",
-				Target: "web-*",
+				Kind:          "exec",
+				MacroSelector: MacroSelector{Target: "web-*"},
 			},
 			wantErr: "requires target and command or commands",
 		},
 		{
 			name: "exec missing target",
 			macro: Macro{
-				Kind:    "exec",
-				Command: "uptime",
+				Kind:      "exec",
+				MacroExec: MacroExec{Command: "uptime"},
 			},
 			wantErr: "requires target and command or commands",
 		},
 		{
 			name: "exec both command and commands",
 			macro: Macro{
-				Kind:     "exec",
-				Target:   "web-*",
-				Command:  "uptime",
-				Commands: []string{"ls"},
+				Kind:          "exec",
+				MacroSelector: MacroSelector{Target: "web-*"},
+				MacroExec:     MacroExec{Command: "uptime", Commands: []string{"ls"}},
 			},
 			wantErr: "supports either command or commands, not both",
 		},
 		{
 			name: "exec empty command in list",
 			macro: Macro{
-				Kind:     "exec",
-				Target:   "web-*",
-				Commands: []string{"uptime", ""},
+				Kind:          "exec",
+				MacroSelector: MacroSelector{Target: "web-*"},
+				MacroExec:     MacroExec{Commands: []string{"uptime", ""}},
 			},
 			wantErr: "must be non-empty",
 		},
 		{
 			name: "valid recipe",
 			macro: Macro{
-				Kind:       "recipe",
-				Target:     "web-*",
-				RecipePath: "a.cue",
+				Kind:          "recipe",
+				MacroSelector: MacroSelector{Target: "web-*"},
+				MacroRecipe:   MacroRecipe{RecipePath: "a.cue"},
 			},
 			wantErr: "",
 		},
 		{
 			name: "recipe missing path",
 			macro: Macro{
-				Kind:   "recipe",
-				Target: "web-*",
+				Kind:          "recipe",
+				MacroSelector: MacroSelector{Target: "web-*"},
 			},
 			wantErr: "recipe requires target and recipePath",
 		},
 		{
 			name: "valid logs",
 			macro: Macro{
-				Kind:   "logs",
-				Target: "web-*",
+				Kind:          "logs",
+				MacroSelector: MacroSelector{Target: "web-*"},
 			},
 			wantErr: "",
 		},
@@ -247,8 +246,8 @@ func TestValidateMacro(t *testing.T) {
 		{
 			name: "valid app",
 			macro: Macro{
-				Kind: "app",
-				App:  "myapp",
+				Kind:     "app",
+				MacroApp: MacroApp{App: "myapp"},
 			},
 			wantErr: "",
 		},
@@ -262,8 +261,8 @@ func TestValidateMacro(t *testing.T) {
 		{
 			name: "valid tunnel",
 			macro: Macro{
-				Kind: "tunnel",
-				App:  "myapp",
+				Kind:     "tunnel",
+				MacroApp: MacroApp{App: "myapp"},
 			},
 			wantErr: "",
 		},
@@ -277,8 +276,8 @@ func TestValidateMacro(t *testing.T) {
 		{
 			name: "valid egress",
 			macro: Macro{
-				Kind:       "egress",
-				EgressHost: "host1",
+				Kind:        "egress",
+				MacroEgress: MacroEgress{EgressHost: "host1"},
 			},
 			wantErr: "",
 		},
@@ -292,11 +291,9 @@ func TestValidateMacro(t *testing.T) {
 		{
 			name: "powershell with runAs",
 			macro: Macro{
-				Kind:    "exec",
-				Target:  "web-*",
-				Command: "uptime",
-				Shell:   "powershell",
-				RunAs:   "admin",
+				Kind:          "exec",
+				MacroSelector: MacroSelector{Target: "web-*"},
+				MacroExec:     MacroExec{Command: "uptime", Shell: "powershell", RunAs: "admin"},
 			},
 			wantErr: "runAs is not supported with powershell",
 		},

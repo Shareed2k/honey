@@ -35,16 +35,17 @@ type MacroSpecs struct {
 	Macros map[string]Macro `yaml:"macros" validate:"required,min=1,dive,keys,required,endkeys,required"`
 }
 
-// Macro describes a single named automation entry in a MacroSet.
-type Macro struct {
-	Kind string `yaml:"kind" validate:"required,oneof=exec recipe logs tunnel app egress"`
-
+// MacroSelector picks which hosts a macro runs against. Shared by every kind.
+type MacroSelector struct {
 	Target    string `yaml:"target"`
 	Provider  string `yaml:"provider"`
 	Backends  string `yaml:"backends"`
 	Name      string `yaml:"name"`
 	NameRegex string `yaml:"nameRegex"`
+}
 
+// MacroExec holds the fields for kind: exec.
+type MacroExec struct {
 	Command  string   `yaml:"command"`
 	Commands []string `yaml:"commands"`
 	Parallel int      `yaml:"parallel" validate:"omitempty,gte=1"`
@@ -54,11 +55,17 @@ type Macro struct {
 	RunAs    string   `yaml:"runAs"`
 	Output   string   `yaml:"output" validate:"omitempty,oneof=text json"`
 	Quiet    *bool    `yaml:"quiet"`
+}
 
+// MacroRecipe holds the fields for kind: recipe.
+type MacroRecipe struct {
 	RecipePath string   `yaml:"recipePath"`
 	Execute    *bool    `yaml:"execute"`
 	Env        []string `yaml:"env"`
+}
 
+// MacroLogs holds the fields for kind: logs.
+type MacroLogs struct {
 	Source         string   `yaml:"source"`
 	Unit           string   `yaml:"unit"`
 	File           string   `yaml:"file"`
@@ -72,11 +79,16 @@ type Macro struct {
 	TUI            *bool    `yaml:"tui"`
 	OutputFile     string   `yaml:"outputFile"`
 	MaxConcurrency *int     `yaml:"maxConcurrency" validate:"omitempty,gte=1"`
+}
 
+// MacroApp holds the fields for kind: app and kind: tunnel.
+type MacroApp struct {
 	App         string `yaml:"app"`
 	OpenBrowser *bool  `yaml:"openBrowser"`
+}
 
-	// Egress kind
+// MacroEgress holds the fields for kind: egress.
+type MacroEgress struct {
 	EgressHost      string   `yaml:"host"`
 	EgressHosts     []string `yaml:"hosts"`
 	EgressPort      int      `yaml:"port"`
@@ -84,6 +96,22 @@ type Macro struct {
 	EgressTun       bool     `yaml:"tun"`
 	EgressAutoProxy bool     `yaml:"auto_proxy"`
 	EgressBypass    []string `yaml:"bypass"`
+}
+
+// Macro describes a single named automation entry in a MacroSet. Kind selects
+// which embedded field group applies. The groups are embedded inline, so the
+// honeyfile.yaml wire format stays flat and callers read promoted fields
+// (m.Command, m.EgressHost, …) unchanged — the decomposition names the
+// per-kind field clusters without touching the schema or the readers.
+type Macro struct {
+	Kind string `yaml:"kind" validate:"required,oneof=exec recipe logs tunnel app egress"`
+
+	MacroSelector `yaml:",inline"`
+	MacroExec     `yaml:",inline"`
+	MacroRecipe   `yaml:",inline"`
+	MacroLogs     `yaml:",inline"`
+	MacroApp      `yaml:",inline"`
+	MacroEgress   `yaml:",inline"`
 }
 
 // ResolvePath returns the absolute path of the honeyfile, checking --file, HONEY_MACROS_FILE, and default filenames.
