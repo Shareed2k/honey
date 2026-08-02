@@ -1,0 +1,10 @@
+id: prometheus
+version: "0.1.0"
+capabilities:
+  - custom_step
+config:
+  prometheus_url: "http://localhost:9090"
+allowed_hosts:
+  - localhost
+allowed_env:
+  - PROMETHEUS_BEARER_TOKEN

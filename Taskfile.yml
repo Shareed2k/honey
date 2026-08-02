@@ -76,7 +76,7 @@ tasks:
     desc: Build all plugin modules as WASM binaries
     cmds:
       - |
-        for dir in bash shell copy template file service postgres sqlite rclone helm cve-scanner js; do
+        for dir in bash shell copy template file service postgres sqlite rclone helm cve-scanner js prometheus; do
           echo "building plugins/$dir"
           if [ "$dir" = "sqlite" ]; then
             (cd plugins/$dir && GOOS=wasip1 GOARCH=wasm go build -tags sqlite3_dotlk -buildmode=c-shared -o plugin.wasm .)
