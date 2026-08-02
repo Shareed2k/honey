@@ -51,6 +51,7 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
       --aws-profile string            AWS shared config profile
       --aws-region string             AWS region (default: from profile/env)
       --backends string               Comma-separated backend names (YAML backends.*.name); only those entries run
+      --check                         Analyze per-step recipe risk and print the decision without executing
       --consul-addr string            Consul HTTP address (host:port, default CONSUL_HTTP_ADDR)
       --consul-datacenter string      Consul datacenter
       --consul-token string           Consul ACL token (or CONSUL_HTTP_TOKEN)
@@ -76,6 +77,7 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
       --name-regex string             Regex filter on name (overrides --name substring)
       --no-ui                         Skip interactive UI (same as --output=json)
   -o, --output string                 Output format: tui, table, json (default "tui")
+      --profile                       Print execution profile (CPU, Mem, Network, SSH stats) after run
       --provider string               Comma-separated: gcp,aws,k8s,consul,proxmox,truenas,docker,local (default: all)
       --proxmox-insecure              Skip TLS verification for Proxmox
       --proxmox-password string       Proxmox password
@@ -85,6 +87,7 @@ honey cue-exec &lt;recipe.cue&gt; [name] [flags]
       --proxmox-user string           Proxmox user (e.g. root@pam)
       --retry-failed string           Re-run only hosts that did not succeed in this recording (basename, e.g. 20260529_….hrec.jsonl)
       --ssh-user string               Default SSH user for connect actions (defaults to config or OS user)
+      --timeout duration              Per-host command timeout (e.g. 30s, 5m); 0 uses config default / disables
       --truenas-api-key string        TrueNAS API key (or TRUENAS_API_KEY)
       --truenas-insecure              Skip TLS verification for TrueNAS
       --truenas-url string            TrueNAS SCALE URL (https://host or wss://host/api/current)

@@ -21,7 +21,7 @@ recipe: {
 			id:      "report-drift"
 			host:    "_"
 			depends: ["hash-critical-files"]
-			ai: {
+			summarize: {
 				prompt: """
 Review the file hashes from the hosts. Group the hosts by the hash of their /etc/ssh/sshd_config.
 Alert if any hosts have a differing /etc/shadow or /etc/passwd structure than the majority.

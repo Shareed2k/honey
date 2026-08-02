@@ -67,7 +67,7 @@ recipe: {
 			id:      "report"
 			host:    "_"
 			depends: ["patch"]
-			ai: {
+			summarize: {
 				prompt: """
 Summarize this patch campaign in 4-6 bullets: 
 Which hosts exceeded the critical budget?

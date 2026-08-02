@@ -3,11 +3,13 @@ package engine
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/shareed2k/honey/internal/approval"
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostapi"
@@ -44,6 +46,7 @@ type RunnerOptions struct {
 	Enforcer       *policy.Enforcer   // optional OPA admission gate; nil = allow all
 	Approvals      *approval.Store    // optional pending-approval store; nil = require_approval hard-denies
 	Biometric      BiometricVerifier  // optional WebAuthn token verifier; nil = require_biometric hard-denies
+	AuditSink      audit.Sink         // optional; nil = no recipe_run admission audit
 }
 
 // BiometricVerifier verifies a biometric step-up token for an actor. Implemented
@@ -85,6 +88,9 @@ type RunRequest struct {
 	Target           *hostapi.SearchHostsInput
 	Records          []hosts.Record // bypasses Target resolution if populated
 	SSHUser          string
+	// Source names the ingress that initiated this run ("web", "webhook",
+	// "scheduler"); recorded on the recipe_run admission audit event.
+	Source string
 	// ActorID is the caller identity (JWT subject or trusted-proxy header),
 	// used as OPA policy input. Empty resolves to "api" downstream.
 	ActorID string
@@ -109,6 +115,12 @@ type RunRequest struct {
 	PluginPolicy PluginLifecycle
 }
 
+// ErrTargetResolution marks a failure to resolve a RunRequest.Target into host
+// records (search error or empty result), so callers can distinguish a bad
+// target (a 400-class caller error) from an execution failure. Test with
+// errors.Is.
+var ErrTargetResolution = errors.New("target resolution failed")
+
 // resolveTargets resolves hosts via SearchHosts if req.Records is empty and req.Target is provided.
 func (r *RecipeRunner) resolveTargets(ctx context.Context, req *RunRequest) error {
 	if len(req.Records) > 0 || req.Target == nil {
@@ -119,10 +131,10 @@ func (r *RecipeRunner) resolveTargets(ctx context.Context, req *RunRequest) erro
 	}
 	out, err := hostapi.SearchHosts(ctx, req.Target, r.opts.ExecRegistry, r.opts.SearchRegistry)
 	if err != nil {
-		return fmt.Errorf("search hosts: %w", err)
+		return fmt.Errorf("%w: search hosts: %w", ErrTargetResolution, err)
 	}
 	if len(out.Records) == 0 {
-		return fmt.Errorf("no target hosts found")
+		return fmt.Errorf("%w: no target hosts found", ErrTargetResolution)
 	}
 	req.Records = out.Records
 	return nil
@@ -193,6 +205,12 @@ func (r *RecipeRunner) DryRun(ctx context.Context, req RunRequest) (string, erro
 		return "", err
 	}
 	req.Env = validatedEnv
+
+	_, cleanupWS, err := SetupRecipeWorkspace(req.Env)
+	if err != nil {
+		return "", err
+	}
+	defer cleanupWS()
 
 	var plan string
 	err = r.withPluginManager(ctx, req, func(mgr *plugins.Manager) error {
@@ -295,6 +313,10 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 // a pending run is created and ErrPendingApproval is returned.
 func (r *RecipeRunner) admitRecipe(ctx context.Context, req RunRequest) error {
 	if r.opts.Enforcer == nil {
+		// No policy gate: the run is admitted. Audit it as allowed so every
+		// executed run still yields a recipe_run event (matching the prior
+		// handler behavior, which logged "allow" regardless of enforcer).
+		r.auditRun(ctx, req, "allow", req.ApprovalID)
 		return nil
 	}
 	actor := actorOrAPI(req.ActorID)
@@ -305,14 +327,51 @@ func (r *RecipeRunner) admitRecipe(ctx context.Context, req RunRequest) error {
 
 	switch d.Decision {
 	case "require_approval":
-		return r.handleApproval(ctx, actor, req, d)
+		aerr := r.handleApproval(ctx, actor, req, d)
+		var pending *ErrPendingApproval
+		switch {
+		case aerr == nil:
+			r.auditRun(ctx, req, "allow", req.ApprovalID)
+		case errors.As(aerr, &pending):
+			r.auditRun(ctx, req, "require_approval", pending.ID)
+		default:
+			r.auditRun(ctx, req, "deny", "")
+		}
+		return aerr
 	case "require_biometric":
-		return r.handleBiometric(ctx, actor, req, d)
+		berr := r.handleBiometric(ctx, actor, req, d)
+		if berr == nil {
+			r.auditRun(ctx, req, "allow", req.ApprovalID)
+		} else {
+			r.auditRun(ctx, req, "require_biometric", "")
+		}
+		return berr
 	}
 	if !d.Allow {
+		r.auditRun(ctx, req, "deny", "")
 		return fmt.Errorf("recipe admission: %s", reasonOr(d.DenyReason, "denied by policy"))
 	}
+	r.auditRun(ctx, req, "allow", req.ApprovalID)
 	return nil
+}
+
+// auditRun emits one recipe_run admission event to the configured AuditSink (nil
+// sink = no-op). The verdict is authoritative here — admitRecipe is the single
+// place the allow / require_approval / require_biometric / deny decision is made
+// — so every run ingress (web, webhook, scheduler) audits consistently, closing
+// the prior gap where the per-handler blocks never audited require_biometric.
+func (r *RecipeRunner) auditRun(ctx context.Context, req RunRequest, decision, approvalID string) {
+	if r.opts.AuditSink == nil {
+		return
+	}
+	_ = r.opts.AuditSink.Log(ctx, audit.Event{
+		Source:     req.Source,
+		Actor:      req.ActorID,
+		Action:     "recipe_run",
+		Target:     req.Recipe.Name,
+		Decision:   decision,
+		ApprovalID: approvalID,
+	})
 }
 
 // evalAdmission runs the recipe_execute policy with optional execution extras
@@ -423,19 +482,27 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 	}
 	req.Env = validatedEnv
 
+	_, cleanupWS, err := SetupRecipeWorkspace(req.Env)
+	if err != nil {
+		return nil, err
+	}
+
 	mgr, release, err := r.borrowPluginManager(ctx, req)
 	if err != nil {
+		cleanupWS()
 		return nil, err
 	}
 
 	params, err := r.buildRunParams(req, mgr)
 	if err != nil {
+		cleanupWS()
 		release()
 		return nil, err
 	}
 
 	rec, closeRec, err := r.openRunRecorder(req)
 	if err != nil {
+		cleanupWS()
 		release()
 		return nil, err
 	}
@@ -445,6 +512,7 @@ func (r *RecipeRunner) Execute(ctx context.Context, req RunRequest) (<-chan Host
 
 	ch := make(chan HostExecResult, recipeRunChannelCap)
 	go func() {
+		defer cleanupWS()
 		defer release()
 		defer func() {
 			if closeRec {

@@ -18,7 +18,10 @@ env:
 tasks:
   lint:
     desc: Run Go linters and security checks
-    deps: [golint, govulncheck, gosec]
+    cmds:
+      - task: golint
+      - task: govulncheck
+      - task: gosec
 
   golint:
     desc: Run golangci-lint
@@ -83,6 +86,25 @@ tasks:
           mkdir -p examples/plugins/$dir
           cp plugins/$dir/plugin.yaml plugins/$dir/plugin.wasm examples/plugins/$dir/
         done
+
+  build-honey-plugin-init:
+    desc: Build honey-plugin-init for linux/amd64 and linux/arm64 (bind-mounted into docker-runtime plugin containers)
+    env:
+      CGO_ENABLED: 0
+    cmds:
+      - GOOS=linux GOARCH=amd64 go build -o build/honey-plugin-init-linux-amd64 ./cmd/honey-plugin-init
+      - GOOS=linux GOARCH=arm64 go build -o build/honey-plugin-init-linux-arm64 ./cmd/honey-plugin-init
+
+  build-plugin-init-image:
+    desc: Build+push the multi-arch honey-plugin-init base image (embedded-init plugins COPY from it)
+    deps: [build-honey-plugin-init]
+    vars:
+      IMAGE: '{{.IMAGE | default "ghcr.io/shareed2k/honey-plugin-init:dev"}}'
+    cmds:
+      # --load only supports a single platform, so local smoke builds pass PUSH
+      # unset (defaults --load, one platform at a time); CI passes
+      # IMAGE=... PUSH=--push for the true multi-arch manifest list.
+      - docker buildx build --platform linux/amd64,linux/arm64 -f build/honey-plugin-init.Dockerfile -t {{.IMAGE}} {{.PUSH | default "--load"}} .
 
   package-plugins:
     desc: Package built plugin modules as release archives (dist/plugins/)

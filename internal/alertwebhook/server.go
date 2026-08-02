@@ -25,6 +25,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/searchrun"
 	"go.uber.org/zap"
 )
 
@@ -39,6 +40,7 @@ type Server struct {
 	cfg         config.AlertWebhookConfig
 	fileCfg     *config.File
 	cfgPath     string
+	searchReg   *searchrun.Registry
 	seen        *lru.Cache[string, time.Time]
 	dedupWindow time.Duration
 }
@@ -49,7 +51,7 @@ func DefaultConfig() config.AlertWebhookConfig {
 }
 
 // New creates a new webhook server from the honey config.
-func New(cfg config.AlertWebhookConfig, fileCfg *config.File, cfgPath string) (*Server, error) {
+func New(cfg config.AlertWebhookConfig, fileCfg *config.File, cfgPath string, searchReg *searchrun.Registry) (*Server, error) {
 	capacity := cfg.DedupCapacity
 	if capacity <= 0 {
 		capacity = defaultDedupCapacity
@@ -70,6 +72,7 @@ func New(cfg config.AlertWebhookConfig, fileCfg *config.File, cfgPath string) (*
 		cfg:         cfg,
 		fileCfg:     fileCfg,
 		cfgPath:     cfgPath,
+		searchReg:   searchReg,
 		seen:        cache,
 		dedupWindow: window,
 	}, nil
@@ -177,7 +180,7 @@ func (s *Server) investigate(ctx context.Context, alert amtemplate.Alert) {
 		return
 	}
 
-	records, err := hostapi.SearchHosts(ctx, &hostapi.SearchHostsInput{Name: hostQuery}, nil, nil)
+	records, err := hostapi.SearchHosts(ctx, &hostapi.SearchHostsInput{Name: hostQuery}, nil, s.searchReg)
 	if err != nil || len(records.Records) == 0 {
 		zap.L().Warn("alert webhook: no hosts found", zap.String("host_query", hostQuery), zap.Error(err))
 		return

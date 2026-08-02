@@ -1,0 +1,32 @@
+[Unit]
+Description=honey web (mesh reachability + recipe scheduler)
+Documentation=https://github.com/shareed2k/honey
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Unprivileged service account created by the package postinstall. It is NOT
+# in the docker group by default (that is root-equivalent, so it's opt-in):
+# core features (search, ssh exec, web, mesh) need no docker access. For
+# docker: steps / docker plugins, run `usermod -aG docker honey` then restart.
+User=honey
+Group=honey
+
+# systemd creates/owns /var/lib/honey for the honey user; use it for state.
+StateDirectory=honey
+Environment=XDG_STATE_HOME=/var/lib/honey
+
+# ONNX runtime libs shipped by the package (only needed for the anomaly
+# feature; harmless otherwise).
+Environment=HONEY_ONNXRUNTIME_LIB_DIR=/usr/lib/honey/onnx
+# Where the arch-matched honey-plugin-init shim lives (the package installs it
+# next to the honey binary). Lets docker plugins — local and remote — find it.
+Environment=HONEY_PLUGIN_INIT_DIR=/usr/bin
+
+ExecStart=/usr/bin/honey web --config /etc/honey/config.yaml --listen 127.0.0.1:8765 --browser=false
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

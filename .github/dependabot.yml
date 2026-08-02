@@ -8,6 +8,13 @@ updates:
     directory: "/webui"
     schedule:
       interval: "weekly"
+    ignore:
+      # eslint 10 requires eslint-plugin-react-hooks >=6 (flat-config API change);
+      # hold eslint on 9 until that migration is done deliberately. See PR unblocking
+      # brace-expansion: the npm group PR otherwise drags eslint 9->10 and breaks
+      # react-hooks@5's peer (<=eslint 9) with ERESOLVE.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

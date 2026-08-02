@@ -396,6 +396,7 @@ func (c *testSSHClient) Upload(localPath, remotePath string) error {
 	// Close forces the flush in pkg/sftp
 	return out.Close()
 }
+
 func (c *testSSHClient) Download(remotePath, localPath string) error {
 	sftpClient, err := sftp.NewClient(c.c)
 	if err != nil {
@@ -418,6 +419,7 @@ func (c *testSSHClient) Download(remotePath, localPath string) error {
 	_, err = io.Copy(dst, src)
 	return err
 }
+
 func (c *testSSHClient) ListRemoteDir(path string) ([]hostexec.RemoteFileEntry, error) {
 	out, err := c.Run(fmt.Sprintf("ls -1 %s", path))
 	if err != nil {
@@ -486,7 +488,15 @@ func dialSSHTestContainer(user, containerHost string, containerPort int, keyFile
 		Timeout:         15 * time.Second,
 	}
 	addr := fmt.Sprintf("%s:%d", containerHost, containerPort)
-	return gossh.Dial("tcp", addr, cfg)
+	var client *gossh.Client
+	for i := 0; i < 15; i++ {
+		client, err = gossh.Dial("tcp", addr, cfg)
+		if err == nil {
+			return client, nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return nil, fmt.Errorf("ssh dial failed after 15 retries: %w", err)
 }
 
 // newTestDialer returns a DialerFunc that connects to the test SSH container.

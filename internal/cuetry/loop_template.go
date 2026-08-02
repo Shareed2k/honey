@@ -23,7 +23,7 @@ func RenderLoopTemplate(opts RenderLoopTemplateOpts) ([]string, error) {
 	rendered, err := RenderTemplate(RenderTemplateOpts{
 		Template: opts.Template,
 		Data:     data,
-		Funcs:    loopTemplateFuncMap(opts.Store, opts.Capture),
+		Funcs:    LoopTemplateFuncMap(opts.Store, opts.Capture),
 	})
 	if err != nil {
 		return nil, err
@@ -41,7 +41,11 @@ func RenderLoopTemplate(opts RenderLoopTemplateOpts) ([]string, error) {
 	return items, nil
 }
 
-func loopTemplateFuncMap(store *StepResultStore, capture *RecipeOutputCapture) template.FuncMap {
+// LoopTemplateFuncMap returns stepStdout/stepStdoutLines/outputStdout/
+// outputStdoutLines template functions backed by store and capture — used
+// by loop: templates, and by internal/engine's templated command/script
+// rendering.
+func LoopTemplateFuncMap(store *StepResultStore, capture *RecipeOutputCapture) template.FuncMap {
 	out := outputTemplateFuncMap(capture)
 	for name, fn := range (template.FuncMap{
 		"stepStdout": func(stepID string) string {

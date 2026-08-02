@@ -13,6 +13,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/apps"
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/queue"
 	"github.com/shareed2k/honey/internal/searchrun"
@@ -531,4 +532,89 @@ func TestWebhookDeliveriesNoEnrichWithoutRecording(t *testing.T) {
 	if len(d) != 1 || d[0].ExecID != "" {
 		t.Fatalf("sync delivery should have no exec_id: %+v", d)
 	}
+}
+
+// TestResolveWebhookEnv locks in the env-extract-then-validate sequence
+// previously duplicated between the live and debug webhook paths
+// (architecture review candidate #2).
+func TestResolveWebhookEnv(t *testing.T) {
+	webhook := cuetry.RecipeWebhook{Extract: map[string]string{"BRANCH": "ref"}}
+	recipe := cuetry.Recipe{}
+
+	envMap, err := resolveWebhookEnv([]byte(`{"ref":"main"}`), webhook, recipe)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if envMap["BRANCH"] != "main" {
+		t.Fatalf("expected BRANCH=main, got %+v", envMap)
+	}
+}
+
+func TestResolveWebhookEnv_InvalidPayload(t *testing.T) {
+	webhook := cuetry.RecipeWebhook{Extract: map[string]string{"BRANCH": "ref"}}
+	if _, err := resolveWebhookEnv([]byte("not json"), webhook, cuetry.Recipe{}); err == nil {
+		t.Fatal("expected an error for invalid JSON payload")
+	}
+}
+
+// TestWebhookSearchHostsInput locks in the SearchHostsInput assembly
+// previously duplicated between the live and debug webhook paths.
+func TestWebhookSearchHostsInput(t *testing.T) {
+	api := &RecipesAPI{opts: Options{ConfigPath: "/etc/honey.yaml", Config: &config.File{}}}
+
+	app := apps.AppConfig{Target: "web-*", Provider: "aws", Backend: "prod"}
+	in := api.webhookSearchHostsInput(app)
+	if in.Name != "web-*" || in.Providers != "aws" || in.Backends != "prod" || in.NameRegex != "" {
+		t.Fatalf("unexpected search input: %+v", in)
+	}
+
+	regexApp := apps.AppConfig{TargetRegex: "^web-\\d+$"}
+	in = api.webhookSearchHostsInput(regexApp)
+	if in.NameRegex != "^web-\\d+$" {
+		t.Fatalf("expected NameRegex to be set when Target is empty, got %+v", in)
+	}
+}
+
+// TestDeriveWebhookIdempotencyKey locks in the shared key-derivation logic;
+// the header case is the one genuine difference between the live path (real
+// request headers available) and the debug path (headerLookup is nil).
+func TestDeriveWebhookIdempotencyKey(t *testing.T) {
+	body := []byte(`{"id":"abc123"}`)
+
+	t.Run("json path", func(t *testing.T) {
+		webhook := cuetry.RecipeWebhook{IdempotencyKey: "id"}
+		got := deriveWebhookIdempotencyKey(webhook, body, nil)
+		if got != "abc123" {
+			t.Fatalf("got %q, want abc123", got)
+		}
+	})
+
+	t.Run("header with lookup", func(t *testing.T) {
+		webhook := cuetry.RecipeWebhook{IdempotencyKey: "header:X-Delivery-Id"}
+		got := deriveWebhookIdempotencyKey(webhook, body, func(name string) string {
+			if name == "X-Delivery-Id" {
+				return "hdr-1"
+			}
+			return ""
+		})
+		if got != "hdr-1" {
+			t.Fatalf("got %q, want hdr-1", got)
+		}
+	})
+
+	t.Run("header without lookup yields empty", func(t *testing.T) {
+		webhook := cuetry.RecipeWebhook{IdempotencyKey: "header:X-Delivery-Id"}
+		got := deriveWebhookIdempotencyKey(webhook, body, nil)
+		if got != "" {
+			t.Fatalf("got %q, want empty (no request headers available)", got)
+		}
+	})
+
+	t.Run("no idempotency_key falls back to body hash", func(t *testing.T) {
+		webhook := cuetry.RecipeWebhook{}
+		got := deriveWebhookIdempotencyKey(webhook, body, nil)
+		if len(got) != 64 { // hex-encoded sha256
+			t.Fatalf("expected a 64-char hex hash, got %q", got)
+		}
+	})
 }

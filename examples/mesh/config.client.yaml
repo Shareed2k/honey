@@ -1,0 +1,38 @@
+# Mesh (NAT traversal) example: the "client" side -- the honey instance
+# dialing OUT to the server side (config.server.yaml) through the mesh,
+# because the server has no public IP/port-forward.
+#
+# Docs: website/docs/providers/honey.md's "Mesh (NAT traversal)" section
+# Walkthrough: examples/mesh/README.md
+# Verify: honey search --provider honey --config examples/mesh/config.client.yaml -o json
+version: 1
+
+# Every mesh-participating instance needs its own identity/relay config to
+# dial out at all -- this is THIS instance's own mesh identity, separate
+# from the server's identity in config.server.yaml.
+mesh:
+  enabled: true
+  # This instance's own mesh identity key -- from "Generate a mesh identity
+  # key" in ../README.md. A secret: treat it like the `token`/`server_ca`
+  # fields documented in website/docs/providers/honey.md, never commit a
+  # real value.
+  private_key: "<CLIENT_PRIVATE_KEY>"
+  relay_addrs:
+    # Same relay as config.server.yaml.
+    - "<RELAY_MULTIADDR>/p2p/<RELAY_PEER_ID>"
+  # listen_mesh: false   # most instances leave this off
+
+backends:
+  honey:
+    - name: home-server
+      # Placeholder -- path-building only, never actually resolved over the
+      # network (the real network target is mesh_addr below). Intentionally
+      # "http://", not "https://": see "Why http://, not https://" in
+      # ../README.md.
+      url: "http://mesh-peer/"
+      mesh: true
+      # A full Circuit Relay v2 path to the server's peer ID: the relay's
+      # own address + peer ID, then "/p2p-circuit/p2p/" + the SERVER's peer
+      # ID (from "Generate a mesh identity key" in ../README.md, run for the
+      # server instance).
+      mesh_addr: "<RELAY_MULTIADDR>/p2p/<RELAY_PEER_ID>/p2p-circuit/p2p/<SERVER_PEER_ID>"

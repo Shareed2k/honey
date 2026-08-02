@@ -1,0 +1,24 @@
+id: watchtower
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+# watchtower --run-once can take a while to pull/scan several images; give it
+# more than the 30s default.
+timeout_ms: 300000
+# These are read from honey's own process environment and injected into the
+# container. WATCHTOWER_NOTIFICATION_URL is a shoutrrr URL
+# (telegram://token@telegram?chats=id, slack://..., smtp://...) — watchtower
+# itself sends the "new image found" alert; keep it out of the recipe (secret).
+allowed_env:
+  - WATCHTOWER_NOTIFICATIONS
+  - WATCHTOWER_NOTIFICATION_URL
+  - WATCHTOWER_NOTIFICATION_REPORT
+docker:
+  image: "docker.io/beatkind/watchtower:latest"
+  # The Docker socket is mounted from whichever daemon runs the container:
+  # the operator's for host: "_", or — with the remote docker-plugin feature —
+  # the target host's when the step targets a real host, so watchtower inspects
+  # that host's own containers.
+  volumes:
+    - "/var/run/docker.sock:/var/run/docker.sock:rw"

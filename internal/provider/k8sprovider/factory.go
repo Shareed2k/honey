@@ -42,6 +42,10 @@ type k8sFactory struct {
 	cfg         ConfigProvider
 }
 
+// k8sFactory must satisfy ExecutorProvider (HandlesRecord + ExecutorFor) or
+// ResolveExecutor silently skips it and k8s pod records fall through to SSH.
+var _ searchrun.ExecutorProvider = k8sFactory{}
+
 func (f k8sFactory) FromConfig(overrides searchrun.ProviderOverrides) []hosts.Backend {
 	o := k8sOverride(overrides)
 	out := make([]hosts.Backend, 0, len(f.cfg.KubernetesBackends()))
@@ -82,9 +86,22 @@ func (f k8sFactory) RegisterFlags(cmd *cobra.Command) { RegisterFlags(cmd) }
 
 func (f k8sFactory) ProviderName() string { return "k8s" }
 
+// HandlesRecord gates ExecutorFor: this factory serves k8s pod records. It claims
+// them regardless of the client-side honey_upstream_backend routing tag --
+// honeyprovider is ordered first (see provider/all) and claims the record for
+// proxying when a matching honey backend exists on this node; on the upstream
+// server honey declines and this factory resolves the pod locally. Without this
+// method k8sFactory would not satisfy searchrun.ExecutorProvider and pod records
+// would fall through to the SSH fallback.
+// handles is the single record-kind predicate shared by HandlesRecord and
+// ExecutorFor, so the pod check has one definition instead of two.
+func (f k8sFactory) handles(r hosts.Record) bool { return r.Meta["kind"] == "pod" }
+
+func (f k8sFactory) HandlesRecord(r hosts.Record) bool { return f.handles(r) }
+
 func (f k8sFactory) ExecutorFor(r hosts.Record, _ hostexec.Registry) hostexec.Executor {
-	if r.Meta["kind"] == "pod" {
-		return &K8sPodExecutor{interactive: f.interactive}
+	if !f.handles(r) {
+		return nil
 	}
-	return nil
+	return &K8sPodExecutor{interactive: f.interactive}
 }

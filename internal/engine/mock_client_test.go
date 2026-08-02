@@ -15,6 +15,8 @@ type MockHostClient struct {
 	RemoteCmd string
 }
 
+func (m *MockHostClient) SupportsKVTunnel() bool { return false }
+
 func (m *MockHostClient) Close() error { return nil }
 func (m *MockHostClient) Output(cmd string, _ map[string]string) ([]byte, error) {
 	m.RemoteCmd = cmd
@@ -53,6 +55,26 @@ func (m *MockHostClient) RunWithStreams(_ string, _ io.Reader, _ io.Writer, _ io
 func (m *MockHostClient) Run(cmd string) ([]byte, error) {
 	m.RemoteCmd = cmd
 	return nil, nil
+}
+
+func (m *MockHostClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, nil
+}
+
+func (m *MockHostClient) StartRemoteForward(_ context.Context, _ string, _ int, _ string, _ int) (remAddr string, stop func(), err error) {
+	return "", nil, nil
+}
+
+func (m *MockHostClient) StartDynamicForward(_ context.Context, _ string, _ int) (host string, port int, stop func(), err error) {
+	return "", 0, nil, nil
+}
+
+func (m *MockHostClient) StartUDPRelay(_ context.Context, _ string, _ int, _ string, _ int, _ bool) (host string, port int, stop func(), err error) {
+	return "", 0, nil, nil
+}
+
+func (m *MockHostClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
+	return "", nil, nil
 }
 
 // MockRegistry and MockExecutor for testing

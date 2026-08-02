@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/logger"
+	"github.com/shareed2k/honey/internal/meshnet"
 	_ "github.com/shareed2k/honey/internal/provider/all" // register all providers natively during boot
 	"github.com/shareed2k/honey/internal/searchrun"
 )
@@ -43,6 +45,7 @@ var rootCmd = &cobra.Command{
 			}
 		}
 		applyCommandFlagDefaults(cmd, resolvedCfgPath)
+		startMeshIfConfigured(resolvedCfg)
 		return nil
 	},
 	PersistentPostRun: func(_ *cobra.Command, _ []string) {
@@ -53,6 +56,41 @@ var rootCmd = &cobra.Command{
 // Execute runs the root command.
 func Execute() error {
 	return rootCmd.Execute()
+}
+
+// startMeshIfConfigured starts the process-wide libp2p mesh singleton
+// (internal/meshnet) when the resolved config enables it. It runs in
+// PersistentPreRunE — the one hook every honey subcommand goes through
+// before its own RunE (root.go is the only place in this package that
+// defines PersistentPreRunE; no subcommand overrides it) — so that any
+// command able to reach a `mesh: true` honey backend (at minimum `search`,
+// `exec`, and `web`, but really anything going through GetSearchRegistry()
+// or otherwise constructing honeyprovider backends, e.g. `alert serve`,
+// `mcp`, `app open`, `egress`, `backends`) has a running mesh Host by the
+// time it needs one, instead of only `web` (the only command this had
+// previously been wired into). A single shared insertion point here avoids
+// duplicating this same `if cfg != nil && cfg.Mesh.Enabled { ... }` guard
+// into every individual command file.
+//
+// Mirrors web.go's pre-existing pattern for this exact call: log-and-continue
+// on a Start failure, never block/fail the command itself over a mesh
+// startup problem. Start is idempotent (see internal/meshnet's doc comment
+// on Start), so calling it here as well as anywhere else (e.g. web.go,
+// historically) is harmless — later calls just replay the first result.
+func startMeshIfConfigured(cfg *config.File) {
+	if cfg == nil || !cfg.Mesh.Enabled {
+		return
+	}
+	meshCfg := meshnet.Config{
+		Enabled:           cfg.Mesh.Enabled,
+		PrivateKey:        cfg.Mesh.PrivateKey,
+		RelayAddrs:        cfg.Mesh.RelayAddrs,
+		ListenMesh:        cfg.Mesh.ListenMesh,
+		ForceReachability: cfg.Mesh.ForceReachability,
+	}
+	if err := meshnet.Start(context.Background(), meshCfg); err != nil {
+		zap.L().Warn("honey mesh failed to start, continuing without it", zap.Error(err))
+	}
 }
 
 func init() {

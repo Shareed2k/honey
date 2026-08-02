@@ -51,3 +51,4 @@ honey search --provider gcp --gcp-project MY_PROJECT -o json
 
 - Instance must have a usable **external or internal IP** for SSH/connect actions.
 - Honey may use `~/.ssh/google_compute_engine` when present for GCE hosts.
+- Only instances in `RUNNING` or `STAGING` state are listed.

@@ -14,6 +14,8 @@ import (
 	"github.com/shareed2k/honey/internal/provider/all"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/sshclient"
+	"github.com/shareed2k/honey/internal/ui"
+	"golang.org/x/crypto/ssh"
 )
 
 var globalSearchRegistry *searchrun.Registry
@@ -57,6 +59,11 @@ func (r *executionRouter) BorrowSSH(_ string, _ hosts.Record) (any, bool) {
 
 type sshFallbackExecutor struct{}
 
+// sshFallbackExecutor is the seam's interactive path for plain SSH records, so a
+// web/TUI terminal resolves it through Registry.ForRecord + InteractiveStreamer
+// like docker/k8s instead of the caller inlining raw ssh.Session plumbing.
+var _ hostexec.InteractiveStreamer = (*sshFallbackExecutor)(nil)
+
 func (e *sshFallbackExecutor) Dial(user string, r hosts.Record) (hostexec.HostClient, error) {
 	user = strings.TrimSpace(user)
 	if user == "" {
@@ -89,6 +96,21 @@ func (e *sshFallbackExecutor) RunInteractive(user string, r hosts.Record) error 
 	return engine.RunSSHInteractive(user, r, nil)
 }
 
+// RunInteractiveStreams runs an interactive SSH PTY shell over the caller's
+// streams (e.g. a web terminal's WebSocket pipes) instead of os.Stdin/os.Stdout.
+// It delegates to ui.RunSSHInteractiveStreams so the SSH PTY plumbing lives in
+// one place, shared with the webserver's universal SSH fallback. resize carries
+// [cols, rows] pairs.
+func (e *sshFallbackExecutor) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		if u := strings.TrimSpace(r.Meta["ssh_user"]); u != "" {
+			user = u
+		}
+	}
+	return ui.RunSSHInteractiveStreams(ctx, user, r, stdin, stdout, cols, rows, resize)
+}
+
 func (e *sshFallbackExecutor) RunTunnel(ctx context.Context, user string, r hosts.Record, localFwd string, out io.Writer) error {
 	user = strings.TrimSpace(user)
 	if user == "" {
@@ -107,8 +129,42 @@ func (e *sshFallbackExecutor) RunTunnel(ctx context.Context, user string, r host
 	return sshclient.RunTunnelGo(ctx, user, host, override, localFwd, out)
 }
 
-func (sshFallbackExecutor) DialUpstream(_ context.Context, _ string, _ hosts.Record, _ string) (net.Conn, error) {
-	return nil, fmt.Errorf("sshFallbackExecutor.DialUpstream not implemented")
+// sshDialConn couples a dialed SSH channel (net.Conn) with the SSH client that
+// owns it, so closing the conn also releases the client — no leaked SSH session.
+type sshDialConn struct {
+	net.Conn
+	closer io.Closer
+}
+
+func (c *sshDialConn) Close() error {
+	err := c.Conn.Close()
+	if c.closer != nil {
+		_ = c.closer.Close()
+	}
+	return err
+}
+
+func (e *sshFallbackExecutor) DialUpstream(_ context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+	hc, err := e.Dial(user, r)
+	if err != nil {
+		return nil, fmt.Errorf("ssh dial for upstream: %w", err)
+	}
+	leafer, ok := hc.(interface{ LeafSSH() *ssh.Client })
+	if !ok {
+		_ = hc.Close()
+		return nil, fmt.Errorf("ssh client has no leaf for upstream dial")
+	}
+	leaf := leafer.LeafSSH()
+	if leaf == nil {
+		_ = hc.Close()
+		return nil, fmt.Errorf("ssh leaf client unavailable")
+	}
+	conn, err := leaf.Dial("tcp", address)
+	if err != nil {
+		_ = hc.Close()
+		return nil, fmt.Errorf("ssh channel dial %s: %w", address, err)
+	}
+	return &sshDialConn{Conn: conn, closer: hc}, nil
 }
 
 // buildHostExecRegistry constructs the host execution registry.

@@ -1,0 +1,14 @@
+id: k6
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+# Load tests can run for minutes; give them headroom over the 30s default.
+timeout_ms: 600000
+docker:
+  image: "docker.io/grafana/k6:latest"   # official k6 image, Docker Hub
+  pull_policy: if_not_present
+  # No volumes: k6 needs no host mounts. The test script arrives via stdin and
+  # the JSON summary leaves via stdout. The target URL must be reachable from
+  # wherever the container runs — the operator's daemon for host: "_", or the
+  # target host's own daemon when the step targets a real host over SSH.

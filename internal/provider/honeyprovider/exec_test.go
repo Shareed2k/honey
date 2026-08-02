@@ -1,19 +1,26 @@
 package honeyprovider
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestExecutor_Dial(t *testing.T) {
-	ex := &Executor{URL: "http://test", Token: "abc", Insecure: true}
+	ex := &Executor{URL: "http://test", Token: "abc", Insecure: true, Mesh: true, MeshAddr: "/ip4/1.2.3.4/tcp/4001/p2p/target"}
 	rec := hosts.Record{Name: "test-host"}
 
 	client, err := ex.Dial("ubuntu", rec)
@@ -25,6 +32,8 @@ func TestExecutor_Dial(t *testing.T) {
 	require.Equal(t, "http://test", c.url)
 	require.Equal(t, "abc", c.token)
 	require.True(t, c.insecure)
+	require.True(t, c.mesh)
+	require.Equal(t, "/ip4/1.2.3.4/tcp/4001/p2p/target", c.meshAddr)
 	require.Equal(t, "ubuntu", c.user)
 	require.Equal(t, "test-host", c.record.Name)
 }
@@ -110,4 +119,207 @@ func TestClient_ListRemoteDir(t *testing.T) {
 	require.Equal(t, int64(100), entries[0].Size)
 	require.Equal(t, "dir1", entries[1].Name)
 	require.True(t, entries[1].IsDir)
+}
+
+// TestClient_doRequest_Mesh covers the Client.doRequest call site (used by
+// Run, ListRemoteDir, StatRemote, MkdirAllRemote, RemoveRemote). Swaps the
+// package-level meshDial (white-box only); the two subtests share that var
+// so, unlike other subtests in this file, they are not run with t.Parallel().
+func TestClient_doRequest_Mesh(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		res := map[string]any{
+			"results": []engine.HostExecResult{{Output: "ok", ExitCode: 0}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer ts.Close()
+
+	t.Run("mesh true routes through meshDial", func(t *testing.T) {
+		orig := meshDial
+		var gotAddr string
+		meshDial = func(ctx context.Context, meshAddr string) (net.Conn, error) {
+			gotAddr = meshAddr
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", ts.Listener.Addr().String())
+		}
+		t.Cleanup(func() { meshDial = orig })
+
+		c := &Client{url: "http://mesh-target.invalid", mesh: true, meshAddr: "/ip4/1.2.3.4/tcp/4001/p2p/target", user: "ubuntu", record: hosts.Record{Name: "test-host"}}
+		_, err := c.Run("echo hi")
+		require.NoError(t, err)
+		assert.Equal(t, "/ip4/1.2.3.4/tcp/4001/p2p/target", gotAddr)
+	})
+
+	t.Run("mesh false uses the default dialer", func(t *testing.T) {
+		orig := meshDial
+		called := false
+		meshDial = func(context.Context, string) (net.Conn, error) {
+			called = true
+			return nil, errors.New("meshDial should not be called")
+		}
+		t.Cleanup(func() { meshDial = orig })
+
+		c := &Client{url: ts.URL, user: "ubuntu", record: hosts.Record{Name: "test-host"}}
+		_, err := c.Run("echo hi")
+		require.NoError(t, err)
+		assert.False(t, called)
+	})
+}
+
+// TestExecutor_DialUpstream_Mesh covers the Executor.DialUpstream call site
+// (dialWS + meshDialContext over a websocket). Same meshDial-sharing caveat
+// as above applies.
+func TestExecutor_DialUpstream_Mesh(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var hello map[string]any
+		if err := conn.ReadJSON(&hello); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(map[string]any{})
+	}))
+	defer ts.Close()
+
+	t.Run("mesh true routes through meshDial", func(t *testing.T) {
+		orig := meshDial
+		var gotAddr string
+		meshDial = func(ctx context.Context, meshAddr string) (net.Conn, error) {
+			gotAddr = meshAddr
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", ts.Listener.Addr().String())
+		}
+		t.Cleanup(func() { meshDial = orig })
+
+		e := &Executor{URL: "http://mesh-target.invalid", Mesh: true, MeshAddr: "/ip4/1.2.3.4/tcp/4001/p2p/relay/p2p-circuit/p2p/target"}
+		conn, err := e.DialUpstream(context.Background(), "ubuntu", hosts.Record{Name: "test-host"}, "10.0.0.1:22")
+		require.NoError(t, err)
+		require.NotNil(t, conn)
+		conn.Close()
+		assert.Equal(t, "/ip4/1.2.3.4/tcp/4001/p2p/relay/p2p-circuit/p2p/target", gotAddr)
+	})
+
+	t.Run("mesh false uses the default dialer", func(t *testing.T) {
+		orig := meshDial
+		called := false
+		meshDial = func(context.Context, string) (net.Conn, error) {
+			called = true
+			return nil, errors.New("meshDial should not be called")
+		}
+		t.Cleanup(func() { meshDial = orig })
+
+		e := &Executor{URL: ts.URL}
+		conn, err := e.DialUpstream(context.Background(), "ubuntu", hosts.Record{Name: "test-host"}, "10.0.0.1:22")
+		require.NoError(t, err)
+		require.NotNil(t, conn)
+		conn.Close()
+		assert.False(t, called)
+	})
+}
+
+// TestExecutor_DialUpstream_HandshakeTimeout covers the same Important review
+// finding as TestClient_DialUpstream_HandshakeTimeout (forward_proxy_test.go),
+// but for Executor.DialUpstream: if the upstream accepts the WS upgrade but
+// then stalls before replying to the hello, the post-upgrade handshake
+// (WriteJSON + ReadJSON) must be bounded by upstreamHandshakeTimeout instead
+// of blocking forever, which would leak a goroutine and a WS conn per flow.
+func TestExecutor_DialUpstream_HandshakeTimeout(t *testing.T) {
+	orig := upstreamHandshakeTimeout
+	upstreamHandshakeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { upstreamHandshakeTimeout = orig })
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/ws/tunnel", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Accept the upgrade but never reply to the hello: simulates an
+		// upstream that stalls after a successful WS handshake.
+		_, _, _ = conn.ReadMessage()
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	e := &Executor{URL: ts.URL}
+
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		conn, err := e.DialUpstream(context.Background(), "ubuntu", hosts.Record{Name: "test-host"}, "x:1")
+		done <- result{conn: conn, err: err}
+	}()
+
+	select {
+	case res := <-done:
+		require.Error(t, res.err)
+		require.Nil(t, res.conn)
+	case <-time.After(time.Second):
+		t.Fatal("DialUpstream did not return within 1s; handshake is not bounded by a deadline")
+	}
+}
+
+// TestClient_RunWithStreams_Mesh covers the Client.RunWithStreams call site
+// (dialWS + meshDialContext over a websocket). Same meshDial-sharing caveat
+// as above applies.
+func TestClient_RunWithStreams_Mesh(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var hello map[string]any
+		if err := conn.ReadJSON(&hello); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(map[string]any{})
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("done"))
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+	}))
+	defer ts.Close()
+
+	t.Run("mesh true routes through meshDial", func(t *testing.T) {
+		orig := meshDial
+		var gotAddr string
+		meshDial = func(ctx context.Context, meshAddr string) (net.Conn, error) {
+			gotAddr = meshAddr
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", ts.Listener.Addr().String())
+		}
+		t.Cleanup(func() { meshDial = orig })
+
+		c := &Client{url: "http://mesh-target.invalid", mesh: true, meshAddr: "/ip4/1.2.3.4/tcp/4001/p2p/target", user: "ubuntu", record: hosts.Record{Name: "test-host"}}
+		var out bytes.Buffer
+		err := c.RunWithStreams("echo hi", nil, &out, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "/ip4/1.2.3.4/tcp/4001/p2p/target", gotAddr)
+	})
+
+	t.Run("mesh false uses the default dialer", func(t *testing.T) {
+		orig := meshDial
+		called := false
+		meshDial = func(context.Context, string) (net.Conn, error) {
+			called = true
+			return nil, errors.New("meshDial should not be called")
+		}
+		t.Cleanup(func() { meshDial = orig })
+
+		c := &Client{url: ts.URL, user: "ubuntu", record: hosts.Record{Name: "test-host"}}
+		var out bytes.Buffer
+		err := c.RunWithStreams("echo hi", nil, &out, nil)
+		require.NoError(t, err)
+		assert.False(t, called)
+	})
 }

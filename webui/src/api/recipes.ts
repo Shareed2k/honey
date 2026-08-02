@@ -1,4 +1,4 @@
-import { apiHeaders, apiGet, apiPost } from './core';
+import { apiHeaders, apiGet, apiPost, apiDelete } from './core';
 import { RecipeListEntry, ParsedRecipe, RecipeGraphPlan, ValidationError, RecipesAIGraphResponse } from './types/recipes';
 import { ResolvedStep, RiskReport, LibraryCategory } from './types/core';
 
@@ -76,6 +76,76 @@ export async function parseDiskRecipe(path: string): Promise<ParsedRecipe> {
   return j.recipe;
 }
 
+/** Response shape of GET /api/v1/recipes/store/{name} (see internal/webserver/recipe_studio_handlers.go StoreLoadResponse). */
+export type StoreLoadResponse = {
+  recipe: ParsedRecipe;
+  raw_cue: string;
+  plan?: string;
+  steps?: ResolvedStep[];
+  graph?: RecipeGraphPlan;
+  errors?: ValidationError[];
+};
+
+/**
+ * Load a STORED recipe by name via GET /api/v1/recipes/store/{name} — resolved against the
+ * configured recipe store and looked up by name, with no path validation. Unlike
+ * parseDiskRecipe's POST /api/v1/recipes/parse (which requires an absolute path present in
+ * the server's allow-list and rejects bare filenames with "recipe path not allowed"), this
+ * is the correct way for the Studio to open an already-saved recipe.
+ */
+export async function fetchStoredRecipe(name: string): Promise<StoreLoadResponse> {
+  const r = await apiGet(`/api/v1/recipes/store/${encodeURIComponent(name)}`);
+  if (!r.ok) {
+    throw new Error(await r.text());
+  }
+  return r.json();
+}
+
+/**
+ * Lists the recipe store's contents via GET /api/v1/recipes/store (handleRecipesStoreList) —
+ * a bare `{name, path}[]` array (unlike fetchRecipes' GET /api/v1/recipes, which lists
+ * disk-discoverable allow-listed paths, a different listing entirely). Used to compute a
+ * collision-free store filename before importing an external recipe (Library/Git-load) —
+ * see uniqueStoreName in workspace/store.ts.
+ */
+export async function fetchRecipeStoreList(): Promise<RecipeListEntry[]> {
+  const r = await apiGet('/api/v1/recipes/store');
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || r.statusText);
+  }
+  const data = await r.json();
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Saves CUE content into the recipe store under `name` (must end in `.cue`) via
+ * POST /api/v1/recipes/store/{name} (handleRecipesStoreSave) — writes the CUE as-is, no
+ * parsing. Used by the Library/Git-load "import into the store" flows: content lands in the
+ * store first, then a subsequent GET /api/v1/recipes/store/{name} (fetchStoredRecipe) converts
+ * it to recipe JSON the same way opening any other stored recipe does.
+ */
+export async function saveStoredRecipe(name: string, content: string): Promise<void> {
+  const r = await apiPost(`/api/v1/recipes/store/${encodeURIComponent(name)}`, { content });
+  if (!r.ok) {
+    throw new Error(await r.text());
+  }
+}
+
+/**
+ * Deletes a recipe from the store via DELETE /api/v1/recipes/store/{name}
+ * (handleRecipesStoreDelete). Used to roll back a Library/Git-load import
+ * that saved content into the store but then failed to open (e.g. the saved
+ * content isn't valid CUE) — without this, the broken file would be left
+ * behind permanently, always erroring when reopened from the Open dropdown.
+ */
+export async function deleteStoredRecipe(name: string): Promise<void> {
+  const r = await apiDelete(`/api/v1/recipes/store/${encodeURIComponent(name)}`);
+  if (!r.ok) {
+    throw new Error(await r.text());
+  }
+}
+
 export async function fixRecipeErrors(
   recipeContent: Record<string, unknown>,
   errors: unknown[],
@@ -122,12 +192,12 @@ export type StepKindOption = {
 };
 
 const preferredKindOrder = [
-  'command', 'script', 'put', 'get', 'template', 'plugin', 'tunnel', 'ai',
+  'command', 'script', 'put', 'get', 'template', 'plugin', 'tunnel', 'ai', 'summarize',
   'agent_transfer', 'docker', 'k8s', 'postgres', 'opensearch'
 ];
 
 const kindLabels: Record<string, string> = {
-  ai: 'AI', k8s: 'Kubernetes', postgres: 'Postgres', opensearch: 'OpenSearch', agent_transfer: 'Agent Transfer'
+  ai: 'AI', summarize: 'Summarize', k8s: 'Kubernetes', postgres: 'Postgres', opensearch: 'OpenSearch', agent_transfer: 'Agent Transfer'
 };
 
 function kindSortIndex(kind: string): number {

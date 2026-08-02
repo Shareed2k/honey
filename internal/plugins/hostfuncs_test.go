@@ -36,6 +36,51 @@ func TestHostFunctions_kvGated(t *testing.T) {
 	}
 }
 
+// TestHostFunctions_k8sHTTPGated, TestHostFunctions_templateRenderGated, and
+// TestHostFunctions_getEnvGated are characterization tests written before
+// concentrating hostFunctions()'s repeated registration wiring into
+// registerHostFunc (architecture review candidate #3) — they pin the existing
+// gating behavior so the refactor can't silently change it.
+func TestHostFunctions_k8sHTTPGated(t *testing.T) {
+	t.Parallel()
+	none := hostFunctionNames(Manifest{ID: "x"})
+	if slices.Contains(none, "k8s_http") {
+		t.Fatal("k8s_http present without allow_k8s_http")
+	}
+	allowed := hostFunctionNames(Manifest{ID: "x", AllowK8sHTTP: true})
+	if !slices.Contains(allowed, "k8s_http") {
+		t.Fatal("expected k8s_http when allow_k8s_http is true")
+	}
+}
+
+func TestHostFunctions_templateRenderGated(t *testing.T) {
+	t.Parallel()
+	none := hostFunctionNames(Manifest{ID: "x"})
+	if slices.Contains(none, "template_render") {
+		t.Fatal("template_render present without allow_template_render")
+	}
+	allowed := hostFunctionNames(Manifest{ID: "x", AllowTemplateRender: true})
+	if !slices.Contains(allowed, "template_render") {
+		t.Fatal("expected template_render when allow_template_render is true")
+	}
+}
+
+func TestHostFunctions_getEnvGated(t *testing.T) {
+	t.Parallel()
+	none := hostFunctionNames(Manifest{ID: "x"})
+	if slices.Contains(none, "get_env") {
+		t.Fatal("get_env present with no allowed_env")
+	}
+	blank := hostFunctionNames(Manifest{ID: "x", AllowedEnv: []string{"  ", ""}})
+	if slices.Contains(blank, "get_env") {
+		t.Fatal("get_env present with only blank allowed_env entries")
+	}
+	allowed := hostFunctionNames(Manifest{ID: "x", AllowedEnv: []string{"HOME"}})
+	if !slices.Contains(allowed, "get_env") {
+		t.Fatal("expected get_env when allowed_env has a real entry")
+	}
+}
+
 func TestRunKV_getPutDelete(t *testing.T) {
 	t.Parallel()
 	s, err := stepkv.Start(0)

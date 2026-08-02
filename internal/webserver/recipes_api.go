@@ -3,8 +3,6 @@ package webserver
 import (
 	"context"
 	"net/http"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -13,7 +11,6 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	wrate "github.com/webriots/rate"
 
-	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -59,6 +56,12 @@ type RecipesAPI struct {
 }
 
 // NewRecipesAPI creates a new isolated router and handler set for Recipes.
+//
+// recipeValidationCache/recipeGraphCache are constructed here rather than on
+// Server: nothing outside RecipesAPI ever reads them, so storing them on
+// Server too was pure duplication (architecture review candidate #6) — the
+// same self-contained shape webhookDedupCache/webhookRL/webhookCapture below
+// already followed.
 func NewRecipesAPI(
 	opts Options,
 	metrics *metrics.Registry,
@@ -67,9 +70,10 @@ func NewRecipesAPI(
 	ai AIAssistant,
 	plugins *plugincache.Cache,
 	sshCache *engine.ClientCache,
-	valCache *lru.Cache[string, *ValidateContentResponse],
-	graphCache *lru.Cache[string, *cuetry.RecipeGraphPlan],
 ) *RecipesAPI {
+	valCache, _ := lru.New[string, *ValidateContentResponse](50)
+	graphCache, _ := lru.New[string, *cuetry.RecipeGraphPlan](50)
+
 	dedupCache := ttlcache.New(
 		ttlcache.WithTTL[string, string](24*time.Hour),
 		ttlcache.WithDisableTouchOnHit[string, string](),
@@ -119,6 +123,7 @@ func NewRecipesAPI(
 		Biometric:      biometric,
 		SearchRegistry: opts.SearchRegistry,
 		PluginCache:    plugins,
+		AuditSink:      opts.AuditSink,
 	})
 	return api
 }
@@ -170,13 +175,7 @@ func (api *RecipesAPI) WebhookResultRoutes() chi.Router {
 }
 
 func (api *RecipesAPI) sshUser(requested string) string {
-	user := strings.TrimSpace(requested)
-	if user == "" {
-		if cfg := api.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
-			user = cfg.Defaults.SSHUser
-		}
-	}
-	return user
+	return sshUserFor(api.opts.Config, requested)
 }
 
 func (api *RecipesAPI) webhookAllow(appName string) bool {
@@ -196,24 +195,5 @@ func (api *RecipesAPI) webhookRateLimit(next http.Handler) http.Handler {
 }
 
 func (api *RecipesAPI) allowedRecipePathSet() map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, p := range config.ListDefaultRecipes() {
-		if cp, err := filepath.Abs(filepath.Clean(p)); err == nil {
-			out[cp] = struct{}{}
-		}
-	}
-	if api.opts.Config != nil {
-		for _, app := range api.opts.Config.Apps {
-			p := strings.TrimSpace(app.TargetRecipe)
-			if p != "" {
-				if !filepath.IsAbs(p) && api.opts.ConfigPath != "" {
-					p = filepath.Join(filepath.Dir(api.opts.ConfigPath), p)
-				}
-				if cp, err := filepath.Abs(filepath.Clean(p)); err == nil {
-					out[cp] = struct{}{}
-				}
-			}
-		}
-	}
-	return out
+	return allowedRecipePathSetFor(api.opts.Config, api.opts.ConfigPath)
 }

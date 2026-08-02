@@ -158,7 +158,7 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, 
               onChange={(val) => setAddKind(val as RecipeStepKind)}
               options={ADD_STEP_KINDS.map((k) => ({
                 value: k,
-                label: k === 'ai' && !canAddStepKind('ai', recipe) ? `${k} (one per recipe)` : k,
+                label: k === 'summarize' && !canAddStepKind('summarize', recipe) ? `${k} (one per recipe)` : k,
                 disabled: !canAddStepKind(k, recipe),
               }))}
             />
@@ -258,6 +258,25 @@ export function EditForm({ recipe, baseRecipe, onChange, onErrors, onValidated, 
                         value={s.ai?.prompt ?? ''}
                         rows={6}
                         onChange={(e) => updateStep(i, { ai: { ...(s.ai ?? {}), prompt: e.target.value } })}
+                      />
+                    </label>
+                  </>
+                ) : null}
+                {kind === 'summarize' ? (
+                  <>
+                    <label className="rcp-edit__field">
+                      model
+                      <Input
+                        value={s.summarize?.model ?? ''}
+                        onChange={(e) => updateStep(i, { summarize: { ...(s.summarize ?? {}), model: e.target.value } })}
+                      />
+                    </label>
+                    <label className="rcp-edit__field rcp-edit__field--multiline">
+                      prompt
+                      <Input.TextArea
+                        value={s.summarize?.prompt ?? ''}
+                        rows={6}
+                        onChange={(e) => updateStep(i, { summarize: { ...(s.summarize ?? {}), prompt: e.target.value } })}
                       />
                     </label>
                   </>

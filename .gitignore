@@ -6,6 +6,10 @@ website/.npm-cache/
 website/.npm-tmp/
 
 docs/*
+dist/
+build/*
+# Dockerfile is source, not a build artifact — track it despite build/* above.
+!build/honey-plugin-init.Dockerfile
 
 webui/node_modules/
 contrib/ansible/inventory_plugins/__pycache__
@@ -15,13 +19,13 @@ contrib/ansible/inventory_plugins/__pycache__
 
 *.wasm
 *.wasm.gz
+coverage-int.txt
 
 models
 runtime
 /honey
-honey
 .env
-.claude/*
+.claude
 
 */*.aar
 android/app/libs/*.aar
@@ -35,3 +39,7 @@ android/.gradle
 .claude
 android/app/src/main/assets/honey-arm64
 android/app/src/main/assets/honey-amd64
+examples/plugins/audio_transcribe/__pycache__
+examples/mesh/relay/relay
+.DS_Store
+dist-deb/

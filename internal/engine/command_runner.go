@@ -174,7 +174,7 @@ func (r *CommandRunner) Execute(ctx context.Context, req CommandRunRequest) (<-c
 		inner := make(chan HostExecResult, len(jobs))
 		go func() {
 			defer close(inner)
-			_ = StreamSSHParallel(ctx, req.SSHUser, tcJobs, false, func(_ TargetContext, _ map[string]string) string { return req.Command }, inner, BatchOptions{Obs: r.opts.Metrics, Reg: r.opts.ExecRegistry, CmdTimeout: req.CmdTimeout, MaxOutputBytes: req.MaxOutputBytes})
+			_ = StreamCommandParallel(ctx, req.SSHUser, tcJobs, false, func(_ TargetContext, _ map[string]string) string { return req.Command }, inner, BatchOptions{Obs: r.opts.Metrics, Reg: r.opts.ExecRegistry, CmdTimeout: req.CmdTimeout, MaxOutputBytes: req.MaxOutputBytes})
 		}()
 
 		for res := range inner {

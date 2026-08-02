@@ -123,7 +123,7 @@ func (b *pluginPostgresBridge) storeKVResults(ctx context.Context, in apiv1.Post
 	if out.Failed || out.Error != "" {
 		return out
 	}
-	baseKey, err := cuetry.ResolvePostgresKVBaseKey(in.KVKey, in.KVKeyPerHost, b.h.Record.Name)
+	baseKey, err := cuetry.ResolveStepKVBaseKey(in.KVKey, in.KVKeyPerHost, b.h.Record.Name)
 	if err != nil {
 		return apiv1.PostgresOutput{Failed: true, Error: err.Error()}
 	}
@@ -240,11 +240,11 @@ func MergeRecipeSecretRefs(defaults *cuetry.RecipeDefaults, step cuetry.Step) ma
 	out := make(map[string]string)
 	if defaults != nil {
 		for k, v := range defaults.Secrets {
-			out[k] = v
+			out[k] = v.StringRef()
 		}
 	}
 	for k, v := range step.Base().Secrets {
-		out[k] = v
+		out[k] = v.StringRef()
 	}
 	return out
 }

@@ -29,7 +29,7 @@ const WAVE_X0 = 100;
 const WAVE_Y0 = 80;
 
 const preferredKindOrder = [
-  'command', 'script', 'put', 'get', 'template', 'plugin', 'tunnel', 'ai',
+  'command', 'script', 'put', 'get', 'template', 'plugin', 'tunnel', 'ai', 'summarize',
   'agent_transfer', 'docker', 'k8s', 'postgres', 'opensearch',
 ];
 

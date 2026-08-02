@@ -1037,126 +1037,6 @@ func (m *model) viewCueRecipePreviewPopup(helpStyle lipgloss.Style) string {
 	return lipgloss.Place(m.winW, m.winH, lipgloss.Center, lipgloss.Center, popup)
 }
 
-func highlightCueLines(lines []string) []string {
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		out = append(out, highlightCueLine(line))
-	}
-	return out
-}
-
-func highlightCueLine(line string) string {
-	commentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	stringStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("221"))
-	keywordStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
-
-	commentIdx := cueLineCommentIndex(line)
-	codePart := line
-	commentPart := ""
-	if commentIdx >= 0 {
-		codePart = line[:commentIdx]
-		commentPart = line[commentIdx:]
-	}
-
-	var b strings.Builder
-	for i := 0; i < len(codePart); {
-		ch := codePart[i]
-		if ch == '"' {
-			j := i + 1
-			escaped := false
-			for j < len(codePart) {
-				if escaped {
-					escaped = false
-					j++
-					continue
-				}
-				if codePart[j] == '\\' {
-					escaped = true
-					j++
-					continue
-				}
-				if codePart[j] == '"' {
-					j++
-					break
-				}
-				j++
-			}
-			b.WriteString(stringStyle.Render(codePart[i:j]))
-			i = j
-			continue
-		}
-		if isCueWordStart(ch) {
-			j := i + 1
-			for j < len(codePart) && isCueWordChar(codePart[j]) {
-				j++
-			}
-			word := codePart[i:j]
-			if isCueKeyword(word) {
-				b.WriteString(keywordStyle.Render(word))
-			} else {
-				b.WriteString(word)
-			}
-			i = j
-			continue
-		}
-		b.WriteByte(ch)
-		i++
-	}
-
-	if commentPart != "" {
-		b.WriteString(commentStyle.Render(commentPart))
-	}
-
-	return b.String()
-}
-
-func cueLineCommentIndex(line string) int {
-	inString := false
-	escaped := false
-	for i := 0; i < len(line)-1; i++ {
-		ch := line[i]
-		if inString {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if ch == '\\' {
-				escaped = true
-				continue
-			}
-			if ch == '"' {
-				inString = false
-			}
-			continue
-		}
-		if ch == '"' {
-			inString = true
-			continue
-		}
-		if ch == '/' && line[i+1] == '/' {
-			return i
-		}
-	}
-	return -1
-}
-
-func isCueWordStart(ch byte) bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
-}
-
-func isCueWordChar(ch byte) bool {
-	return isCueWordStart(ch) || (ch >= '0' && ch <= '9')
-}
-
-func isCueKeyword(word string) bool {
-	switch word {
-	case "package", "import", "let", "for", "if", "in", "true", "false", "null":
-		return true
-	default:
-		return false
-	}
-}
-
 func runCueRecipeCmd(recipePath string, targets []hosts.Record, targetNote string, sshUser string, execute bool, recordDir string, recordEnabled bool, honey *config.File, configPath string, reg hostexec.Registry) tea.Cmd {
 	title := "CUE recipe (dry-run)"
 	if execute {
@@ -1338,7 +1218,7 @@ func runParallelSSHStreamCmd(reg hostexec.Registry, user string, targets []hosts
 				}
 				return remoteCmd
 			}
-			_ = engine.StreamSSHParallel(context.Background(), user, jobs, false, cmdFunc, ch, engine.BatchOptions{Reg: reg})
+			_ = engine.StreamCommandParallel(context.Background(), user, jobs, false, cmdFunc, ch, engine.BatchOptions{Reg: reg})
 		}()
 
 		return streamStartMsg{
@@ -1520,6 +1400,17 @@ func runTrueNASShellWithRecording(r hosts.Record, recordOpts *engine.SessionReco
 }
 
 func runSSHWithRecording(reg hostexec.Registry, user string, r hosts.Record, recordOpts *engine.SessionRecorderOptions) error {
+	// A record this node proxies to another node (honey mesh) runs on the node
+	// that owns it: forward the whole terminal via the proxy executor, which the
+	// upstream server dispatches to the right native shell (docker/k8s/ssh).
+	// hostexec.IsProxy keeps this decision at the seam and must precede the kind
+	// dispatch below, which dials native clients directly (the k8s branch bypasses
+	// the registry) and would otherwise hit the local docker socket / kubeconfig.
+	if reg != nil {
+		if ex := reg.ForRecord(r); hostexec.IsProxy(ex) {
+			return ex.RunInteractive(user, r)
+		}
+	}
 	if r.IsDocker() {
 		if strings.TrimSpace(r.Meta["container_id"]) == "" {
 			return fmt.Errorf("docker record missing container_id")

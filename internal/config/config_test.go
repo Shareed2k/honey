@@ -528,3 +528,206 @@ func TestExecTimeoutDuration(t *testing.T) {
 		})
 	}
 }
+
+func TestParseMeshConfigEnabled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `
+version: 1
+mesh:
+  enabled: true
+  private_key: "test-key-material"
+  relay_addrs:
+    - /ip4/1.2.3.4/tcp/4001/p2p/12D3KooTestRelayAddr
+  listen_mesh: true
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.Mesh.Enabled {
+		t.Fatal("mesh.enabled should be true")
+	}
+	if f.Mesh.PrivateKey != "test-key-material" {
+		t.Fatalf("mesh.private_key = %q, want test-key-material", f.Mesh.PrivateKey)
+	}
+	if len(f.Mesh.RelayAddrs) != 1 || f.Mesh.RelayAddrs[0] != "/ip4/1.2.3.4/tcp/4001/p2p/12D3KooTestRelayAddr" {
+		t.Fatalf("mesh.relay_addrs = %v, want 1 addr", f.Mesh.RelayAddrs)
+	}
+	if !f.Mesh.ListenMesh {
+		t.Fatal("mesh.listen_mesh should be true")
+	}
+}
+
+func TestParseMeshConfigEnabledMissingRequiredFields(t *testing.T) {
+	t.Parallel()
+	data := `
+version: 1
+mesh:
+  enabled: true
+`
+	_, err := ParseYAML([]byte(data))
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "mesh.private_key") {
+		t.Fatalf("expected mesh.private_key error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "mesh.relay_addrs") {
+		t.Fatalf("expected mesh.relay_addrs error, got: %v", err)
+	}
+}
+
+func TestParseMeshConfigDisabled(t *testing.T) {
+	t.Parallel()
+	data := `
+version: 1
+mesh:
+  enabled: false
+`
+	f, err := ParseYAML([]byte(data))
+	if err != nil {
+		t.Fatalf("expected no error for disabled mesh, got: %v", err)
+	}
+	if f.Mesh.Enabled {
+		t.Fatal("mesh.enabled should be false")
+	}
+	if f.Mesh.PrivateKey != "" {
+		t.Fatalf("mesh.private_key should be empty when disabled, got %q", f.Mesh.PrivateKey)
+	}
+}
+
+func TestParseMeshConfigAbsent(t *testing.T) {
+	t.Parallel()
+	data := `
+version: 1
+`
+	f, err := ParseYAML([]byte(data))
+	if err != nil {
+		t.Fatalf("expected no error for absent mesh, got: %v", err)
+	}
+	if f.Mesh.Enabled {
+		t.Fatal("mesh.enabled should be false when absent")
+	}
+	if f.Mesh.PrivateKey != "" {
+		t.Fatalf("mesh.private_key should be empty when absent, got %q", f.Mesh.PrivateKey)
+	}
+	if len(f.Mesh.RelayAddrs) != 0 {
+		t.Fatalf("mesh.relay_addrs should be empty when absent, got %v", f.Mesh.RelayAddrs)
+	}
+}
+
+func TestHoneyBackendMesh(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+      mesh: true
+      mesh_addr: /ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooTestPeerAddr
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Backends.Honey) != 1 {
+		t.Fatalf("expected 1 honey backend, got %d", len(f.Backends.Honey))
+	}
+	if !f.Backends.Honey[0].Mesh {
+		t.Fatal("honey backend mesh flag should be true")
+	}
+	if f.Backends.Honey[0].MeshAddr != "/ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooTestPeerAddr" {
+		t.Fatalf("honey backend mesh_addr = %q, want the configured multiaddr", f.Backends.Honey[0].MeshAddr)
+	}
+}
+
+func TestHoneyBackendMeshRequiresMeshAddr(t *testing.T) {
+	t.Parallel()
+	data := `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+      mesh: true
+`
+	_, err := ParseYAML([]byte(data))
+	if err == nil {
+		t.Fatal("expected validation error for mesh: true with empty mesh_addr, got nil")
+	}
+	if !strings.Contains(err.Error(), "mesh_addr") {
+		t.Fatalf("expected mesh_addr validation error, got: %v", err)
+	}
+}
+
+func TestHoneyBackendMeshAddrValidatesCleanly(t *testing.T) {
+	t.Parallel()
+	data := `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+      mesh: true
+      mesh_addr: /ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooTestPeerAddr
+`
+	f, err := ParseYAML([]byte(data))
+	if err != nil {
+		t.Fatalf("expected no error for mesh: true with non-empty mesh_addr, got: %v", err)
+	}
+	if f.Backends.Honey[0].MeshAddr == "" {
+		t.Fatal("expected mesh_addr to be populated")
+	}
+}
+
+func TestHoneyBackendMeshFalseIgnoresMeshAddr(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "mesh false with mesh_addr present",
+			data: `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+      mesh: false
+      mesh_addr: /ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooTestPeerAddr
+`,
+		},
+		{
+			name: "mesh and mesh_addr both absent",
+			data: `
+version: 1
+backends:
+  honey:
+    - name: remote-honey
+      url: https://honey.example.com
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := ParseYAML([]byte(tt.data)); err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}

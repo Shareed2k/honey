@@ -3,18 +3,18 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/plugins"
+	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
 	"github.com/shareed2k/honey/internal/stepkv"
 	"go.uber.org/zap"
-	"golang.org/x/sync/semaphore"
 )
 
 // StreamCueStepPlugin ...
@@ -40,29 +40,11 @@ func (e *PluginExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest
 		return fmt.Errorf("internal plugin step")
 	}
 	maxConc := RecipeHostMaxConc(step, opts.Recipe.Defaults)
-	if maxConc <= 0 {
-		maxConc = 8
-	}
-	if maxConc > maxConcurrencyCap {
-		maxConc = maxConcurrencyCap
-	}
-	sem := semaphore.NewWeighted(int64(maxConc))
-	var wg sync.WaitGroup
-	for _, target := range targets {
-		target := target
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := sem.Acquire(ctx, 1); err != nil {
-				ch <- HostExecResult{Name: target.Record.Name, IP: target.Record.PrimaryIP, Provider: target.Record.Provider, Success: false, ErrMsg: err.Error()}
-				return
-			}
-			defer sem.Release(1)
-			res := runCuePluginOnHost(ctx, opts, stepIdx, kind, step, target, retryCfg, attemptMax)
-			ch <- res
-		}()
-	}
-	wg.Wait()
+	DispatchHostResults(ctx, targets, maxConc, 8, func(target TargetContext) HostExecResult {
+		return runCuePluginOnHost(ctx, opts, stepIdx, kind, step, target, retryCfg, attemptMax)
+	}, func(res HostExecResult) {
+		ch <- res
+	})
 	return nil
 }
 
@@ -102,6 +84,19 @@ func runCuePluginOnHost(ctx context.Context, opts ExecutionOptions, stepIdx int,
 		return res
 	}
 	runAs := cuetry.EffectiveRunAs(step.Base(), opts.Recipe.Defaults)
+	sshUser := opts.SSHUser
+	if u := strings.TrimSpace(target.Meta["ssh_user"]); u != "" {
+		sshUser = u
+	}
+	// A runtime:docker plugin targeting a real remote host runs its
+	// shim-container on that host's Docker daemon (over SSH) instead of the
+	// operator's local daemon. Only on --execute (dry-run keeps everything
+	// local) and only when a per-run session exists to own the remote
+	// container's lifecycle. host: "_" / localhost stays on the local path.
+	useRemoteDocker := opts.Execute &&
+		opts.DockerPluginSess != nil &&
+		pluginMgr.IsDockerPlugin(pls.Plugin.ID) &&
+		isRemoteHostRecord(target)
 	bridge := NewRemoteBridge(opts.SSHUser, target, opts.Cache, opts.Reg, opts.RecipeDir, runAs, env, pluginMgr.EffectivePaths(pls.Plugin.ID))
 	hostCtx := &plugins.HostRunContext{
 		SSHUser:              opts.SSHUser,
@@ -140,7 +135,16 @@ func runCuePluginOnHost(ctx context.Context, opts ExecutionOptions, stepIdx int,
 		var totalAttempts int
 		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
 			inner := HostExecResult{Name: target.Name, IP: target.PrimaryIP, Provider: target.Provider, Success: false}
-			out, execErr := pluginMgr.ExecuteStep(callCtx, pls.Plugin.ID, pls.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, opts.Execute, secretsDry, kvSess)
+			var (
+				out     apiv1.ExecuteStepOutput
+				execErr error
+			)
+			if useRemoteDocker {
+				factory := newDockerPluginSSHBackendFactory(ctx, opts.Cache, sshUser, runAs, target)
+				out, execErr = opts.DockerPluginSess.ExecuteStep(callCtx, factory, dockerPluginHostKey(target), pls.Plugin.ID, pls.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, opts.Execute, secretsDry, kvSess)
+			} else {
+				out, execErr = pluginMgr.ExecuteStep(callCtx, pls.Plugin.ID, pls.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, opts.Execute, secretsDry, kvSess)
+			}
 			if execErr != nil {
 				inner.ErrMsg = execErr.Error()
 				if metrics.ObserverEnabled(obs) {
@@ -148,22 +152,15 @@ func runCuePluginOnHost(ctx context.Context, opts ExecutionOptions, stepIdx int,
 				}
 				return inner
 			}
-			inner.Success = out.Success
-			inner.Skipped = out.Skipped
-			inner.ExitCode = out.ExitCode
-			inner.Output = strings.TrimSpace(out.Stdout)
-			if out.Stderr != "" {
-				if inner.Output != "" {
-					inner.Output += "\n"
+			if kvErr := writePluginKVResult(kvSess, pl, target.Name, out.Stdout); kvErr != nil {
+				inner.ErrMsg = kvErr.Error()
+				if metrics.ObserverEnabled(obs) {
+					obs.ObservePluginExec(pl.ID, pl.Action, "error", -1)
 				}
-				inner.Output += strings.TrimSpace(out.Stderr)
+				return inner
 			}
-			if out.Err != "" {
-				inner.ErrMsg = out.Err
-			}
-			if !out.Success && inner.ErrMsg == "" {
-				inner.ErrMsg = "plugin step failed"
-			}
+			applyExecuteStepOutput(&inner, out)
+			inner.KVCaptureKey = strings.TrimSpace(pl.KVKey)
 			if metrics.ObserverEnabled(obs) {
 				obs.ObservePluginExec(pl.ID, pl.Action, PluginExecStatus(inner.Success, inner.Skipped), -1)
 			}
@@ -187,15 +184,28 @@ func runCuePluginOnHost(ctx context.Context, opts ExecutionOptions, stepIdx int,
 		RunCueStepHooks(ctx, opts, stepIdx, kind, step, target, tc, &res, true)
 		return res
 	}
+	// kvSess is always nil below this point: it's only built when opts.Execute
+	// is true (line 67 above), and the opts.Execute branch always returns above
+	// (line 175) — so plugin.kv_key writes only ever happen on a real --execute
+	// run, never here on the dry-run/no-op fallthrough path.
 	out, err := pluginMgr.ExecuteStep(callCtx, pls.Plugin.ID, pls.Plugin.Action, pluginConfig, stepIdx, hostJSON, env, opts.Execute, secretsDry, kvSess)
 	if err != nil {
 		res.ErrMsg = err.Error()
 		return res
 	}
+	applyExecuteStepOutput(&res, out)
+	return res
+}
+
+// applyExecuteStepOutput copies a plugin action's result onto a HostExecResult:
+// stdout+stderr concatenated into Output, and ErrMsg from out.Err (or a
+// default message on failure) if the plugin didn't already report one.
+func applyExecuteStepOutput(res *HostExecResult, out apiv1.ExecuteStepOutput) {
 	res.Success = out.Success
 	res.Skipped = out.Skipped
 	res.ExitCode = out.ExitCode
-	res.Output = strings.TrimSpace(out.Stdout)
+	res.Stdout = strings.TrimSpace(out.Stdout)
+	res.Output = res.Stdout
 	if out.Stderr != "" {
 		if res.Output != "" {
 			res.Output += "\n"
@@ -208,7 +218,30 @@ func runCuePluginOnHost(ctx context.Context, opts ExecutionOptions, stepIdx int,
 	if !out.Success && res.ErrMsg == "" {
 		res.ErrMsg = "plugin step failed"
 	}
-	return res
+}
+
+// writePluginKVResult stores a plugin action's raw stdout in the recipe KV
+// store when the step declares plugin.kv_key — the escape hatch for output
+// too large for env_from's 8KB cap (stepkv.Put allows up to 64KB, rejecting
+// rather than truncating oversized values). Writes regardless of the
+// action's own exit_code/Err, since the whole point is capturing whatever
+// the plugin produced (error payload included) for a later step to inspect.
+// A no-op when kv_key is unset or kvSess is nil (dry-run).
+func writePluginKVResult(kvSess *stepkv.Session, pl *cuetry.RecipeStepPlugin, hostName, stdout string) error {
+	if kvSess == nil || pl == nil || strings.TrimSpace(pl.KVKey) == "" {
+		return nil
+	}
+	key, err := cuetry.ResolveStepKVBaseKey(pl.KVKey, pl.KVKeyPerHost, hostName)
+	if err != nil {
+		return fmt.Errorf("plugin kv_key %q: %w", pl.KVKey, err)
+	}
+	if err := kvSess.Put(key, stdout); err != nil {
+		if errors.Is(err, stepkv.ErrValueTooLong) {
+			return fmt.Errorf("plugin kv_key %q: value exceeds max kv size", pl.KVKey)
+		}
+		return fmt.Errorf("plugin kv_key %q: %w", pl.KVKey, err)
+	}
+	return nil
 }
 
 // ExecuteDryRun executes a dry run of the step.

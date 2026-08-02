@@ -25,8 +25,8 @@ type WSTunnelHello struct {
 // @Tags tunnels
 // @Router /api/v1/ws/tunnel [get]
 // @Security BearerAuth
-func (s *Server) handleWebTunnel(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
+func (a *ForwardingAPI) handleWebTunnel(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -49,7 +49,7 @@ func (s *Server) handleWebTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := s.sshUser(hello.SSHUser)
+	user := a.sshUser(hello.SSHUser)
 	if !hello.Record.IsConnectable() {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"record is not connectable"}`))
 		return
@@ -62,7 +62,7 @@ func (s *Server) handleWebTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Dial the target using the appropriate executor
-	executor := s.opts.ExecRegistry.ForRecord(hello.Record)
+	executor := a.opts.ExecRegistry.ForRecord(hello.Record)
 	if executor == nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"no executor found for record"}`))
 		return

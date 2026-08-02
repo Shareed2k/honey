@@ -664,6 +664,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/files/remote/download": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "files"
+                ],
+                "summary": "Download file from remote host",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "SSH user",
+                        "name": "ssh_user",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON-encoded Record",
+                        "name": "record",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Remote source path",
+                        "name": "path",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {}
+            }
+        },
         "/api/v1/files/remote/list": {
             "post": {
                 "security": [
@@ -718,6 +757,216 @@ const docTemplate = `{
                         }
                     }
                 }
+            }
+        },
+        "/api/v1/files/remote/mkdir": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "files"
+                ],
+                "summary": "Mkdir remote directory",
+                "parameters": [
+                    {
+                        "description": "ssh_user, record, path",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/webserver.FilesRemoteMkdirRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/webserver.FilesRemoteMkdirResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/files/remote/remove": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "files"
+                ],
+                "summary": "Remove remote file",
+                "parameters": [
+                    {
+                        "description": "ssh_user, record, path, recursive",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/webserver.FilesRemoteRemoveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/webserver.FilesRemoteRemoveResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/files/remote/stat": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "files"
+                ],
+                "summary": "Stat remote file",
+                "parameters": [
+                    {
+                        "description": "ssh_user, record, path",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/webserver.FilesRemoteStatRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/webserver.FilesRemoteStatResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/files/remote/upload": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/octet-stream"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "files"
+                ],
+                "summary": "Upload file to remote host",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "SSH user",
+                        "name": "ssh_user",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON-encoded Record",
+                        "name": "record",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Remote destination path",
+                        "name": "path",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {}
             }
         },
         "/api/v1/host-ports": {
@@ -1125,6 +1374,99 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/recipes/prompts/choices": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "recipes"
+                ],
+                "summary": "Fetch remote choices for recipe prompt",
+                "parameters": [
+                    {
+                        "description": "URL to fetch",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/webserver.PromptChoicesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/recipes/prompts/upload": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "recipes"
+                ],
+                "summary": "Upload file for recipe prompt",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "File contents",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/webserver.PromptUploadResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/recipes/recent-runs": {
             "get": {
                 "security": [
@@ -1446,6 +1788,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/recordings/{id}/failed-hosts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "recordings"
+                ],
+                "summary": "Extract failed hosts from session recording",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "recording file ID (without extension)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/hosts.Record"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "405": {
+                        "description": "Method Not Allowed",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/search": {
             "post": {
                 "security": [
@@ -1615,6 +2017,90 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studio/workspace": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "studio"
+                ],
+                "summary": "Get the studio workspace layout",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/workspacestore.Workspace"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "studio"
+                ],
+                "summary": "Save the studio workspace layout",
+                "parameters": [
+                    {
+                        "description": "workspace",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/workspacestore.Workspace"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1951,9 +2437,126 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/v1/ws/exec": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "exec"
+                ],
+                "summary": "Stream remote command execution over WebSocket",
+                "responses": {}
+            }
+        },
+        "/api/v1/ws/tunnel": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "tunnels"
+                ],
+                "summary": "Open TCP tunnel over WebSocket",
+                "responses": {}
+            }
         }
     },
     "definitions": {
+        "commandrisk.Analysis": {
+            "type": "object",
+            "properties": {
+                "critical": {
+                    "type": "boolean"
+                },
+                "detected": {
+                    "$ref": "#/definitions/commandrisk.Detected"
+                },
+                "interpreter": {
+                    "description": "Interpreter is the step's declared interpreter (e.g. \"python3\", \"bash\"), or\nempty for the default shell. It selects the parser and is passed to policy.",
+                    "type": "string"
+                },
+                "max_severity": {
+                    "$ref": "#/definitions/commandrisk.Severity"
+                },
+                "parse_error": {
+                    "description": "ParseError is set when the command could not be parsed; this also yields a\nmedium UNPARSEABLE_COMMAND signal rather than a hard failure.",
+                    "type": "string"
+                },
+                "signals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/commandrisk.RiskSignal"
+                    }
+                }
+            }
+        },
+        "commandrisk.Detected": {
+            "type": "object",
+            "properties": {
+                "commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "flags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "commandrisk.RiskSignal": {
+            "type": "object",
+            "properties": {
+                "args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "command": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "severity": {
+                    "$ref": "#/definitions/commandrisk.Severity"
+                }
+            }
+        },
+        "commandrisk.Severity": {
+            "type": "string",
+            "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+            ],
+            "x-enum-varnames": [
+                "SeverityLow",
+                "SeverityMedium",
+                "SeverityHigh",
+                "SeverityCritical"
+            ]
+        },
         "config.AWSBackend": {
             "type": "object",
             "required": [
@@ -2014,6 +2617,12 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/config.GCPBackend"
+                    }
+                },
+                "honey": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/config.HoneyBackend"
                     }
                 },
                 "kubernetes": {
@@ -2164,6 +2773,43 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "zone": {
+                    "type": "string"
+                }
+            }
+        },
+        "config.HoneyBackend": {
+            "type": "object",
+            "required": [
+                "name",
+                "url"
+            ],
+            "properties": {
+                "insecure": {
+                    "type": "boolean"
+                },
+                "mesh": {
+                    "description": "Mesh routes this backend's URL through the local libp2p mesh client\n(internal/meshnet) instead of the normal network path — for reaching a\nremote honey instance behind NAT/CGNAT with no port-forward. Requires\nConfig.Mesh.Enabled on this process, with at least one relay\nconfigured in Config.Mesh.RelayAddrs.",
+                    "type": "boolean"
+                },
+                "mesh_addr": {
+                    "description": "MeshAddr is the libp2p multiaddr to dial when Mesh is true — the actual\nnetwork target, e.g. a direct peer address or a full Circuit Relay v2\npath (relay + target peer ID). URL is still used for building this\nbackend's request paths (e.g. \"/api/v1/search\") via plain string\nconcatenation — its host component is never actually resolved for a\nmesh-routed backend, since the real dial is intercepted and redirected\nto MeshAddr instead. Required when Mesh is true.",
+                    "type": "string"
+                },
+                "mtls": {
+                    "description": "MTLS marks this backend as managed by the device mTLS client (the mobile app\nfetches it over a client cert). The in-process honeyprovider skips it to\navoid a double-fetch; the app owns it. See examples/mtls/apisix.",
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "server_ca": {
+                    "description": "ServerCA optionally pins the gateway server certificate (PEM) the mTLS\nclient trusts. Empty falls back to the enrolled device CA.",
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }
@@ -2460,6 +3106,199 @@ const docTemplate = `{
                 }
             }
         },
+        "cuetry.RiskReport": {
+            "type": "object",
+            "properties": {
+                "findings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "level": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "integer"
+                }
+            }
+        },
+        "engine.AgentCloudBackend": {
+            "type": "object",
+            "properties": {
+                "bucket": {
+                    "type": "string"
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "object": {
+                    "type": "string"
+                },
+                "prefix": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                }
+            }
+        },
+        "engine.AgentTransferEvent": {
+            "type": "object",
+            "properties": {
+                "attempt": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "stage": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                },
+                "timestamp": {
+                    "type": "string"
+                }
+            }
+        },
+        "engine.CloudBackendRef": {
+            "type": "object",
+            "properties": {
+                "index": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "engine.HostExecResult": {
+            "type": "object",
+            "properties": {
+                "changed": {
+                    "type": "boolean"
+                },
+                "errMsg": {
+                    "type": "string"
+                },
+                "exitCode": {
+                    "type": "integer"
+                },
+                "hookFailed": {
+                    "type": "boolean"
+                },
+                "hookOutput": {
+                    "type": "string"
+                },
+                "hookPhase": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "isTransient": {
+                    "type": "boolean"
+                },
+                "kvcaptureKey": {
+                    "description": "KVCaptureKey is set when a step wrote its output to the recipe KV store\n(e.g. plugin.kv_key) instead of a named output capture. Unlike\nOutputCapture, run.go's graph dispatch never overwrites this field, so\nit survives to CueRecipeDisplayOutput to suppress the raw dump.",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "output": {
+                    "type": "string"
+                },
+                "outputCapture": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "skipped": {
+                    "type": "boolean"
+                },
+                "stdout": {
+                    "description": "Stdout is the step's raw stdout only, with no stderr mixed in — unlike\nOutput, which concatenates stdout+stderr for human display. Only\npopulated by executors that keep the two streams genuinely separate\ninternally (currently: plugin steps, via apiv1.ExecuteStepOutput);\nempty otherwise (e.g. command/script steps, whose HostClient.Run\nreturns one already-merged stream from the SSH session — there is no\nseparate stdout to recover there). env_from/stepStdout consumers\nshould prefer this over Output when non-empty, since a step whose\nprocess logs diagnostics to stderr (common, not a bug in the process)\nwould otherwise corrupt output_format: \"json\" parsing downstream.",
+                    "type": "string"
+                },
+                "stepID": {
+                    "type": "string"
+                },
+                "stepIndex": {
+                    "type": "integer"
+                },
+                "stepKind": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "engine.RemoteFileEntry": {
+            "type": "object",
+            "properties": {
+                "is_dir": {
+                    "type": "boolean"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "modified_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                }
+            }
+        },
+        "engine.StepRisk": {
+            "type": "object",
+            "properties": {
+                "analysis": {
+                    "$ref": "#/definitions/commandrisk.Analysis"
+                },
+                "command": {
+                    "type": "string"
+                },
+                "decision": {
+                    "$ref": "#/definitions/policy.Decision"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "interpreter": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "step_index": {
+                    "type": "integer"
+                }
+            }
+        },
         "hostapi.ListBackendsOutput": {
             "type": "object",
             "properties": {
@@ -2526,10 +3365,25 @@ const docTemplate = `{
                 }
             }
         },
+        "hosts.InventoryValue": {
+            "type": "object"
+        },
         "hosts.Record": {
             "type": "object",
             "properties": {
+                "capabilities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "extra_ips": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "groups": {
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -2553,8 +3407,36 @@ const docTemplate = `{
                 "region": {
                     "type": "string"
                 },
+                "vars": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/hosts.InventoryValue"
+                    }
+                },
                 "zone": {
                     "type": "string"
+                }
+            }
+        },
+        "policy.Decision": {
+            "type": "object",
+            "properties": {
+                "allow": {
+                    "type": "boolean"
+                },
+                "decision": {
+                    "description": "Decision is the optional fine-grained verdict a policy may set:\n\"allow\" | \"deny\" | \"require_approval\" | \"require_biometric\". Empty when the\npolicy only sets allow/deny_reason.",
+                    "type": "string"
+                },
+                "denyReason": {
+                    "type": "string"
+                },
+                "requires": {
+                    "description": "Requires lists optional preconditions a policy demands, e.g.\n[\"explicit_approval\", \"biometric\"]. Empty when unset.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -2626,132 +3508,7 @@ const docTemplate = `{
                 }
             }
         },
-        "engine.AgentCloudBackend": {
-            "type": "object",
-            "properties": {
-                "bucket": {
-                    "type": "string"
-                },
-                "endpoint": {
-                    "type": "string"
-                },
-                "object": {
-                    "type": "string"
-                },
-                "prefix": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "region": {
-                    "type": "string"
-                }
-            }
-        },
-        "engine.AgentTransferEvent": {
-            "type": "object",
-            "properties": {
-                "attempt": {
-                    "type": "integer"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "host": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "stage": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                },
-                "timestamp": {
-                    "type": "string"
-                }
-            }
-        },
-        "engine.CloudBackendRef": {
-            "type": "object",
-            "properties": {
-                "index": {
-                    "type": "integer"
-                },
-                "kind": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "engine.HostExecResult": {
-            "type": "object",
-            "properties": {
-                "errMsg": {
-                    "description": "transport / spawn failure (not remote stderr)",
-                    "type": "string"
-                },
-                "exitCode": {
-                    "type": "integer"
-                },
-                "hookOutput": {
-                    "description": "captured stdout+stderr from the hook (local or remote)",
-                    "type": "string"
-                },
-                "hookPhase": {
-                    "description": "HookPhase / HookOutput are set when a CUE step hook ran after the main result (command/script only).",
-                    "type": "string"
-                },
-                "ip": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "output": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "skipped": {
-                    "description": "when CEL was false; no SSH/SFTP ran",
-                    "type": "boolean"
-                },
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
         "ui.LocalFileEntry": {
-            "type": "object",
-            "properties": {
-                "is_dir": {
-                    "type": "boolean"
-                },
-                "mode": {
-                    "type": "string"
-                },
-                "modified_at": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "size": {
-                    "type": "integer"
-                }
-            }
-        },
-        "engine.RemoteFileEntry": {
             "type": "object",
             "properties": {
                 "is_dir": {
@@ -2816,6 +3573,12 @@ const docTemplate = `{
             "properties": {
                 "plan": {
                     "type": "string"
+                },
+                "risk_assessment": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/engine.StepRisk"
+                    }
                 }
             }
         },
@@ -2833,6 +3596,9 @@ const docTemplate = `{
         "webserver.CueExecRequest": {
             "type": "object",
             "properties": {
+                "approval_id": {
+                    "type": "string"
+                },
                 "env": {
                     "type": "array",
                     "items": {
@@ -2860,6 +3626,10 @@ const docTemplate = `{
                 },
                 "ssh_user": {
                     "type": "string"
+                },
+                "timeout": {
+                    "description": "per-host command timeout (e.g. \"30s\"); empty uses config default",
+                    "type": "string"
                 }
             }
         },
@@ -2877,6 +3647,10 @@ const docTemplate = `{
                 },
                 "interpreter_args_quoted": {
                     "type": "boolean"
+                },
+                "max_output_bytes": {
+                    "description": "0 = default (6000), \u003c 0 = unlimited",
+                    "type": "integer"
                 },
                 "record_session": {
                     "type": "boolean"
@@ -2903,6 +3677,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "ssh_user": {
+                    "type": "string"
+                },
+                "timeout": {
+                    "description": "per-host command timeout (e.g. \"30s\"); empty uses config default",
                     "type": "string"
                 }
             }
@@ -3060,6 +3838,75 @@ const docTemplate = `{
                 }
             }
         },
+        "webserver.FilesRemoteMkdirRequest": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "record": {
+                    "$ref": "#/definitions/hosts.Record"
+                },
+                "ssh_user": {
+                    "type": "string"
+                }
+            }
+        },
+        "webserver.FilesRemoteMkdirResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "webserver.FilesRemoteRemoveRequest": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "record": {
+                    "$ref": "#/definitions/hosts.Record"
+                },
+                "recursive": {
+                    "type": "boolean"
+                },
+                "ssh_user": {
+                    "type": "string"
+                }
+            }
+        },
+        "webserver.FilesRemoteRemoveResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "webserver.FilesRemoteStatRequest": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "record": {
+                    "$ref": "#/definitions/hosts.Record"
+                },
+                "ssh_user": {
+                    "type": "string"
+                }
+            }
+        },
+        "webserver.FilesRemoteStatResponse": {
+            "type": "object",
+            "properties": {
+                "entry": {
+                    "$ref": "#/definitions/engine.RemoteFileEntry"
+                }
+            }
+        },
         "webserver.GraphPlanRequest": {
             "type": "object",
             "properties": {
@@ -3069,6 +3916,9 @@ const docTemplate = `{
                 "recipe_content": {
                     "type": "object",
                     "additionalProperties": true
+                },
+                "recipe_content_raw": {
+                    "type": "string"
                 }
             }
         },
@@ -3176,6 +4026,35 @@ const docTemplate = `{
                 }
             }
         },
+        "webserver.PromptChoicesRequest": {
+            "type": "object",
+            "properties": {
+                "json_path": {
+                    "description": "Unused for now, we'll do filtering on frontend",
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "webserver.PromptUploadResponse": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "sha": {
+                    "type": "string"
+                }
+            }
+        },
         "webserver.ProvidersResponse": {
             "type": "object",
             "properties": {
@@ -3212,6 +4091,9 @@ const docTemplate = `{
                 "edited": {
                     "type": "boolean"
                 },
+                "graph": {
+                    "$ref": "#/definitions/cuetry.RecipeGraphPlan"
+                },
                 "host_count": {
                     "type": "integer"
                 },
@@ -3220,6 +4102,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/hosts.Record"
                     }
+                },
+                "plan": {
+                    "type": "string"
                 },
                 "recipe_content_hash": {
                     "type": "string"
@@ -3610,6 +4495,9 @@ const docTemplate = `{
                 "recipe_content": {
                     "type": "object",
                     "additionalProperties": true
+                },
+                "recipe_content_raw": {
+                    "type": "string"
                 }
             }
         },
@@ -3628,10 +4516,33 @@ const docTemplate = `{
                 "plan": {
                     "type": "string"
                 },
+                "risk": {
+                    "$ref": "#/definitions/cuetry.RiskReport"
+                },
                 "steps": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/webserver.ResolvedStepSummary"
+                    }
+                }
+            }
+        },
+        "workspacestore.Workspace": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "string"
+                },
+                "layout": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "openRecipes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
                     }
                 }
             }

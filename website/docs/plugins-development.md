@@ -4,9 +4,12 @@ title: Plugin development
 slug: /plugins-development
 ---
 
-Honey can load **WASM plugins** ([Extism](https://extism.org/)) to extend recipes and secrets without recompiling the CLI. Plugins are optional and **off by default**.
+Honey can load plugins to extend recipes and secrets without recompiling the CLI, in two runtimes. Plugins are optional and **off by default**.
 
-Typical uses:
+- **`runtime: wasm`** (default) — a sandboxed [Extism](https://extism.org/) module. Covered in most of this page.
+- **`runtime: docker`** — execs a real binary (`mongosh`, `aws`, `gcloud`, `duckdb`, `ffmpeg`, …) inside a long-lived container. No WASM, no build step. See [Docker runtime plugins](#docker-runtime-plugins) below.
+
+Typical WASM uses:
 
 - Rewrite CUE recipe bytes before compile (`cue_transform`)
 - Custom per-host recipe steps (`plugin:` in CUE)
@@ -106,6 +109,27 @@ Recipe shape:
 ```
 
 See [CUE Recipes](./cue-recipes.md) for `host` matching and graph mode.
+
+### `kv_key` / `kv_key_per_host`
+
+Any plugin step (WASM or `runtime: docker`) can capture its raw stdout into the recipe KV store — the escape hatch for output too large for `env_from`'s 8192-byte cap (the KV store caps at 65536 bytes, rejecting rather than truncating an oversized value):
+
+```cue
+plugin: {
+  id:     "stealth_browser"
+  action: "fetch"
+  config: {url: "https://example.com"}
+  kv_key:         "stealth_fetch"  // recipe KV key
+  kv_key_per_host: false            // true suffixes the key with a sanitized host name
+}
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `kv_key` | _none_ | KV key the action's raw stdout is written to after a successful call. Omit to skip KV entirely (the common case). |
+| `kv_key_per_host` | `false` | Suffix the key with the target host's (sanitized) name, so parallel hosts don't overwrite each other's value |
+
+Written **only on a real `--execute` run** (dry-run never touches KV, consistent with plugins never really executing on dry-run) — right after the plugin call returns successfully, using its raw stdout, before it's combined with stderr for the step's own output. A downstream step reads it back with `{{ kvGet "stealth_fetch" }}` inside a [templated command/script step](./cue-recipes.md#templated-commandscript-steps), or the plain `kvGet`/`kvHas` template functions inside a `template:` step.
 
 ### `resolve_secret`
 
@@ -440,6 +464,216 @@ For simple one-off shell, prefer native `command` / `script` steps (no WASM). Us
 
 Use the [Extism Go PDK HTTP API](https://github.com/extism/go-pdk) (`pdk.NewHTTPRequest` / `Send`) against hosts in `allowed_hosts`. Other [Extism PDKs](https://extism.org/docs) work for non-Go languages.
 
+## Docker runtime plugins
+
+For tools better run as their real CLI/binary than reimplemented in WASM (`mongosh`, `aws`, `gcloud`, `duckdb`, `ffmpeg`, `psql`, …), set `runtime: docker` instead of shipping a `.wasm` module. No Go/WASM build step — a plugin is just `plugin.yaml` + `plugin.cue`.
+
+### Layout
+
+| File | Purpose |
+|------|---------|
+| `plugin.yaml` | Manifest: `id`, `capabilities`, `runtime: docker`, `docker: {...}` |
+| `plugin.cue` | Declares each action's `argv`, `#Config` schema, `output_format`, optional `env`/`stdin` |
+
+### Manifest fields (`docker:`)
+
+```yaml
+id: mongodb
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "mongo:latest"
+  pull_policy: if_not_present   # if_not_present (default) | always
+  restart:
+    max_backoff: 30s            # default 30s; unbounded retries, capped interval
+  volumes:
+    - "/var/honey/data:/data:rw"  # host_path:container_path[:ro|rw]
+```
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `docker.image` | _required_ | Image to run; pulled per `pull_policy` |
+| `docker.pull_policy` | `if_not_present` | `if_not_present` or `always` |
+| `docker.restart.max_backoff` | `30s` | Cap on exponential backoff between restart attempts after a crash — retries are unbounded, never permanently give up |
+| `docker.volumes` | _none_ | Static bind mounts (Docker `Binds` syntax); use for actions that read/write files across calls (e.g. `ffmpeg` writing then `ffprobe` reading the same file) |
+| `allowed_env` | _none_ | Same manifest field as WASM plugins, but for docker plugins these are passed straight into the container's environment at creation time — not gated behind a per-call host function |
+
+The container is created once when the plugin loads and stays up for the plugin's lifetime (like a WASM module instance) — not one container per call. If it crashes, honey restarts it automatically with exponential backoff (capped at `max_backoff`, retried forever).
+
+### `plugin.cue`
+
+One `actions: <name>: {...}` block per action:
+
+```cue
+actions: query: {
+	#Config: {
+		uri:        string
+		database:   string
+		collection: string
+		query:      string
+	}
+
+	argv: [
+		"mongosh",
+		config.uri,
+		"--quiet",
+		"--eval",
+		"EJSON.stringify(db.getSiblingDB('\(config.database)').getCollection('\(config.collection)').find(\(config.query)).toArray())"
+	]
+
+	output_format: "json"
+}
+```
+
+| Field | Required | Purpose |
+|-------|----------|---------|
+| `#Config` | recommended | CUE schema the recipe's `plugin.config` is validated against before every call |
+| `argv` | yes | Argv exec'd directly inside the container — **not** run through the image's own `ENTRYPOINT`/shell (see gotcha below) |
+| `output_format` | no (default `"text"`) | `"json"` decodes stdout as JSON for the step's captured output; `"text"` keeps it as a string |
+| `env` | no | Extra env vars for just this call, evaluated from `config` like `argv` — use for secrets (e.g. a resolved DB password) that shouldn't appear in `argv`/`ps`/`/proc/<pid>/cmdline` |
+| `stdin` | no | Text piped to the process's stdin, evaluated from `config` — use for request bodies (e.g. a JSON query DSL) that are awkward to shell-quote into `argv` |
+
+**Gotcha:** honey always overrides the container's `Entrypoint` with the `honey-plugin-init` shim, which execs `argv[0]` directly. If an image's default entrypoint does argument-wrapping (e.g. some `ffmpeg` images wrap `ffmpeg`/`ffprobe` in a shell script), use the binary's absolute path in `argv[0]` (check with `docker inspect <image>`) instead of relying on the image's own entrypoint behavior.
+
+### Packaging: `honey-plugin-init`
+
+Docker-runtime plugins bind-mount a small shim binary, `honey-plugin-init`, as the container's entrypoint (it execs `argv` and returns `{output, stderr, exit_code, error}` over a loopback HTTP call). It must exist **alongside the `honey` executable** — build it with:
+
+```bash
+task build-honey-plugin-init
+```
+
+Or point at a prebuilt binary with the `HONEY_PLUGIN_INIT_PATH` environment variable. Without one of these, loading a `runtime: docker` plugin fails with `honey-plugin-init not found at ... (build it via task build-honey-plugin-init or set HONEY_PLUGIN_INIT_PATH)`.
+
+### Embedded-init (registry-distributed) plugins
+
+Bind mode (above) requires the **operator's** machine to have `honey-plugin-init` built or available locally — fine for local dev, awkward for an image you publish for other people to `docker pull` and run as-is. For that case, set `docker.init: embedded` in the manifest: the image itself already carries `honey-plugin-init` as its entrypoint, so honey doesn't bind-mount or override anything — it just starts the container and talks to the shim already baked in.
+
+```yaml
+runtime: docker
+docker:
+  image: "ghcr.io/you/my-plugin@sha256:<digest>"
+  init: embedded          # image supplies honey-plugin-init; no host binary needed
+  init_path: /usr/local/bin/honey-plugin-init   # optional; this is the default
+```
+
+`docker.init: embedded` requires `docker.image` to be **digest-pinned** (`...@sha256:...`, not just a tag) — honey rejects the manifest at load otherwise. Only a digest guarantees every host pulls the exact bytes that were built and verified; a mutable tag can point at different content per architecture or be repointed later.
+
+Build the image with `honey-plugin-init` at `/usr/local/bin/honey-plugin-init` (or wherever `docker.init_path` says) using one of two patterns:
+
+**Pattern A — `COPY --from` the published base image** (recommended; the shim ships prebuilt, so there's nothing to compile):
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM your-base-image
+COPY --from=ghcr.io/shareed2k/honey-plugin-init:<ver> \
+    /usr/local/bin/honey-plugin-init /usr/local/bin/honey-plugin-init
+ENTRYPOINT ["/usr/local/bin/honey-plugin-init"]
+```
+
+**Pattern B — `ADD` the release binary directly** (no dependency on the base image):
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM your-base-image
+ARG TARGETARCH
+ADD https://github.com/shareed2k/honey/releases/download/v<ver>/honey-plugin-init-linux-${TARGETARCH} /usr/local/bin/honey-plugin-init
+RUN chmod 0755 /usr/local/bin/honey-plugin-init
+ENTRYPOINT ["/usr/local/bin/honey-plugin-init"]
+```
+
+Either way, **the final image must be a multi-arch manifest list** — build and push it with `docker buildx build --platform linux/amd64,linux/arm64 ... --push` covering every architecture your fleet runs. A single-arch image works fine on a matching host but fails at container start with an `exec format error` on a mismatched one (e.g. an amd64-only image pulled on an arm64 host). `docker manifest inspect <image>@sha256:...` shows whether a reference is a manifest list or a single-platform image before you ship it.
+
+### Host networking (`docker.network: host`)
+
+By default a docker-runtime plugin's container runs on the normal Docker bridge network, isolated from the daemon host's own network stack. Set `docker.network: host` in the manifest to instead run the container with the daemon host's network namespace — the container sees (and can reach) exactly what the host itself can, including the host's own loopback interface:
+
+```yaml
+runtime: docker
+docker:
+  image: "pghero_diagnostics:latest"
+  network: host   # "" (default, bridge) | "host"
+```
+
+Host networking is **operator-gated**, off by default: the operator must opt in with `plugins.allow_host_network: true` in `honey.yaml`, separately from whatever the plugin's own manifest requests. A plugin manifest alone cannot turn this on — a plugin author asking for `network: host` is not the same as an operator granting it. If a loaded plugin requests `network: host` while the toggle is off, honey refuses to load it (error mentions `allow_host_network`).
+
+```yaml
+plugins:
+  allow_host_network: true   # required, or a docker.network: host plugin fails to load
+```
+
+**Why gated:** host networking is a privilege escalation relative to the normal container network sandbox — it hands the container the daemon host's full network namespace (every interface, every port the host can reach), not just an isolated bridge segment. Treat `plugins.allow_host_network: true` the same as any other operator-side widening of a plugin's trust boundary (alongside `docker.image`/`allowed_env`, see [Security](#security)).
+
+Even in host mode the shim itself only ever binds **loopback**: honey allocates a free port on `127.0.0.1` and tells the shim to bind that address directly (no port publishing — host networking has no published-ports concept to begin with). The container's other host-network privileges (reaching the host's other interfaces, other services bound to the host) are a side effect of the network mode, not something the shim itself uses.
+
+This is primarily a **Linux** feature. Docker Desktop and Colima run the daemon inside a VM, so their own "host" network mode is still scoped to that VM, not the real host — and both already expose `host.docker.internal` as a bridge-reachable gateway to the operator's loopback, which is simpler and works today (see the [Manifest fields](#manifest-fields-docker) example and [`pghero_tunnel_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/pghero_tunnel_demo.cue)). On plain Linux there is no such gateway and no bridge route to the operator's loopback at all, so `network: host` is the way to reach it: e.g. an operator-side recipe `tunnel:` step opens a local SSH port-forward on `127.0.0.1:15432`, and a host-networked plugin container reaches that same `127.0.0.1:15432` directly, because it shares the operator's loopback.
+
+### Running a docker plugin on a remote host
+
+By default a `runtime: docker` plugin's container runs on the **operator's** Docker daemon. A recipe step's `host:` decides where instead:
+
+- `host: "_"` (or `localhost`/`127.0.0.1`) — the operator's local daemon (the default; unchanged).
+- any real matched host — on **that host's** Docker daemon, over the SSH connection honey already uses for that host.
+
+When a step targets a real host on `--execute`, honey:
+
+1. tunnels the Docker Engine API to the host over SSH (same mechanism as the `docker:` step),
+2. stages the arch-matched `honey-plugin-init` shim to `/tmp/honey-plugin-init-linux-<arch>` on the host (uploaded once, checksum-skipped on later runs — nothing else is installed on the host),
+3. runs the plugin's shim-container on the host's daemon and reaches the shim through the same SSH connection.
+
+Because the container is created by the **remote** daemon, `docker.volumes` bind mounts resolve on the remote host — e.g. `"/var/run/docker.sock:/var/run/docker.sock"` mounts the *host's* Docker socket, letting the plugin manage the host's own containers. The container is scoped to the run and stopped+removed when the recipe finishes.
+
+Requirements: the host needs SSH (already used by honey) and a Docker daemon — nothing else. The **operator** needs the shim binary matching the *remote host's* architecture — `honey-plugin-init-linux-<arch>` — available in one of: `$HONEY_PLUGIN_INIT_DIR`, the directory of `$HONEY_PLUGIN_INIT_PATH` (its arch-suffixed siblings), or alongside the `honey` binary (where releases ship both arches). In dev, `task build-honey-plugin-init` writes both arches to `build/`; point `HONEY_PLUGIN_INIT_DIR` there. WASM plugins are unaffected — they always run in-process on the operator.
+
+Dry-run keeps everything local (no remote containers), and cross-run container reuse is not done (one container per host per run).
+
+**Proxmox VMs/LXCs**: LXC guests always work, regardless of the backend's `exec_mode` — Proxmox has no LXC exec REST endpoint, so LXC command execution is always SSH-backed. QEMU VMs work when the backend's `exec_mode` is `ssh` (the default) or `hybrid` (which runs commands through the QEMU guest agent but still keeps a real SSH connection open for file transfers — reused here for the docker tunnel). `exec_mode: pve` (pure QEMU guest-agent, no SSH at all) cannot run a docker plugin remotely — there is no SSH connection to tunnel through.
+
+**When the host has no reachable SSH at all** (inbound firewalled/CGNAT, port 22 refused): the operator can't reach *into* it for the tunnel. Instead, run honey **on that host** with `mesh.enabled: true` — it dials *out* to a relay and becomes reachable over the libp2p mesh — and run the docker plugin **locally on that host** (`host: "_"`, its own Docker daemon), while the operator reaches and manages it over the relay via a `backends.honey` entry with `mesh: true`. No inbound port, no SSH into the host, no remote tunnel. See [`examples/mesh`](https://github.com/shareed2k/honey/tree/main/examples/mesh) → "Reaching a firewalled host that runs Docker".
+
+### Known limitation: dry-run
+
+Unlike WASM plugins, `runtime: docker` actions currently always execute — `execute: false` (dry-run) and secrets-dry-run are not yet threaded through to the container call. Don't rely on dry-run to preview a docker-runtime plugin action's side effects; test against a disposable target first.
+
+### Examples
+
+[`examples/plugins/`](https://github.com/shareed2k/honey/tree/main/examples/plugins) ships several ready-to-copy docker-runtime plugins — no build step, just copy `plugin.yaml` + `plugin.cue` into your plugins directory:
+
+| Plugin | Image | Actions |
+|--------|-------|---------|
+| [`mongodb/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/mongodb) | `mongo:latest` | `query`, `eval` |
+| [`duckdb/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/duckdb) | `duckdb/duckdb:latest` | `query`, `export_parquet` |
+| [`aws/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/aws) | `amazon/aws-cli:latest` | `s3_ls`, `s3_cp`, `s3_rm`, `ec2_describe`, `ec2_start`, `ec2_stop` |
+| [`gcloud/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/gcloud) | `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` | `compute_list`, `compute_start`, `compute_stop`, `storage_ls`, `storage_cp`, `storage_rm` |
+| [`watchtower/`](https://github.com/shareed2k/honey/tree/main/examples/plugins/watchtower) | `docker.io/beatkind/watchtower:latest` | `check` (monitor-only, text output), `check_json` (same, single JSON document via watchtower's built-in `json.v1` notification template — see plugin.cue for the exact shape), `update` — mounts the daemon's Docker socket; pair with `host: "prod-*"` to check each server's own images (see [`watchtower_image_check.cue`](https://github.com/shareed2k/honey/tree/main/examples/recipe/watchtower_image_check.cue)). |
+
+`gcr.io/google.com/cloudsdktool/cloud-sdk:slim` is **amd64-only** (no arm64 manifest) — on an Apple Silicon host with a VM-backed Docker daemon (Colima, Docker Desktop) with no qemu emulation registered, it fails with `exec format error`. The other three images are multi-arch.
+
+```bash
+mkdir -p ~/.config/honey/plugins/mongodb
+cp examples/plugins/mongodb/plugin.yaml examples/plugins/mongodb/plugin.cue ~/.config/honey/plugins/mongodb/
+```
+
+Recipe usage is identical to WASM plugins — `plugin: { id, action, config }`:
+
+```cue
+{
+  host: "*"
+  plugin: {
+    id:     "mongodb"
+    action: "query"
+    config: {
+      uri:        "mongodb://db.internal:27017"
+      database:   "app"
+      collection: "users"
+      query:      "{}"
+    }
+  }
+}
+```
+
 ## Authoring in Go
 
 ### Project layout
@@ -588,6 +822,8 @@ The host calls `on_step_result` on the plugin with `phase`, host, and result pay
 - **`allowed_paths`** maps host filesystem into the guest; keep paths minimal.
 - Secret material from `resolve_secret` flows into recipe env like any other secret backend.
 - Use `plugins.allowlist` in production to load only known plugin ids.
+- **`runtime: docker`**: the container image is arbitrary — pin a digest or a trusted registry, since honey runs whatever `docker.image` says with no sandboxing beyond normal container isolation. `allowed_env` values are passed straight into the container at creation (unlike WASM's per-call gated `get_env`), so treat `docker.image` + `allowed_env` together as the plugin's full trust boundary.
+- **`docker.network: host`**: widens that trust boundary further — the container gets the daemon host's full network namespace instead of an isolated bridge segment. Off by default; requires the operator to opt in with `plugins.allow_host_network: true`, independent of the plugin's own manifest. See [Host networking](#host-networking-dockernetwork-host).
 
 ## Related
 

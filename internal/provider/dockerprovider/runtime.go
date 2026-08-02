@@ -1,10 +1,8 @@
 package dockerprovider
 
 import (
-	"strings"
-	"sync"
-
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/provider/backendruntime"
 )
 
 // DockerBackendRuntime holds Docker API connection settings.
@@ -24,20 +22,16 @@ type DockerBackendRuntime struct {
 	Key           string
 }
 
-var (
-	rtMu       sync.RWMutex
-	dockerBack []DockerBackendRuntime
-)
+var rtReg = backendruntime.New(func(b DockerBackendRuntime) string { return b.Name })
 
 func reconfigureDocker() {
 	cfg := config.Get()
-	rtMu.Lock()
-	defer rtMu.Unlock()
-	dockerBack = dockerBack[:0]
 	if cfg == nil {
+		rtReg.Reconfigure(nil)
 		return
 	}
 	locals := cfg.Backends.Local
+	items := make([]DockerBackendRuntime, 0, len(cfg.Backends.Docker))
 	for _, e := range cfg.Backends.Docker {
 		rt := DockerBackendRuntime{
 			Name:          e.Name,
@@ -56,25 +50,12 @@ func reconfigureDocker() {
 		if e.ViaLocal != "" || e.ViaSSH.Host != "" {
 			rt.Transport = "honey_ssh"
 		}
-		dockerBack = append(dockerBack, rt)
+		items = append(items, rt)
 	}
+	rtReg.Reconfigure(items)
 }
 
 // BackendByName returns runtime config for a named Docker backend (empty name matches first entry).
 func BackendByName(name string) (DockerBackendRuntime, bool) {
-	rtMu.RLock()
-	defer rtMu.RUnlock()
-	name = strings.TrimSpace(name)
-	if len(dockerBack) == 0 {
-		return DockerBackendRuntime{}, false
-	}
-	if name == "" {
-		return dockerBack[0], true
-	}
-	for _, b := range dockerBack {
-		if b.Name == name {
-			return b, true
-		}
-	}
-	return DockerBackendRuntime{}, false
+	return rtReg.ByName(name)
 }

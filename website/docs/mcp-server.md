@@ -11,6 +11,8 @@ title: MCP Server
 |------|------|---------|
 | `search_hosts` | read-only | Same parallel search as `honey search`; input fields mirror CLI flags (snake_case JSON). Optional `overrides` map for per-request provider settings. |
 | `list_backends` | read-only | Returns configured backends from YAML (`kind`, `name`, `hint`). Requires a resolvable config file. |
+| `get_host_details` | read-only | Resolve one host by name (optionally scoped to a `provider`) and return its full `Record` plus derived capabilities. |
+| `plan_command` | read-only | Run a command through the command-risk engine + OPA policy **without executing it** — no SSH dial, no state change. Useful for an agent to check "would this be allowed?" before calling `exec_on_host`. |
 | `exec_on_host` | **destructive** | Run a shell command on a host via SSH. Gated by the command-risk engine + OPA policy (see below). Use `primary_ip` from a `search_hosts` result. |
 
 ## Cursor
@@ -92,6 +94,9 @@ Tools appear with the `honey_` prefix (e.g. `honey_search_hosts`). See [OpenCode
   "name_regex": "",
   "providers": "gcp,k8s",
   "backends": "",
+  "ssh_user": "",
+  "cache_ttl": "",
+  "cache_dir": "",
   "no_cache": false,
   "refresh": false,
   "config_path": "",
@@ -134,6 +139,48 @@ Output:
   ]
 }
 ```
+
+---
+
+### `get_host_details`
+
+```json
+{ "name": "pg-primary", "provider": "gcp" }
+```
+
+`provider` is optional; when omitted, the first matching record across all backends is returned.
+
+Output:
+
+```json
+{
+  "record": { "name": "pg-primary", "primary_ip": "10.0.0.5", "provider": "gcp", "meta": {} },
+  "capabilities": ["ssh", "docker_exec"]
+}
+```
+
+---
+
+### `plan_command`
+
+Evaluates a command through the command-risk engine + OPA policy **without connecting to anything** — safe to call speculatively before `exec_on_host`.
+
+```json
+{ "command": "rm -rf /var/lib/postgresql/old-backup", "target": "pg-primary", "interpreter": "" }
+```
+
+Output:
+
+```json
+{
+  "decision": "deny",
+  "risk": "critical",
+  "signals": [{ "id": "...", "severity": "critical", "reason": "..." }],
+  "reason": "command risk: ..."
+}
+```
+
+`decision` is `"allow"` or `"deny"`.
 
 ---
 
@@ -181,6 +228,12 @@ paths before any SSH connection:
   of system paths, `curl | sh`, fork bombs. This holds even with no policy
   configured, so an AI agent cannot drive a destructive command to a host. The
   LLM is advisory-only and cannot override a deny.
+- **Deny-by-default with no policy configured:** unlike the CLI/web/recipe
+  paths, `exec_on_host` denies **every** command — not just critical ones —
+  when no OPA enforcer is wired in. Either set `HONEY_POLICY_DIR` to a
+  directory of `.rego` files, or set `HONEY_EXEC_ALLOW_UNVERIFIED=1` to allow
+  execution without a policy (only past the command-risk check above — not
+  recommended for AI clients).
 - **OPA policy** (opt-in): set `HONEY_POLICY_DIR` to a directory of `.rego`
   files. The MCP path evaluates the `mcp_exec` action; a `deny`,
   `require_approval`, or `require_biometric` verdict refuses the call (there is
@@ -198,4 +251,4 @@ recommended for AI clients).
 
 - **No token required** for stdio transport — the MCP session runs as the local user.
 - **stdout is reserved** for the JSON-RPC stream; honey only writes to stderr.
-- For the HTTP-based MCP endpoint (via `honey web`), see [Web UI](./web-ui.md).
+- `honey mcp` is stdio-only today; there is no separate HTTP-based MCP endpoint.

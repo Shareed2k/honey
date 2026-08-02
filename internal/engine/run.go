@@ -148,7 +148,7 @@ func (run *CueRun) GatherFacts(ctx context.Context) {
 		targets = append(targets, TargetContext{Record: r}) // no env needed for facts gathering
 	}
 
-	err := StreamSSHParallel(ctx, run.Params.SSHUser, targets, false, cmdFunc, ch, BatchOptions{
+	err := StreamCommandParallel(ctx, run.Params.SSHUser, targets, false, cmdFunc, ch, BatchOptions{
 		MaxConc:    8,
 		Cache:      run.Cache,
 		AttemptMax: nil,
@@ -248,6 +248,8 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		OutputCapture:     run.OutputCapture,
 		Facts:             run.Facts,
 		TriggeredHandlers: run.TriggeredHandlers,
+		TunnelCoord:       run.TunnelCoord,
+		DockerPluginSess:  run.DockerPluginSess,
 	}
 
 	proxyCh := make(chan HostExecResult)
@@ -433,6 +435,10 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	defer run.RecipeKV.Close()
 	run.TunnelCoord = NewRecipeTunnelCoordinator(nil)
 	defer run.TunnelCoord.Close()
+	if p.PluginMgr != nil && p.PluginMgr.Enabled() {
+		run.DockerPluginSess = p.PluginMgr.NewDockerHostSession()
+		defer func() { _ = run.DockerPluginSess.Close(context.Background()) }()
+	}
 	if err := EnsureKVSessionForRecipe(p.Recipe, run.RecipeKV, p.Execute); err != nil {
 		return err
 	}
@@ -577,7 +583,19 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 			res.Name = fmt.Sprintf("Step %d | %s", i+1, res.Name)
 			out <- res
 		}
-		return StreamCueLoopStep(ctx, run, i, step, targets, history, out)
+		loopRes, loopErr := StreamCueLoopStep(ctx, run, i, step, targets, history, out)
+		if reduceName := step.Base().Reduce; reduceName != "" && run.OutputCapture != nil {
+			var collected []string
+			for _, row := range loopRes {
+				if row.Success && !row.Skipped {
+					collected = append(collected, row.Output)
+				}
+			}
+			if b, marshalErr := json.Marshal(collected); marshalErr == nil {
+				run.OutputCapture.Set(reduceName, string(b))
+			}
+		}
+		return loopRes, loopErr
 	}
 
 	whenSkipped := allSkipped
@@ -624,6 +642,17 @@ func StreamCueRecipeStep(ctx context.Context, run *CueRun, i int, step cuetry.St
 				run.OutputCapture.Set(name, row.Output)
 				break
 			}
+		}
+	}
+	if reduceName := step.Base().Reduce; reduceName != "" && run.OutputCapture != nil {
+		var collected []string
+		for _, row := range stepResults {
+			if row.Success && !row.Skipped {
+				collected = append(collected, row.Output)
+			}
+		}
+		if b, err := json.Marshal(collected); err == nil {
+			run.OutputCapture.Set(reduceName, string(b))
 		}
 	}
 	maxAttempts := int(attemptMax.Load())
@@ -719,6 +748,7 @@ func StreamCueLoopStep(ctx context.Context, run *CueRun, i int, step cuetry.Step
 				Cache:             run.Cache,
 				RecipeKV:          run.RecipeKV,
 				TunnelCoord:       run.TunnelCoord,
+				DockerPluginSess:  run.DockerPluginSess,
 				OutputStore:       run.OutputStore,
 				OutputCapture:     run.OutputCapture,
 				Facts:             run.Facts,
@@ -768,26 +798,40 @@ func RecordGraphStepStdout(recipe cuetry.Recipe, step cuetry.Step, kind string, 
 	case cuetry.KindCommand, cuetry.KindScript, cuetry.KindPlugin, cuetry.KindTunnel:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
-				store.Record(id, HostNameFromExecResult(row.Name), row.Output)
+				store.Record(id, HostNameFromExecResult(row.Name), stdoutForRecord(row))
 			}
 		}
 	case cuetry.KindTemplate:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
-				store.Record(id, cuetry.MatchLocalAIHost, row.Output)
+				store.Record(id, cuetry.MatchLocalAIHost, stdoutForRecord(row))
 			}
 		}
 	case cuetry.KindK8s:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
-				store.Record(id, HostNameFromExecResult(row.Name), row.Output)
+				store.Record(id, HostNameFromExecResult(row.Name), stdoutForRecord(row))
 			}
 		}
 	}
 }
 
+// stdoutForRecord picks what env_from/stepStdout consumers should see for a
+// step's output: HostExecResult.Stdout (stderr-free) when the executor
+// populated it — currently plugin steps only — otherwise the combined
+// Output every other step kind has always provided, unchanged.
+func stdoutForRecord(row HostExecResult) string {
+	if row.Stdout != "" {
+		return row.Stdout
+	}
+	return row.Output
+}
+
 // CueRecipeDisplayOutput ...
 func CueRecipeDisplayOutput(res HostExecResult) string {
+	if res.Success && res.KVCaptureKey != "" {
+		return "[stored in kv: " + res.KVCaptureKey + "]"
+	}
 	if res.Success && res.OutputCapture != "" {
 		return "[captured output: " + res.OutputCapture + "]"
 	}

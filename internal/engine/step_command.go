@@ -21,6 +21,51 @@ func init() {
 	RegisterStepExecutor(cuetry.KindScript, &ScriptExecutor{})
 }
 
+// renderStepTemplate renders a templated: true command/script body as a Go
+// template — the same rendering template: steps and loop: fields already use
+// (kvGet/kvHas, sprig, stepStdout/outputStdout), plus this call's resolved
+// env map. Used so a step can reference a plugin's kv_key-captured output (or
+// any prior step's stdout) directly in its own command/script text, without
+// routing through env_from's 8KB cap.
+func renderStepTemplate(body string, opts ExecutionOptions, env map[string]string) (string, error) {
+	return cuetry.RenderTemplate(cuetry.RenderTemplateOpts{
+		Template: body,
+		Data: map[string]any{
+			"steps":   opts.OutputStore.StepsTemplateData(),
+			"outputs": opts.OutputCapture.View(),
+			"env":     env,
+		},
+		KV:    KvReaderFromCoordinator(opts.RecipeKV),
+		Funcs: cuetry.LoopTemplateFuncMap(opts.OutputStore, opts.OutputCapture),
+	})
+}
+
+// renderScriptFileTemplate renders a templated: true script's local file
+// content (see renderStepTemplate) and writes the result to a new temp file,
+// returning its path — the caller is responsible for removing it once the
+// upload completes. Rendered once for the whole step, not per host like
+// command's Templated: a script step uploads one local file to every target,
+// so there's no single per-host env to expose here — only steps/outputs/KV.
+func renderScriptFileTemplate(localAbs string, opts ExecutionOptions) (string, error) {
+	src, err := safepath.ReadFile(localAbs)
+	if err != nil {
+		return "", fmt.Errorf("read %q: %w", localAbs, err)
+	}
+	rendered, err := renderStepTemplate(string(src), opts, nil)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp("", "honey-templated-script-*"+filepath.Ext(localAbs))
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(rendered); err != nil {
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	return f.Name(), nil
+}
+
 // CommandExecutor executes the corresponding recipe step.
 type CommandExecutor struct{}
 
@@ -63,6 +108,13 @@ func (e *CommandExecutor) ExecuteStream(ctx context.Context, req ExecutionReques
 		maps.Copy(env, tc.Env)
 		maps.Copy(env, kv)
 		mainCmd := strings.TrimSpace(cs.Command)
+		if cs.Templated {
+			rendered, rerr := renderStepTemplate(mainCmd, opts, env)
+			if rerr != nil {
+				return "echo " + ShellSingleQuoted("template err: "+rerr.Error())
+			}
+			mainCmd = strings.TrimSpace(rendered)
+		}
 		if interp := strings.TrimSpace(cs.Interpreter); interp != "" {
 			mainCmd = fmt.Sprintf("%s -c %s", interp, ShellSingleQuoted(mainCmd))
 		}
@@ -95,7 +147,7 @@ func (e *CommandExecutor) ExecuteStream(ctx context.Context, req ExecutionReques
 
 	recipeScoped := kvTunnel
 	post := CueRecipeSSHPostHostResult(ctx, opts, stepIdx, kind, step, recipeScoped)
-	return StreamSSHParallel(ctx, opts.SSHUser, targets, kvTunnel, cmdFunc, ch, BatchOptions{
+	return StreamCommandParallel(ctx, opts.SSHUser, targets, kvTunnel, cmdFunc, ch, BatchOptions{
 		MaxConc:        RecipeHostMaxConc(step, opts.Recipe.Defaults),
 		Cache:          opts.Cache,
 		RecipeKV:       opts.RecipeKV,
@@ -243,6 +295,15 @@ func (e *ScriptExecutor) ExecuteStream(ctx context.Context, req ExecutionRequest
 		return fmt.Errorf("script: local file %q: %w", localAbs, statErr)
 	}
 
+	if ss.Templated {
+		renderedAbs, rerr := renderScriptFileTemplate(localAbs, opts)
+		if rerr != nil {
+			return fmt.Errorf("script: templated: %w", rerr)
+		}
+		defer os.Remove(renderedAbs)
+		localAbs = renderedAbs
+	}
+
 	// Risk-gate the script body (best-effort: unreadable file → no analysis).
 	// safepath.ReadFile reads via os.Root on the parent dir, so the basename
 	if scriptSrc, rerr := safepath.ReadFile(localAbs); rerr == nil {
@@ -304,8 +365,10 @@ func (e *CommandExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest,
 	out, recipe, execute, i, step, targets := out, opts.Recipe, opts.Execute, req.Index, req.Step, req.Targets
 	cs, _ := step.(*cuetry.CommandStep)
 	command := ""
+	templated := false
 	if cs != nil {
 		command = cs.Command
+		templated = cs.Templated
 		if interp := strings.TrimSpace(cs.Interpreter); interp != "" {
 			command = fmt.Sprintf("%s -c %s", interp, ShellSingleQuoted(command))
 		}
@@ -327,8 +390,19 @@ func (e *CommandExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest,
 				return fmt.Errorf("step %d: %w", i, err)
 			}
 
-			_, _ = fmt.Fprintf(out, "step %d: kind=command name=%q %s provider=%s run_as=%q remote=%q\n",
-				i, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, runAs, remoteCmd)
+			// templated: true is deliberately NOT rendered here (unlike the
+			// real run): render-time data (KV/prior-step stdout) is usually
+			// still empty/missing during a dry-run since nothing has
+			// actually executed yet, and rendering against that would likely
+			// error (e.g. `fromJson` on an empty value) — same reasoning
+			// TemplateExecutor's own dry-run already follows by showing a
+			// raw, unrendered preview instead of actually calling Execute.
+			templateNote := ""
+			if templated {
+				templateNote = " templated=true (shown unrendered; rendered from live step/kv data at execute time)"
+			}
+			_, _ = fmt.Fprintf(out, "step %d: kind=command name=%q %s provider=%s run_as=%q remote=%q%s\n",
+				i, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, runAs, remoteCmd, templateNote)
 		}
 		return nil
 	}
@@ -437,13 +511,19 @@ func (e *ScriptExecutor) ExecuteDryRun(_ context.Context, req ExecutionRequest, 
 		if _, statErr := os.Stat(localAbs); statErr != nil {
 			_, _ = fmt.Fprintf(out, "step %d: kind=script (warning: local not readable: %v)\n", i, statErr)
 		}
+		// templated: true's rendering is deliberately not attempted during
+		// dry-run — see the matching note in CommandExecutor.ExecuteDryRun.
+		templateNote := ""
+		if ss.Templated {
+			templateNote = " templated=true (local file shown unrendered; rendered from live step/kv data before upload at execute time)"
+		}
 		for _, target := range targets {
 			remoteCmd, err := cuetry.ScriptRunAfterUpload(remotePath, runAs, target.Env, ss.Interpreter)
 			if err != nil {
 				return fmt.Errorf("step %d: %w", i, err)
 			}
-			_, _ = fmt.Fprintf(out, "step %d: kind=script name=%q %s provider=%s put %q → %q then exec run_as=%q cmd=%q\n",
-				i, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, localAbs, remotePath, runAs, remoteCmd)
+			_, _ = fmt.Fprintf(out, "step %d: kind=script name=%q %s provider=%s put %q → %q then exec run_as=%q cmd=%q%s\n",
+				i, target.Record.Name, FormatTargetForDryRun(target.Record), target.Record.Provider, localAbs, remotePath, runAs, remoteCmd, templateNote)
 		}
 		return nil
 	}

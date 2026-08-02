@@ -55,6 +55,7 @@ The `match` field is a [CEL expression](https://github.com/google/cel-spec) eval
 - `host.zone`
 - `host.region`
 - `host.meta['key']`
+- `host.extra_ips`
 
 You can use the `.matches()` function for regex evaluation. Note that CEL uses Go's RE2 regex engine.
 
@@ -100,3 +101,16 @@ During step execution, all inventory variables attached to the target host are e
 :::warning
 Inventory variables are visible in plans, JSON outputs, and logs. They are meant for configuration data. Do not use inventory variables for passwords or tokens; use the `secrets` fields for sensitive values instead.
 :::
+
+## Ansible dynamic inventory
+
+`honey inventory` exports the same resolved groups/vars as an Ansible-compatible dynamic inventory — built directly on this feature, so `inventory.groups`/`inventory.vars` above double as your Ansible group/host variable source.
+
+```bash
+honey inventory --list
+honey inventory --host web-canary-01
+```
+
+Each host gets `ansible_host` (from the discovered `PrimaryIP`), `ansible_user` (from `--ssh-user` / `defaults.ssh_user`), `honey_*` groups (`honey_provider_*`, `honey_region_*`, `honey_zone_*`), and `honey_meta_*` keys from record meta. Use `--strip-prefix` to drop the `honey_` prefix from group/variable names, and `--blacklist` to exclude specific tags/label keys.
+
+For Ansible's `-i` (which expects a file/directory, not a shell command), either wrap `honey inventory "$@"` in a small executable script, or use the YAML inventory plugin at [`contrib/ansible/inventory_plugins/honey.py`](https://github.com/shareed2k/honey/blob/main/contrib/ansible/inventory_plugins/honey.py) (see `contrib/ansible/honey.gcp.example.yml` and `examples/ansible/README.md`). CLI reference: [`honey inventory`](./cli/honey_inventory.md).

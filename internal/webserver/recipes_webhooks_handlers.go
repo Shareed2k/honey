@@ -19,7 +19,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/apps"
-	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
@@ -97,25 +96,69 @@ func extractWebhookEnv(body []byte, webhook cuetry.RecipeWebhook) ([]string, err
 	return cliEnv, nil
 }
 
-func checkWebhookIdempotency(api *RecipesAPI, webhook cuetry.RecipeWebhook, body []byte, appName, webhookName string, r *http.Request) (string, bool) {
-	var idemKey, scopedKey string
+// resolveWebhookEnv extracts and validates a webhook payload's env vars
+// against the recipe's declared prompts — the exact sequence previously
+// duplicated between the live and debug webhook paths (architecture review
+// candidate #2).
+func resolveWebhookEnv(body []byte, webhook cuetry.RecipeWebhook, recipe cuetry.Recipe) (map[string]string, error) {
+	cliEnv, err := extractWebhookEnv(body, webhook)
+	if err != nil {
+		return nil, err
+	}
+	envMap, err := cuetry.ParseEnvKeyValuePairs(cliEnv)
+	if err != nil {
+		return nil, err
+	}
+	return cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), envMap)
+}
+
+// webhookSearchHostsInput builds the host-search input shared by both the
+// live and debug webhook paths.
+func (api *RecipesAPI) webhookSearchHostsInput(app apps.AppConfig) *hostapi.SearchHostsInput {
+	in := &hostapi.SearchHostsInput{
+		ConfigPath: api.opts.ConfigPath,
+		Config:     api.opts.Config,
+		Name:       app.Target,
+		Providers:  app.Provider,
+		Backends:   app.Backend,
+	}
+	if app.Target == "" && app.TargetRegex != "" {
+		in.NameRegex = app.TargetRegex
+	}
+	return in
+}
+
+// deriveWebhookIdempotencyKey computes the raw idempotency key from a
+// webhook's idempotency_key spec and the payload body. headerLookup resolves
+// a "header:X" spec (pass nil when no real request headers are available,
+// e.g. the debug endpoint's simulated payload — the header case then yields
+// ""). This is the logic genuinely shared between the live path's dedup
+// enforcement and the debug path's key-for-display; the header-availability
+// difference is real, not accidental duplication, so it stays a parameter
+// rather than being erased.
+func deriveWebhookIdempotencyKey(webhook cuetry.RecipeWebhook, body []byte, headerLookup func(name string) string) string {
 	if webhook.IdempotencyKey != "" {
 		if strings.HasPrefix(webhook.IdempotencyKey, "header:") {
-			headerName := strings.TrimSpace(webhook.IdempotencyKey[7:])
-			idemKey = r.Header.Get(headerName)
-		} else if gjson.ValidBytes(body) {
-			idemKey = gjson.GetBytes(body, webhook.IdempotencyKey).String()
+			if headerLookup == nil {
+				return ""
+			}
+			return headerLookup(strings.TrimSpace(webhook.IdempotencyKey[7:]))
 		}
-	} else {
-		hash := sha256.Sum256(body)
-		idemKey = hex.EncodeToString(hash[:])
+		if gjson.ValidBytes(body) {
+			return gjson.GetBytes(body, webhook.IdempotencyKey).String()
+		}
+		return ""
 	}
+	hash := sha256.Sum256(body)
+	return hex.EncodeToString(hash[:])
+}
 
+func checkWebhookIdempotency(api *RecipesAPI, webhook cuetry.RecipeWebhook, body []byte, appName, webhookName string, r *http.Request) (string, bool) {
+	idemKey := deriveWebhookIdempotencyKey(webhook, body, r.Header.Get)
 	if idemKey == "" {
 		return "", false
 	}
-
-	scopedKey = fmt.Sprintf("%s:%s:%s", appName, webhookName, idemKey)
+	scopedKey := fmt.Sprintf("%s:%s:%s", appName, webhookName, idemKey)
 	ttl := 24 * time.Hour
 	if webhook.IdempotencyTTL != "" {
 		if parsed, err := time.ParseDuration(webhook.IdempotencyTTL); err == nil {
@@ -198,6 +241,7 @@ func (api *RecipesAPI) enqueueWebhookAsync(webhookName, sshUser string, searchIn
 			RecipeDir:        filepath.Dir(recipePath),
 			Records:          searchOut.Records,
 			SSHUser:          sshUser,
+			Source:           "webhook",
 			ActorID:          actor,
 			Env:              envMap,
 			AISystemPrompt:   aiPrompt,
@@ -223,20 +267,19 @@ func (api *RecipesAPI) enqueueWebhookAsync(webhookName, sshUser string, searchIn
 // executeWebhookSync runs host search + recipe synchronously and returns the
 // per-host results. Search/target failures are wrapped with errWebhookBadTarget.
 func (api *RecipesAPI) executeWebhookSync(ctx context.Context, webhookName, sshUser string, searchIn *hostapi.SearchHostsInput, recipe cuetry.Recipe, recipePath string, envMap map[string]string, aiPrompt, actor string) ([]engine.HostExecResult, error) {
-	searchOut, err := hostapi.SearchHosts(ctx, searchIn, api.opts.ExecRegistry, api.opts.SearchRegistry)
-	if err != nil {
-		return nil, errors.Join(errWebhookBadTarget, fmt.Errorf("search hosts: %w", err))
-	}
-	if len(searchOut.Records) == 0 {
-		return nil, errors.Join(errWebhookBadTarget, fmt.Errorf("no target hosts found"))
-	}
-
+	// Hand the runner the Target and let it resolve hosts — the same deep module
+	// the web and scheduler paths use — instead of re-implementing host search
+	// here. engine.ErrTargetResolution (search failure / no hosts) maps to the
+	// caller-facing 400 via errWebhookBadTarget. (The async path still searches
+	// up front because it needs the record count for the recording metadata and
+	// a recording id before the queued run starts.)
 	ch, err := api.runner.Execute(ctx, engine.RunRequest{
 		Recipe:           recipe,
 		RecipeSourcePath: recipePath,
 		RecipeDir:        filepath.Dir(recipePath),
-		Records:          searchOut.Records,
+		Target:           searchIn,
 		SSHUser:          sshUser,
+		Source:           "webhook",
 		ActorID:          actor,
 		Env:              envMap,
 		AISystemPrompt:   aiPrompt,
@@ -245,10 +288,13 @@ func (api *RecipesAPI) executeWebhookSync(ctx context.Context, webhookName, sshU
 		PluginPolicy:     engine.LifecycleShared,
 	})
 	if err != nil {
+		if errors.Is(err, engine.ErrTargetResolution) {
+			return nil, errors.Join(errWebhookBadTarget, err)
+		}
 		return nil, err
 	}
 
-	results := make([]engine.HostExecResult, 0, len(searchOut.Records))
+	results := make([]engine.HostExecResult, 0)
 	var runFailed bool
 	for res := range ch {
 		if res.Provider == "engine" && res.Name == "recipe-run" && !res.Success {
@@ -347,17 +393,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 
 	// 3. Extract JSON payload fields
-	cliEnv, err := extractWebhookEnv(body, webhook)
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	envMap, err := cuetry.ParseEnvKeyValuePairs(cliEnv)
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	envMap, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), envMap)
+	envMap, err := resolveWebhookEnv(body, webhook, recipe)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -367,16 +403,7 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
 
 	// Host search input — shared by both branches.
-	searchIn := &hostapi.SearchHostsInput{
-		ConfigPath: api.opts.ConfigPath,
-		Config:     api.opts.Config,
-		Name:       app.Target,
-		Providers:  app.Provider,
-		Backends:   app.Backend,
-	}
-	if app.Target == "" && app.TargetRegex != "" {
-		searchIn.NameRegex = app.TargetRegex
-	}
+	searchIn := api.webhookSearchHostsInput(app)
 
 	// 4. Idempotency and Deduplication
 	scopedKey, isDuplicate := checkWebhookIdempotency(api, webhook, body, appName, webhookName, r)
@@ -395,13 +422,8 @@ func (api *RecipesAPI) handleRecipeWebhook(w http.ResponseWriter, r *http.Reques
 	}
 
 	actor := api.resolveWebhookActor(r, webhook, body, appName)
-	_ = api.opts.AuditSink.Log(r.Context(), audit.Event{
-		Source:   "webhook",
-		Actor:    actor,
-		Action:   "recipe_run",
-		Target:   recipe.Name,
-		Decision: "allow",
-	})
+	// recipe_run admission audit is emitted by the runner (see admitRecipe),
+	// verdict-aware and covering both the sync and async execution below.
 
 	// ---- Async path: return 202 immediately; search + execution run in the queue. ----
 	if isAsync {
@@ -587,18 +609,11 @@ func (api *RecipesAPI) recipeWebhookNames(app apps.AppConfig) []string {
 
 // webhookDebugIdempotencyDisplay derives the idempotency key the live path would
 // use, for display only (header-based keys are unavailable from a test payload).
+// webhookDebugIdempotencyDisplay derives the idempotency key the live path
+// would use, for display only — header-based keys are unavailable from a
+// test payload (no real request headers), so headerLookup is nil.
 func webhookDebugIdempotencyDisplay(webhook cuetry.RecipeWebhook, body []byte) string {
-	if webhook.IdempotencyKey != "" {
-		if strings.HasPrefix(webhook.IdempotencyKey, "header:") {
-			return ""
-		}
-		if gjson.ValidBytes(body) {
-			return gjson.GetBytes(body, webhook.IdempotencyKey).String()
-		}
-		return ""
-	}
-	hash := sha256.Sum256(body)
-	return hex.EncodeToString(hash[:])
+	return deriveWebhookIdempotencyKey(webhook, body, nil)
 }
 
 type webhookDebugRequest struct {
@@ -652,17 +667,7 @@ func (api *RecipesAPI) handleWebhookDebug(w http.ResponseWriter, r *http.Request
 		body = []byte("{}")
 	}
 
-	cliEnv, err := extractWebhookEnv(body, webhook)
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	envMap, err := cuetry.ParseEnvKeyValuePairs(cliEnv)
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	envMap, err = cuetry.ValidateAndApplyPromptDefaults(recipe.PromptDefs(), envMap)
+	envMap, err := resolveWebhookEnv(body, webhook, recipe)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -708,16 +713,7 @@ func (api *RecipesAPI) handleWebhookDebug(w http.ResponseWriter, r *http.Request
 	resp.Executed = true
 	sshUser := api.sshUser("")
 	aiPrompt := ui.LoadAISystemPromptFromConfigPath(api.opts.ConfigPath)
-	searchIn := &hostapi.SearchHostsInput{
-		ConfigPath: api.opts.ConfigPath,
-		Config:     api.opts.Config,
-		Name:       app.Target,
-		Providers:  app.Provider,
-		Backends:   app.Backend,
-	}
-	if app.Target == "" && app.TargetRegex != "" {
-		searchIn.NameRegex = app.TargetRegex
-	}
+	searchIn := api.webhookSearchHostsInput(app)
 
 	if isAsync {
 		id, err := api.enqueueWebhookAsync(webhookName, sshUser, searchIn, recipe, recipePath, envMap, aiPrompt, actor, "")

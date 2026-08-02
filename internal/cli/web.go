@@ -10,8 +10,10 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
 	"github.com/shareed2k/honey/internal/webserver"
 )
@@ -47,6 +49,18 @@ func init() {
 }
 
 func runWeb(cmd *cobra.Command, _ []string) error {
+	// Mesh (internal/meshnet) is started for every honey subcommand in
+	// root.go's PersistentPreRunE, which always runs before this RunE — so
+	// by this point Start has already been attempted if cfg.Mesh.Enabled.
+	// Stop it (best-effort, log-only on error) on every return path out of
+	// this function, not just the srv.Start(ctx) exit at the bottom: a
+	// prior version of this function only stopped mesh after a successful
+	// webserver.NewServer + srv.Start, which meant an early return (e.g.
+	// webserver.NewServer itself failing) leaked the running mesh Host.
+	// meshnet.Enabled() is false (a no-op) whenever mesh wasn't started, so
+	// this defer is always safe to register unconditionally.
+	defer stopMeshBestEffort()
+
 	disableAuth := webNoAuth
 	if !disableAuth {
 		if b, perr := strconv.ParseBool(strings.TrimSpace(os.Getenv("HONEY_WEB_NO_AUTH"))); perr == nil {
@@ -119,6 +133,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		JWTPubKey:          authCfg.jwtPubKey,
 		TrustedProxyNets:   authCfg.trustedNets,
 		WebAuthn:           authCfg.webauthn,
+		EnableMesh:         meshnet.Enabled(),
 	})
 	if err != nil {
 		return err
@@ -126,4 +141,17 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return srv.Start(ctx)
+}
+
+// stopMeshBestEffort stops the mesh singleton (internal/meshnet) if it was
+// started, logging (not returning) any Stop error — mirrors the log-and-continue
+// pattern this file already uses for mesh startup problems. A no-op when mesh
+// was never enabled/started.
+func stopMeshBestEffort() {
+	if !meshnet.Enabled() {
+		return
+	}
+	if err := meshnet.Stop(context.Background()); err != nil {
+		zap.L().Warn("honey mesh failed to stop cleanly", zap.Error(err))
+	}
 }

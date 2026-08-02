@@ -205,6 +205,125 @@ recipe: {
 	require.Contains(t, err.Error(), "TARGET")
 }
 
+func TestRecipeRunner_Execute_GraphTriggerRule(t *testing.T) {
+	r := NewRecipeRunner(RunnerOptions{})
+
+	const triggerRecipe = `
+recipe: {
+	name: "trigger-test"
+	type: "graph"
+	steps: [
+		{ id: "fail_step", host: "_", command: "exit 1", ignore_errors: false },
+		{ id: "skip_step", host: "_", depends: ["fail_step"], command: "echo skip" },
+		{ id: "rescue_step", host: "_", depends: ["fail_step"], trigger_rule: "one_failed", command: "echo rescued" },
+	]
+}
+`
+	// execute should fail because one of the steps failed and ignore_errors is false.
+	// But it should still return the channel so we can observe "rescue_step" running.
+	ch, _ := r.Execute(context.Background(), RunRequest{
+		Recipe:  parseTestRecipe(t, triggerRecipe),
+		Records: []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "127.0.0.1"}},
+	})
+	// Actually Execute returns (<-chan, error) where error is preflight. It will return nil err here.
+
+	var got []HostExecResult
+	for res := range ch {
+		got = append(got, res)
+	}
+
+	hasRescue := false
+	hasSkip := false
+	for _, res := range got {
+		if strings.Contains(res.Name, "Step 3") || strings.Contains(res.Name, "rescue_step") {
+			hasRescue = true
+		}
+		if strings.Contains(res.Name, "Step 2") || strings.Contains(res.Name, "skip_step") {
+			hasSkip = true
+		}
+	}
+	require.True(t, hasRescue, "rescue_step should have attempted to execute")
+	require.False(t, hasSkip, "skip_step should NOT have executed")
+}
+
+func TestRecipeRunner_Execute_GraphRescueBlock(t *testing.T) {
+	r := NewRecipeRunner(RunnerOptions{})
+
+	const rescueRecipe = `
+recipe: {
+	name: "rescue-test"
+	type: "graph"
+	steps: [
+		{ id: "fail_step", host: "_", command: "exit 1", ignore_errors: false, rescue: ["rescue_step"] },
+		{ id: "skip_step", host: "_", depends: ["fail_step"], command: "echo skip" },
+		{ id: "rescue_step", host: "_", command: "echo rescued" },
+	]
+}
+`
+	ch, _ := r.Execute(context.Background(), RunRequest{
+		Recipe:  parseTestRecipe(t, rescueRecipe),
+		Records: []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "127.0.0.1"}},
+	})
+
+	var got []HostExecResult
+	for res := range ch {
+		got = append(got, res)
+	}
+
+	hasRescue := false
+	hasSkip := false
+	for _, res := range got {
+		if strings.Contains(res.Name, "Step 3") || strings.Contains(res.Name, "rescue_step") {
+			hasRescue = true
+		}
+		if strings.Contains(res.Name, "Step 2") || strings.Contains(res.Name, "skip_step") {
+			hasSkip = true
+		}
+	}
+	require.True(t, hasRescue, "rescue_step should have attempted to execute")
+	require.False(t, hasSkip, "skip_step should NOT have executed")
+}
+
+func TestRecipeRunner_Execute_GraphMapReduce(t *testing.T) {
+	old, _ := GetStepExecutor(cuetry.KindCommand)
+	RegisterStepExecutor(cuetry.KindCommand, &mockReduceExecutor{})
+	defer func() { RegisterStepExecutor(cuetry.KindCommand, old) }()
+
+	r := NewRecipeRunner(RunnerOptions{})
+
+	const reduceRecipe = `
+recipe: {
+	name: "reduce-test"
+	type: "graph"
+	steps: [
+		{ id: "gen", host: "_", loop: "[\"a\", \"b\"]", command: "echo {{.item}}", reduce: "reduced_data" },
+		{ id: "agg", host: "_", depends: ["gen"], env_from: [{from_output: "reduced_data", map: {"DATA": "stdout"}}], command: "echo $DATA" },
+	]
+}
+`
+	ch, _ := r.Execute(context.Background(), RunRequest{
+		Recipe:  parseTestRecipe(t, reduceRecipe),
+		Records: []hosts.Record{{Provider: "static", Name: "h1", PrimaryIP: "127.0.0.1"}},
+	})
+
+	var got []HostExecResult
+	for res := range ch {
+		got = append(got, res)
+	}
+
+	hasAgg := false
+	for _, res := range got {
+		t.Logf("Got result: ID=%s, Success=%v, Skipped=%v, Err=%q, Output=%q", res.Name, res.Success, res.Skipped, res.ErrMsg, res.Output)
+		if strings.Contains(res.Name, "Step 2") || strings.Contains(res.Name, "agg") {
+			// output of agg should be the JSON array ["a","b"]
+			if strings.Contains(res.Output, "[\"a\",\"b\"]") || strings.Contains(res.Output, "[\"b\",\"a\"]") {
+				hasAgg = true
+			}
+		}
+	}
+	require.True(t, hasAgg, "reduce step should have aggregated the array and passed it via env_from")
+}
+
 func readOnlyRecording(t *testing.T, dir string) string {
 	t.Helper()
 

@@ -133,7 +133,7 @@ func TestHandleRecipesValidateContent_CacheHit(t *testing.T) {
 	hash, _ := recipe.HashJSON()
 
 	cachedResp := &ValidateContentResponse{Plan: "CACHED_PLAN"}
-	srv.recipeValidationCache.Add(hash, cachedResp)
+	srv.recipesAPI.recipeValidationCache.Add(hash, cachedResp)
 
 	body, _ := json.Marshal(ValidateContentRequest{RecipeContent: content})
 	req := httptest.NewRequest("POST", "/api/v1/recipes/validate-content", bytes.NewBuffer(body))

@@ -203,6 +203,29 @@ deny_reason := "no interactive shells on prod" if {
 	}
 }
 
+func TestGateUDPRelay(t *testing.T) {
+	const src = `package honey
+import rego.v1
+default allow := false
+allow if {
+	input.action == "udp_relay"
+	input.target.host == "10.0.0.5"
+}`
+	enf, err := policy.NewFromSource(context.Background(), "udp.rego", src)
+	if err != nil {
+		t.Fatalf("NewFromSource: %v", err)
+	}
+	s := newTestServer(t, Options{Enforcer: enf})
+	req := httptest.NewRequest("GET", "/api/v1/ws/udp", nil)
+
+	if err := s.forwardingAPI.gateUDPRelay(req, "10.0.0.5:53"); err != nil {
+		t.Fatalf("allowed target should pass: %v", err)
+	}
+	if err := s.forwardingAPI.gateUDPRelay(req, "1.2.3.4:53"); err == nil {
+		t.Fatal("disallowed target should be denied")
+	}
+}
+
 func TestAuthMiddleware_OPAGate(t *testing.T) {
 	// Policy: allow api_request only for actor "alice".
 	const src = `package honey

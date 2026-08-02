@@ -123,6 +123,10 @@ func previewForStep(s Step) string {
 				strings.TrimSpace(v.Host), strings.TrimSpace(v.AgentTransfer.SourcePath),
 				strings.TrimSpace(v.AgentTransfer.DestHost), strings.TrimSpace(v.AgentTransfer.DestPath))
 		}
+	case *SummarizeStep:
+		if v.Summarize != nil {
+			p = "summarize: " + strings.TrimSpace(v.Summarize.Prompt)
+		}
 	case *AIStep:
 		if v.AI != nil {
 			p = "ai: " + strings.TrimSpace(v.AI.Prompt)

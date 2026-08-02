@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Telmate/proxmox-api-go/proxmox"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -165,6 +166,19 @@ func (h *hybridQEMUClient) RemoveRemote(p string, rec bool) error { return h.ssh
 func (h *hybridQEMUClient) Close() error {
 	_ = h.qemu.Close()
 	return h.ssh.Close()
+}
+
+// LeafSSH exposes hybridQEMUClient's underlying SSH connection (already used
+// for file transfers, see dialHybridQEMU) so callers that need a raw
+// *ssh.Client — e.g. the remote docker-plugin path, which tunnels the Docker
+// Engine API over SSH — can reuse it. Command execution (Run/RunWithStreams)
+// is unaffected: it still always goes through the QEMU guest agent (h.qemu),
+// exactly as exec_mode: hybrid configures.
+func (h *hybridQEMUClient) LeafSSH() *ssh.Client {
+	if hc, ok := h.ssh.(*sshclient.HoneyClient); ok {
+		return hc.LeafSSH()
+	}
+	return nil
 }
 
 // StartLocalForward starts a local port forward.

@@ -5,16 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/metrics"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/sync/semaphore"
 )
 
 // ScriptUploadRunOptions controls upload/chmod/execute script runs.
@@ -87,36 +86,135 @@ func newScriptContentRunner(user, scriptContent, fileExtension string, opts Scri
 }
 
 func (sr *scriptRunner) stream(ctx context.Context, recs []TargetContext, maxConc int, out chan<- HostExecResult, post SSHPostHostResultFunc, retryCfg cuetry.RecipeStepRetry, obs metrics.Observer, attemptMax *atomic.Int32) {
-	if maxConc <= 0 {
-		maxConc = defaultSSHBatchConcurrency
-	}
-	if maxConc > maxConcurrencyCap {
-		maxConc = maxConcurrencyCap
-	}
-	sem := semaphore.NewWeighted(int64(maxConc))
-	var wg sync.WaitGroup
-	for i := range recs {
-		wg.Add(1)
-		go func(tc TargetContext) {
-			defer wg.Done()
-			if err := sem.Acquire(ctx, 1); err != nil {
-				out <- HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider, Success: false, ErrMsg: "cancelled"}
-				return
+	DispatchHostResults(ctx, recs, maxConc, defaultSSHBatchConcurrency, func(tc TargetContext) HostExecResult {
+		outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
+			if tc.Record.Name == cuetry.MatchLocalAIHost && tc.Record.PrimaryIP == "-" {
+				return sr.runLocalHost(ctx, tc)
 			}
-			defer sem.Release(1)
-			outcome := RunHostExecWithRetry(ctx, retryCfg, func() HostExecResult {
-				return sr.runHost(ctx, tc)
-			})
-			RecordMaxAttempts(attemptMax, outcome.Attempts)
-			observeSSHOperation(obs, "script", hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
-			res := outcome.Result
-			if post != nil {
-				post(ctx, tc, &res)
-			}
-			out <- res
-		}(recs[i])
+			return sr.runHost(ctx, tc)
+		})
+		RecordMaxAttempts(attemptMax, outcome.Attempts)
+		op := "script"
+		if tc.Record.Name == "_" {
+			op = "local_script"
+		}
+		observeSSHOperation(obs, op, hostResultStatus(outcome.Result), outcome.LastAttemptDuration)
+		res := outcome.Result
+		if post != nil {
+			post(ctx, tc, &res)
+		}
+		return res
+	}, func(res HostExecResult) {
+		out <- res
+	})
+}
+
+func (sr *scriptRunner) runLocalHost(ctx context.Context, tc TargetContext) HostExecResult {
+	res := HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider}
+
+	// Ensure the local script is executable (required for scripts without explicit interpreter)
+	if err := os.Chmod(sr.localAbs, 0o700); err != nil { // #nosec G302 -- script must be executable by operator
+		res.Success = false
+		res.ErrMsg = "chmod: " + err.Error()
+		return res
 	}
-	wg.Wait()
+
+	var kv map[string]string
+	if sr.kvTunnel {
+		sess, err := sr.recipeKV.EnsureSession()
+		if err != nil {
+			res.Success = false
+			res.ErrMsg = "kv_tunnel: " + err.Error()
+			return res
+		}
+		kv = map[string]string{
+			"HONEY_KV_URL":   sess.LocalBaseURL(),
+			"HONEY_KV_TOKEN": sess.Token(),
+		}
+	}
+
+	// For local execution, the script is already at sr.localAbs.
+	// But sr.cmd was built expecting to run sr.remotePath.
+	// We need to replace sr.remotePath with sr.localAbs in the final command.
+	remoteCmd := strings.TrimSpace(sr.cmd(tc, kv))
+	remoteCmd = strings.ReplaceAll(remoteCmd, shellQuote(sr.remotePath), shellQuote(sr.localAbs))
+	// Fallback in case remotePath wasn't shell-quoted
+	remoteCmd = strings.ReplaceAll(remoteCmd, sr.remotePath, sr.localAbs)
+
+	var workspaceDir string
+	if tc.Env != nil && tc.Env["HONEY_WORKSPACE"] != "" {
+		workspaceDir = tc.Env["HONEY_WORKSPACE"]
+	} else {
+		workspaceDir = os.TempDir()
+	}
+
+	scriptFile, err := os.CreateTemp(workspaceDir, "honey_local_script_*.sh")
+	if err != nil {
+		res.Success = false
+		res.ErrMsg = "create temp script: " + err.Error()
+		return res
+	}
+	scriptPath := scriptFile.Name()
+	defer os.Remove(scriptPath)
+
+	if _, err := scriptFile.WriteString(remoteCmd); err != nil {
+		scriptFile.Close()
+		res.Success = false
+		res.ErrMsg = "write temp script: " + err.Error()
+		return res
+	}
+	scriptFile.Close()
+
+	if sr.cmdTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, sr.cmdTimeout)
+		defer cancel()
+	}
+
+	execCmd := exec.CommandContext(ctx, "sh")
+	execCmd.Stdin = strings.NewReader(remoteCmd)
+
+	raw, err := execCmd.CombinedOutput()
+	out := strings.TrimSpace(string(raw))
+	if sr.maxOutputBytes > 0 && len(out) > sr.maxOutputBytes {
+		out = out[:sr.maxOutputBytes] + "\n…(truncated)"
+	}
+	res.Output = out
+
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			res.Success = false
+			res.ErrMsg = fmt.Sprintf("command timed out after %s", sr.cmdTimeout)
+			return res
+		}
+		if errors.Is(ctx.Err(), context.Canceled) {
+			res.Success = false
+			res.ErrMsg = "cancelled"
+			return res
+		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			res.ExitCode = ee.ExitCode()
+			res.Success = false
+			if res.ExitCode == 124 {
+				if strings.Contains(res.Output, "__HONEY_TIMEOUT_MISSING__") {
+					res.ErrMsg = "local host missing `timeout` command (install coreutils or remove step timeout)"
+				} else {
+					res.ErrMsg = "command timed out (exit 124)"
+				}
+			} else if res.ExitCode != 0 {
+				res.ErrMsg = fmt.Sprintf("exit %d", res.ExitCode)
+			}
+			return res
+		}
+		res.Success = false
+		res.ErrMsg = err.Error()
+		return res
+	}
+
+	res.Success = true
+	res.ExitCode = 0
+	return res
 }
 
 func (sr *scriptRunner) runHost(ctx context.Context, tc TargetContext) HostExecResult {

@@ -95,7 +95,7 @@ backends:
 
 	// 2. Upload
 	localUploadFile := filepath.Join(tmpDir, "upload.txt")
-	err = os.WriteFile(localUploadFile, []byte("hello from upload proxy"), 0644)
+	err = os.WriteFile(localUploadFile, []byte("hello from upload proxy"), 0o644)
 	if err != nil {
 		t.Fatalf("failed to create upload file: %v", err)
 	}
@@ -103,7 +103,7 @@ backends:
 	if err := client.Upload(localUploadFile, "/tmp/proxy_test_dir_transfer/uploaded.txt"); err != nil {
 		t.Fatalf("upload failed: %v", err)
 	}
-	
+
 	// Wait for SSH file sync
 	time.Sleep(2 * time.Second)
 

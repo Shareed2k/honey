@@ -137,7 +137,8 @@ func (m *Manager) register() {
 
 		raw, err := safepath.ReadFile(recipePath)
 		if err != nil {
-			zap.L().Warn("scheduler: skipping app — cannot read recipe",
+			zap.L().Warn(
+				"scheduler: skipping app — cannot read recipe",
 				zap.String("app", appName),
 				zap.String("path", recipePath),
 				zap.Error(err),
@@ -147,7 +148,8 @@ func (m *Manager) register() {
 
 		recipe, err := cuetry.ParseRemoteRecipeOpts(raw, nil, cuetry.ParseOptions{})
 		if err != nil {
-			zap.L().Warn("scheduler: skipping app — cannot parse recipe",
+			zap.L().Warn(
+				"scheduler: skipping app — cannot parse recipe",
 				zap.String("app", appName),
 				zap.Error(err),
 			)
@@ -156,7 +158,8 @@ func (m *Manager) register() {
 
 		for schedName, sched := range recipe.Schedules {
 			if strings.TrimSpace(sched.Cron) == "" {
-				zap.L().Warn("scheduler: skipping schedule — empty cron expression",
+				zap.L().Warn(
+					"scheduler: skipping schedule — empty cron expression",
 					zap.String("app", appName),
 					zap.String("schedule", schedName),
 				)
@@ -178,7 +181,8 @@ func (m *Manager) register() {
 			}
 			if _, ok := tzTaskers[tz]; !ok {
 				if _, err := time.LoadLocation(tz); err != nil {
-					zap.L().Warn("scheduler: invalid timezone, skipping these schedules",
+					zap.L().Warn(
+						"scheduler: invalid timezone, skipping these schedules",
 						zap.String("timezone", tz),
 						zap.Error(err),
 					)
@@ -198,7 +202,8 @@ func (m *Manager) register() {
 					capturedRecipePath,
 					capturedSchedule,
 				); err != nil {
-					zap.L().Error("scheduler: schedule execution failed",
+					zap.L().Error(
+						"scheduler: schedule execution failed",
 						zap.String("app", capturedAppName),
 						zap.String("schedule", capturedScheduleName),
 						zap.Error(err),
@@ -216,7 +221,8 @@ func (m *Manager) register() {
 				Schedule:     capturedSchedule,
 				App:          capturedApp,
 			})
-			zap.L().Info("scheduler: registered cron task",
+			zap.L().Info(
+				"scheduler: registered cron task",
 				zap.String("app", capturedAppName),
 				zap.String("schedule", capturedScheduleName),
 				zap.String("cron", capturedSchedule.Cron),
@@ -272,6 +278,7 @@ func (m *Manager) executeSchedule(
 		RecipeDir:        filepath.Dir(recipePath),
 		Target:           searchIn,
 		SSHUser:          sshUser,
+		Source:           "scheduler",
 		ActorID:          "cron:" + appName,
 		Env:              cliEnv,
 		AISystemPrompt:   ui.LoadAISystemPromptFromConfigPath(m.opts.ConfigPath),
@@ -311,7 +318,8 @@ func (m *Manager) executeSchedule(
 		}
 
 		if rerr := m.runner.ExecuteAndWait(runCtx, req); rerr != nil {
-			zap.L().Error("scheduler: recipe execution failed",
+			zap.L().Error(
+				"scheduler: recipe execution failed",
 				zap.String("app", appName),
 				zap.String("schedule", scheduleName),
 				zap.Error(rerr),
@@ -325,7 +333,8 @@ func (m *Manager) executeSchedule(
 	if m.opts.Queue != nil {
 		if qErr := m.opts.Queue.Submit(run); qErr != nil {
 			if errors.Is(qErr, queue.ErrQueueFull) {
-				zap.L().Warn("scheduler: queue full, skipping tick",
+				zap.L().Warn(
+					"scheduler: queue full, skipping tick",
 					zap.String("app", appName),
 					zap.String("schedule", scheduleName),
 				)

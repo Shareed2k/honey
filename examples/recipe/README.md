@@ -21,7 +21,7 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 - `barman_failover_recovery.cue`: Graph recipe for **Barman** hosts after Postgres failover — kill stale `pg_receivewal`, wait, `barman check`, restart **`BARMAN_EXPORTER_SERVICE`** via **service** plugin; optional **`when`** + `-e BARMAN_DO_RESET=true` for `receive-wal --reset`; see file header.
 - `clean_filesystem.cue`: Maintenance recipe for systemd journal usage/vacuum and snap (remove disabled revisions, clear `/var/lib/snapd/cache`); read the file header for destructive journal behavior and `sudo -n` requirements.
 - `high_load_processes.cue`: On Linux (GNU `ps`), prints load, `free -h`, and top processes by **CPU%** and **RSS**; uses `host: "*"` for every matched host with an IP.
-- `k8s_node_pod_cpu_hint.cue`: For **Kubernetes worker** nodes over SSH: load, top PIDs, `/proc/<pid>/cgroup` snippets (pod UID hints), optional `crictl stats` / `crictl pods`, then optional **`ai`** summary; see file header for `sudo`/PATH and cgroup caveats.
+- `k8s_node_pod_cpu_hint.cue`: For **Kubernetes worker** nodes over SSH: load, top PIDs, `/proc/<pid>/cgroup` snippets (pod UID hints), optional `crictl stats` / `crictl pods`, then an optional **`summarize`** step; see file header for `sudo`/PATH and cgroup caveats.
 - `postgres_replica_lag.cue`: Read-only Postgres triage (replication lag snapshot, long-running `pg_stat_activity` sessions over 5 minutes, postgres process snapshot); set `PG*` via `defaults.env` and pass **`PGPASSWORD` via `cue-exec -e`**; see file header.
 - `postgres_replica_lag_plugin.cue`: Same triage via **graph** recipe — **`tunnel`** + **postgres** + **bash** WASM plugins, sealed **`PG_DSN`**, optional AI summary; see [`postgres_replica_lag.cue`](postgres_replica_lag.cue) for legacy remote `psql`.
 - `kv_tunnel_multistep_example.cue`: Three **`command`** steps with **`defaults.kv_tunnel: true`** — one operator `stepkv` for the whole `cue-exec` on **SSH and Kubernetes** (pods use a long-lived exec bridge to that session). Per-host keys sanitize `HONEY_HOST_NAME` for `/` and `:`.
@@ -38,11 +38,12 @@ This directory contains an example [CUE](https://cuelang.org/) recipe that demon
 - `tunnel_k8s_dns_tcp.cue`: **TCP** DNS via k8s port-forward to a **CoreDNS pod**; `dig +tcp` on operator.
 - `tunnel_tun_datacenter.cue`: **L3 tun** (`ssh -w`) to a private subnet; manual `ip addr` / `ip route` on operator after tunnel stdout.
 - `echo_plugin_demo.cue` / `echo_plugin_kv_demo.cue`: **`plugin:`** steps with the echo WASM plugin (`noop`, `host_exec`, and **`kv_ping`** via `pkg/pluginpdk` + remote `curl` for shared KV); requires `plugins.enabled` and echo installed — see `examples/plugins/echo/README.md` and `examples/plugins/README.md` (Recipe KV from Go plugins).
-- `patch_campaign.cue`: Patch & vulnerability-management campaign via the **cve-scanner** WASM plugin — **graph** waves: `scan` → exit-code **compliance gate** → security-only `patch` → **`ai`** report; **`max_parallel`** canary rollout, optional **`schedules`** cron. Requires `plugins.enabled` + cve-scanner installed; targets need **grype/trivy** (scan) and a package manager (patch). See [website docs](https://github.com/shareed2k/honey/blob/main/website/docs/vulnerability-management.md).
-- `cve_scan_audit.cue`: Read-only vulnerability audit — `scan` every host then an **`ai`** audit (top CVEs by severity, systems-per-CVE, fix availability); no patching, safe anywhere. Same cve-scanner + grype/trivy requirement.
+- `patch_campaign.cue`: Patch & vulnerability-management campaign via the **cve-scanner** WASM plugin — **graph** waves: `scan` → exit-code **compliance gate** → security-only `patch` → **`summarize`** report; **`max_parallel`** canary rollout, optional **`schedules`** cron. Requires `plugins.enabled` + cve-scanner installed; targets need **grype/trivy** (scan) and a package manager (patch). See [website docs](https://github.com/shareed2k/honey/blob/main/website/docs/vulnerability-management.md).
+- `cve_scan_audit.cue`: Read-only vulnerability audit — `scan` every host then a **`summarize`** audit (top CVEs by severity, systems-per-CVE, fix availability); no patching, safe anywhere. Same cve-scanner + grype/trivy requirement.
 - `js_step.cue`: Run custom **JavaScript** via the **js** WASM plugin (goja) — script calls a capability-gated host API (`host.remote_exec`, `kv.get/put`, `log`, `args`), returns JSON consumed downstream via **`env_from`**. Requires `plugins.enabled` + js installed. Dry-run evaluates the script with side-effecting host calls stubbed.
+- `watchtower_image_check.cue`: Check each matched server for newer Docker images via the **watchtower** docker-runtime plugin, targeting real hosts (`host: "*"`) so the container runs on **each server's own** daemon over SSH (remote docker-plugin execution) — watchtower's shoutrrr config (`WATCHTOWER_NOTIFICATION_URL`) sends the "new image" alert. Requires `plugins.enabled` + watchtower installed + Docker on each host. See file header.
 - `postgres_logical_replication_slots.cue`: Read-only logical replication triage (`pg_replication_slots`, `pg_publication`, `pg_replication_slot_advance` in `pg_stat_activity`, primary-only WAL distance); same `PG*` / `-e PGPASSWORD` pattern; see file header for Grafana/Wazuh and destructive follow-ups not in the recipe.
-- `ai_summarize_hosts.cue`: Sample `command` steps on `host: "*"` then a final **`ai`** step (`host: "_"`); needs `OPENAI_API_KEY` for `--execute`; optional **`notify`** (`notify_subject`, `message`, `services` allowlist, `slack.channel_id`) + `HONEY_NOTIFY_*` env for [notify](https://github.com/nikoksr/notify); see file header and `honey cue-exec` docs.
+- `ai_summarize_hosts.cue`: Sample `command` steps on `host: "*"` then a final **`summarize`** step (`host: "_"`); needs `OPENAI_API_KEY` for `--execute`; optional **`notify`** (`notify_subject`, `message`, `services` allowlist, `slack.channel_id`) + `HONEY_NOTIFY_*` env for [notify](https://github.com/nikoksr/notify); see file header and `honey cue-exec` docs.
 - `with_env.cue` / `with_secrets.cue`: Literal **`env`** maps vs **`secrets`** maps; **`secrets` values must be `secure:v1:…` only**. Requires honey `defaults.secretsprovider` + `defaults.encryptedkey` (or a test static key); dry-run redacts; `--execute` decrypts on the operator host.
 - `with_secrets_stores.cue`: Same symmetric-only model with provider URL examples (GCP/AWS KMS, Vault Transit, K8s, keyring, age).
 - `assets/index.html`: A dummy file used to demonstrate the `put` (upload) step.
@@ -95,11 +96,11 @@ By default recipes run **linearly** (steps in array order). Set **`type: "graph"
 - Graph mode sets **`HONEY_STEP_ID`** on remote command/script/plugin env when the step has an **`id`** (use with shared KV keys).
 - **`kv_tunnel`** may be enabled on multiple graph steps (or via `defaults.kv_tunnel`); one shared stepkv session for the run — dependency waves order reads; **same-wave** steps may race (namespace keys per host/step).
 - If a step **fails** (or all hosts hit transient SSH errors), **descendants are skipped**; other branches continue.
-- If the recipe has an **`ai`** step and it becomes **unreachable** (a dependency failed or was skipped), the whole run **aborts**.
-- Linear recipes must not use `id` / `depends` / `env_from`; graph recipes relax the rule that `ai` must be last in the `steps` array (but `ai` must not be listed in any other step’s `depends`).
+- If the recipe has a **`summarize`** step and it becomes **unreachable** (a dependency failed or was skipped), the whole run **aborts**.
+- Linear recipes must not use `id` / `depends` / `env_from`; graph recipes relax the rule that `summarize` must be last in the `steps` array (but `summarize` must not be listed in any other step’s `depends`).
 - Web UI: in the recipe wizard (Step ③ Review plan), use the **Graph** tab for a read-only DAG (powered by `POST /api/v1/recipes/validate-content` → `graph` field).
 
-See [`graph_parallel.cue`](graph_parallel.cue) for a fetch → parallel restarts → verify → ai example.
+See [`graph_parallel.cue`](graph_parallel.cue) for a fetch → parallel restarts → verify → summarize example.
 
 ## Tunnel steps (operator-side port forward)
 
@@ -146,7 +147,7 @@ See [`postgres_tunnel_demo.cue`](postgres_tunnel_demo.cue), [`postgres_tunnel_ss
 
 ## Conditional steps (`when` + CEL)
 
-Optional **`when: "<CEL expression>"`** on any step kind (`command`, `script`, `plugin`, `put`, `get`, `agent_transfer`, `ai`). The expression must evaluate to **bool**. When false, that host (or the whole `agent_transfer` / `ai` step) is **skipped** without SSH/SFTP.
+Optional **`when: "<CEL expression>"`** on any step kind (`command`, `script`, `plugin`, `put`, `get`, `agent_transfer`, `ai`, `summarize`). The expression must evaluate to **bool**. When false, that host (or the whole `agent_transfer` / `ai` / `summarize` step) is **skipped** without SSH/SFTP.
 
 - **`id` is required** whenever `when` is set (linear or graph) so `steps['fetch']` is stable. In linear recipes, `id` is only allowed on steps that have `when`.
 - Graph: step ids referenced in `when` must appear in that step’s **`depends`**.

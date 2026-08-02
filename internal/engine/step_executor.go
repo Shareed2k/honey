@@ -65,6 +65,10 @@ type ExecutionOptions struct {
 	Facts             map[string]map[string]any
 	TriggeredHandlers map[string]bool
 	TunnelCoord       *RecipeTunnelCoordinator
+	// DockerPluginSess scopes remote runtime:docker plugin containers to the
+	// run (one shim-container per plugin+host, torn down at run end). nil on
+	// paths that never run remote docker plugins.
+	DockerPluginSess *plugins.DockerHostSession
 }
 
 // StepExecutor defines a deep module responsible for a specific recipe step kind.

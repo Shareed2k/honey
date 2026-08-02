@@ -9,22 +9,22 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/approval"
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
 	plugincache "github.com/shareed2k/honey/internal/plugincache"
 	"github.com/shareed2k/honey/internal/policy"
@@ -35,6 +35,7 @@ import (
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
 	"github.com/shareed2k/honey/internal/webauthn"
+	"github.com/shareed2k/honey/internal/webserver/workspacestore"
 )
 
 // Options configures the embedded web server.
@@ -59,7 +60,14 @@ type Options struct {
 	NoCache            bool
 	Refresh            bool
 	AllowLogsCommand   bool
-	OnReady            func() // called after the listener is bound, before serving
+	// EnableMesh, when true, additionally serves this webserver's existing API
+	// on a second listener obtained from internal/meshnet.Listener() — so other
+	// honey instances can reach this one through the libp2p mesh (Circuit Relay
+	// v2 + DCUtR), in addition to (not instead of) the normal TCP ListenAddr.
+	// A misconfigured or not-yet-ready mesh must never prevent the ordinary
+	// TCP listener from serving — see Start's handling below.
+	EnableMesh bool
+	OnReady    func() // called after the listener is bound, before serving
 
 	// AuditSink receives one event per security-relevant action (approval decisions,
 	// recipe runs). nil is replaced with a no-op sink in NewServer.
@@ -108,24 +116,41 @@ type Server struct {
 	fileClientCache *engine.ClientCache
 
 	snippetStore snippets.Store
+	workspace    workspaceStore
 
 	retentionState recordingRetentionState
 
-	// pveQemuVncByID holds one-time vncproxy results for /ws/pve-qemu-vnc (see POST /api/v1/pve-qemu-vnc-offer).
-	pveQemuVncMu   sync.Mutex
-	pveQemuVncByID map[string]pveQemuVncOfferSession
-
-	recipeValidationCache *lru.Cache[string, *ValidateContentResponse]
-	recipeGraphCache      *lru.Cache[string, *cuetry.RecipeGraphPlan]
+	// pveVNC holds one-time vncproxy offers for /ws/pve-qemu-vnc (see POST
+	// /api/v1/pve-qemu-vnc-offer); it owns its own lock.
+	pveVNC *pveVNCStore
 
 	recipesAPI *RecipesAPI
 
+	// filesAPI owns the file-management endpoints (upload, browse, copy,
+	// agent transfer, stat/mkdir/remove, streamed up/download).
+	filesAPI *FilesAPI
+
+	// postgresAPI owns the Postgres data-browser endpoints (catalog, query),
+	// resolving the backing proxy session via the shared proxy manager.
+	postgresAPI *PostgresAPI
+
+	// tunnelsAPI owns the in-process SSH -L port-forward endpoints (list, logs,
+	// start, stop), driving the shared tunnel manager.
+	tunnelsAPI *TunnelsAPI
+
+	// proxyAPI owns the app-proxy session endpoints (list, start, stop), driving
+	// the shared proxy manager.
+	proxyAPI *ProxyAPI
+
 	commandRunner *engine.CommandRunner
 
-	// deviceCA + enroll back the mTLS device-enrollment endpoints. Both are nil
-	// when no state dir is available (enrollment disabled).
-	deviceCA *DeviceCA
-	enroll   *enrollStore
+	// enrollAPI owns the mTLS device-enrollment endpoints; its CA/store are nil
+	// (endpoints report 503) when no state dir is available.
+	enrollAPI *EnrollAPI
+
+	// forwardingAPI owns the WebSocket forwarding/relay endpoints (ws/tunnel,
+	// ws/remote-forward, ws/udp) and their test-injectable seams.
+	forwardingAPI *ForwardingAPI
 }
 
 // NewServer builds handlers with the given auth token.
@@ -156,9 +181,6 @@ func NewServer(opts Options) (*Server, error) {
 		opts.ExecRegistry.Reconfigure(opts.Config)
 	}
 
-	valCache, _ := lru.New[string, *ValidateContentResponse](50)
-	graphCache, _ := lru.New[string, *cuetry.RecipeGraphPlan](50)
-
 	q, err := queue.NewAntsQueue(50)
 	if err != nil {
 		return nil, fmt.Errorf("init webhook queue: %w", err)
@@ -167,18 +189,17 @@ func NewServer(opts Options) (*Server, error) {
 	pgPools := postgres.NewPoolManager()
 	pc := plugincache.New(opts.Config)
 	s := &Server{
-		opts:                  opts,
-		metrics:               opts.Metrics,
-		router:                chi.NewRouter(),
-		assistRL:              newSlidingRL(),
-		tunnels:               newTunnelManager(),
-		proxy:                 proxy.NewManager(proxy.NewLogger(zap.L())),
-		pgPools:               pgPools,
-		webhookQueue:          q,
-		plugins:               pc,
-		fileClientCache:       engine.NewClientCache(),
-		recipeValidationCache: valCache,
-		recipeGraphCache:      graphCache,
+		opts:            opts,
+		metrics:         opts.Metrics,
+		router:          chi.NewRouter(),
+		assistRL:        newSlidingRL(),
+		tunnels:         newTunnelManager(),
+		proxy:           proxy.NewManager(proxy.NewLogger(zap.L())),
+		pgPools:         pgPools,
+		webhookQueue:    q,
+		plugins:         pc,
+		fileClientCache: engine.NewClientCache(),
+		pveVNC:          newPveVNCStore(),
 		commandRunner: engine.NewCommandRunner(engine.CommandRunnerOptions{
 			ExecRegistry:   opts.ExecRegistry,
 			SearchRegistry: opts.SearchRegistry,
@@ -208,13 +229,20 @@ func NewServer(opts Options) (*Server, error) {
 	s.fileClientCache.SetRegistry(opts.ExecRegistry)
 	s.snippetStore = snippets.NewLocalStore(snippetsFilePath(opts.ConfigPath))
 
+	s.workspace = workspacestore.New(workspaceStoreDir(s.opts.ConfigPath))
+
 	// Device mTLS enrollment: load-or-create a device CA under the state dir.
-	// Non-fatal — endpoints report 503 when unavailable.
+	// Non-fatal — endpoints report 503 when unavailable (nil CA/store).
+	var deviceCA *DeviceCA
 	if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
 		if ca, caErr := LoadOrCreateDeviceCA(stateDir); caErr == nil {
-			s.deviceCA = ca
-			s.enroll = newEnrollStore()
+			deviceCA = ca
 		}
+	}
+	if deviceCA != nil {
+		s.enrollAPI = NewEnrollAPI(deviceCA, newEnrollStore())
+	} else {
+		s.enrollAPI = NewEnrollAPI(nil, nil)
 	}
 
 	if err := s.routes(); err != nil {
@@ -223,9 +251,28 @@ func NewServer(opts Options) (*Server, error) {
 	return s, nil
 }
 
+// workspaceStoreDir returns the dir for the studio workspace store: beside
+// the resolved config file when one exists, else under the runtime state
+// dir. Mirrors snippetsFilePath's tiering (see snippets_handlers.go).
+func workspaceStoreDir(configPath string) string {
+	if cp, err := config.ResolvePath(strings.TrimSpace(configPath)); err == nil && cp != "" {
+		return filepath.Dir(cp)
+	}
+	if dir, err := config.ResolveStateDir(); err == nil && dir != "" {
+		return dir
+	}
+	return "."
+}
+
 func (s *Server) routes() error {
-	s.recipesAPI = NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache, s.recipeValidationCache, s.recipeGraphCache)
+	s.recipesAPI = NewRecipesAPI(s.opts, s.metrics, s.webhookQueue, s.pgPools, s, s.plugins, s.fileClientCache)
 	recipesAPI := s.recipesAPI
+
+	s.filesAPI = NewFilesAPI(s.opts, s.metrics, s.fileClientCache, s.sshUser)
+	s.postgresAPI = NewPostgresAPI(s.opts, s.pgPools, s.proxy)
+	s.tunnelsAPI = NewTunnelsAPI(s.opts, s.tunnels, s.sshUser)
+	s.proxyAPI = NewProxyAPI(s.opts, s.proxy, s.fileClientCache)
+	s.forwardingAPI = NewForwardingAPI(s.opts, s.authorized, s.sshUser)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -249,10 +296,10 @@ func (s *Server) routes() error {
 		r.Post("/host-ports", s.handleHostPorts)
 
 		r.Route("/tunnels", func(tr chi.Router) {
-			tr.Get("/", s.handleTunnelsGet)
-			tr.Get("/{id}/logs", s.handleTunnelsLogs)
-			tr.Post("/", s.handleTunnelsPost)
-			tr.Delete("/{id}", s.handleTunnelsDelete)
+			tr.Get("/", s.tunnelsAPI.handleTunnelsGet)
+			tr.Get("/{id}/logs", s.tunnelsAPI.handleTunnelsLogs)
+			tr.Post("/", s.tunnelsAPI.handleTunnelsPost)
+			tr.Delete("/{id}", s.tunnelsAPI.handleTunnelsDelete)
 		})
 
 		r.Route("/config", func(cr chi.Router) {
@@ -265,17 +312,17 @@ func (s *Server) routes() error {
 			cr.Put("/", s.handleConfigPut)
 		})
 
-		r.Post("/upload", s.handleUpload)
+		r.Post("/upload", s.filesAPI.handleUpload)
 		r.Route("/files", func(fr chi.Router) {
-			fr.Post("/local/list", s.handleFilesLocalList)
-			fr.Post("/remote/list", s.handleFilesRemoteList)
-			fr.Post("/copy", s.handleFilesCopy)
-			fr.Post("/agent-transfer", s.handleFilesAgentTransfer)
-			fr.Post("/remote/stat", s.handleFilesRemoteStat)
-			fr.Post("/remote/mkdir", s.handleFilesRemoteMkdir)
-			fr.Post("/remote/remove", s.handleFilesRemoteRemove)
-			fr.Post("/remote/upload", s.handleFilesRemoteUpload)
-			fr.Get("/remote/download", s.handleFilesRemoteDownload)
+			fr.Post("/local/list", s.filesAPI.handleFilesLocalList)
+			fr.Post("/remote/list", s.filesAPI.handleFilesRemoteList)
+			fr.Post("/copy", s.filesAPI.handleFilesCopy)
+			fr.Post("/agent-transfer", s.filesAPI.handleFilesAgentTransfer)
+			fr.Post("/remote/stat", s.filesAPI.handleFilesRemoteStat)
+			fr.Post("/remote/mkdir", s.filesAPI.handleFilesRemoteMkdir)
+			fr.Post("/remote/remove", s.filesAPI.handleFilesRemoteRemove)
+			fr.Post("/remote/upload", s.filesAPI.handleFilesRemoteUpload)
+			fr.Get("/remote/download", s.filesAPI.handleFilesRemoteDownload)
 		})
 
 		r.Route("/recordings", func(rcr chi.Router) {
@@ -298,7 +345,9 @@ func (s *Server) routes() error {
 		r.Post("/terminal-assist", s.handleTerminalAssist)
 		r.Get("/terminal-assist/models", s.handleTerminalAssistModels)
 		r.Post("/pve-qemu-vnc-offer", s.handlePveQemuVncOffer)
-		r.Get("/ws/tunnel", s.handleWebTunnel)
+		r.Get("/ws/tunnel", s.forwardingAPI.handleWebTunnel)
+		r.Get("/ws/remote-forward", s.forwardingAPI.handleWebRemoteForward)
+		r.Get("/ws/udp", s.forwardingAPI.handleWebUDPRelay)
 		r.Get("/ws/exec", s.handleWebExec)
 
 		r.Post("/agent", s.handleAgent)
@@ -306,14 +355,14 @@ func (s *Server) routes() error {
 		r.Get("/schedules", s.handleSchedulesList)
 
 		r.Route("/proxy", func(pr chi.Router) {
-			pr.Get("/sessions", s.handleProxySessionsGet)
-			pr.Post("/start", s.handleProxySessionStart)
-			pr.Delete("/sessions/{id}", s.handleProxySessionDelete)
+			pr.Get("/sessions", s.proxyAPI.handleProxySessionsGet)
+			pr.Post("/start", s.proxyAPI.handleProxySessionStart)
+			pr.Delete("/sessions/{id}", s.proxyAPI.handleProxySessionDelete)
 		})
 
 		r.Route("/postgres", func(pgr chi.Router) {
-			pgr.Get("/catalog", s.handlePostgresCatalog)
-			pgr.Post("/query", s.handlePostgresQuery)
+			pgr.Get("/catalog", s.postgresAPI.handlePostgresCatalog)
+			pgr.Post("/query", s.postgresAPI.handlePostgresQuery)
 		})
 
 		r.Route("/logs", func(lr chi.Router) {
@@ -333,13 +382,18 @@ func (s *Server) routes() error {
 		r.Get("/webhooks/{app_name}/{webhook_name}/deliveries", recipesAPI.handleWebhookDeliveries)
 
 		// Device mTLS enrollment: mint a one-time code (operator) + list issued devices.
-		r.Post("/devices/enroll-code", s.handleMintEnrollCode)
-		r.Get("/devices", s.handleListDevices)
+		r.Post("/devices/enroll-code", s.enrollAPI.handleMintEnrollCode)
+		r.Get("/devices", s.enrollAPI.handleListDevices)
+
+		r.Route("/studio", func(sr chi.Router) {
+			sr.Get("/workspace", s.handleGetStudioWorkspace)
+			sr.Put("/workspace", s.handlePutStudioWorkspace)
+		})
 	})
 
 	// Device enrollment is authenticated by the one-time code, not the session
 	// token, so it mounts outside the main auth group.
-	s.router.Post("/api/v1/devices/enroll", s.handleDeviceEnroll)
+	s.router.Post("/api/v1/devices/enroll", s.enrollAPI.handleDeviceEnroll)
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
 	s.router.With(recipesAPI.webhookRateLimit).
@@ -466,6 +520,20 @@ func (s *Server) Start(ctx context.Context) error {
 		errCh <- srv.Serve(ln)
 	}()
 
+	var meshLn net.Listener
+	if s.opts.EnableMesh {
+		meshLn, err = meshnet.Listener()
+		if err != nil {
+			zap.L().Warn("honey mesh listener unavailable, continuing without it", zap.Error(err))
+			meshLn = nil
+		} else {
+			go func() {
+				zap.L().Info("honey web listening (mesh)")
+				errCh <- srv.Serve(meshLn)
+			}()
+		}
+	}
+
 	s.startRecordingRetention(ctx)
 	if s.scheduleManager != nil {
 		s.scheduleManager.Start(ctx)
@@ -473,7 +541,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	nListeners := 1
 	if metricsSrv != nil {
-		nListeners = 2
+		nListeners++
+	}
+	if meshLn != nil {
+		nListeners++
 	}
 	for {
 		select {
@@ -534,11 +605,9 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	if maxAge, text := s.recordingRetentionMaxAge(); maxAge > 0 && text != "" {
 		meta.SessionRecordingRetention = text
 	}
-	s.retentionState.mu.Lock()
-	if !s.retentionState.lastPurgeAt.IsZero() {
-		meta.SessionRecordingLastPurge = s.retentionState.lastPurgeAt.Format(time.RFC3339)
+	if t, ok := s.retentionState.lastPurge(); ok {
+		meta.SessionRecordingLastPurge = t.Format(time.RFC3339)
 	}
-	s.retentionState.mu.Unlock()
 	if addr := strings.TrimSpace(s.opts.MetricsListenAddr); addr != "" {
 		meta.MetricsURL = "http://" + addr + "/metrics"
 	}
@@ -629,11 +698,5 @@ func httpError(w http.ResponseWriter, err error, code int) {
 }
 
 func (s *Server) sshUser(requested string) string {
-	user := strings.TrimSpace(requested)
-	if user == "" {
-		if cfg := s.opts.Config; cfg != nil && cfg.Defaults.SSHUser != "" {
-			user = cfg.Defaults.SSHUser
-		}
-	}
-	return user
+	return sshUserFor(s.opts.Config, requested)
 }

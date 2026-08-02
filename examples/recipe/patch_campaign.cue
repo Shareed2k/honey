@@ -80,7 +80,7 @@ recipe: {
 			id:      "report"
 			host:    "_"
 			depends: ["patch"]
-			ai: {
+			summarize: {
 				prompt: """
 Summarize this patch campaign in 4-6 bullets: how many CVEs per host by
 severity, which hosts exceeded the critical budget, and which patch steps

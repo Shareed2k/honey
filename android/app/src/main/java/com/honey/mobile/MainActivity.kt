@@ -152,7 +152,7 @@ fun HoneyNavApp() {
         ) { padding ->
             NavHost(navController, startDestination = "dashboard", Modifier.padding(padding)) {
                 composable(
-                    route = "vpn?exit={exit}&ip={ip}&sshport={sshport}",
+                    route = "vpn?exit={exit}&ip={ip}&sshport={sshport}&honeybackend={honeybackend}",
                     arguments = listOf(
                         navArgument("exit") {
                             type = NavType.StringType
@@ -166,24 +166,31 @@ fun HoneyNavApp() {
                             type = NavType.IntType
                             defaultValue = 0
                         },
+                        navArgument("honeybackend") {
+                            type = NavType.StringType
+                            defaultValue = ""
+                        },
                     ),
                 ) { backStackEntry ->
                     VpnScreen(
                         prefilledExit = backStackEntry.arguments?.getString("exit") ?: "",
                         prefilledIp = backStackEntry.arguments?.getString("ip") ?: "",
                         prefilledSshPort = backStackEntry.arguments?.getInt("sshport") ?: 0,
+                        prefilledHoneyBackend = backStackEntry.arguments?.getString("honeybackend") ?: "",
                     )
                 }
                 composable("dashboard") {
                     DashboardScreen(
-                        onNavigateExec = { hostName, provider, ip, sshPort ->
+                        onNavigateExec = { hostName, provider, ip, sshPort, honeyBackend ->
                             navController.navigate(
-                                "exec?host=$hostName&provider=$provider&ip=${Uri.encode(ip)}&sshport=$sshPort",
+                                "exec?host=$hostName&provider=$provider&ip=${Uri.encode(ip)}&sshport=$sshPort" +
+                                    "&honeybackend=${Uri.encode(honeyBackend)}",
                             ) { launchSingleTop = true }
                         },
-                        onNavigateVpn = { hostName, ip, sshPort ->
+                        onNavigateVpn = { hostName, ip, sshPort, honeyBackend ->
                             navController.navigate(
-                                "vpn?exit=$hostName&ip=${Uri.encode(ip)}&sshport=$sshPort",
+                                "vpn?exit=$hostName&ip=${Uri.encode(ip)}&sshport=$sshPort" +
+                                    "&honeybackend=${Uri.encode(honeyBackend)}",
                             ) { launchSingleTop = true }
                         },
                     )
@@ -192,7 +199,7 @@ fun HoneyNavApp() {
                     BackendsScreen()
                 }
                 composable(
-                    route = "exec?host={host}&provider={provider}&ip={ip}&sshport={sshport}",
+                    route = "exec?host={host}&provider={provider}&ip={ip}&sshport={sshport}&honeybackend={honeybackend}",
                     arguments = listOf(
                         navArgument("host") {
                             type = NavType.StringType
@@ -210,6 +217,10 @@ fun HoneyNavApp() {
                             type = NavType.IntType
                             defaultValue = 0
                         },
+                        navArgument("honeybackend") {
+                            type = NavType.StringType
+                            defaultValue = ""
+                        },
                     ),
                 ) { backStackEntry ->
                     ExecScreen(
@@ -217,6 +228,7 @@ fun HoneyNavApp() {
                         prefilledProvider = backStackEntry.arguments?.getString("provider") ?: "",
                         prefilledIp = backStackEntry.arguments?.getString("ip") ?: "",
                         prefilledSshPort = backStackEntry.arguments?.getInt("sshport") ?: 0,
+                        prefilledHoneyBackend = backStackEntry.arguments?.getString("honeybackend") ?: "",
                     )
                 }
                 composable("recipes") { RecipesScreen() }

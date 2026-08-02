@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/shareed2k/honey/internal/cuetry"
@@ -16,6 +17,148 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/postgres"
 )
+
+type mockReduceExecutor struct{}
+
+func (m *mockReduceExecutor) ExecuteStream(_ context.Context, req ExecutionRequest, _ ExecutionOptions, resCh chan<- HostExecResult) error {
+	for _, t := range req.Targets {
+		out := t.Env["item"]
+		if data, ok := t.Env["DATA"]; ok {
+			out = data
+		}
+		resCh <- HostExecResult{
+			Name:    t.Record.Name,
+			Success: true,
+			Output:  out,
+		}
+	}
+	return nil
+}
+
+func (m *mockReduceExecutor) ExecuteDryRun(_ context.Context, _ ExecutionRequest, _ ExecutionOptions, _ io.Writer) error {
+	return nil
+}
+
+func TestStreamCueRecipeStep_Reduce(t *testing.T) {
+	step := &cuetry.CommandStep{
+		StepBase: cuetry.StepBase{
+			ID:     "gen",
+			Host:   "*",
+			Loop:   `["apple", "banana"]`,
+			Reduce: "fruits_array",
+		},
+		Command: "mock_reduce_cmd",
+	}
+
+	old, _ := GetStepExecutor(cuetry.KindCommand)
+	RegisterStepExecutor(cuetry.KindCommand, &mockReduceExecutor{})
+	defer func() { RegisterStepExecutor(cuetry.KindCommand, old) }()
+
+	run := &CueRun{
+		Params: CueRecipeRunParams{
+			Recipe:  cuetry.Recipe{},
+			Records: []hosts.Record{{Name: "h1", PrimaryIP: "1.2.3.4"}},
+		},
+		OutputCapture: cuetry.NewRecipeOutputCapture(),
+		OutputStore:   cuetry.NewStepOutputStore(),
+	}
+
+	ch := make(chan HostExecResult, 10)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range ch { //nolint:revive
+		}
+	}()
+
+	res, err := StreamCueRecipeStep(context.Background(), run, 0, step, nil, ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(res) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(res))
+	}
+
+	val, ok := run.OutputCapture.Get("fruits_array")
+	if !ok {
+		t.Fatalf("fruits_array not set in OutputCapture")
+	}
+	if val != `["apple","banana"]` && val != `["banana","apple"]` {
+		t.Fatalf("unexpected fruits_array value: %s", val)
+	}
+}
+
+// tunnelCoordCaptureExecutor records the ExecutionOptions it was invoked with,
+// so tests can assert on fields the real StepExecutor never gets to see
+// (like TunnelCoord) without needing an actual SSH dial.
+type tunnelCoordCaptureExecutor struct {
+	opts *ExecutionOptions
+}
+
+func (e *tunnelCoordCaptureExecutor) ExecuteStream(_ context.Context, req ExecutionRequest, opts ExecutionOptions, resCh chan<- HostExecResult) error {
+	e.opts = &opts
+	for _, tgt := range req.Targets {
+		resCh <- HostExecResult{Name: tgt.Record.Name, Success: true}
+	}
+	return nil
+}
+
+func (e *tunnelCoordCaptureExecutor) ExecuteDryRun(_ context.Context, _ ExecutionRequest, _ ExecutionOptions, _ io.Writer) error {
+	return nil
+}
+
+// TestExecuteStep_PropagatesTunnelCoord is a regression test for a bug where
+// CueRun.ExecuteStep built its ExecutionOptions literal without copying
+// run.TunnelCoord over. Every non-loop step (e.g. a "tunnel" step, or a
+// plugin step using tunnel_step) then executed with a nil tunnel
+// coordinator, which made TunnelExecutor fail immediately with
+// "tunnel coordinator: nil" on any real recipe. The parallel loop-step path
+// (StreamCueLoopStep) already carried run.TunnelCoord over correctly; only
+// the direct, non-loop path missed it.
+func TestExecuteStep_PropagatesTunnelCoord(t *testing.T) {
+	old, err := GetStepExecutor(cuetry.KindTunnel)
+	if err != nil {
+		t.Fatalf("no tunnel executor registered: %v", err)
+	}
+	capture := &tunnelCoordCaptureExecutor{}
+	RegisterStepExecutor(cuetry.KindTunnel, capture)
+	defer RegisterStepExecutor(cuetry.KindTunnel, old)
+
+	step := &cuetry.TunnelStep{
+		StepBase: cuetry.StepBase{ID: "t1", Host: "*"},
+		Tunnel:   &cuetry.RecipeStepTunnel{RemotePort: 5432, LocalPort: 15432},
+	}
+
+	coord := NewRecipeTunnelCoordinator(nil)
+	defer coord.Close()
+
+	run := &CueRun{
+		Params: CueRecipeRunParams{
+			Recipe:  cuetry.Recipe{},
+			Records: []hosts.Record{{Name: "h1", PrimaryIP: "1.2.3.4"}},
+			Execute: true,
+		},
+		TunnelCoord: coord,
+	}
+
+	ch := make(chan HostExecResult, 10)
+	if _, err := StreamCueRecipeStep(context.Background(), run, 0, step, nil, ch); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	close(ch)
+
+	if capture.opts == nil {
+		t.Fatalf("tunnel step executor was never invoked")
+	}
+	if capture.opts.TunnelCoord == nil {
+		t.Fatalf("ExecutionOptions.TunnelCoord is nil; run.TunnelCoord was not propagated to the non-loop step executor")
+	}
+	if capture.opts.TunnelCoord != coord {
+		t.Fatalf("ExecutionOptions.TunnelCoord = %p, want %p (run.TunnelCoord)", capture.opts.TunnelCoord, coord)
+	}
+}
 
 func TestCueStepAllTargetsTransientTransportFailed(t *testing.T) {
 	t.Parallel()
@@ -435,6 +578,16 @@ func TestCueRecipeDisplayOutput_suppressesSuccessfulCapturedOutput(t *testing.T)
 			res:  HostExecResult{Success: true, Output: "hello"},
 			want: "hello",
 		},
+		{
+			name: "plugin kv_key capture prints a kv-specific note instead of the raw payload",
+			res:  HostExecResult{Success: true, Output: `{"content":"..."}`, KVCaptureKey: "stealth_fetch"},
+			want: "[stored in kv: stealth_fetch]",
+		},
+		{
+			name: "KVCaptureKey takes priority over OutputCapture when somehow both are set",
+			res:  HostExecResult{Success: true, Output: "x", KVCaptureKey: "stealth_fetch", OutputCapture: "RESULT"},
+			want: "[stored in kv: stealth_fetch]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -736,8 +889,11 @@ func TestCueRun_postgresStep(t *testing.T) {
 
 	// Create mock secret resolver
 	mockResolver := &mockSecretResolver{
+		handlesFunc: func(ref string) bool {
+			return strings.Contains(ref, "secure:v1:test") || strings.Contains(ref, "secure:v1:defaults")
+		},
 		resolveFunc: func(ref string) (string, error) {
-			if strings.Contains(ref, "PG_DSN") || strings.Contains(ref, "secure:v1:test") {
+			if strings.Contains(ref, "PG_DSN") || strings.Contains(ref, "secure:v1:test") || strings.Contains(ref, "secure:v1:defaults") {
 				return "postgresql://postgres:password@localhost:5432/postgres", nil
 			}
 			return "", fmt.Errorf("not found")
@@ -748,8 +904,8 @@ func TestCueRun_postgresStep(t *testing.T) {
 		Params: CueRecipeRunParams{
 			Recipe: cuetry.Recipe{
 				Defaults: &cuetry.RecipeDefaults{
-					Secrets: map[string]string{
-						"PG_DSN": "secure:v1:test",
+					Secrets: map[string]cuetry.RecipeSecret{
+						"DB_PASS": {Ref: "secure:v1:defaults"},
 					},
 				},
 			},
@@ -769,7 +925,7 @@ func TestCueRun_postgresStep(t *testing.T) {
 			Host: "h1",
 		},
 		Postgres: &cuetry.RecipeStepPostgres{
-			DSNSecret: "PG_DSN",
+			DSNSecret: "DB_PASS",
 			Action:    "query",
 			SQL:       "SELECT 1 AS ok",
 		},

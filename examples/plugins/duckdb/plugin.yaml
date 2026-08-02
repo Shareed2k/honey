@@ -1,0 +1,9 @@
+id: duckdb
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+docker:
+  image: "duckdb/duckdb:latest"
+  volumes:
+    - "/var/honey/data:/data:rw"

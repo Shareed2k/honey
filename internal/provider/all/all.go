@@ -55,7 +55,8 @@ func (c configAdapter) DockerBackendSlicePtr() *[]config.DockerBackend {
 
 func (c configAdapter) SetDockerBackends(b []config.DockerBackend) { config.Get().Backends.Docker = b }
 
-func (c configAdapter) GCPBackends() []config.GCPBackend         { return config.Get().Backends.GCP }
+func (c configAdapter) GCPBackends() []config.GCPBackend { return config.Get().Backends.GCP }
+
 func (c configAdapter) GCPBackendSlicePtr() *[]config.GCPBackend { return &config.Get().Backends.GCP }
 func (c configAdapter) SetGCPBackends(b []config.GCPBackend)     { config.Get().Backends.GCP = b }
 
@@ -124,11 +125,16 @@ func (c configAdapter) DockerDiscover() config.DockerDiscover {
 func Factories(deps Deps) []searchrun.ProviderFactory {
 	adapter := configAdapter{}
 	return []searchrun.ProviderFactory{
+		// honey first: for a record proxied through a honey upstream backend,
+		// ResolveExecutor must try honeyprovider before the native factories can
+		// claim it by kind, so a genuine client proxy wins. On the upstream server
+		// honeyFactory declines (no matching backend) and the native factory below
+		// resolves the record locally.
+		honeyprovider.NewFactory(adapter),
 		awsprovider.NewFactory(adapter),
 		consulprovider.NewFactory(adapter),
 		dockerprovider.NewFactory(deps.DockerInteractive, adapter),
 		gcp.NewFactory(adapter),
-		honeyprovider.NewFactory(adapter),
 		k8sprovider.NewFactory(deps.K8sInteractive, adapter),
 		localprovider.NewFactory(adapter),
 		proxmoxprovider.NewFactory(adapter),

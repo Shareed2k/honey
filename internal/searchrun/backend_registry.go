@@ -37,9 +37,6 @@ func (r *Registry) RegisteredBackendKinds() []string {
 // GetBackendSliceByKind resolves cfg.Backends.<kind> as a reflect.Value slice.
 func (r *Registry) GetBackendSliceByKind(kind string) (reflect.Value, error) {
 	cfg := config.Get()
-	if cfg == nil {
-		return reflect.Value{}, fmt.Errorf("nil config")
-	}
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	getter, ok := r.backendSliceByKind[kind]
 	if !ok {
