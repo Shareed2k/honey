@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/hostexec"
@@ -69,6 +72,144 @@ func StreamParallel[T any](jobs []T, maxConc int, worker func(T)) {
 
 func sshTransientBackoff(attempt int) {
 	time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
+}
+
+// execProgress tracks live batch progress for the watchdog.
+type execProgress struct {
+	inflight atomic.Int64 // hosts currently being dialed/run
+	done     atomic.Int64 // hosts that have produced a result
+}
+
+// runExecWatchdog logs batch progress every 10s and, if no host completes for
+// ~30s while work is still in flight, dumps all goroutine stacks to stderr. A
+// large parallel exec that stalls silently (e.g. every worker wedged on a
+// dial/session with no timeout) is otherwise invisible — this makes the wedge
+// self-diagnosing: the log shows how many hosts finished and where the stuck
+// workers are blocked. It exits when stop is closed (batch complete).
+func runExecWatchdog(stop <-chan struct{}, p *execProgress, total int64) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	var lastDone int64
+	stalledTicks := 0
+	dumped := false
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			done := p.done.Load()
+			inflight := p.inflight.Load()
+			if done >= total {
+				return
+			}
+			zap.L().Info("exec batch progress",
+				zap.Int64("done", done),
+				zap.Int64("total", total),
+				zap.Int64("inflight", inflight))
+			if done == lastDone && inflight > 0 {
+				stalledTicks++
+				// ~30s of zero progress with workers in flight → dump once.
+				if stalledTicks >= 3 && !dumped {
+					dumped = true
+					zap.L().Warn("exec batch STALLED — dumping goroutine summary",
+						zap.Int64("done", done),
+						zap.Int64("total", total),
+						zap.Int64("inflight", inflight))
+					buf := make([]byte, 2<<20)
+					n := runtime.Stack(buf, true)
+					hist, sample := summarizeStuckGoroutines(buf[:n])
+					fmt.Fprintf(os.Stderr,
+						"\n=== HONEY EXEC STALL: %d/%d done, %d in flight ===\n"+
+							"[blocking histogram: count | state | first honey/goph/crypto/agent frame]\n%s\n"+
+							"[one representative stuck sshclient goroutine]\n%s\n=== END HONEY EXEC STALL ===\n",
+						done, total, inflight, hist, sample)
+				}
+			} else {
+				stalledTicks = 0
+			}
+			lastDone = done
+		}
+	}
+}
+
+// summarizeStuckGoroutines condenses a full runtime.Stack dump into a compact,
+// pasteable picture of where a stalled batch is blocked: a histogram keyed by
+// "goroutine state + the first frame in honey/goph/crypto/agent code" (so all N
+// workers wedged in the same call collapse to one line), plus one full
+// representative sshclient stack for the exact call chain. A raw dump of
+// hundreds of goroutines overflows a terminal and hides the answer.
+func summarizeStuckGoroutines(dump []byte) (histogram, sample string) {
+	pkgHints := []string{
+		"shareed2k/honey/internal/sshclient",
+		"shareed2k/honey/internal/engine",
+		"melbahja/goph",
+		"crypto/ssh/agent",
+		"golang.org/x/crypto/ssh",
+	}
+	blocks := strings.Split(string(dump), "\n\ngoroutine ")
+	counts := map[string]int{}
+	var order []string
+	for i, b := range blocks {
+		if i > 0 {
+			b = "goroutine " + b
+		}
+		b = strings.TrimRight(b, "\n")
+		if strings.TrimSpace(b) == "" {
+			continue
+		}
+		lines := strings.Split(b, "\n")
+		state := ""
+		if l := strings.IndexByte(lines[0], '['); l >= 0 {
+			if r := strings.IndexByte(lines[0][l:], ']'); r >= 0 {
+				state = lines[0][l+1 : l+r]
+			}
+		}
+		if c := strings.IndexByte(state, ','); c >= 0 {
+			state = strings.TrimSpace(state[:c]) // drop "..., 2 minutes"
+		}
+		topFrame, hintFrame := "", ""
+		for k := 1; k < len(lines); k++ {
+			ln := lines[k]
+			if ln == "" || strings.HasPrefix(ln, "\t") {
+				continue // file:line detail line
+			}
+			fn := ln
+			if p := strings.IndexByte(fn, '('); p > 0 {
+				fn = fn[:p]
+			}
+			fn = strings.TrimSpace(fn)
+			if topFrame == "" {
+				topFrame = fn
+			}
+			for _, h := range pkgHints {
+				if strings.Contains(ln, h) {
+					hintFrame = fn
+					break
+				}
+			}
+			if hintFrame != "" {
+				break
+			}
+		}
+		frame := hintFrame
+		if frame == "" {
+			frame = topFrame
+		}
+		key := state + "  " + frame
+		if counts[key] == 0 {
+			order = append(order, key)
+		}
+		counts[key]++
+		if sample == "" && strings.Contains(b, "internal/sshclient") {
+			sample = b
+		}
+	}
+	sort.Slice(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
+	var sb strings.Builder
+	for _, k := range order {
+		fmt.Fprintf(&sb, "%5d  %s\n", counts[k], k)
+	}
+	return sb.String(), sample
 }
 
 // evictCachedSSHClient removes a dead pooled client (if any) and pauses before redial.
@@ -137,20 +278,41 @@ func StreamCommandParallel(ctx context.Context, user string, jobs []TargetContex
 	}
 
 	cache := opts.Cache
-	// Callers that don't manage their own cache (e.g. the web exec handlers) pass
-	// a nil cache and rely on Reg to dial. Build a short-lived cache for this run.
+	// A nil caller cache means this is a one-shot batch (e.g. the web exec
+	// handlers): each host runs exactly once, so its connection is not reused and
+	// should be closed right after — otherwise the short-lived cache holds one
+	// open socket per host for the whole run and a large exec exhausts the FD
+	// limit (macOS default 256), stalling silently at ~236/N. A caller-supplied
+	// cache (recipes reusing a connection across steps) is left untouched.
+	ephemeral := opts.Cache == nil
 	if cache == nil {
 		cache = NewClientCache()
 		cache.SetRegistry(opts.Reg)
 		defer cache.CloseAll()
 	}
 
+	// Progress watchdog: only for batches large enough to queue on the
+	// concurrency limit, so small recipe runs stay quiet. Emits a progress line
+	// every 10s and auto-dumps goroutine stacks if the batch stalls.
+	var prog execProgress
+	if len(jobs) > maxConc {
+		stop := make(chan struct{})
+		defer close(stop)
+		go runExecWatchdog(stop, &prog, int64(len(jobs)))
+	}
+
 	StreamParallel(jobs, maxConc, func(tc TargetContext) {
 		// Stop dialing new hosts once the run is cancelled / timed out.
 		if ctx.Err() != nil {
+			prog.done.Add(1)
 			out <- HostExecResult{Name: tc.Record.Name, IP: tc.Record.PrimaryIP, Provider: tc.Record.Provider, Success: false, ErrMsg: "cancelled"}
 			return
 		}
+		prog.inflight.Add(1)
+		zap.L().Debug("exec host starting",
+			zap.String("host", tc.Record.Name),
+			zap.String("ip", tc.Record.PrimaryIP),
+			zap.Int64("inflight", prog.inflight.Load()))
 
 		effUser := strings.TrimSpace(user)
 		if effUser == "" {
@@ -177,6 +339,17 @@ func StreamCommandParallel(ctx context.Context, user string, jobs []TargetContex
 			opts.Post(ctx, tc, &res)
 		}
 		out <- res
+		// One-shot batch: close this host's connection now so the number of open
+		// sockets stays bounded by the concurrency limit, not the host count.
+		if ephemeral {
+			cache.Evict(effUser, tc.Record)
+		}
+		prog.inflight.Add(-1)
+		prog.done.Add(1)
+		zap.L().Debug("exec host done",
+			zap.String("host", tc.Record.Name),
+			zap.Bool("ok", res.Success),
+			zap.Int64("done", prog.done.Load()))
 	})
 	return nil
 }

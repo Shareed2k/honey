@@ -3,6 +3,7 @@ package sshclient
 import (
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/melbahja/goph"
 	"golang.org/x/crypto/ssh"
@@ -89,23 +90,58 @@ func resolveDialPlan(resolve hostConfigResolver, userOverride, hostAlias string,
 	}, nil
 }
 
+// finishSSHHandshake bounds the SSH handshake with cfg.Timeout and returns the
+// client. crypto/ssh's Dial applies ClientConfig.Timeout ONLY to the TCP connect
+// (net.DialTimeout); the handshake that follows — banner exchange, key exchange,
+// auth, and the host-key callback — runs with NO deadline. So a host that
+// accepts the TCP connection but never drives the SSH handshake to completion
+// (an overloaded sshd, MaxStartups throttling, a silent middlebox, a half-open
+// cached path) blocks the caller forever. In a bounded parallel exec that is
+// enough to wedge one worker and, through the pool's wg.Wait, stall the whole
+// batch at ~N/M with no error and no timeout ever surfacing. Setting a deadline
+// across NewClientConn — then clearing it on success so it never fires on the
+// live session — makes a stuck handshake fail fast instead.
+//
+// The deadline is best-effort: a raw TCP conn honours it, but an SSH-channel
+// conn (a ProxyJump hop) does not support deadlines and returns an error from
+// SetDeadline. In that case proceed without one — the bastion connection bounds
+// liveness — rather than failing the dial.
+func finishSSHHandshake(conn net.Conn, addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+	deadlined := false
+	if cfg.Timeout > 0 {
+		if err := conn.SetDeadline(time.Now().Add(cfg.Timeout)); err == nil {
+			deadlined = true
+		}
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if deadlined {
+		_ = conn.SetDeadline(time.Time{})
+	}
+	return ssh.NewClient(ncc, chans, reqs), nil
+}
+
 // sshDialDirect and sshDialVia are the crypto/ssh dial primitives used by the
 // dial chain, behind package vars so tests can substitute a fake transport for
-// the ProxyJump I/O loop. Production uses the real ones.
+// the ProxyJump I/O loop. Production uses the real ones. Both bound the SSH
+// handshake via finishSSHHandshake (see its doc for why Dial's own Timeout is
+// insufficient).
 var (
 	sshDialDirect = func(addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
-		return ssh.Dial("tcp", addr, cfg)
+		conn, err := net.DialTimeout("tcp", addr, cfg.Timeout)
+		if err != nil {
+			return nil, err
+		}
+		return finishSSHHandshake(conn, addr, cfg)
 	}
 	sshDialVia = func(via *ssh.Client, addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
 		rawConn, err := via.Dial("tcp", addr)
 		if err != nil {
 			return nil, err
 		}
-		ncc, chans, reqs, err := ssh.NewClientConn(rawConn, addr, cfg)
-		if err != nil {
-			_ = rawConn.Close()
-			return nil, err
-		}
-		return ssh.NewClient(ncc, chans, reqs), nil
+		return finishSSHHandshake(rawConn, addr, cfg)
 	}
 )

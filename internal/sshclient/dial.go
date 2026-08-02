@@ -623,10 +623,6 @@ func (h *HoneyClient) RunContext(ctx context.Context, cmd string) ([]byte, error
 	if h.Client == nil || h.Client.Client == nil {
 		return nil, fmt.Errorf("ssh client is not connected")
 	}
-	sess, err := h.NewSession()
-	if err != nil {
-		return nil, err
-	}
 
 	type result struct {
 		out []byte
@@ -634,16 +630,32 @@ func (h *HoneyClient) RunContext(ctx context.Context, cmd string) ([]byte, error
 	}
 	ch := make(chan result, 1)
 	go func() {
+		// NewSession itself can block indefinitely on a half-open connection (a
+		// channel-open request that never gets a reply — common when a NAT or
+		// firewall silently drops an idle cached connection), so it must run
+		// inside the ctx guard too, not before the select below. Otherwise a
+		// single stuck host wedges its worker forever and, via wg.Wait, the whole
+		// batch — with no timeout ever firing.
+		sess, err := h.NewSession()
+		if err != nil {
+			ch <- result{err: err}
+			return
+		}
 		out, runErr := sess.CombinedOutput(cmd)
+		_ = sess.Close()
 		ch <- result{out: out, err: runErr}
 	}()
 
 	select {
 	case <-ctx.Done():
-		_ = sess.Close() // unblocks CombinedOutput
+		// Best-effort unblock: closing the leaf connection aborts a hung
+		// NewSession/CombinedOutput so the goroutine above returns instead of
+		// leaking. The caller (batch exec) evicts this client from the cache.
+		if leaf := h.LeafSSH(); leaf != nil {
+			_ = leaf.Close()
+		}
 		return nil, ctx.Err()
 	case r := <-ch:
-		_ = sess.Close()
 		return r.out, r.err
 	}
 }
@@ -743,11 +755,37 @@ func defaultSSHIdentityKeyBaseNames() []string {
 	return []string{"id_ed25519", "id_rsa", "id_ecdsa", "google_compute_engine", "id_dsa"}
 }
 
-func appendAuthFromKeyFiles(methods []ssh.AuthMethod, seen map[string]struct{}, paths []string) ([]ssh.AuthMethod, error) {
+// signersFromKeyFile reads a private key file (gosec-clean via safepath) and
+// parses it into an ssh.Signer for in-process signing. Fails on encrypted keys
+// (no passphrase), matching goph.Key(path, "") — such keys are expected to live
+// in the ssh-agent instead.
+func signersFromKeyFile(path string) ([]ssh.Signer, error) {
+	f, err := safepath.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	signer, err := ssh.ParsePrivateKey(b)
+	if err != nil {
+		return nil, err
+	}
+	return []ssh.Signer{signer}, nil
+}
+
+// appendSignersFromKeyFiles parses each usable, not-yet-seen private key file into
+// an in-process ssh.Signer. Unparseable or encrypted keys are skipped (the agent
+// may hold them). Collecting signers (not separate AuthMethods) lets the caller
+// fold every key into a single publickey method — see buildAuthWithIdentityFiles
+// for why that matters.
+func appendSignersFromKeyFiles(signers []ssh.Signer, seen map[string]struct{}, paths []string) ([]ssh.Signer, error) {
 	for _, raw := range paths {
 		p, err := expandSSHPath(raw)
 		if err != nil {
-			return methods, err
+			return signers, err
 		}
 		if p == "" {
 			continue
@@ -759,14 +797,14 @@ func appendAuthFromKeyFiles(methods []ssh.AuthMethod, seen map[string]struct{}, 
 		if statErr != nil || st.IsDir() {
 			continue
 		}
-		k, keyErr := goph.Key(p, "")
+		s, keyErr := signersFromKeyFile(p)
 		if keyErr != nil {
 			continue
 		}
 		seen[p] = struct{}{}
-		methods = append(methods, k...)
+		signers = append(signers, s...)
 	}
-	return methods, nil
+	return signers, nil
 }
 
 func errNoSSHAuth() error {
@@ -777,27 +815,32 @@ func errNoSSHAuth() error {
 		honeySSHIdentityFilesEnv)
 }
 
-// buildAuthWithIdentityFiles returns auth methods: agent (if any), then extra key files (ssh_config IdentityFile),
-// then HONEY_SSH_IDENTITY_FILES, then default ~/.ssh key names (see defaultSSHIdentityKeyBaseNames).
+// buildAuthWithIdentityFiles returns a single publickey auth method offering, in
+// order: disk key files (ssh_config IdentityFile, then HONEY_SSH_IDENTITY_FILES,
+// then default ~/.ssh key names), then the ssh-agent's keys.
+//
+// It is deliberately ONE ssh.PublicKeysCallback, not one method per key.
+// x/crypto/ssh identifies auth methods by name and, once any "publickey" method
+// has been tried, skips every other "publickey" method (client_auth.go findNext).
+// So multiple separate publickey methods mean only the FIRST is ever attempted —
+// which is why honey previously authenticated every host through the agent alone
+// (it was appended first) and hammered it: a large parallel exec issued a sign
+// request per host at one ssh-agent, which real/GUI agents can't service, wedging
+// the whole batch. Folding every key into one callback, with disk signers first,
+// lets a file key (e.g. ~/.ssh/google_compute_engine) authenticate in-process so
+// the agent is consulted only when no disk key is accepted.
 func buildAuthWithIdentityFiles(extraFiles []string) (goph.Auth, error) {
-	var methods []ssh.AuthMethod
-	if goph.HasAgent() {
-		if ag, err := goph.UseAgent(); err == nil {
-			methods = append(methods, ag...)
-		}
-	}
 	seen := make(map[string]struct{})
+	var fileSigners []ssh.Signer
 	var err error
-	methods, err = appendAuthFromKeyFiles(methods, seen, extraFiles)
-	if err != nil {
+	if fileSigners, err = appendSignersFromKeyFiles(fileSigners, seen, extraFiles); err != nil {
 		return nil, err
 	}
 	envPaths, err := identityPathsFromHoneyEnv()
 	if err != nil {
 		return nil, err
 	}
-	methods, err = appendAuthFromKeyFiles(methods, seen, envPaths)
-	if err != nil {
+	if fileSigners, err = appendSignersFromKeyFiles(fileSigners, seen, envPaths); err != nil {
 		return nil, err
 	}
 	home, err := os.UserHomeDir()
@@ -806,15 +849,33 @@ func buildAuthWithIdentityFiles(extraFiles []string) (goph.Auth, error) {
 	}
 	for _, name := range defaultSSHIdentityKeyBaseNames() {
 		p := filepath.Join(home, ".ssh", name)
-		methods, err = appendAuthFromKeyFiles(methods, seen, []string{p})
-		if err != nil {
+		if fileSigners, err = appendSignersFromKeyFiles(fileSigners, seen, []string{p}); err != nil {
 			return nil, err
 		}
 	}
-	if len(methods) == 0 {
+
+	haveAgent := hasSSHAgent()
+	if len(fileSigners) == 0 && !haveAgent {
 		return nil, errNoSSHAuth()
 	}
-	return methods, nil
+
+	// The callback runs per authentication attempt. Disk signers are static and
+	// offered first. Agent signers are appended after, from a cached key list, and
+	// a failed/slow agent is non-fatal — auth proceeds with the disk signers. The
+	// agent only actually signs if the server accepts none of the disk keys.
+	cb := func() ([]ssh.Signer, error) {
+		out := append([]ssh.Signer(nil), fileSigners...)
+		if haveAgent {
+			if as, aerr := agentSigners(); aerr == nil {
+				out = append(out, as...)
+			}
+		}
+		if len(out) == 0 {
+			return nil, errNoSSHAuth()
+		}
+		return out, nil
+	}
+	return goph.Auth{ssh.PublicKeysCallback(cb)}, nil
 }
 
 // buildAuthExclusiveIdentityFile loads a single private key file (no ssh-agent, ssh_config

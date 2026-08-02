@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -123,20 +125,41 @@ func (r *CommandRunner) Execute(ctx context.Context, req CommandRunRequest) (<-c
 	ch := make(chan HostExecResult, len(req.Records))
 	execStart := time.Now()
 
+	zap.L().Info("web exec batch starting",
+		zap.Int("hosts", recordJobCount),
+		zap.Duration("cmd_timeout", req.CmdTimeout))
+
 	go func() {
+		var doneN, okN int
 		defer func() {
 			if rec != nil {
 				_ = rec.Close()
 			}
 			close(ch)
+			zap.L().Info("web exec batch finished",
+				zap.Int("hosts", recordJobCount),
+				zap.Int("done", doneN),
+				zap.Int("ok", okN),
+				zap.Int("failed", doneN-okN),
+				zap.Bool("cancelled", ctx.Err() != nil),
+				zap.Duration("elapsed", time.Since(execStart)))
 		}()
+
+		// emit records, counts (for the finished-log) and forwards one host result.
+		emit := func(res HostExecResult) {
+			if rec != nil {
+				rec.RecordHostExecResult(res)
+			}
+			doneN++
+			if res.Success {
+				okN++
+			}
+			ch <- res
+		}
 
 		if req.IsScript {
 			for _, res := range unconnectable {
-				if rec != nil {
-					rec.RecordHostExecResult(res)
-				}
-				ch <- res
+				emit(res)
 			}
 			if len(jobs) == 0 {
 				return
@@ -155,10 +178,7 @@ func (r *CommandRunner) Execute(ctx context.Context, req CommandRunRequest) (<-c
 			}()
 
 			for res := range inner {
-				if rec != nil {
-					rec.RecordHostExecResult(res)
-				}
-				ch <- res
+				emit(res)
 			}
 			if metrics.ObserverEnabled(r.opts.Metrics) {
 				r.opts.Metrics.ObserveExecCommand("ok", recordJobCount, time.Since(execStart))
@@ -178,10 +198,7 @@ func (r *CommandRunner) Execute(ctx context.Context, req CommandRunRequest) (<-c
 		}()
 
 		for res := range inner {
-			if rec != nil {
-				rec.RecordHostExecResult(res)
-			}
-			ch <- res
+			emit(res)
 		}
 		if metrics.ObserverEnabled(r.opts.Metrics) {
 			r.opts.Metrics.ObserveExecCommand("ok", recordJobCount, time.Since(execStart))
