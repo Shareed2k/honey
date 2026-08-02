@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	maxWebExecRecords   = 200
 	maxWebExecCommand   = 8192
 	maxWebExecScript    = 64 << 10
 	maxWebExecArgs      = 64
@@ -276,9 +275,6 @@ func (s *Server) validateExecRequest(body ExecRequest) (string, error) {
 	if len(body.Records) == 0 {
 		return "", fmt.Errorf("no hosts selected")
 	}
-	if len(body.Records) > maxWebExecRecords {
-		return "", fmt.Errorf("too many hosts (max %d)", maxWebExecRecords)
-	}
 	return mode, nil
 }
 
@@ -514,10 +510,6 @@ func (api *RecipesAPI) handleCueExec(w http.ResponseWriter, r *http.Request) {
 
 	if len(body.Records) == 0 {
 		httpError(w, fmt.Errorf("no hosts selected"), http.StatusBadRequest)
-		return
-	}
-	if len(body.Records) > maxWebExecRecords {
-		httpError(w, fmt.Errorf("too many hosts (max %d)", maxWebExecRecords), http.StatusBadRequest)
 		return
 	}
 	jobs := filterConnectableRecords(body.Records)
