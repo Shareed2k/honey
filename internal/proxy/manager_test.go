@@ -17,11 +17,16 @@ func TestManager_StartListStop(t *testing.T) {
 	mgr := NewManager(nil)
 
 	app := apps.AppConfig{
-		Name:      "test-http",
-		Type:      apps.AppTypeHTTP,
-		Target:    "localhost",
-		Upstream:  "example.com:80",
-		LocalPort: 28080,
+		Name:     "test-http",
+		Type:     apps.AppTypeHTTP,
+		Target:   "localhost",
+		Upstream: "example.com:80",
+		// LocalPort 0 = dynamic web-proxy mode: StartHTTPProxy binds no local
+		// listener (see http.go "if app.LocalPort > 0"), so this test exercises the
+		// Manager session lifecycle deterministically. A hardcoded port raced the
+		// 100ms bind heuristic and collided with whatever already held it on a CI
+		// runner — the source of the TestManager_StartListStop flake.
+		LocalPort: 0,
 	}
 
 	dialer := DirectDialer{}
@@ -63,11 +68,14 @@ func TestManager_Expired(t *testing.T) {
 
 	mgr := NewManager(nil)
 	app := apps.AppConfig{
-		Name:      "test-tcp",
-		Type:      apps.AppTypeTCP,
-		Target:    "localhost",
-		Upstream:  "example.com:80",
-		LocalPort: 25432,
+		Name:     "test-tcp",
+		Type:     apps.AppTypeTCP,
+		Target:   "localhost",
+		Upstream: "example.com:80",
+		// LocalPort 0 lets StartTCPProxy bind an OS-assigned ephemeral port
+		// (net.Listen "127.0.0.1:0") instead of a hardcoded one that could be in
+		// use on a CI runner — same fixed-port flake class as StartListStop.
+		LocalPort: 0,
 		TTL:       time.Millisecond * 10,
 	}
 
