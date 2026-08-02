@@ -137,8 +137,13 @@ func StreamCommandParallel(ctx context.Context, user string, jobs []TargetContex
 	}
 
 	cache := opts.Cache
-	// Callers that don't manage their own cache (e.g. the web exec handlers) pass
-	// a nil cache and rely on Reg to dial. Build a short-lived cache for this run.
+	// A nil caller cache means this is a one-shot batch (e.g. the web exec
+	// handlers): each host runs exactly once, so its connection is not reused and
+	// should be closed right after — otherwise the short-lived cache holds one
+	// open socket per host for the whole run and a large exec exhausts the FD
+	// limit (macOS default 256), stalling silently at ~236/N. A caller-supplied
+	// cache (recipes reusing a connection across steps) is left untouched.
+	ephemeral := opts.Cache == nil
 	if cache == nil {
 		cache = NewClientCache()
 		cache.SetRegistry(opts.Reg)
@@ -177,6 +182,11 @@ func StreamCommandParallel(ctx context.Context, user string, jobs []TargetContex
 			opts.Post(ctx, tc, &res)
 		}
 		out <- res
+		// One-shot batch: close this host's connection now so the number of open
+		// sockets stays bounded by the concurrency limit, not the host count.
+		if ephemeral {
+			cache.Evict(effUser, tc.Record)
+		}
 	})
 	return nil
 }
