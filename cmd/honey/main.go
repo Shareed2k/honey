@@ -17,6 +17,7 @@ var (
 )
 
 func main() {
+	raiseFDLimit() // avoid FD exhaustion on large parallel exec (macOS default is 256)
 	cli.InitBuildInfo(version, commit, date)
 	transferagent.SetEmbeddedHoneyVersion(version)
 	if err := cli.Execute(); err != nil {
