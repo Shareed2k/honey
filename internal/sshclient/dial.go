@@ -623,10 +623,6 @@ func (h *HoneyClient) RunContext(ctx context.Context, cmd string) ([]byte, error
 	if h.Client == nil || h.Client.Client == nil {
 		return nil, fmt.Errorf("ssh client is not connected")
 	}
-	sess, err := h.NewSession()
-	if err != nil {
-		return nil, err
-	}
 
 	type result struct {
 		out []byte
@@ -634,16 +630,32 @@ func (h *HoneyClient) RunContext(ctx context.Context, cmd string) ([]byte, error
 	}
 	ch := make(chan result, 1)
 	go func() {
+		// NewSession itself can block indefinitely on a half-open connection (a
+		// channel-open request that never gets a reply — common when a NAT or
+		// firewall silently drops an idle cached connection), so it must run
+		// inside the ctx guard too, not before the select below. Otherwise a
+		// single stuck host wedges its worker forever and, via wg.Wait, the whole
+		// batch — with no timeout ever firing.
+		sess, err := h.NewSession()
+		if err != nil {
+			ch <- result{err: err}
+			return
+		}
 		out, runErr := sess.CombinedOutput(cmd)
+		_ = sess.Close()
 		ch <- result{out: out, err: runErr}
 	}()
 
 	select {
 	case <-ctx.Done():
-		_ = sess.Close() // unblocks CombinedOutput
+		// Best-effort unblock: closing the leaf connection aborts a hung
+		// NewSession/CombinedOutput so the goroutine above returns instead of
+		// leaking. The caller (batch exec) evicts this client from the cache.
+		if leaf := h.LeafSSH(); leaf != nil {
+			_ = leaf.Close()
+		}
 		return nil, ctx.Err()
 	case r := <-ch:
-		_ = sess.Close()
 		return r.out, r.err
 	}
 }
