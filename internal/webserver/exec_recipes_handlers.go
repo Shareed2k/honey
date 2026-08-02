@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
@@ -73,16 +75,32 @@ type ExecResponse struct {
 	Results []engine.HostExecResult `json:"results"`
 }
 
+// defaultWebExecTimeout bounds each per-host web-exec command when neither the
+// request nor defaults.exec_timeout provides a valid one. A finite default
+// (instead of 0 = unbounded) stops a single hung host from holding a worker slot
+// forever — at scale that stalls the whole batch with no timeout ever firing.
+// Override with a larger defaults.exec_timeout for legitimately long commands.
+const defaultWebExecTimeout = 10 * time.Minute
+
 // resolveCmdTimeout resolves the per-host command timeout: the request value
-// (duration string) if valid, else the config default, else 0 (no timeout).
+// (a Go duration string) if valid, else defaults.exec_timeout, else a finite
+// default. A non-empty but INVALID request value (e.g. a typo'd "4os") is warned
+// about rather than silently collapsing to "no timeout".
 func resolveCmdTimeout(cfg *config.File, reqTimeout string) time.Duration {
-	if d, err := time.ParseDuration(strings.TrimSpace(reqTimeout)); err == nil && d > 0 {
-		return d
+	if s := strings.TrimSpace(reqTimeout); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			return d
+		}
+		zap.L().Warn("ignoring invalid exec timeout; using server default",
+			zap.String("timeout", s),
+			zap.String("hint", "use a Go duration like 30s, 2m, 90s"))
 	}
 	if cfg != nil {
-		return cfg.Defaults.ExecTimeoutDuration()
+		if d := cfg.Defaults.ExecTimeoutDuration(); d > 0 {
+			return d
+		}
 	}
-	return 0
+	return defaultWebExecTimeout
 }
 
 // CueExecRequest is the JSON body for POST /api/v1/cue-exec.

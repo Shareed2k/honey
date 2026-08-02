@@ -198,6 +198,9 @@ export function SearchTab() {
   const [removeTmpFile, setRemoveTmpFile] = useState(true);
   const [execRunAs, setExecRunAs] = useState('');
   const [execTimeout, setExecTimeout] = useState('');
+  // execTotal = hosts submitted this run; execResults grows as NDJSON results
+  // stream in, so execResults.length / execTotal is the live "done / total".
+  const [execTotal, setExecTotal] = useState(0);
   const execAbortRef = useRef<AbortController | null>(null);
 
   // Saved exec snippets (server-side, pluggable storage).
@@ -430,6 +433,7 @@ export function SearchTab() {
     setExecBusy(true);
     setExecErr(null);
     setExecResults([]);
+    setExecTotal(selectedRecords.length);
     try {
       const req: ExecOnHostsBody = {
         ssh_user: sshUser.trim(),
@@ -842,6 +846,27 @@ export function SearchTab() {
               Stop
             </Button>
           )}
+          {(execBusy || (execResults?.length ?? 0) > 0) && (() => {
+            const done = execResults?.length ?? 0;
+            const okN = execResults?.reduce((n, r) => n + (r.Success ? 1 : 0), 0) ?? 0;
+            const total = execTotal || done;
+            const pct = total ? Math.round((done / total) * 100) : 0;
+            return (
+              <Space size={6} style={{ marginLeft: 8 }}>
+                <Progress
+                  percent={pct}
+                  showInfo={false}
+                  status={execBusy ? 'active' : done < total ? 'exception' : 'success'}
+                  style={{ width: 140 }}
+                />
+                <Typography.Text strong style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {done} / {total}
+                </Typography.Text>
+                {okN > 0 && <Tag color="green" style={{ marginInlineEnd: 0 }}>{okN} ok</Tag>}
+                {done - okN > 0 && <Tag color="red" style={{ marginInlineEnd: 0 }}>{done - okN} fail</Tag>}
+              </Space>
+            );
+          })()}
           <Button onClick={clearExecOutput}>Clear results</Button>
         </Space>
         <Modal maskClosable={false}           title="Save snippet"
