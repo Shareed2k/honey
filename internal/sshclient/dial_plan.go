@@ -9,6 +9,17 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// sshHandshakeTimeout bounds the SSH handshake (banner, key exchange, and auth)
+// so a host that accepts TCP but never drives the protocol forward can't wedge a
+// dialer forever. It is deliberately much larger than goph.DefaultTimeout (the
+// TCP-connect bound): the handshake+auth legitimately takes longer than the TCP
+// connect — a slow sshd banner, key exchange over a high-latency link, or the
+// agent/key auth round-trips — so reusing the 20s connect timeout tripped on
+// slow-but-working hosts (a random "read tcp ...:22: i/o timeout"). This value
+// only needs to be generous enough to never fire on a working host while still
+// capping a truly stuck handshake.
+const sshHandshakeTimeout = 60 * time.Second
+
 // hopPlan is one resolved node in a dial chain: the address to dial plus the
 // host's SSH config (used for the per-hop user and host-key callback). The
 // config is resolved exactly once and reused for both auth-identity collection
@@ -90,17 +101,19 @@ func resolveDialPlan(resolve hostConfigResolver, userOverride, hostAlias string,
 	}, nil
 }
 
-// finishSSHHandshake bounds the SSH handshake with cfg.Timeout and returns the
-// client. crypto/ssh's Dial applies ClientConfig.Timeout ONLY to the TCP connect
-// (net.DialTimeout); the handshake that follows — banner exchange, key exchange,
-// auth, and the host-key callback — runs with NO deadline. So a host that
-// accepts the TCP connection but never drives the SSH handshake to completion
-// (an overloaded sshd, MaxStartups throttling, a silent middlebox, a half-open
-// cached path) blocks the caller forever. In a bounded parallel exec that is
-// enough to wedge one worker and, through the pool's wg.Wait, stall the whole
-// batch at ~N/M with no error and no timeout ever surfacing. Setting a deadline
-// across NewClientConn — then clearing it on success so it never fires on the
-// live session — makes a stuck handshake fail fast instead.
+// finishSSHHandshake bounds the SSH handshake with sshHandshakeTimeout and
+// returns the client. crypto/ssh's Dial applies ClientConfig.Timeout ONLY to the
+// TCP connect (net.DialTimeout); the handshake that follows — banner exchange,
+// key exchange, auth, and the host-key callback — runs with NO deadline. So a
+// host that accepts the TCP connection but never drives the SSH handshake to
+// completion (an overloaded sshd, MaxStartups throttling, a silent middlebox, a
+// half-open cached path) blocks the caller forever. In a bounded parallel exec
+// that is enough to wedge one worker and, through the pool's wg.Wait, stall the
+// whole batch at ~N/M with no error and no timeout ever surfacing. Setting a
+// deadline across NewClientConn — then clearing it on success so it never fires
+// on the live session — makes a stuck handshake fail fast instead. The bound is
+// sshHandshakeTimeout (generous), NOT the 20s TCP-connect timeout, which was too
+// tight and tripped randomly on slow-but-working hosts.
 //
 // The deadline is best-effort: a raw TCP conn honours it, but an SSH-channel
 // conn (a ProxyJump hop) does not support deadlines and returns an error from
@@ -108,10 +121,8 @@ func resolveDialPlan(resolve hostConfigResolver, userOverride, hostAlias string,
 // liveness — rather than failing the dial.
 func finishSSHHandshake(conn net.Conn, addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
 	deadlined := false
-	if cfg.Timeout > 0 {
-		if err := conn.SetDeadline(time.Now().Add(cfg.Timeout)); err == nil {
-			deadlined = true
-		}
+	if err := conn.SetDeadline(time.Now().Add(sshHandshakeTimeout)); err == nil {
+		deadlined = true
 	}
 	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
