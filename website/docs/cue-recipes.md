@@ -8,6 +8,8 @@ Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each 
 
 Use **`honey cue-validate`** to check a file, **`honey cue-exec`** to dry-run or execute (same host resolution as `honey search`). From the search TUI, press **r** (append `!` to the path to execute). The [Web UI](./web-ui.md) Recipes tab runs the same engine.
 
+> Making runs faster (graph mode, `max_parallel`, `share_key`, warm/WASM plugins): see [Recipe & plugin performance](./recipe-performance.md).
+
 **Example recipes:** [`examples/recipe/`](https://github.com/shareed2k/honey/tree/main/examples/recipe) on GitHub (see that folder’s README for a full file index).
 
 ## Quick start

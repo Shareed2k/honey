@@ -34,6 +34,7 @@ type CueRecipeRunParams struct {
 	Enforcer       *policy.Enforcer // optional OPA host-filter gate; nil = allow all
 	Inventory      config.Inventory // config inventory; resolved per-host into OPA host_vars
 	CmdTimeout     time.Duration    // per-host command timeout; 0 = none
+	MaxParallel    int              // config default host fan-out (1-128); 0 = per-step defaults
 }
 
 // CueRun ...

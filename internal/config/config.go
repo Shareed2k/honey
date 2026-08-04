@@ -165,6 +165,29 @@ func (d Defaults) ExecTimeoutDuration() time.Duration {
 	return dur
 }
 
+// MaxParallelValue returns the configured default host fan-out clamped to the
+// recipe-valid range [1,128]; 0 (or out-of-range low) means "unset — use the
+// per-step defaults".
+func (d Defaults) MaxParallelValue() int {
+	n := d.MaxParallel
+	if n <= 0 {
+		return 0
+	}
+	if n > 128 {
+		return 128
+	}
+	return n
+}
+
+// DefaultMaxParallel is a nil-safe accessor for the config-level host fan-out
+// default (0 when the config or value is unset).
+func (f *File) DefaultMaxParallel() int {
+	if f == nil {
+		return 0
+	}
+	return f.Defaults.MaxParallelValue()
+}
+
 // Defaults apply when CLI flags are unset.
 type Defaults struct {
 	SSHUser         string         `yaml:"ssh_user" json:"ssh_user" honey:"label=SSH user" mod:"trim"`
@@ -175,6 +198,7 @@ type Defaults struct {
 	RecordDir       string         `yaml:"record_dir" json:"record_dir" honey:"label=Session recordings directory" mod:"trim"`
 	RecordRetention string         `yaml:"record_retention" json:"record_retention" honey:"label=Auto-delete recordings older than this (e.g. 720h, 30d); empty disables" mod:"trim"`
 	ExecTimeout     string         `yaml:"exec_timeout" json:"exec_timeout" honey:"label=Per-host command timeout (e.g. 30s, 5m); empty disables" mod:"trim"`
+	MaxParallel     int            `yaml:"max_parallel" json:"max_parallel" honey:"label=Default host fan-out for recipe steps (1-128); 0 uses per-step defaults"`
 	Output          string         `yaml:"output" json:"output" honey:"label=Output;enum=table|json|tui;enum_as_warning" mod:"trim"` // e.g. "table", "json", "tui" (default)
 	Name            string         `yaml:"name" json:"name" honey:"label=Name filter" mod:"trim"`
 	NameRegex       string         `yaml:"name_regex" json:"name_regex" honey:"label=Name regex" mod:"trim"`

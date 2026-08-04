@@ -17,6 +17,7 @@ const sidebars = {
     'authorization',
     'command-risk',
     'cue-recipes',
+    'recipe-performance',
     'plugins',
     'vulnerability-management',
     'plugins-development',
