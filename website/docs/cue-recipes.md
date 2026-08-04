@@ -549,7 +549,7 @@ Example with a hold step so the tunnel stays up while you debug: [`tunnel_local_
 | `protocol` | `udp` (with `mode: "udp"`) |
 | `remote_socat` | Required `true` for UDP mode (bootstraps `socat` on the remote) |
 | `remote_socket` | Remote unix socket path for `mode: "unix"` (absolute, e.g. `/var/run/postgresql/.s.PGSQL.5432`) |
-| `local_socket` | Optional operator unix socket path for `mode: "unix"` (absolute; auto temp path if omitted) |
+| `local_socket` | Optional operator unix socket path for `mode: "unix"` (absolute; auto temp path if omitted). Mutually exclusive with `local_port` — set `local_port` instead to expose a TCP listener for TCP-only clients (docker plugins, pgx/JDBC) |
 | `tun_local` / `tun_remote` | Tun interface ids for `mode: "tun"` |
 
 **Provider dispatch:** k8s pod targets → Kubernetes port-forward; TrueNAS API-shell hosts → TrueNAS tunnel backend; everything else → SSH.
@@ -585,7 +585,13 @@ honey cue-exec --execute --ssh-user postgres \
 psql -h /tmp/honey-pgsock-XXXX -U postgres -c "select current_user"   # -> postgres, no password
 ```
 
-The local socket is auto-named `.s.PGSQL.5432` in a private temp dir (so `psql -h <dir>` uses it), or set `local_socket` for a fixed path. Requires remote sshd `AllowStreamLocalForwarding` (OpenSSH default). Over the mesh the `unix:<path>` target is **OPA-gated** (`action: "tunnel"`, `target.scheme: "unix"`) so a policy can restrict which server-side sockets are reachable. This is the forward primitive only — honey's postgres plugin dials the operator-side TCP endpoint and cannot use `peer` over this tunnel. Example: [`postgres_peer_unix_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_peer_unix_tunnel.cue).
+The local socket is auto-named `.s.PGSQL.5432` in a private temp dir (so `psql -h <dir>` uses it), or set `local_socket` for a fixed path. Requires remote sshd `AllowStreamLocalForwarding` (OpenSSH default). Over the mesh the `unix:<path>` target is **OPA-gated** (`action: "tunnel"`, `target.scheme: "unix"`) so a policy can restrict which server-side sockets are reachable. Example: [`postgres_peer_unix_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_peer_unix_tunnel.cue).
+
+**TCP variant — `mode: "unix"` + `local_port`.** Set `local_port` (instead of `local_socket`) and the operator side listens on a **local TCP port** that forwards to the remote unix socket over the same `direct-streamlocal` channel. This lets **TCP-only clients reach a unix-socket-only Postgres** — notably the pghero/postgres docker plugins (which dial `host.docker.internal:<local_port>`), or any pgx/JDBC app. `local_port` and `local_socket` are mutually exclusive. The remote Postgres still sees a **unix-socket** connection, so its pg_hba `local` rules apply: `local scram/md5` → password in the DSN; `local peer` + `--ssh-user postgres` → passwordless (DSN password ignored). Example: [`pghero_unix_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/pghero_unix_tunnel.cue).
+
+```cue
+tunnel: { mode: "unix", remote_socket: "/var/run/postgresql/.s.PGSQL.5432", local_port: 15432 }
+```
 
 **SOCKS5 (many internal hosts)** — see [Jump host → many internal services (SOCKS)](#jump-host--many-internal-services-socks) below.
 
