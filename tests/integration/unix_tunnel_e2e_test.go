@@ -48,15 +48,21 @@ func TestUnixSocketTunnel_E2E(t *testing.T) {
 	const remoteSock = "/tmp/honey-e2e-echo.sock"
 	_, _ = runSSH(client, "rm -f "+remoteSock) // clear any stale socket from a prior run
 
-	// A unix-socket echo server inside the container, held open for the test by
-	// a dedicated session; closing the session (cleanup) tears socat down.
+	// On each connection the server writes a fixed banner and exits — a one-way
+	// proof that data flows back through the direct-streamlocal channel. This is
+	// deliberately NOT a bidirectional `cat` echo: under a real OpenSSH sshd,
+	// cat's pipe buffering never flushed and the connection reset before any
+	// bytes came back. A write-then-exit banner flushes on child exit, so the
+	// client reliably reads it. Held open by a dedicated session; closing it
+	// (cleanup) tears socat down.
+	const banner = "ready-over-streamlocal"
 	echoSess, err := client.NewSession()
 	if err != nil {
-		t.Fatalf("new echo session: %v", err)
+		t.Fatalf("new banner session: %v", err)
 	}
 	t.Cleanup(func() { _ = echoSess.Close() })
 	go func() {
-		_ = echoSess.Run(fmt.Sprintf("socat UNIX-LISTEN:%s,fork EXEC:/bin/cat", remoteSock))
+		_ = echoSess.Run(fmt.Sprintf("socat UNIX-LISTEN:%s,fork EXEC:'/bin/echo %s'", remoteSock, banner))
 	}()
 	waitForRemoteSocket(t, client, remoteSock, 20*time.Second)
 
@@ -83,20 +89,17 @@ func TestUnixSocketTunnel_E2E(t *testing.T) {
 	}
 	defer func() { _ = c.Close() }()
 
-	want := []byte("ping-over-real-sshd\n")
-	if _, err := c.Write(want); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	// The server writes the banner and closes, so read to EOF.
 	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
-	got := make([]byte, len(want))
-	if _, err := io.ReadFull(c, got); err != nil {
-		t.Fatalf("read echo through real sshd streamlocal: %v", err)
+	got, err := io.ReadAll(c)
+	if err != nil {
+		t.Fatalf("read banner through real sshd streamlocal: %v", err)
 	}
-	if string(got) != string(want) {
-		t.Fatalf("round trip mismatch: got %q, want %q", got, want)
+	if !strings.Contains(string(got), banner) {
+		t.Fatalf("banner through streamlocal: got %q, want to contain %q", got, banner)
 	}
 
-	// Round-trip proves the tunnel is up; stop() must then remove the local
+	// The round-trip proves the tunnel is up; stop() must then remove the local
 	// socket file (cleanup also calls it, which is idempotent).
 	stop()
 	if _, statErr := os.Stat(local); !os.IsNotExist(statErr) {
