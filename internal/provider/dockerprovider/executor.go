@@ -776,3 +776,8 @@ func (c *DockerNativeClient) StartUDPRelay(_ context.Context, _ string, _ int, _
 func (c *DockerNativeClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
 	return "", nil, fmt.Errorf("tunneling not supported on this transport")
 }
+
+// StartLocalSocketForward starts a local unix-socket forward.
+func (c *DockerNativeClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
+	return "", nil, fmt.Errorf("unix socket forward not supported by docker backend")
+}

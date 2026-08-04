@@ -49,6 +49,10 @@ func (fakeHostClient) StartUDPRelay(context.Context, string, int, string, int, b
 func (fakeHostClient) StartTunForward(context.Context, string, string, int, int, int) (string, func(), error) {
 	return "", nil, nil
 }
+
+func (fakeHostClient) StartLocalSocketForward(context.Context, string, string) (string, func(), error) {
+	return "", nil, nil
+}
 func (fakeHostClient) Close() error { return nil }
 
 // TestHybridQEMUClient_LeafSSH_NonHoneyClient proves LeafSSH() returns nil

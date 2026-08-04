@@ -40,6 +40,10 @@ type HostClient interface {
 	StartDynamicForward(ctx context.Context, bind string, localPort int) (host string, port int, stop func(), err error)
 	StartUDPRelay(ctx context.Context, bind string, localPort int, remoteHost string, remotePort int, useSocat bool) (host string, port int, stop func(), err error)
 	StartTunForward(ctx context.Context, user string, alias string, sshPort int, tunLocal, tunRemote int) (tunName string, stop func(), err error)
+	// StartLocalSocketForward listens on a local unix socket and forwards each
+	// connection to a remote unix socket over the transport (OpenSSH
+	// direct-streamlocal). Enables e.g. postgres peer auth over a tunnel.
+	StartLocalSocketForward(ctx context.Context, localSocket, remoteSocket string) (localPath string, stop func(), err error)
 
 	Close() error
 }

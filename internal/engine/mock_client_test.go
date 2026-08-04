@@ -77,6 +77,10 @@ func (m *MockHostClient) StartTunForward(_ context.Context, _ string, _ string, 
 	return "", nil, nil
 }
 
+func (m *MockHostClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
+	return "", nil, nil
+}
+
 // MockRegistry and MockExecutor for testing
 
 type MockExecutor struct {

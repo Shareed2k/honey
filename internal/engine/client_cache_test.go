@@ -158,3 +158,7 @@ func (f *FakeHostClient) StartUDPRelay(_ context.Context, _ string, _ int, _ str
 func (f *FakeHostClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
 	return "", nil, fmt.Errorf("tunneling not supported on this transport")
 }
+
+func (f *FakeHostClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
+	return "", nil, nil
+}
