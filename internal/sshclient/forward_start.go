@@ -490,8 +490,10 @@ func bridgeConns(a, b net.Conn) {
 }
 
 func closeWrite(c net.Conn) error {
-	if tc, ok := c.(*net.TCPConn); ok {
-		return tc.CloseWrite()
+	// *net.TCPConn, *net.UnixConn, and ssh.Channel (via chanConn) all expose
+	// CloseWrite; half-closing propagates EOF so the peer's io.Copy can finish.
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
 	}
 	return nil
 }

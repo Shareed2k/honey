@@ -159,6 +159,19 @@ func (e *sshFallbackExecutor) DialUpstream(_ context.Context, user string, r hos
 		_ = hc.Close()
 		return nil, fmt.Errorf("ssh leaf client unavailable")
 	}
+	pt, err := hostexec.ParseTunnelTarget(address)
+	if err != nil {
+		_ = hc.Close()
+		return nil, fmt.Errorf("tunnel target: %w", err)
+	}
+	if pt.Scheme == hostexec.TunnelUnix {
+		conn, derr := sshclient.DialStreamLocal(leaf, pt.Socket)
+		if derr != nil {
+			_ = hc.Close()
+			return nil, fmt.Errorf("ssh streamlocal dial %s: %w", pt.Socket, derr)
+		}
+		return &sshDialConn{Conn: conn, closer: hc}, nil
+	}
 	conn, err := leaf.Dial("tcp", address)
 	if err != nil {
 		_ = hc.Close()

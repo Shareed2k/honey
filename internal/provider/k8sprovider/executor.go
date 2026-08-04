@@ -473,6 +473,9 @@ func (k *K8sPodExecutor) RunTunnel(ctx context.Context, _ string, r hosts.Record
 
 // DialUpstream connects to a port inside the pod via k8s port-forward.
 func (k *K8sPodExecutor) DialUpstream(_ context.Context, _ string, r hosts.Record, address string) (net.Conn, error) {
+	if pt, perr := hostexec.ParseTunnelTarget(address); perr == nil && pt.Scheme == hostexec.TunnelUnix {
+		return nil, fmt.Errorf("unix socket target not supported by kubernetes backend")
+	}
 	namespace := r.Meta["namespace"]
 	podName := r.Meta["pod_name"]
 
@@ -576,4 +579,9 @@ func (c *K8sNativeClient) StartUDPRelay(_ context.Context, _ string, _ int, _ st
 // StartTunForward starts a TUN forward.
 func (c *K8sNativeClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
 	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartLocalSocketForward starts a local unix-socket forward.
+func (c *K8sNativeClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
+	return "", nil, fmt.Errorf("unix socket forward not supported by kubernetes backend")
 }

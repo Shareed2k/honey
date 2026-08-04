@@ -143,6 +143,9 @@ func (e *DockerExecutor) RunTunnel(context.Context, string, hosts.Record, string
 
 // DialUpstream connects to a port inside the container via nc/socat.
 func (e *DockerExecutor) DialUpstream(_ context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+	if pt, perr := hostexec.ParseTunnelTarget(address); perr == nil && pt.Scheme == hostexec.TunnelUnix {
+		return nil, fmt.Errorf("unix socket target not supported by docker backend")
+	}
 	c, err := e.Dial(user, r)
 	if err != nil {
 		return nil, err
@@ -775,4 +778,9 @@ func (c *DockerNativeClient) StartUDPRelay(_ context.Context, _ string, _ int, _
 // StartTunForward starts a TUN forward.
 func (c *DockerNativeClient) StartTunForward(_ context.Context, _ string, _ string, _ int, _, _ int) (tunName string, stop func(), err error) {
 	return "", nil, fmt.Errorf("tunneling not supported on this transport")
+}
+
+// StartLocalSocketForward starts a local unix-socket forward.
+func (c *DockerNativeClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
+	return "", nil, fmt.Errorf("unix socket forward not supported by docker backend")
 }

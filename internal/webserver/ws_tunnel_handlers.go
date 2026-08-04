@@ -2,11 +2,13 @@ package webserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/gorilla/websocket"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"go.uber.org/zap"
 )
@@ -58,6 +60,13 @@ func (a *ForwardingAPI) handleWebTunnel(w http.ResponseWriter, r *http.Request) 
 	target := strings.TrimSpace(hello.Target)
 	if target == "" {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"missing target address"}`))
+		return
+	}
+
+	// Target is caller-controlled; a "unix:<path>" target can reach any
+	// server-side unix socket (SSRF-shaped), so gate it before dialing.
+	if err := a.gateTunnel(r, target); err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
 		return
 	}
 
@@ -122,4 +131,42 @@ func (a *ForwardingAPI) handleWebTunnel(w http.ResponseWriter, r *http.Request) 
 	}()
 
 	<-errc
+}
+
+// gateTunnel asks OPA whether the actor may have the server dial target on
+// their behalf (action "tunnel"). A nil enforcer always allows (parity with
+// gateUDPRelay). Unlike the endpoint-level authMiddleware (which sees only the
+// path), this passes the caller-controlled target — including a "unix:<path>"
+// scheme that can reach any server-side unix socket — so a policy can restrict
+// scheme and destination. Fails closed on evaluation error.
+func (a *ForwardingAPI) gateTunnel(r *http.Request, target string) error {
+	if a.opts.Enforcer == nil {
+		return nil
+	}
+	pt, err := hostexec.ParseTunnelTarget(target)
+	if err != nil {
+		return fmt.Errorf("tunnel target: %w", err)
+	}
+	scheme := "tcp"
+	if pt.Scheme == hostexec.TunnelUnix {
+		scheme = "unix"
+	}
+	actor := userFromRequest(r, a.opts.TrustedProxyNets, a.opts.JWTPubKey)
+	d, err := a.opts.Enforcer.Evaluate(r.Context(), map[string]any{
+		"action": "tunnel",
+		"actor":  actor,
+		"target": map[string]any{
+			"scheme": scheme,
+			"dest":   pt.Dest,
+			"host":   pt.Host,
+			"port":   pt.Port,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("policy: %w", err)
+	}
+	if !d.Allow {
+		return fmt.Errorf("%s", reasonOrForbidden(d.DenyReason))
+	}
+	return nil
 }

@@ -698,6 +698,17 @@ func (h *HoneyClient) StartTunForward(ctx context.Context, user string, alias st
 	return StartTunForward(ctx, user, alias, sshPort, tunLocal, tunRemote)
 }
 
+// StartLocalSocketForward starts a local unix-socket forward to a remote unix
+// socket over direct-streamlocal.
+func (h *HoneyClient) StartLocalSocketForward(ctx context.Context, localSocket, remoteSocket string) (localPath string, stop func(), err error) {
+	if leaf := h.LeafSSH(); leaf != nil {
+		return StartLocalSocketForward(ctx, leaf, localSocket, remoteSocket)
+	}
+	return "", nil, fmt.Errorf("StartLocalSocketForward requires an active SSH client")
+}
+
+var _ hostexec.HostClient = (*HoneyClient)(nil)
+
 func expandSSHPath(p string) (string, error) {
 	p = strings.TrimSpace(p)
 	p = strings.Trim(p, `"`)

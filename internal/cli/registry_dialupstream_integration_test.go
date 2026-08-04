@@ -32,6 +32,15 @@ type directTcpipExtraData struct {
 	OriginPort uint32
 }
 
+// directStreamLocalExtraData mirrors OpenSSH's direct-streamlocal@openssh.com
+// channel-open payload: a unix socket path plus two reserved fields. Field
+// order (not names) matters for ssh.Unmarshal.
+type directStreamLocalExtraData struct {
+	SocketPath string
+	Reserved0  string
+	Reserved1  uint32
+}
+
 // startLoopbackSSHD starts an in-process SSH server on 127.0.0.1 that accepts
 // only authorizedKey and, for "direct-tcpip" channels, actually dials the
 // requested destination and relays bytes both ways — a real (if minimal)
@@ -107,27 +116,46 @@ func serveLoopbackSSHDConn(raw net.Conn, cfg *ssh.ServerConfig) {
 	go ssh.DiscardRequests(reqs)
 
 	for newCh := range chans {
-		if newCh.ChannelType() != "direct-tcpip" {
+		switch newCh.ChannelType() {
+		case "direct-tcpip":
+			var extra directTcpipExtraData
+			if err := ssh.Unmarshal(newCh.ExtraData(), &extra); err != nil {
+				_ = newCh.Reject(ssh.ConnectionFailed, "bad direct-tcpip payload")
+				continue
+			}
+			dst, err := net.DialTimeout("tcp", net.JoinHostPort(extra.DestAddr, strconv.Itoa(int(extra.DestPort))), 5*time.Second)
+			if err != nil {
+				_ = newCh.Reject(ssh.ConnectionFailed, "dial destination failed")
+				continue
+			}
+			ch, inReqs, err := newCh.Accept()
+			if err != nil {
+				_ = dst.Close()
+				continue
+			}
+			go ssh.DiscardRequests(inReqs)
+			go relay(ch, dst)
+		case "direct-streamlocal@openssh.com":
+			var extra directStreamLocalExtraData
+			if err := ssh.Unmarshal(newCh.ExtraData(), &extra); err != nil {
+				_ = newCh.Reject(ssh.ConnectionFailed, "bad direct-streamlocal payload")
+				continue
+			}
+			dst, err := net.DialTimeout("unix", extra.SocketPath, 5*time.Second)
+			if err != nil {
+				_ = newCh.Reject(ssh.ConnectionFailed, "dial socket failed")
+				continue
+			}
+			ch, inReqs, err := newCh.Accept()
+			if err != nil {
+				_ = dst.Close()
+				continue
+			}
+			go ssh.DiscardRequests(inReqs)
+			go relay(ch, dst)
+		default:
 			_ = newCh.Reject(ssh.UnknownChannelType, "unsupported")
-			continue
 		}
-		var extra directTcpipExtraData
-		if err := ssh.Unmarshal(newCh.ExtraData(), &extra); err != nil {
-			_ = newCh.Reject(ssh.ConnectionFailed, "bad direct-tcpip payload")
-			continue
-		}
-		dst, err := net.DialTimeout("tcp", net.JoinHostPort(extra.DestAddr, strconv.Itoa(int(extra.DestPort))), 5*time.Second)
-		if err != nil {
-			_ = newCh.Reject(ssh.ConnectionFailed, "dial destination failed")
-			continue
-		}
-		ch, inReqs, err := newCh.Accept()
-		if err != nil {
-			_ = dst.Close()
-			continue
-		}
-		go ssh.DiscardRequests(inReqs)
-		go relay(ch, dst)
 	}
 }
 
@@ -175,6 +203,42 @@ func startLoopbackEcho(t *testing.T) (addr string, stop func()) {
 	return ln.Addr().String(), func() {
 		_ = ln.Close()
 		<-done
+	}
+}
+
+// startLoopbackUnixEcho starts a unix-socket echo listener used as the
+// "upstream" target that DialUpstream's returned net.Conn should reach through
+// the SSH direct-streamlocal channel. A short /tmp base keeps the socket path
+// under the sun_path length limit.
+func startLoopbackUnixEcho(t *testing.T) (socketPath string, stop func()) {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "hpg")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	socketPath = filepath.Join(dir, "echo.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix echo: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				_, _ = io.Copy(c, c)
+			}(conn)
+		}
+	}()
+	return socketPath, func() {
+		_ = ln.Close()
+		<-done
+		_ = os.RemoveAll(dir)
 	}
 }
 
@@ -229,6 +293,58 @@ func TestSSHFallbackExecutor_DialUpstream_RoundTrip(t *testing.T) {
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 
 	want := []byte("ping-through-ssh-tunnel")
+	if _, err := conn.Write(want); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := make([]byte, len(want))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("round trip mismatch: got %q, want %q", got, want)
+	}
+}
+
+// TestSSHFallbackExecutor_DialUpstream_UnixRoundTrip proves the mesh unix path:
+// a "unix:<path>" target makes DialUpstream open a direct-streamlocal channel
+// on the leaf, reaching a unix-socket echo server that no TCP dial could hit.
+func TestSSHFallbackExecutor_DialUpstream_UnixRoundTrip(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("HONEY_SSH_OPENSSH_G", "0")
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		t.Fatalf("signer from client key: %v", err)
+	}
+	keyPath := filepath.Join(tmpHome, "id_rsa_test")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
+		t.Fatalf("write identity file: %v", err)
+	}
+
+	sshdPort, stopSSHD := startLoopbackSSHD(t, signer.PublicKey())
+	defer stopSSHD()
+
+	socketPath, stopEcho := startLoopbackUnixEcho(t)
+	defer stopEcho()
+
+	rec := hosts.Record{PrimaryIP: "127.0.0.1"}
+	rec = hosts.CloneWithMetaSSHPort(rec, sshdPort)
+	rec = hosts.CloneWithMetaSSHIdentityFile(rec, keyPath)
+
+	e := &sshFallbackExecutor{}
+	conn, err := e.DialUpstream(context.Background(), "honeytest", rec, "unix:"+socketPath)
+	if err != nil {
+		t.Fatalf("DialUpstream unix: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	want := []byte("ping-through-streamlocal")
 	if _, err := conn.Write(want); err != nil {
 		t.Fatalf("write: %v", err)
 	}

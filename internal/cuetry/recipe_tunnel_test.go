@@ -70,6 +70,40 @@ func TestValidateStepTunnel_udpWithSocatIsValid(t *testing.T) {
 	}
 }
 
+func TestValidateStepTunnel_unixMode(t *testing.T) {
+	t.Parallel()
+	vc := StepValidateCtx{Index: 0, Mode: ExecutionModeLinear}
+
+	ok := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
+		Tunnel:   &RecipeStepTunnel{Mode: "unix", RemoteSocket: "/var/run/postgresql/.s.PGSQL.5432"},
+	}).Validate(vc)
+	if ok != nil {
+		t.Fatalf("valid unix tunnel rejected: %v", ok)
+	}
+
+	if err := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
+		Tunnel:   &RecipeStepTunnel{Mode: "unix"},
+	}).Validate(vc); err == nil || !strings.Contains(err.Error(), "remote_socket") {
+		t.Fatalf("unix without remote_socket must fail: %v", err)
+	}
+
+	if err := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
+		Tunnel:   &RecipeStepTunnel{Mode: "unix", RemoteSocket: "run/pg.sock"},
+	}).Validate(vc); err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("relative remote_socket must fail: %v", err)
+	}
+
+	if err := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
+		Tunnel:   &RecipeStepTunnel{Mode: "unix", RemoteSocket: "/s.sock", RemotePort: 5432},
+	}).Validate(vc); err == nil || !strings.Contains(err.Error(), "tcp port fields") {
+		t.Fatalf("unix with remote_port must fail: %v", err)
+	}
+}
+
 func TestValidateRecipeTunnelRefs_unknownStep(t *testing.T) {
 	t.Parallel()
 	cfg, _ := json.Marshal(map[string]string{"tunnel_step": "missing"})

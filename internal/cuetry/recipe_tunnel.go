@@ -25,6 +25,8 @@ type RecipeStepTunnel struct {
 	TunLocal       int               `json:"tun_local,omitempty"`
 	TunRemote      int               `json:"tun_remote,omitempty"`
 	RemoteSocat    bool              `json:"remote_socat,omitempty"`
+	RemoteSocket   string            `json:"remote_socket,omitempty"`
+	LocalSocket    string            `json:"local_socket,omitempty"`
 }
 
 // EffectiveTunnelMode returns normalized tunnel mode (local, remote, dynamic, udp, tun).

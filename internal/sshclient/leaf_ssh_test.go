@@ -60,6 +60,10 @@ func (fakeNoLeafClient) StartUDPRelay(context.Context, string, int, string, int,
 func (fakeNoLeafClient) StartTunForward(context.Context, string, string, int, int, int) (string, func(), error) {
 	return "", nil, nil
 }
+
+func (fakeNoLeafClient) StartLocalSocketForward(context.Context, string, string) (string, func(), error) {
+	return "", nil, nil
+}
 func (fakeNoLeafClient) Close() error { return nil }
 
 // TestLeafSSHFromClient_HoneyClientNil pins existing behavior: a nil-leaf

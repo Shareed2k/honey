@@ -226,6 +226,42 @@ allow if {
 	}
 }
 
+func TestGateTunnel(t *testing.T) {
+	// Policy: deny every unix-socket target; allow only one tcp host.
+	const src = `package honey
+import rego.v1
+default allow := false
+allow if {
+	input.action == "tunnel"
+	input.target.scheme == "tcp"
+	input.target.host == "10.0.0.5"
+}`
+	enf, err := policy.NewFromSource(context.Background(), "tunnel.rego", src)
+	if err != nil {
+		t.Fatalf("NewFromSource: %v", err)
+	}
+	s := newTestServer(t, Options{Enforcer: enf})
+	req := httptest.NewRequest("GET", "/api/v1/ws/tunnel", nil)
+
+	if err := s.forwardingAPI.gateTunnel(req, "10.0.0.5:5432"); err != nil {
+		t.Fatalf("allowed tcp target should pass: %v", err)
+	}
+	if err := s.forwardingAPI.gateTunnel(req, "unix:/var/run/docker.sock"); err == nil {
+		t.Fatal("unix target must be denied by policy")
+	}
+	if err := s.forwardingAPI.gateTunnel(req, "1.2.3.4:5432"); err == nil {
+		t.Fatal("disallowed tcp target should be denied")
+	}
+}
+
+func TestGateTunnel_nilEnforcerAllows(t *testing.T) {
+	s := newTestServer(t, Options{})
+	req := httptest.NewRequest("GET", "/api/v1/ws/tunnel", nil)
+	if err := s.forwardingAPI.gateTunnel(req, "unix:/var/run/docker.sock"); err != nil {
+		t.Fatalf("nil enforcer must allow: %v", err)
+	}
+}
+
 func TestAuthMiddleware_OPAGate(t *testing.T) {
 	// Policy: allow api_request only for actor "alice".
 	const src = `package honey

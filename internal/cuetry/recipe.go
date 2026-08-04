@@ -157,6 +157,8 @@ const schemaSource = `
 		tun_local?: int
 		tun_remote?: int
 		remote_socat?: bool
+		remote_socket?: string
+		local_socket?: string
 	})
 	docker?: close({
 		socket?: string

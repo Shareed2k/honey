@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -102,6 +103,19 @@ func newLoopbackSSHClient(t *testing.T) (*ssh.Client, func()) {
 						go ssh.DiscardRequests(inReqs)
 						_, _ = io.Copy(io.Discard, ch)
 						_ = ch.Close()
+					case "direct-streamlocal@openssh.com":
+						// Echo one line back, so streamlocal forward tests can
+						// assert a full round-trip over the channel.
+						ch, inReqs, chErr := newCh.Accept()
+						if chErr != nil {
+							continue
+						}
+						go ssh.DiscardRequests(inReqs)
+						go func(ch ssh.Channel) {
+							line, _ := bufio.NewReader(ch).ReadString('\n')
+							_, _ = ch.Write([]byte("echo:" + line))
+							_ = ch.Close()
+						}(ch)
 					default:
 						_ = newCh.Reject(ssh.UnknownChannelType, "unsupported")
 					}
