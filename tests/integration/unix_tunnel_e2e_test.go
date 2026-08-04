@@ -71,6 +71,17 @@ func TestUnixSocketTunnel_E2E(t *testing.T) {
 	}()
 	waitForRemoteSocket(t, client, remoteSock, 20*time.Second)
 
+	// Primary proof: a REAL OpenSSH sshd accepts our direct-streamlocal
+	// channel-open and connects to the remote unix socket. This depends only on
+	// the channel reaching the live listener (waitForRemoteSocket confirmed
+	// socat is up) — not on how the far side relays data — so it is the robust
+	// core assertion of the feature.
+	directConn, derr := sshclient.DialStreamLocal(client, remoteSock)
+	if derr != nil {
+		t.Fatalf("direct-streamlocal channel-open to real sshd: %v", derr)
+	}
+	_ = directConn.Close()
+
 	// Operator-side local socket. A short /tmp base keeps the path under the
 	// sun_path length limit (macOS TMPDIR is far too long).
 	dir, err := os.MkdirTemp("/tmp", "hpg")
