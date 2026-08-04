@@ -5,20 +5,31 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
-	"github.com/shareed2k/honey/internal/sshclient"
 	"go.uber.org/zap"
 )
+
+// healthChecker is implemented by pooled clients that can cheaply self-probe
+// (the SSH client's keepalive). The cache only probes clients that implement it.
+type healthChecker interface{ Healthy() error }
+
+// clientHealthCheckInterval bounds how often a cached client is keepalive-probed
+// on reuse. Probing on every GetOrDial hit was a round-trip per host per step; a
+// connection that dies within the window is instead caught at use time (the
+// command's transient-error path evicts and re-dials). A var so tests can tune it.
+var clientHealthCheckInterval = 5 * time.Second
 
 // ClientCache maintains a pool of open HostClient connections for reuse across steps.
 // ClientCache ...
 type ClientCache struct {
-	mu      sync.Mutex
-	clients map[string]HostClient
-	leases  map[string]int
-	reg     hostexec.Registry
+	mu         sync.Mutex
+	clients    map[string]HostClient
+	leases     map[string]int
+	lastHealth map[string]time.Time // key -> last successful keepalive probe
+	reg        hostexec.Registry
 
 	hits         int64
 	misses       int64
@@ -55,8 +66,9 @@ func (c *ClientCache) Stats() CacheStats {
 // NewClientCache ...
 func NewClientCache() *ClientCache {
 	return &ClientCache{
-		clients: make(map[string]HostClient),
-		leases:  make(map[string]int),
+		clients:    make(map[string]HostClient),
+		leases:     make(map[string]int),
+		lastHealth: make(map[string]time.Time),
 	}
 }
 
@@ -137,28 +149,41 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 	c.mu.Unlock()
 
 	if exists {
-		// Health check if it's an SSH client
-		if hc, ok := client.(*sshclient.HoneyClient); ok {
-			// hc.Healthy() runs the same timeout-guarded keepalive the pool uses;
-			// a nil leaf reports healthy (nothing to probe).
-			if err := hc.Healthy(); err != nil {
-				zap.L().Warn(
-					"ssh client cache keepalive failed, discarding client",
-					zap.String("provider", r.Provider),
-					zap.String("host_name", r.Name),
-					zap.String("host_ip", r.PrimaryIP),
-					zap.String("user", user),
-					zap.Error(err),
-				)
+		// Keepalive-probe the connection on reuse, but at most once per
+		// clientHealthCheckInterval: probing on every hit was a round-trip per
+		// host per step. Within the window we skip and assume healthy — a
+		// connection that died meanwhile is caught when the command runs (the
+		// transient-error path evicts and re-dials).
+		if hc, ok := client.(healthChecker); ok {
+			c.mu.Lock()
+			fresh := time.Since(c.lastHealth[key]) < clientHealthCheckInterval
+			c.mu.Unlock()
 
-				// Remove from cache and close
-				c.mu.Lock()
-				delete(c.clients, key)
-				c.mu.Unlock()
-				_ = client.Close()
+			if !fresh {
+				if err := hc.Healthy(); err != nil {
+					zap.L().Warn(
+						"ssh client cache keepalive failed, discarding client",
+						zap.String("provider", r.Provider),
+						zap.String("host_name", r.Name),
+						zap.String("host_ip", r.PrimaryIP),
+						zap.String("user", user),
+						zap.Error(err),
+					)
 
-				// Proceed as cache miss
-				exists = false
+					// Remove from cache and close
+					c.mu.Lock()
+					delete(c.clients, key)
+					delete(c.lastHealth, key)
+					c.mu.Unlock()
+					_ = client.Close()
+
+					// Proceed as cache miss
+					exists = false
+				} else {
+					c.mu.Lock()
+					c.lastHealth[key] = time.Now()
+					c.mu.Unlock()
+				}
 			}
 		}
 
@@ -207,6 +232,7 @@ func (c *ClientCache) GetOrDial(user string, r hosts.Record) (HostClient, error)
 		return existing, nil
 	}
 	c.clients[key] = client
+	c.lastHealth[key] = time.Now() // just dialed → healthy; skip the first-hit probe
 	c.mu.Unlock()
 	zap.L().Debug(
 		"ssh client cached new connection",
@@ -301,6 +327,7 @@ func (c *ClientCache) Evict(user string, r hosts.Record) {
 	if ok {
 		delete(c.clients, key)
 		delete(c.leases, key)
+		delete(c.lastHealth, key)
 	}
 	c.mu.Unlock()
 	if !ok || client == nil {
