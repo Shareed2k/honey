@@ -92,17 +92,42 @@ func TestFilterBackendsByNamesLegacyNameOnly(t *testing.T) {
 	}
 }
 
-func TestFilterBackendsByNamesHoneyBypass(t *testing.T) {
+func TestFilterBackendsByNamesHoney(t *testing.T) {
 	t.Parallel()
 	provs := []Backend{
-		stubBackend{id: "honey", name: "remote-proxy"},
+		stubBackend{id: "honey", name: "gcp-pme"},
+		stubBackend{id: "honey", name: "mesh-peer"},
 		stubBackend{id: "k8s", name: "prod"},
 	}
-	out := FilterBackendsByNames(provs, []string{"prod"})
-	if len(out) != 2 {
-		t.Fatalf("expected honey proxy to bypass filter and be included, got len %d", len(out))
+
+	// Naming one honey proxy runs ONLY it — other honey proxies must not tag along.
+	out := FilterBackendsByNames(provs, []string{"gcp-pme"})
+	if len(out) != 1 || out[0].(stubBackend).name != "gcp-pme" {
+		t.Fatalf("naming gcp-pme should select only it, got %#v", out)
 	}
-	if out[0].(stubBackend).id != "honey" {
-		t.Errorf("expected first to be honey")
+
+	// A token naming nothing local is presumed upstream: every honey proxy runs
+	// to forward it; local non-honey backends do not.
+	out = FilterBackendsByNames(provs, []string{"gcp-prod-us2"})
+	if len(out) != 2 {
+		t.Fatalf("upstream-only token should hit both honey proxies, got %#v", out)
+	}
+	for _, p := range out {
+		if p.ID() != "honey" {
+			t.Fatalf("only honey proxies forward an upstream-only token, got %#v", p)
+		}
+	}
+
+	// A token naming a local non-honey backend is handled locally; honey proxies
+	// are not dragged in.
+	out = FilterBackendsByNames(provs, []string{"prod"})
+	if len(out) != 1 || out[0].(stubBackend).id != "k8s" {
+		t.Fatalf("naming a local k8s backend should not pull in honey, got %#v", out)
+	}
+
+	// Explicit honey:name selects that proxy only.
+	out = FilterBackendsByNames(provs, []string{"honey:mesh-peer"})
+	if len(out) != 1 || out[0].(stubBackend).name != "mesh-peer" {
+		t.Fatalf("honey:mesh-peer should select only mesh-peer, got %#v", out)
 	}
 }
