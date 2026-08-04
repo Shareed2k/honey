@@ -303,6 +303,7 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 		Enforcer:       r.opts.Enforcer,
 		Inventory:      invFromConfig(r.opts.Config),
 		CmdTimeout:     req.CmdTimeout,
+		MaxParallel:    r.opts.Config.DefaultMaxParallel(),
 	}, nil
 }
 

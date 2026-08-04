@@ -204,6 +204,7 @@ func runCueExec(cmd *cobra.Command, args []string) error {
 		Reg:            cache.Reg(),
 		Cache:          cache,
 		CmdTimeout:     effTimeout,
+		MaxParallel:    cfg.DefaultMaxParallel(),
 	}, rec)
 }
 

@@ -49,6 +49,23 @@ func RunRecipe(_ context.Context, _ RunParams, events chan<- Event) error {
 	return nil
 }
 
+// seedDefaultMaxParallel applies the config-level host fan-out to the recipe
+// defaults when neither the recipe nor a positive config value is a no-op:
+// only fills recipe.defaults.max_parallel when it is unset and configDefault>0,
+// so per-recipe/per-step max_parallel always wins and behavior is unchanged when
+// the config default is unset.
+func seedDefaultMaxParallel(recipe *cuetry.Recipe, configDefault int) {
+	if configDefault <= 0 {
+		return
+	}
+	if recipe.Defaults == nil {
+		recipe.Defaults = &cuetry.RecipeDefaults{}
+	}
+	if recipe.Defaults.MaxParallel == 0 {
+		recipe.Defaults.MaxParallel = configDefault
+	}
+}
+
 // RecipeHostMaxConc ...
 func RecipeHostMaxConc(step cuetry.Step, defaults *cuetry.RecipeDefaults) int {
 	re := RemoteOpts(step)
@@ -409,6 +426,12 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	if len(p.Records) == 0 {
 		return fmt.Errorf("no hosts in current result set")
 	}
+
+	// Seed the config-level host fan-out default into the recipe defaults when
+	// the recipe itself doesn't set one, so a single honey config value raises
+	// concurrency for every step kind (plugin/tunnel/template/k8s default to a
+	// low per-kind value otherwise). Per-recipe/per-step max_parallel still wins.
+	seedDefaultMaxParallel(&p.Recipe, p.MaxParallel)
 
 	tracer := otel.Tracer("honey")
 	var span trace.Span
