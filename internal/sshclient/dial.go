@@ -707,6 +707,15 @@ func (h *HoneyClient) StartLocalSocketForward(ctx context.Context, localSocket, 
 	return "", nil, fmt.Errorf("StartLocalSocketForward requires an active SSH client")
 }
 
+// StartLocalTCPToSocketForward starts a local TCP listener forwarding to a
+// remote unix socket over direct-streamlocal.
+func (h *HoneyClient) StartLocalTCPToSocketForward(ctx context.Context, bind string, localPort int, remoteSocket string) (host string, port int, stop func(), err error) {
+	if leaf := h.LeafSSH(); leaf != nil {
+		return StartLocalTCPToSocketForward(ctx, leaf, bind, localPort, remoteSocket)
+	}
+	return "", 0, nil, fmt.Errorf("StartLocalTCPToSocketForward requires an active SSH client")
+}
+
 var _ hostexec.HostClient = (*HoneyClient)(nil)
 
 func expandSSHPath(p string) (string, error) {

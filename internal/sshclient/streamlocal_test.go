@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -70,6 +71,49 @@ func TestStartLocalSocketForward_relativePathRejected(t *testing.T) {
 
 func TestDialStreamLocal_nilClient(t *testing.T) {
 	if _, err := DialStreamLocal(nil, "/x"); err == nil {
+		t.Fatal("expected error for nil client")
+	}
+}
+
+func TestStartLocalTCPToSocketForward_roundTrip(t *testing.T) {
+	client, cleanup := newLoopbackSSHClient(t)
+	defer cleanup()
+
+	host, port, stop, err := StartLocalTCPToSocketForward(context.Background(), client, "127.0.0.1", 0, "/var/run/postgresql/.s.PGSQL.5432")
+	if err != nil {
+		t.Fatalf("StartLocalTCPToSocketForward: %v", err)
+	}
+	defer stop()
+	if port <= 0 {
+		t.Fatalf("port = %d", port)
+	}
+
+	c, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial local tcp: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	if _, err := c.Write([]byte("ping\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 64)
+	n, err := c.Read(buf)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got := string(buf[:n]); got != "echo:ping\n" {
+		t.Fatalf("round-trip = %q, want %q", got, "echo:ping\n")
+	}
+}
+
+func TestStartLocalTCPToSocketForward_errors(t *testing.T) {
+	client, cleanup := newLoopbackSSHClient(t)
+	defer cleanup()
+	if _, _, _, err := StartLocalTCPToSocketForward(context.Background(), client, "127.0.0.1", 0, "rel/sock"); err == nil {
+		t.Fatal("expected error for relative remote socket")
+	}
+	if _, _, _, err := StartLocalTCPToSocketForward(context.Background(), nil, "127.0.0.1", 0, "/x"); err == nil {
 		t.Fatal("expected error for nil client")
 	}
 }

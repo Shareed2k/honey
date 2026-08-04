@@ -784,3 +784,8 @@ func (c *DockerNativeClient) StartTunForward(_ context.Context, _ string, _ stri
 func (c *DockerNativeClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
 	return "", nil, fmt.Errorf("unix socket forward not supported by docker backend")
 }
+
+// StartLocalTCPToSocketForward starts a local TCP-to-unix-socket forward.
+func (c *DockerNativeClient) StartLocalTCPToSocketForward(_ context.Context, _ string, _ int, _ string) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("unix socket forward not supported by docker backend")
+}

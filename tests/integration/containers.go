@@ -920,3 +920,7 @@ func (e *testSSHClient) StartTunForward(_ context.Context, _ string, _ string, _
 func (e *testSSHClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
 	return "", nil, fmt.Errorf("unix socket forward not supported on this transport")
 }
+
+func (e *testSSHClient) StartLocalTCPToSocketForward(_ context.Context, _ string, _ int, _ string) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("unix socket forward not supported on this transport")
+}

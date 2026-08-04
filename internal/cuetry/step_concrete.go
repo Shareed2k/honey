@@ -258,8 +258,15 @@ func validateUnixTunnel(t *RecipeStepTunnel, i int) error {
 	if t.LocalSocket != "" && !strings.HasPrefix(t.LocalSocket, "/") {
 		return fmt.Errorf("cuetry: steps[%d].tunnel.local_socket must be an absolute path: %q", i, t.LocalSocket)
 	}
-	if t.RemotePort != 0 || t.RemoteListen != 0 || t.LocalPort != 0 {
-		return fmt.Errorf("cuetry: steps[%d].tunnel mode \"unix\" does not accept tcp port fields", i)
+	// remote_port/remote_listen_port are meaningless for a unix remote; local_port
+	// is allowed — it switches the operator side to a TCP listener (→ remote unix
+	// socket over direct-streamlocal), so TCP-only clients can reach it. A TCP
+	// listener and a unix-socket listener are mutually exclusive.
+	if t.RemotePort != 0 || t.RemoteListen != 0 {
+		return fmt.Errorf("cuetry: steps[%d].tunnel mode \"unix\" does not accept remote_port/remote_listen_port", i)
+	}
+	if t.LocalPort != 0 && t.LocalSocket != "" {
+		return fmt.Errorf("cuetry: steps[%d].tunnel mode \"unix\": set either local_port (TCP listener) or local_socket (unix listener), not both", i)
 	}
 	return nil
 }

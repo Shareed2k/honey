@@ -1027,3 +1027,7 @@ func (m *mockHostClient) StartTunForward(_ context.Context, _ string, _ string, 
 func (m *mockHostClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
 	return "", nil, nil
 }
+
+func (m *mockHostClient) StartLocalTCPToSocketForward(_ context.Context, _ string, _ int, _ string) (host string, port int, stop func(), err error) {
+	return "", 0, nil, nil
+}

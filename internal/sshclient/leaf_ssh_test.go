@@ -64,6 +64,10 @@ func (fakeNoLeafClient) StartTunForward(context.Context, string, string, int, in
 func (fakeNoLeafClient) StartLocalSocketForward(context.Context, string, string) (string, func(), error) {
 	return "", nil, nil
 }
+
+func (fakeNoLeafClient) StartLocalTCPToSocketForward(context.Context, string, int, string) (string, int, func(), error) {
+	return "", 0, nil, nil
+}
 func (fakeNoLeafClient) Close() error { return nil }
 
 // TestLeafSSHFromClient_HoneyClientNil pins existing behavior: a nil-leaf
