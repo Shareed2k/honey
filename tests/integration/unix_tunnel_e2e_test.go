@@ -46,23 +46,28 @@ func TestUnixSocketTunnel_E2E(t *testing.T) {
 	}
 
 	const remoteSock = "/tmp/honey-e2e-echo.sock"
+	const bannerFile = "/tmp/honey-e2e-banner.txt"
+	const banner = "ready-over-streamlocal"
 	_, _ = runSSH(client, "rm -f "+remoteSock) // clear any stale socket from a prior run
 
-	// On each connection the server writes a fixed banner and exits — a one-way
-	// proof that data flows back through the direct-streamlocal channel. This is
-	// deliberately NOT a bidirectional `cat` echo: under a real OpenSSH sshd,
-	// cat's pipe buffering never flushed and the connection reset before any
-	// bytes came back. A write-then-exit banner flushes on child exit, so the
-	// client reliably reads it. Held open by a dedicated session; closing it
-	// (cleanup) tears socat down.
-	const banner = "ready-over-streamlocal"
+	// socat streams a static file byte-for-byte to every connecting client — a
+	// one-way proof that data flows back through the direct-streamlocal channel.
+	// This is deliberately NOT an EXEC/cat echo: under a real OpenSSH sshd those
+	// depend on a child process's stdout flushing before teardown, which raced
+	// (a `cat` echo reset the connection; a `/bin/echo` child produced nothing).
+	// OPEN:file has no child and no pipe buffering, so the banner arrives
+	// deterministically. Held open by a dedicated session; closing it (cleanup)
+	// tears socat down.
+	if out, rerr := runSSH(client, fmt.Sprintf("printf %%s %s > %s", banner, bannerFile)); rerr != nil {
+		t.Fatalf("write banner file: %v (%s)", rerr, out)
+	}
 	echoSess, err := client.NewSession()
 	if err != nil {
 		t.Fatalf("new banner session: %v", err)
 	}
 	t.Cleanup(func() { _ = echoSess.Close() })
 	go func() {
-		_ = echoSess.Run(fmt.Sprintf("socat UNIX-LISTEN:%s,fork EXEC:'/bin/echo %s'", remoteSock, banner))
+		_ = echoSess.Run(fmt.Sprintf("socat UNIX-LISTEN:%s,fork OPEN:%s,rdonly", remoteSock, bannerFile))
 	}()
 	waitForRemoteSocket(t, client, remoteSock, 20*time.Second)
 
