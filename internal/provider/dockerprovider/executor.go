@@ -143,6 +143,9 @@ func (e *DockerExecutor) RunTunnel(context.Context, string, hosts.Record, string
 
 // DialUpstream connects to a port inside the container via nc/socat.
 func (e *DockerExecutor) DialUpstream(_ context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
+	if pt, perr := hostexec.ParseTunnelTarget(address); perr == nil && pt.Scheme == hostexec.TunnelUnix {
+		return nil, fmt.Errorf("unix socket target not supported by docker backend")
+	}
 	c, err := e.Dial(user, r)
 	if err != nil {
 		return nil, err

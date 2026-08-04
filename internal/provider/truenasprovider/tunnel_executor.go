@@ -13,6 +13,7 @@ import (
 var (
 	errTrueNASTunnelOnly          = errors.New("truenasprovider: TrueNAS API-shell record supports port-forward (tunnel) only")
 	errTrueNASTunnelNotConfigured = errors.New("truenasprovider: TrueNAS API tunnel not configured (import internal/ui)")
+	errTrueNASUnixUnsupported     = errors.New("truenasprovider: unix socket target not supported by truenas backend")
 )
 
 // TunnelRunner runs the TrueNAS API-shell port-forward. UpstreamDialer dials an
@@ -75,6 +76,9 @@ func (e truenasExecutor) RunTunnel(ctx context.Context, user string, r hosts.Rec
 func (e truenasExecutor) DialUpstream(ctx context.Context, user string, r hosts.Record, address string) (net.Conn, error) {
 	if e.dialer == nil {
 		return nil, errTrueNASTunnelNotConfigured
+	}
+	if pt, perr := hostexec.ParseTunnelTarget(address); perr == nil && pt.Scheme == hostexec.TunnelUnix {
+		return nil, errTrueNASUnixUnsupported
 	}
 	return e.dialer.DialUpstream(ctx, user, r, address)
 }

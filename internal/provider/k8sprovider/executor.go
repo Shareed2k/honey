@@ -473,6 +473,9 @@ func (k *K8sPodExecutor) RunTunnel(ctx context.Context, _ string, r hosts.Record
 
 // DialUpstream connects to a port inside the pod via k8s port-forward.
 func (k *K8sPodExecutor) DialUpstream(_ context.Context, _ string, r hosts.Record, address string) (net.Conn, error) {
+	if pt, perr := hostexec.ParseTunnelTarget(address); perr == nil && pt.Scheme == hostexec.TunnelUnix {
+		return nil, fmt.Errorf("unix socket target not supported by kubernetes backend")
+	}
 	namespace := r.Meta["namespace"]
 	podName := r.Meta["pod_name"]
 
