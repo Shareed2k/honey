@@ -13,6 +13,7 @@ import (
 	"time"
 
 	extism "github.com/extism/go-sdk"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/shareed2k/honey/internal/config"
 	apiv1 "github.com/shareed2k/honey/internal/plugins/api/v1"
@@ -56,8 +57,21 @@ type loadedPlugin struct {
 	cueSource      []byte // plugin.cue bytes, retained for docker plugins so a
 	// DockerHostSession can build a fresh per-remote-host transport
 	transport pluginTransport
-	callMu    sync.Mutex // neither extism.Plugin nor dockerTransport is safe for concurrent calls
+	// callMu serializes WASM (extism) calls: a single extism.Plugin instance has
+	// shared linear memory and is NOT concurrent-safe. Docker plugins instead use
+	// callSem (below) — the container shim runs an independent process per /call
+	// and dockerTransport.CallRaw is stateless, so calls may overlap.
+	callMu sync.Mutex
+	// callSem bounds concurrent docker-plugin calls (nil for WASM plugins, which
+	// use callMu). Lets a local docker plugin serve many hosts concurrently
+	// instead of serializing every call through one container.
+	callSem *semaphore.Weighted
 }
+
+// maxConcurrentDockerPluginCalls caps how many calls may run at once against a
+// single local docker-plugin container. The shim handles concurrent execs; the
+// bound keeps a fan-out from spawning unbounded processes inside one container.
+const maxConcurrentDockerPluginCalls = 8
 
 func clonePathMap(m map[string]string) map[string]string {
 	if len(m) == 0 {
@@ -256,6 +270,7 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 		dir:            dir,
 		cueSource:      cueBytes,
 		transport:      dt,
+		callSem:        semaphore.NewWeighted(maxConcurrentDockerPluginCalls),
 	}, nil
 }
 
@@ -496,8 +511,16 @@ func (m *Manager) Call(ctx context.Context, pluginID, export string, in, out any
 		callCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	lp.callMu.Lock()
-	defer lp.callMu.Unlock()
+	// Docker plugins may run concurrent calls (bounded); WASM must serialize.
+	if lp.callSem != nil {
+		if err := lp.callSem.Acquire(callCtx, 1); err != nil {
+			return fmt.Errorf("plugins: %s.%s: %w", pluginID, export, err)
+		}
+		defer lp.callSem.Release(1)
+	} else {
+		lp.callMu.Lock()
+		defer lp.callMu.Unlock()
+	}
 	exit, outBytes, err := lp.transport.CallRaw(callCtx, export, inBytes)
 	if err != nil {
 		return fmt.Errorf("plugins: %s.%s: %w", pluginID, export, err)
