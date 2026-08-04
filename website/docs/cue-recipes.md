@@ -46,7 +46,7 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 | `command` | SSH / k8s exec | Optional `env`, `secrets`, `hooks`, `kv_tunnel`, `templated` — [Templated command/script steps](#templated-commandscript-steps) |
 | `script` | SSH / k8s exec | Upload `local` → `remote`, then `sh <remote>`; optional `templated` |
 | `plugin` | SSH / k8s exec | Custom step (WASM or `runtime: docker`) — [Plugin development](./plugins-development.md), optional `kv_key`/`kv_key_per_host` |
-| `tunnel` | SSH / k8s / TrueNAS | Operator-side listen (local/remote/dynamic/UDP/tun) — [Tunnel steps](#tunnel-steps) |
+| `tunnel` | SSH / k8s / TrueNAS | Operator-side listen (local/remote/dynamic/UDP/unix/tun) — [Tunnel steps](#tunnel-steps) |
 | `k8s` | Kubernetes API | Direct API calls: apply, delete, scale, rollout, get, exec, job — [Kubernetes steps](#kubernetes-steps) |
 | `put` / `get` | SFTP or k8s tar stream | Relative `local` paths from recipe directory |
 | `agent_transfer` | A→cloud→B | Needs honey config for `cloud_backend_ref` |
@@ -537,7 +537,7 @@ Example with a hold step so the tunnel stays up while you debug: [`tunnel_local_
 
 | Field | Meaning |
 |-------|---------|
-| `mode` | `local` (default, SSH `-L`), `remote` (`-R`), `dynamic` (SOCKS5), `udp`, `tun` (`ssh -w`, L3 only) |
+| `mode` | `local` (default, SSH `-L`), `remote` (`-R`), `dynamic` (SOCKS5), `udp`, `unix` (unix-socket StreamLocal), `tun` (`ssh -w`, L3 only) |
 | `remote_host` / `remote_port` | Remote side of a local forward (default host `localhost`) |
 | `local_port` | Operator listen port (`0` or omitted = auto) |
 | `bind` | Operator bind address (loopback only unless `tunnels.allow_non_loopback_bind` in honey config) |
@@ -548,11 +548,13 @@ Example with a hold step so the tunnel stays up while you debug: [`tunnel_local_
 | `share_key` | Reuse the same operator listen port when multiple steps or hosts acquire the same tunnel in one run (process-wide pool) |
 | `protocol` | `udp` (with `mode: "udp"`) |
 | `remote_socat` | Required `true` for UDP mode (bootstraps `socat` on the remote) |
+| `remote_socket` | Remote unix socket path for `mode: "unix"` (absolute, e.g. `/var/run/postgresql/.s.PGSQL.5432`) |
+| `local_socket` | Optional operator unix socket path for `mode: "unix"` (absolute; auto temp path if omitted) |
 | `tun_local` / `tun_remote` | Tun interface ids for `mode: "tun"` |
 
 **Provider dispatch:** k8s pod targets → Kubernetes port-forward; TrueNAS API-shell hosts → TrueNAS tunnel backend; everything else → SSH.
 
-Dry-run prints placeholder JSON (`<<127.0.0.1>>`, `<<port>>`) and annotates ssh_config source when `use_ssh_config` is set.
+Dry-run prints placeholder JSON (`<<127.0.0.1>>`, `<<port>>`; `<<socket>>` for `mode: "unix"`) and annotates ssh_config source when `use_ssh_config` is set.
 
 ### Modes
 
@@ -565,6 +567,25 @@ Dry-run prints placeholder JSON (`<<127.0.0.1>>`, `<<port>>`) and annotates ssh_
   tunnel: { remote_host: "db.internal", remote_port: 5432 }
 }
 ```
+
+**Unix socket (StreamLocal, postgres `peer`)** — forward a **remote unix socket** to a local one over OpenSSH `direct-streamlocal` (TCP forwards can't reach a unix socket). The one case that needs this is postgres `peer` auth: postgres maps the OS uid of the process on its socket to a role, and over SSH that process is sshd running as the **SSH login user** — so you must log in as the `postgres` user (or a `pg_ident`-mapped one). A TCP tunnel to `:5432` can never do `peer` (it uses pg_hba `host` rules → md5/scram).
+
+```cue
+{
+  host: "db-primary"
+  tunnel: { mode: "unix", remote_socket: "/var/run/postgresql/.s.PGSQL.5432" }
+}
+```
+
+```bash
+honey cue-exec --execute --ssh-user postgres \
+  examples/recipe/postgres_peer_unix_tunnel.cue "db-primary"
+# step stdout: {"mode":"unix","socket":"/tmp/honey-pgsock-XXXX/.s.PGSQL.5432"}
+# then, in another terminal — point psql at the DIRECTORY, not the socket file:
+psql -h /tmp/honey-pgsock-XXXX -U postgres -c "select current_user"   # -> postgres, no password
+```
+
+The local socket is auto-named `.s.PGSQL.5432` in a private temp dir (so `psql -h <dir>` uses it), or set `local_socket` for a fixed path. Requires remote sshd `AllowStreamLocalForwarding` (OpenSSH default). Over the mesh the `unix:<path>` target is **OPA-gated** (`action: "tunnel"`, `target.scheme: "unix"`) so a policy can restrict which server-side sockets are reachable. This is the forward primitive only — honey's postgres plugin dials the operator-side TCP endpoint and cannot use `peer` over this tunnel. Example: [`postgres_peer_unix_tunnel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_peer_unix_tunnel.cue).
 
 **SOCKS5 (many internal hosts)** — see [Jump host → many internal services (SOCKS)](#jump-host--many-internal-services-socks) below.
 
