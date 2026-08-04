@@ -22,6 +22,8 @@ type TunnelEndpoint struct {
 	RemoteHost string
 	RemotePort int
 	ShareKey   string
+	// SocketPath is the operator-side unix socket for mode:"unix" (empty otherwise).
+	SocketPath string
 }
 
 type tunnelPoolEntry struct {

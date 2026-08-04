@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -220,6 +222,34 @@ func startSSHTunnel(ctx context.Context, user string, r hosts.Record, t *cuetry.
 			return TunnelEndpoint{}, nil, err
 		}
 		return TunnelEndpoint{Mode: mode, TunName: tunName, ShareKey: t.ShareKey}, stop, nil
+	case "unix":
+		localSock := strings.TrimSpace(t.LocalSocket)
+		var cleanupDir string
+		if localSock == "" {
+			// A short /tmp base keeps the socket path under the sun_path
+			// length limit (macOS TMPDIR is far too long); the .s.PGSQL.5432
+			// name lets `psql -h <dir>` use peer auth (libpq convention).
+			dir, derr := os.MkdirTemp("/tmp", "honey-pgsock-")
+			if derr != nil {
+				return TunnelEndpoint{}, nil, fmt.Errorf("create local socket dir: %w", derr)
+			}
+			localSock = filepath.Join(dir, ".s.PGSQL.5432")
+			cleanupDir = dir
+		}
+		path, stopFwd, err := client.StartLocalSocketForward(ctx, localSock, t.RemoteSocket)
+		if err != nil {
+			if cleanupDir != "" {
+				_ = os.RemoveAll(cleanupDir)
+			}
+			return TunnelEndpoint{}, nil, err
+		}
+		stop := func() {
+			stopFwd()
+			if cleanupDir != "" {
+				_ = os.RemoveAll(cleanupDir)
+			}
+		}
+		return TunnelEndpoint{Mode: "unix", SocketPath: path, ShareKey: t.ShareKey}, stop, nil
 	default:
 		host, port, stop, err := client.StartLocalForward(ctx, bind, localPort, remoteHost, remotePort)
 		if err != nil {
@@ -262,6 +292,9 @@ func tunnelEndpointJSON(ep TunnelEndpoint) string {
 	if ep.TunName != "" {
 		m["tun_name"] = ep.TunName
 	}
+	if ep.SocketPath != "" {
+		m["socket"] = ep.SocketPath
+	}
 	if ep.ShareKey != "" {
 		m["share_key"] = ep.ShareKey
 	}
@@ -270,10 +303,13 @@ func tunnelEndpointJSON(ep TunnelEndpoint) string {
 }
 
 func tunnelDryRunJSON(t *cuetry.RecipeStepTunnel) string {
-	m := map[string]any{
-		"host": "<<127.0.0.1>>",
-		"port": "<<port>>",
-		"mode": cuetry.EffectiveTunnelMode(t),
+	mode := cuetry.EffectiveTunnelMode(t)
+	m := map[string]any{"mode": mode}
+	if mode == "unix" {
+		m["socket"] = "<<socket>>"
+	} else {
+		m["host"] = "<<127.0.0.1>>"
+		m["port"] = "<<port>>"
 	}
 	if t.UseSSHConfig {
 		m["ssh_config"] = "via ssh -G"

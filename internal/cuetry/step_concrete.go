@@ -221,6 +221,10 @@ func (s *TunnelStep) Validate(vc StepValidateCtx) error {
 			return fmt.Errorf("cuetry: steps[%d].tunnel requires remote_listen_port and local_target_port for remote mode", i)
 		}
 	case "dynamic":
+	case "unix":
+		if err := validateUnixTunnel(t, i); err != nil {
+			return err
+		}
 	case "tun":
 		if t.TunLocal < 0 || t.TunRemote < 0 {
 			return fmt.Errorf("cuetry: steps[%d].tunnel tun ids must be non-negative", i)
@@ -236,6 +240,26 @@ func (s *TunnelStep) Validate(vc StepValidateCtx) error {
 		if id == "" && (len(s.Depends) > 0 || len(s.EnvFrom) > 0) {
 			return fmt.Errorf("cuetry: steps[%d]: tunnel step with depends or env_from requires id", i)
 		}
+	}
+	return nil
+}
+
+// validateUnixTunnel checks the mode:"unix" (StreamLocal) fields: an absolute
+// remote_socket is required, an optional local_socket must be absolute, and the
+// tcp port fields must be unset. Split out of TunnelStep.Validate to keep that
+// function under the cyclomatic-complexity bound.
+func validateUnixTunnel(t *RecipeStepTunnel, i int) error {
+	if strings.TrimSpace(t.RemoteSocket) == "" {
+		return fmt.Errorf("cuetry: steps[%d].tunnel mode \"unix\" requires remote_socket", i)
+	}
+	if !strings.HasPrefix(t.RemoteSocket, "/") {
+		return fmt.Errorf("cuetry: steps[%d].tunnel.remote_socket must be an absolute path: %q", i, t.RemoteSocket)
+	}
+	if t.LocalSocket != "" && !strings.HasPrefix(t.LocalSocket, "/") {
+		return fmt.Errorf("cuetry: steps[%d].tunnel.local_socket must be an absolute path: %q", i, t.LocalSocket)
+	}
+	if t.RemotePort != 0 || t.RemoteListen != 0 || t.LocalPort != 0 {
+		return fmt.Errorf("cuetry: steps[%d].tunnel mode \"unix\" does not accept tcp port fields", i)
 	}
 	return nil
 }
