@@ -99,8 +99,24 @@ func TestValidateStepTunnel_unixMode(t *testing.T) {
 	if err := (&TunnelStep{
 		StepBase: StepBase{Host: "db-*"},
 		Tunnel:   &RecipeStepTunnel{Mode: "unix", RemoteSocket: "/s.sock", RemotePort: 5432},
-	}).Validate(vc); err == nil || !strings.Contains(err.Error(), "tcp port fields") {
+	}).Validate(vc); err == nil || !strings.Contains(err.Error(), "remote_port") {
 		t.Fatalf("unix with remote_port must fail: %v", err)
+	}
+
+	// local_port switches the operator side to a TCP listener → valid.
+	if err := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
+		Tunnel:   &RecipeStepTunnel{Mode: "unix", RemoteSocket: "/s.sock", LocalPort: 15432},
+	}).Validate(vc); err != nil {
+		t.Fatalf("unix with local_port (TCP listener) must be valid: %v", err)
+	}
+
+	// local_port + local_socket are mutually exclusive.
+	if err := (&TunnelStep{
+		StepBase: StepBase{Host: "db-*"},
+		Tunnel:   &RecipeStepTunnel{Mode: "unix", RemoteSocket: "/s.sock", LocalPort: 15432, LocalSocket: "/tmp/x.sock"},
+	}).Validate(vc); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("unix with both local_port and local_socket must fail: %v", err)
 	}
 }
 

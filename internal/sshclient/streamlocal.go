@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -113,4 +114,53 @@ func StartLocalSocketForward(ctx context.Context, client *ssh.Client, localSocke
 		return DialStreamLocal(client, remoteSocket)
 	})
 	return localSocket, stop, nil
+}
+
+// StartLocalTCPToSocketForward listens on a local TCP port and forwards each
+// accepted connection to remoteSocket over a direct-streamlocal channel. Unlike
+// StartLocalSocketForward (a unix-socket listener), it exposes a TCP endpoint so
+// TCP-only clients — a containerized plugin reaching host.docker.internal, a
+// pgx/JDBC app — can reach a service that only listens on a remote unix socket
+// (e.g. a Postgres with no TCP listener). bind defaults to 127.0.0.1; localPort
+// 0 picks a free port. Returns the operator-side listen host and port.
+func StartLocalTCPToSocketForward(ctx context.Context, client *ssh.Client, bind string, localPort int, remoteSocket string) (string, int, func(), error) {
+	if client == nil {
+		return "", 0, nil, errors.New("ssh: nil client for streamlocal forward")
+	}
+	if localPort < 0 || localPort >= 65536 {
+		return "", 0, nil, fmt.Errorf("ssh: local port out of range: %d", localPort)
+	}
+	if !filepath.IsAbs(remoteSocket) {
+		return "", 0, nil, fmt.Errorf("ssh: remote socket must be absolute: %q", remoteSocket)
+	}
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(bind, strconv.Itoa(localPort)))
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("ssh: listen tcp %s:%d: %w", bind, localPort, err)
+	}
+	host, portStr, splitErr := net.SplitHostPort(ln.Addr().String())
+	if splitErr != nil {
+		_ = ln.Close()
+		return "", 0, nil, splitErr
+	}
+	port, _ := strconv.Atoi(portStr)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			_ = ln.Close()
+		})
+	}
+	go func() {
+		<-runCtx.Done()
+		_ = ln.Close()
+	}()
+	go acceptForwardLoop(runCtx, ln, func() (net.Conn, error) {
+		return DialStreamLocal(client, remoteSocket)
+	})
+	return host, port, stop, nil
 }

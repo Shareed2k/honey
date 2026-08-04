@@ -162,3 +162,7 @@ func (f *FakeHostClient) StartTunForward(_ context.Context, _ string, _ string, 
 func (f *FakeHostClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
 	return "", nil, nil
 }
+
+func (f *FakeHostClient) StartLocalTCPToSocketForward(_ context.Context, _ string, _ int, _ string) (host string, port int, stop func(), err error) {
+	return "", 0, nil, nil
+}

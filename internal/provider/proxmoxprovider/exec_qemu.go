@@ -211,6 +211,11 @@ func (q *qemuGuestClient) StartLocalSocketForward(_ context.Context, _ string, _
 	return "", nil, fmt.Errorf("unix socket forward not supported on this transport")
 }
 
+// StartLocalTCPToSocketForward starts a local TCP-to-unix-socket forward.
+func (q *qemuGuestClient) StartLocalTCPToSocketForward(_ context.Context, _ string, _ int, _ string) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("unix socket forward not supported on this transport")
+}
+
 // StartLocalForward starts a local port forward.
 func (h *hybridQEMUClient) StartLocalForward(_ context.Context, _ string, _ int, _ string, _ int) (host string, port int, stop func(), err error) {
 	return "", 0, nil, fmt.Errorf("tunneling not supported on this transport")
@@ -239,4 +244,9 @@ func (h *hybridQEMUClient) StartTunForward(_ context.Context, _ string, _ string
 // StartLocalSocketForward starts a local unix-socket forward.
 func (h *hybridQEMUClient) StartLocalSocketForward(_ context.Context, _ string, _ string) (localPath string, stop func(), err error) {
 	return "", nil, fmt.Errorf("unix socket forward not supported on this transport")
+}
+
+// StartLocalTCPToSocketForward starts a local TCP-to-unix-socket forward.
+func (h *hybridQEMUClient) StartLocalTCPToSocketForward(_ context.Context, _ string, _ int, _ string) (host string, port int, stop func(), err error) {
+	return "", 0, nil, fmt.Errorf("unix socket forward not supported on this transport")
 }

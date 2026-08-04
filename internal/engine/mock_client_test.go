@@ -81,6 +81,10 @@ func (m *MockHostClient) StartLocalSocketForward(_ context.Context, _ string, _ 
 	return "", nil, nil
 }
 
+func (m *MockHostClient) StartLocalTCPToSocketForward(_ context.Context, _ string, _ int, _ string) (host string, port int, stop func(), err error) {
+	return "", 0, nil, nil
+}
+
 // MockRegistry and MockExecutor for testing
 
 type MockExecutor struct {

@@ -223,6 +223,16 @@ func startSSHTunnel(ctx context.Context, user string, r hosts.Record, t *cuetry.
 		}
 		return TunnelEndpoint{Mode: mode, TunName: tunName, ShareKey: t.ShareKey}, stop, nil
 	case "unix":
+		if localPort > 0 {
+			// TCP listener → remote unix socket (direct-streamlocal), so TCP-only
+			// clients (a docker plugin via host.docker.internal, a pgx/JDBC app)
+			// can reach a unix-socket-only service.
+			host, port, stopFwd, err := client.StartLocalTCPToSocketForward(ctx, bind, localPort, t.RemoteSocket)
+			if err != nil {
+				return TunnelEndpoint{}, nil, err
+			}
+			return TunnelEndpoint{Host: host, Port: port, Mode: "unix", RemoteHost: t.RemoteSocket, ShareKey: t.ShareKey}, stopFwd, nil
+		}
 		localSock := strings.TrimSpace(t.LocalSocket)
 		var cleanupDir string
 		if localSock == "" {

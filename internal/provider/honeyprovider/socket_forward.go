@@ -70,3 +70,20 @@ func (c *Client) StartLocalSocketForward(ctx context.Context, localSocket, remot
 	})
 	return localSocket, stop, nil
 }
+
+// StartLocalTCPToSocketForward listens on a local TCP port and forwards every
+// accepted connection to remoteSocket on the upstream host via the mesh proxy
+// (a "unix:<path>" tunnel target the server opens as an OpenSSH
+// direct-streamlocal channel). Unlike StartLocalSocketForward it exposes a TCP
+// endpoint, so TCP-only clients (e.g. a containerized plugin via
+// host.docker.internal) can reach a unix-socket-only upstream service. Reuses
+// the shared tcp listen+pump; only the target encoding differs.
+func (c *Client) StartLocalTCPToSocketForward(ctx context.Context, bind string, localPort int, remoteSocket string) (string, int, func(), error) {
+	if !filepath.IsAbs(remoteSocket) {
+		return "", 0, nil, fmt.Errorf("honeyprovider: remote socket must be absolute: %q", remoteSocket)
+	}
+	target := hostexec.FormatUnixTarget(remoteSocket)
+	return listenAndPipe(ctx, bind, localPort, c.dialer(), func(net.Conn) (string, error) {
+		return target, nil
+	})
+}

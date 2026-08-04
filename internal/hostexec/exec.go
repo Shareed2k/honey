@@ -44,6 +44,11 @@ type HostClient interface {
 	// connection to a remote unix socket over the transport (OpenSSH
 	// direct-streamlocal). Enables e.g. postgres peer auth over a tunnel.
 	StartLocalSocketForward(ctx context.Context, localSocket, remoteSocket string) (localPath string, stop func(), err error)
+	// StartLocalTCPToSocketForward listens on a local TCP port and forwards each
+	// connection to a remote unix socket over the transport (direct-streamlocal),
+	// so TCP-only clients (a containerized plugin via host.docker.internal, a
+	// pgx/JDBC app) can reach a unix-socket-only service.
+	StartLocalTCPToSocketForward(ctx context.Context, bind string, localPort int, remoteSocket string) (host string, port int, stop func(), err error)
 
 	Close() error
 }
