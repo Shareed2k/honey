@@ -13,6 +13,20 @@ import (
 
 const defaultGraphStepParallelism = 8
 
+// graphStepParallelism resolves how many graph steps may run concurrently within
+// a wave: recipe defaults.max_parallel (which itself carries the config-level
+// default, seeded before dispatch) when set, else the built-in 8. Clamped 1-128.
+func graphStepParallelism(recipe *cuetry.Recipe) int {
+	if recipe != nil && recipe.Defaults != nil && recipe.Defaults.MaxParallel > 0 {
+		n := recipe.Defaults.MaxParallel
+		if n > 128 {
+			n = 128
+		}
+		return n
+	}
+	return defaultGraphStepParallelism
+}
+
 // StreamCueRecipeStepsGraph ...
 func StreamCueRecipeStepsGraph(ctx context.Context, run *CueRun, out chan<- HostExecResult) error {
 	sg, err := cuetry.BuildStepGraphFromRecipe(&run.Params.Recipe)
@@ -42,7 +56,7 @@ func StreamCueRecipeStepsGraph(ctx context.Context, run *CueRun, out chan<- Host
 		err := func() error {
 			waveCtx, waveSpan := tracer.Start(ctx, fmt.Sprintf("recipe.wave.%d", wi))
 			defer waveSpan.End()
-			return runGraphWave(waveCtx, run, out, sg, state, historyByIndex, batch, defaultGraphStepParallelism)
+			return runGraphWave(waveCtx, run, out, sg, state, historyByIndex, batch, graphStepParallelism(&run.Params.Recipe))
 		}()
 		if err != nil {
 			return err

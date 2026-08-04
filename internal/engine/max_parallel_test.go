@@ -31,6 +31,22 @@ func TestSeedDefaultMaxParallel(t *testing.T) {
 	}
 }
 
+func TestGraphStepParallelism(t *testing.T) {
+	t.Parallel()
+	// Unset → built-in default.
+	if got := graphStepParallelism(&cuetry.Recipe{}); got != defaultGraphStepParallelism {
+		t.Fatalf("unset: got %d, want %d", got, defaultGraphStepParallelism)
+	}
+	// From recipe/config default (seeded).
+	if got := graphStepParallelism(&cuetry.Recipe{Defaults: &cuetry.RecipeDefaults{MaxParallel: 20}}); got != 20 {
+		t.Fatalf("set: got %d, want 20", got)
+	}
+	// Clamped to 128.
+	if got := graphStepParallelism(&cuetry.Recipe{Defaults: &cuetry.RecipeDefaults{MaxParallel: 999}}); got != 128 {
+		t.Fatalf("clamp: got %d, want 128", got)
+	}
+}
+
 func TestSeededDefaultFlowsToHostConcurrency(t *testing.T) {
 	t.Parallel()
 	// End-to-end of the resolution chain: a seeded recipe default is picked up by
