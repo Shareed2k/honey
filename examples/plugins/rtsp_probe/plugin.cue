@@ -8,22 +8,22 @@
 // evalAction decodes the unified config back to a plain map to apply defaults,
 // and CUE omits uninstantiated optional fields, which would drop them from argv.
 
-// check: read `sample` seconds of the RTSP url's VIDEO stream and exit 0 only if
-// packets actually flow. A dead / unreachable / silent (frozen) stream makes
-// ffmpeg exit non-zero (connect error or the -timeout socket read timeout);
+// check: read the first VIDEO packet from the RTSP url and exit 0 only if one
+// arrives. A dead / unreachable / silent (frozen) stream makes ffprobe exit
+// non-zero (connect error, or the -timeout socket read timeout with no data);
 // honey surfaces that as a step failure. This is the real "is it returning
 // video" test.
 //
-// It uses `-c copy` (no decode) deliberately: a real camera may not deliver a
-// keyframe / SPS fast enough for ffmpeg to determine the frame size, which fails
-// a decode-based probe with "Could not find codec parameters ... unspecified
-// size" even though the stream is live. Copying packets needs no codec
-// parameters — any video RTP packet flowing proves the camera is streaming.
-// `-map 0:v:0` makes it video-specific (no video stream → non-zero).
+// It reads a single packet with ffprobe — no decode, no output — deliberately:
+// a real camera may not deliver a keyframe / SPS fast enough for ffmpeg to
+// determine the frame size, and a decode- or `-c copy`-to-null probe then fails
+// with "Could not find codec parameters ... unspecified size" / "Could not write
+// header" even though the stream is live. Any video packet arriving proves the
+// camera is streaming, with no codec-parameter dependency. `-select_streams v:0`
+// makes it video-specific.
 actions: check: {
 	#Config: {
 		input:      string
-		sample:     string | *"3"        // seconds of stream to read before declaring healthy
 		transport:  string | *"tcp"      // rtsp_transport: tcp (reliable) or udp
 		timeout_us: string | *"15000000" // rtsp socket I/O timeout, microseconds (15s)
 	}
@@ -32,14 +32,14 @@ actions: check: {
 	// actually opens ("Option rw_timeout not found"), and -stimeout was removed
 	// in ffmpeg 8.
 	argv: [
-		"/usr/local/bin/ffmpeg", "-hide_banner",
+		"/usr/local/bin/ffprobe", "-v", "error",
 		"-rtsp_transport", config.transport,
 		"-timeout", config.timeout_us,
+		"-select_streams", "v:0",
+		"-show_entries", "packet=pts",
+		"-read_intervals", "%+#1",
+		"-of", "csv=p=0",
 		"-i", config.input,
-		"-map", "0:v:0",
-		"-t", config.sample,
-		"-c", "copy",
-		"-f", "null", "-",
 	]
 	output_format: "text"
 }
