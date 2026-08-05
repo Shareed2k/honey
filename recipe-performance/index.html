@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">Recipe &amp; plugin performance | Honey</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:url" content="https://shareed2k.github.io/honey/recipe-performance"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Recipe &amp; plugin performance | Honey"><meta data-rh="true" name="description" content="How to make honey cue-exec runs and docker plugins faster. Most of the heavy"><meta data-rh="true" property="og:description" content="How to make honey cue-exec runs and docker plugins faster. Most of the heavy"><link data-rh="true" rel="icon" href="/honey/img/logo.svg"><link data-rh="true" rel="canonical" href="https://shareed2k.github.io/honey/recipe-performance"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/recipe-performance" hreflang="en"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/recipe-performance" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Recipe & plugin performance","item":"https://shareed2k.github.io/honey/recipe-performance"}]}</script><link rel="stylesheet" href="/honey/assets/css/styles.38bacd89.css">
-<script src="/honey/assets/js/runtime~main.c75a2fae.js" defer="defer"></script>
-<script src="/honey/assets/js/main.528c537e.js" defer="defer"></script>
+<script src="/honey/assets/js/runtime~main.bfd61d5a.js" defer="defer"></script>
+<script src="/honey/assets/js/main.4da68ed9.js" defer="defer"></script>
 </head>
 <body>
 <svg style="display: none;"><defs>
@@ -67,6 +67,16 @@ lookup per distinct ref.</p>
 readiness; every later call is a cheap HTTP call. Running under <code>honey web</code> (a
 persistent process) keeps the container warm across requests; a fresh <code>honey</code> CLI
 invocation pays cold start again.</li>
+<li class=""><strong>Reuse the container across CLI runs — <code>plugins.keep_warm</code>.</strong> Set
+<code>plugins.keep_warm: true</code> (default off) and a docker plugin&#x27;s container is created
+with a deterministic name + labels and <strong>left running</strong> on <code>Close</code>, so the next
+<code>honey</code> run attaches to it instead of paying cold start. A container is reused only
+when its identity (image, entrypoint, env, volumes, network) matches; a stale build
+whose shim <code>api_version</code> no longer matches is replaced automatically. Warm
+containers linger until you reap them: <code>honey plugins gc</code> removes them all, or
+<code>honey plugins gc --older-than 1h</code> removes only those idle-by-age. The tradeoff is
+lingering containers vs. repeated cold starts — enable it when you run the same
+plugins repeatedly from the CLI.</li>
 <li class=""><strong>Remote plugin runs create one container per host</strong> — cost scales with host
 count. When the plugin just needs to <em>reach</em> a service (e.g. pghero → Postgres),
 run it <strong>once on the operator</strong> (<code>host: &quot;_&quot;</code>) against a tunneled endpoint instead
