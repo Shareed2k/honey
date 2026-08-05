@@ -326,6 +326,32 @@ func (s *DockerStep) Validate(_ StepValidateCtx) error {
 
 var _ RemoteStep = (*DockerStep)(nil)
 
+// HTTPStep performs an HTTP/REST call. The request is issued by the operator
+// process (there is no mechanism to originate it from a remote host without a
+// tunnel); it iterates the step's targets so per-host URL/header templating is
+// possible, and a host: "_" step yields a single operator-local result.
+type HTTPStep struct {
+	StepBase
+	RemoteExec
+	HTTP *RecipeStepHTTP `json:"http,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *HTTPStep) Kind() string { return KindHTTP }
+
+// Clone returns a deep copy of the step (safe for loop fan-out mutation).
+func (s *HTTPStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields; shared rules run separately.
+func (s *HTTPStep) Validate(_ StepValidateCtx) error {
+	if s.HTTP == nil {
+		return fmt.Errorf("http step requires an http block")
+	}
+	return validateHTTPStep(s.HTTP)
+}
+
+var _ RemoteStep = (*HTTPStep)(nil)
+
 // OpensearchStep performs an OpenSearch API action.
 type OpensearchStep struct {
 	StepBase
@@ -779,4 +805,5 @@ func init() {
 	RegisterStep(KindSummarize, []string{"summarize"}, func() Step { return &SummarizeStep{} })
 	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })
 	RegisterStep(KindOPA, []string{"opa"}, func() Step { return &OPAStep{} })
+	RegisterStep(KindHTTP, []string{"http"}, func() Step { return &HTTPStep{} })
 }

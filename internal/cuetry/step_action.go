@@ -3,6 +3,7 @@ package cuetry
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 func validateDockerStep(d *RecipeStepDocker) error {
@@ -52,6 +53,30 @@ func validateDockerStep(d *RecipeStepDocker) error {
 	}
 	if actions > 1 {
 		return fmt.Errorf("docker step allows only one action per step")
+	}
+	return nil
+}
+
+func validateHTTPStep(h *RecipeStepHTTP) error {
+	if strings.TrimSpace(h.URL) == "" {
+		return fmt.Errorf("http.url is required")
+	}
+	if m := strings.TrimSpace(h.Method); m != "" {
+		switch m {
+		case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD":
+		default:
+			return fmt.Errorf("http.method must be one of GET, POST, PUT, PATCH, DELETE, HEAD, got %q", m)
+		}
+	}
+	if t := strings.TrimSpace(h.Timeout); t != "" {
+		if _, err := time.ParseDuration(t); err != nil {
+			return fmt.Errorf("http.timeout %q is not a valid duration: %w", t, err)
+		}
+	}
+	for _, code := range h.ExpectStatus {
+		if code < 100 || code > 599 {
+			return fmt.Errorf("http.expect_status %d is out of range (100-599)", code)
+		}
 	}
 	return nil
 }

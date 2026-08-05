@@ -52,6 +52,7 @@ const (
 	KindService       = "service"
 	KindRecipe        = "recipe"
 	KindOPA           = "opa"
+	KindHTTP          = "http"
 )
 
 // StepValidateCtx carries everything the per-step validators need. It replaces the
@@ -248,14 +249,14 @@ func (w *StepWrapper) UnmarshalJSON(data []byte) error {
 				}
 			}
 			if matchedKind != "" && matchedKind != e.kind {
-				return fmt.Errorf("only one of command, render, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, postgres, recipe, or opa allowed")
+				return fmt.Errorf("only one of command, render, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, postgres, recipe, opa, or http allowed")
 			}
 			matchedKind = e.kind
 			ctor = e.ctor
 		}
 	}
 	if ctor == nil {
-		return fmt.Errorf("need exactly one of command, render, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, postgres, recipe, or opa")
+		return fmt.Errorf("need exactly one of command, render, put, get, script, agent_transfer, ai, template, plugin, tunnel, k8s, docker, opensearch, postgres, recipe, opa, or http")
 	}
 
 	step := ctor()

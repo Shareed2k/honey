@@ -818,7 +818,7 @@ func RecordGraphStepStdout(recipe cuetry.Recipe, step cuetry.Step, kind string, 
 		return
 	}
 	switch kind {
-	case cuetry.KindCommand, cuetry.KindScript, cuetry.KindPlugin, cuetry.KindTunnel:
+	case cuetry.KindCommand, cuetry.KindScript, cuetry.KindPlugin, cuetry.KindTunnel, cuetry.KindHTTP:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
 				store.Record(id, HostNameFromExecResult(row.Name), stdoutForRecord(row))
