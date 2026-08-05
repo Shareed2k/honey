@@ -216,6 +216,15 @@ type dockerTransportConfig struct {
 	InitMode   string            // "bind" or "embedded" (never empty; resolved in loadDockerPluginDir)
 	InitPath   string            // in-image honey-plugin-init path when InitMode=="embedded"
 
+	// KeepWarm opts this plugin's container into cross-run reuse: it is created
+	// with a deterministic name + labels (see docker_warmpool.go), a later run
+	// attaches to it instead of creating a new one, and Close leaves it running
+	// (reaped by `honey plugins gc`). PluginID is the manifest id, used to name
+	// the container. Both come from plugins.keep_warm; unset → today's behavior
+	// (anonymous container, removed on Close).
+	KeepWarm bool
+	PluginID string
+
 	// HostNetwork runs the container with NetworkMode "host" instead of the
 	// default bridge network — no ports are exposed/published, and the shim
 	// is instead told (via buildContainerConfig's Cmd) to bind an
@@ -304,6 +313,9 @@ func buildContainerConfig(cfg dockerTransportConfig, shimHostPath string, port i
 		Entrypoint: entrypointForMode(cfg.InitMode, cfg.InitPath),
 		Env:        envSlice(cfg.Env),
 	}
+	if cfg.KeepWarm {
+		cc.Labels = warmLabels(cfg.PluginID, warmDigest(cfg), apiv1.APIVersion)
+	}
 	hc := &containertypes.HostConfig{Binds: buildBinds(shimHostPath, cfg.Volumes)}
 	if cfg.HostNetwork {
 		hc.NetworkMode = "host"
@@ -334,18 +346,48 @@ func createAndStart(ctx context.Context, cli *client.Client, httpClient *http.Cl
 		}
 	}
 
+	// Warm-pool: attach to an already-running compatible container instead of
+	// creating a new one. A stale/incompatible match (api_version mismatch) is
+	// removed so the create below replaces it.
+	var name string
+	if cfg.KeepWarm {
+		digest := warmDigest(cfg)
+		name = warmContainerName(cfg.PluginID, digest)
+		id, warmAddr, reusable, staleID := findWarmContainer(ctx, cli, httpClient, digest)
+		if reusable {
+			zap.L().Debug("plugins: reusing warm container",
+				zap.String("plugin_id", cfg.PluginID), zap.String("container_id", id), zap.String("addr", warmAddr))
+			return id, warmAddr, nil
+		}
+		if staleID != "" {
+			if rmErr := forceRemoveContainer(ctx, cli, staleID); rmErr != nil {
+				zap.L().Warn("plugins: failed to remove incompatible warm container",
+					zap.String("container_id", staleID), zap.Error(rmErr))
+			}
+		}
+	}
+
 	if cfg.HostNetwork {
 		zap.L().Warn("plugins: starting docker.network: host container — this grants the container the daemon host's full network namespace",
 			zap.String("image", cfg.Image), zap.Int("port", port))
 	}
 
 	containerCfg, hostCfg := buildContainerConfig(cfg, shimHostPath, port)
-	createOpts := client.ContainerCreateOptions{Config: containerCfg, HostConfig: hostCfg}
+	createOpts := client.ContainerCreateOptions{Config: containerCfg, HostConfig: hostCfg, Name: name}
 
 	resp, createErr := cli.ContainerCreate(ctx, createOpts)
 	if createErr != nil && strings.Contains(createErr.Error(), "No such image") {
 		if pullErr := pullImage(ctx, cli, cfg.Image); pullErr != nil {
 			return "", "", fmt.Errorf("plugins: auto-pull %q: %w", cfg.Image, pullErr)
+		}
+		resp, createErr = cli.ContainerCreate(ctx, createOpts)
+	}
+	if createErr != nil && name != "" && isWarmNameConflict(createErr) {
+		// A leftover (stopped or unreachable) container holds the deterministic
+		// warm name — force-remove it and retry once so keep_warm self-heals.
+		zap.L().Info("plugins: replacing conflicting warm container", zap.String("name", name))
+		if rmErr := forceRemoveContainer(ctx, cli, name); rmErr != nil {
+			return "", "", fmt.Errorf("plugins: remove conflicting warm container %q: %w", name, rmErr)
 		}
 		resp, createErr = cli.ContainerCreate(ctx, createOpts)
 	}
@@ -885,6 +927,14 @@ func (t *dockerTransport) Close(ctx context.Context) error {
 	if !started {
 		// Never called: no container was ever created, so there's nothing
 		// to stop/remove.
+		return nil
+	}
+	if t.createCfg.KeepWarm {
+		// Warm-pool: leave the container running so the next run reuses it.
+		// Closing the moby client (deferred above) does not stop the
+		// container — it runs independently until `honey plugins gc`.
+		zap.L().Debug("plugins: leaving warm container running (keep_warm)",
+			zap.String("plugin_id", t.createCfg.PluginID), zap.String("container_id", id))
 		return nil
 	}
 	return stopAndRemoveContainer(ctx, cli, cli, id)

@@ -502,6 +502,26 @@ docker:
 
 The container is created once when the plugin loads and stays up for the plugin's lifetime (like a WASM module instance) — not one container per call. If it crashes, honey restarts it automatically with exponential backoff (capped at `max_backoff`, retried forever).
 
+#### Reusing the container across runs (`plugins.keep_warm`)
+
+By default a CLI run stops+removes its plugin containers on exit, so the next run pays cold start again (only `honey web`, a persistent process, stays warm). Set `plugins.keep_warm: true` in `honey.yaml` to keep local docker plugin containers running across runs:
+
+```yaml
+plugins:
+  keep_warm: true   # reuse plugin containers across CLI runs (default false)
+```
+
+With it on, the container is created with a deterministic name (`honey-plugin-<id>-<digest>`) and honey labels, and is **left running** on exit. A later run finds it, health-checks it (the `api_version` handshake), and attaches to its published port instead of creating a new one. A container is reused only when its identity — image, entrypoint, `allowed_env` values, volumes, network mode — matches (captured as `<digest>`); the plugin's `plugin.cue` is evaluated host-side per call, so editing it does **not** force a rebuild. A warm container whose shim `api_version` no longer matches (e.g. after a honey upgrade) is replaced automatically.
+
+Warm containers linger until reaped — that is the tradeoff for skipping cold start. Reap them with:
+
+```bash
+honey plugins gc                 # remove all honey warm plugin containers
+honey plugins gc --older-than 1h # remove only those created over an hour ago
+```
+
+`keep_warm` is local-only; remote docker plugins are already scoped to the run and stopped+removed when it finishes.
+
 ### `plugin.cue`
 
 One `actions: <name>: {...}` block per action:

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -14,7 +15,7 @@ import (
 
 var pluginsCmd = &cobra.Command{
 	Use:   "plugins",
-	Short: "Manage WASM plugins",
+	Short: "Manage plugins",
 }
 
 var pluginsListCmd = &cobra.Command{
@@ -51,14 +52,49 @@ var pluginsInspectCmd = &cobra.Command{
 	RunE:  runPluginsInspect,
 }
 
+var (
+	pluginsGCOlderThan time.Duration
+	pluginsGCSocket    string
+)
+
+var pluginsGCCmd = &cobra.Command{
+	Use:   "gc",
+	Short: "Remove keep_warm docker plugin containers",
+	Long: `Remove docker-runtime plugin containers left running by plugins.keep_warm.
+
+With keep_warm enabled, a plugin's container is reused across honey runs instead
+of being torn down, so it lingers until reaped. This removes those containers
+(matched by the honey.plugin.managed label) from the local docker daemon.
+
+By default every warm plugin container is removed. Use --older-than to remove
+only containers created more than the given duration ago (e.g. --older-than 1h),
+leaving recently-used ones warm.
+`,
+	Args: cobra.NoArgs,
+	RunE: runPluginsGC,
+}
+
 func init() {
 	rootCmd.AddCommand(pluginsCmd)
 	pluginsCmd.AddCommand(pluginsListCmd)
 	pluginsCmd.AddCommand(pluginsInstallCmd)
 	pluginsCmd.AddCommand(pluginsInspectCmd)
+	pluginsCmd.AddCommand(pluginsGCCmd)
 
 	pluginsInstallCmd.Flags().BoolVarP(&pluginsInstallForce, "force", "f", false, "Overwrite existing plugin")
 	pluginsInstallCmd.Flags().StringVar(&pluginsInstallDir, "dir", "", "Override plugins directory (default: from config or ~/.config/honey/plugins)")
+
+	pluginsGCCmd.Flags().DurationVar(&pluginsGCOlderThan, "older-than", 0, "Only remove containers created more than this ago (e.g. 1h, 30m); default removes all")
+	pluginsGCCmd.Flags().StringVar(&pluginsGCSocket, "socket", "", "Override the docker daemon socket (default: DOCKER_HOST / docker env)")
+}
+
+func runPluginsGC(cmd *cobra.Command, _ []string) error {
+	removed, err := plugins.GCWarmContainers(context.Background(), pluginsGCSocket, pluginsGCOlderThan)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed %d warm plugin container(s)\n", removed)
+	return nil
 }
 
 func runPluginsList(cmd *cobra.Command, _ []string) error {

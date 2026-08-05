@@ -99,6 +99,16 @@ lookup per distinct ref.
   readiness; every later call is a cheap HTTP call. Running under `honey web` (a
   persistent process) keeps the container warm across requests; a fresh `honey` CLI
   invocation pays cold start again.
+- **Reuse the container across CLI runs — `plugins.keep_warm`.** Set
+  `plugins.keep_warm: true` (default off) and a docker plugin's container is created
+  with a deterministic name + labels and **left running** on `Close`, so the next
+  `honey` run attaches to it instead of paying cold start. A container is reused only
+  when its identity (image, entrypoint, env, volumes, network) matches; a stale build
+  whose shim `api_version` no longer matches is replaced automatically. Warm
+  containers linger until you reap them: `honey plugins gc` removes them all, or
+  `honey plugins gc --older-than 1h` removes only those idle-by-age. The tradeoff is
+  lingering containers vs. repeated cold starts — enable it when you run the same
+  plugins repeatedly from the CLI.
 - **Remote plugin runs create one container per host** — cost scales with host
   count. When the plugin just needs to *reach* a service (e.g. pghero → Postgres),
   run it **once on the operator** (`host: "_"`) against a tunneled endpoint instead
