@@ -5,17 +5,16 @@ import (
 	"fmt"
 	"sync"
 
-	"go.opentelemetry.io/otel"
-
 	"github.com/shareed2k/honey/internal/cuetry"
 	"go.uber.org/zap"
 )
 
 const defaultGraphStepParallelism = 8
 
-// graphStepParallelism resolves how many graph steps may run concurrently within
-// a wave: recipe defaults.max_parallel (which itself carries the config-level
-// default, seeded before dispatch) when set, else the built-in 8. Clamped 1-128.
+// graphStepParallelism resolves how many graph steps may run concurrently: the
+// dataflow scheduler's worker-pool size. Uses recipe defaults.max_parallel
+// (which itself carries the config-level default, seeded before dispatch) when
+// set, else the built-in 8. Clamped 1-128.
 func graphStepParallelism(recipe *cuetry.Recipe) int {
 	if recipe != nil && recipe.Defaults != nil && recipe.Defaults.MaxParallel > 0 {
 		n := recipe.Defaults.MaxParallel
@@ -46,22 +45,17 @@ func StreamCueRecipeStepsGraph(ctx context.Context, run *CueRun, out chan<- Host
 		state[i] = cuetry.StepRunPending
 	}
 
-	tracer := otel.Tracer("honey")
-	for wi, wave := range sg.Waves {
-		batch := graphWaveBatch(sg, state, wave, &run.Params.Recipe)
-		if len(batch) == 0 {
-			continue
-		}
-
-		err := func() error {
-			waveCtx, waveSpan := tracer.Start(ctx, fmt.Sprintf("recipe.wave.%d", wi))
-			defer waveSpan.End()
-			return runGraphWave(waveCtx, run, out, sg, state, historyByIndex, batch, graphStepParallelism(&run.Params.Recipe))
-		}()
-		if err != nil {
-			return err
-		}
+	// stateMu is the single owner of state[]; it is shared between the scheduler
+	// (seeding/skip/cascade) and each step run (graphRunOneStep reads the
+	// succeeded-set and writes the step's terminal state under it). historyMu is
+	// separate because graphRunOneStep nests it under stateMu.
+	var stateMu sync.Mutex
+	var historyMu sync.Mutex
+	runStep := func(sctx context.Context, idx int) {
+		graphRunOneStep(sctx, run, out, sg, state, historyByIndex, &stateMu, &historyMu, idx)
 	}
+	runGraphDataflow(ctx, sg, state, &run.Params.Recipe, graphStepParallelism(&run.Params.Recipe), &stateMu, runStep)
+
 	if err := graphAbortIfSummarizeUnreachable(sg, state); err != nil {
 		return err
 	}
@@ -96,19 +90,130 @@ func graphAbortIfSummarizeUnreachable(sg *cuetry.StepGraph, state []cuetry.StepR
 	return nil
 }
 
-func graphWaveBatch(sg *cuetry.StepGraph, state []cuetry.StepRunState, wave []int, r *cuetry.Recipe) []int {
-	var batch []int
-	for _, idx := range wave {
-		if state[idx] == cuetry.StepRunSkipped {
-			continue
-		}
-		if graphShouldSkipStep(sg, state, idx, r) {
-			state[idx] = cuetry.StepRunSkipped
-			continue
-		}
-		batch = append(batch, idx)
+// runGraphDataflow schedules graph steps by true dataflow: each step becomes
+// runnable the instant ALL of its dependencies reach a terminal state
+// (Succeeded/Failed/Skipped), rather than waiting for the slowest peer in its
+// dependency "wave". A worker pool of `parallelism` goroutines drains a
+// ready-channel; a completed step cascades to its dependents, and a step whose
+// trigger rule is unmet is marked skipped (which itself cascades). This removes
+// the barrier between dependency levels while preserving the skip/rescue/failure
+// semantics of the former wave scheduler.
+//
+// Concurrency contract: stateMu is the single owner of state[]; the scheduler
+// uses it to guard state, remaining, pending, readyStack and closed, and it is
+// the SAME mutex runStep locks internally to read the succeeded-set and write a
+// step's terminal state. runStep is invoked WITHOUT holding stateMu (it locks
+// internally) and MUST set state[idx] to a terminal value before returning. The
+// ready channel is buffered to n and each step is enqueued at most once, so
+// sends never block — safe to send while holding stateMu.
+func runGraphDataflow(ctx context.Context, sg *cuetry.StepGraph, state []cuetry.StepRunState, r *cuetry.Recipe, parallelism int, stateMu *sync.Mutex, runStep func(context.Context, int)) {
+	n := len(sg.IndexToID)
+	if n == 0 {
+		return
 	}
-	return batch
+	if parallelism < 1 {
+		parallelism = 1
+	}
+
+	// Reverse edges + outstanding-dependency counts.
+	dependents := make([][]int, n)
+	remaining := make([]int, n)
+	for i := 0; i < n; i++ {
+		remaining[i] = len(sg.Depends[i])
+		for _, d := range sg.Depends[i] {
+			dependents[d] = append(dependents[d], i)
+		}
+	}
+
+	var (
+		pending    = n
+		closed     bool
+		readyStack []int
+	)
+	ready := make(chan int, n)
+	done := make(chan struct{})
+
+	closeDone := func() {
+		if !closed {
+			closed = true
+			close(done)
+		}
+	}
+
+	// terminal records that step idx reached a terminal state (called under
+	// stateMu): drop the pending count and unblock any dependent whose final
+	// dependency just finished.
+	terminal := func(idx int) {
+		pending--
+		if pending == 0 {
+			closeDone()
+		}
+		for _, dep := range dependents[idx] {
+			remaining[dep]--
+			if remaining[dep] == 0 {
+				readyStack = append(readyStack, dep)
+			}
+		}
+	}
+
+	// drain resolves every scheduled step (deps all terminal) to a skip
+	// (mark + cascade) or a run (enqueue). Iterative so a skip-cascade never
+	// recurses while holding the lock. Called under stateMu.
+	drain := func() {
+		for len(readyStack) > 0 {
+			idx := readyStack[len(readyStack)-1]
+			readyStack = readyStack[:len(readyStack)-1]
+			if graphShouldSkipStep(sg, state, idx, r) {
+				state[idx] = cuetry.StepRunSkipped
+				if idx < len(r.Steps) {
+					if step := r.Steps[idx].Step; step != nil {
+						logGraphStepFinished(sg.IndexToID[idx], step.Kind(), cuetry.StepRunSkipped, nil)
+					}
+				}
+				terminal(idx)
+				continue
+			}
+			ready <- idx // buffered (cap n), never blocks
+		}
+	}
+
+	// Seed roots (no dependencies), resolving any immediate skip-cascade.
+	stateMu.Lock()
+	for i := 0; i < n; i++ {
+		if remaining[i] == 0 {
+			readyStack = append(readyStack, i)
+		}
+	}
+	drain()
+	stateMu.Unlock()
+
+	var wg sync.WaitGroup
+	for w := 0; w < parallelism; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ctx.Done():
+					return
+				case idx := <-ready:
+					// Don't start new steps once cancelled (matches the former
+					// wave scheduler, which returned before running on ctx.Done).
+					if ctx.Err() != nil {
+						return
+					}
+					runStep(ctx, idx)
+					stateMu.Lock()
+					terminal(idx)
+					drain()
+					stateMu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func graphShouldSkipStep(sg *cuetry.StepGraph, state []cuetry.StepRunState, idx int, r *cuetry.Recipe) bool {
@@ -178,35 +283,6 @@ func graphShouldSkipStep(sg *cuetry.StepGraph, state []cuetry.StepRunState, idx 
 	default:
 		return parentFailed || parentSkipped
 	}
-}
-
-func runGraphWave(ctx context.Context, run *CueRun, out chan<- HostExecResult, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, batch []int, parallelism int) error {
-	stepIDs := make([]string, len(batch))
-	for i, idx := range batch {
-		stepIDs[i] = sg.IndexToID[idx]
-	}
-	zap.L().Debug("recipe graph wave", zap.Strings("step_ids", stepIDs))
-
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, parallelism)
-	var stateMu sync.Mutex
-	var historyMu sync.Mutex
-
-	for _, idx := range batch {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				return
-			}
-			graphRunOneStep(ctx, run, out, sg, state, historyByIndex, &stateMu, &historyMu, idx)
-		}(idx)
-	}
-	wg.Wait()
-	return graphAbortIfSummarizeUnreachable(sg, state)
 }
 
 func graphRunOneStep(ctx context.Context, run *CueRun, out chan<- HostExecResult, sg *cuetry.StepGraph, state []cuetry.StepRunState, historyByIndex [][]HostExecResult, stateMu *sync.Mutex, historyMu *sync.Mutex, idx int) {

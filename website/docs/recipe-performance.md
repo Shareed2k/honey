@@ -15,7 +15,7 @@ honey cue-exec --debug-log /dev/stderr <recipe.cue> "<query>"   # per-step timin
 
 `--profile` prints per-run CPU, memory, network and SSH stats. `--debug-log` shows
 per-step "tunnel starting/ready", plugin create/ready, and per-host timing. If a
-collector is wired, OTEL spans are emitted per wave/step.
+collector is wired, OTEL spans are emitted per step.
 
 ## 1. Run independent steps in parallel — `type: "graph"`
 
@@ -35,11 +35,13 @@ recipe: {
 }
 ```
 
-Graph runs in **dependency waves** (a step waits for the slowest peer at its level)
-and, by default, up to **8 steps concurrently**. Raise the concurrency with
-`defaults.max_parallel` (see §2) — it also caps graph step parallelism. Structure
-long work as chains rather than one giant wave so a slow step doesn't hold up a
-whole level.
+Graph mode is a **true dataflow** scheduler: each step starts the instant its own
+`depends` finish — a slow step never holds up an unrelated peer, and a step two
+levels deep runs as soon as its chain is ready rather than waiting for the slowest
+step at its level. By default up to **8 steps** run concurrently; raise it with
+`defaults.max_parallel` (see §2), which also sizes the graph worker pool. There is
+no per-level barrier, so you get parallelism from declaring dependencies
+accurately — over-declaring `depends` serializes work that could overlap.
 
 ## 2. Raise host fan-out — `max_parallel`
 
