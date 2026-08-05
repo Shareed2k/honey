@@ -8,16 +8,24 @@
 // evalAction decodes the unified config back to a plain map to apply defaults,
 // and CUE omits uninstantiated optional fields, which would drop them from argv.
 
-// check: decode `frames` video frames from the RTSP url; exit 0 only if that
-// succeeds. A dead / frozen / unreachable stream makes ffmpeg exit non-zero (or
-// hit rw_timeout), which honey surfaces as a step failure. This is the real
-// "is it returning video" test.
+// check: read `sample` seconds of the RTSP url's VIDEO stream and exit 0 only if
+// packets actually flow. A dead / unreachable / silent (frozen) stream makes
+// ffmpeg exit non-zero (connect error or the -timeout socket read timeout);
+// honey surfaces that as a step failure. This is the real "is it returning
+// video" test.
+//
+// It uses `-c copy` (no decode) deliberately: a real camera may not deliver a
+// keyframe / SPS fast enough for ffmpeg to determine the frame size, which fails
+// a decode-based probe with "Could not find codec parameters ... unspecified
+// size" even though the stream is live. Copying packets needs no codec
+// parameters — any video RTP packet flowing proves the camera is streaming.
+// `-map 0:v:0` makes it video-specific (no video stream → non-zero).
 actions: check: {
 	#Config: {
 		input:      string
-		frames:     string | *"10"      // video frames to decode before declaring healthy
-		transport:  string | *"tcp"     // rtsp_transport: tcp (reliable) or udp
-		timeout_us: string | *"8000000" // rtsp socket I/O timeout, microseconds (8s)
+		sample:     string | *"3"        // seconds of stream to read before declaring healthy
+		transport:  string | *"tcp"      // rtsp_transport: tcp (reliable) or udp
+		timeout_us: string | *"15000000" // rtsp socket I/O timeout, microseconds (15s)
 	}
 	// -timeout is the RTSP demuxer's socket-timeout option (microseconds). Do
 	// NOT use -rw_timeout here: the rtsp demuxer rejects it once the input
@@ -28,7 +36,9 @@ actions: check: {
 		"-rtsp_transport", config.transport,
 		"-timeout", config.timeout_us,
 		"-i", config.input,
-		"-frames:v", config.frames,
+		"-map", "0:v:0",
+		"-t", config.sample,
+		"-c", "copy",
 		"-f", "null", "-",
 	]
 	output_format: "text"
