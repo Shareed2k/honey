@@ -30,8 +30,9 @@ recipe: {
 				id:     "rtsp_probe"
 				action: "check"
 				config: {
-					input:  "rtsp://192.168.88.243:18554/balcony/stream"
-					frames: "10"
+					input: "rtsp://192.168.88.243:18554/balcony/stream"
+					// sample/transport/timeout_us use the plugin defaults (read 3s
+					// of the video stream over tcp, 15s socket timeout).
 				}
 			}
 		},
