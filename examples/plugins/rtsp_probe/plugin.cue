@@ -17,12 +17,16 @@ actions: check: {
 		input:      string
 		frames:     string | *"10"      // video frames to decode before declaring healthy
 		transport:  string | *"tcp"     // rtsp_transport: tcp (reliable) or udp
-		rw_timeout: string | *"8000000" // I/O timeout, microseconds (8s)
+		timeout_us: string | *"8000000" // rtsp socket I/O timeout, microseconds (8s)
 	}
+	// -timeout is the RTSP demuxer's socket-timeout option (microseconds). Do
+	// NOT use -rw_timeout here: the rtsp demuxer rejects it once the input
+	// actually opens ("Option rw_timeout not found"), and -stimeout was removed
+	// in ffmpeg 8.
 	argv: [
 		"/usr/local/bin/ffmpeg", "-hide_banner",
 		"-rtsp_transport", config.transport,
-		"-rw_timeout", config.rw_timeout,
+		"-timeout", config.timeout_us,
 		"-i", config.input,
 		"-frames:v", config.frames,
 		"-f", "null", "-",
@@ -37,12 +41,12 @@ actions: probe: {
 	#Config: {
 		input:      string
 		transport:  string | *"tcp"
-		rw_timeout: string | *"8000000"
+		timeout_us: string | *"8000000"
 	}
 	argv: [
 		"/usr/local/bin/ffprobe", "-v", "error",
 		"-rtsp_transport", config.transport,
-		"-rw_timeout", config.rw_timeout,
+		"-timeout", config.timeout_us,
 		"-select_streams", "v:0",
 		"-show_entries", "stream=codec_name,width,height",
 		"-of", "json",
