@@ -18,6 +18,11 @@ type Plugins struct {
 	NetworkDeny       *bool    `yaml:"network_deny,omitempty" json:"network_deny,omitempty"`
 	NetworkAllowHosts []string `yaml:"network_allow_hosts,omitempty" json:"network_allow_hosts,omitempty"`
 	AllowHostNetwork  bool     `yaml:"allow_host_network,omitempty" json:"allow_host_network,omitempty"`
+	// KeepWarm keeps docker-runtime plugin containers running across CLI runs
+	// (deterministically named + labeled) so a later run reuses the warm
+	// container instead of re-paying cold start. Opt-in: leaves containers
+	// running until `honey plugins gc`. Default false.
+	KeepWarm bool `yaml:"keep_warm,omitempty" json:"keep_warm,omitempty"`
 }
 
 // PluginsEffective holds resolved plugin settings for runtime.
@@ -30,6 +35,7 @@ type PluginsEffective struct {
 	NetworkDeny       bool
 	NetworkAllowHosts []string
 	AllowHostNetwork  bool
+	KeepWarm          bool
 }
 
 const (
@@ -69,6 +75,7 @@ func (p Plugins) WithDefaults() PluginsEffective {
 		e.NetworkAllowHosts = append([]string(nil), p.NetworkAllowHosts...)
 	}
 	e.AllowHostNetwork = p.AllowHostNetwork
+	e.KeepWarm = p.KeepWarm
 	return e
 }
 

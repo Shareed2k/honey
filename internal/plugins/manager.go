@@ -145,7 +145,7 @@ func loadPluginDir(ctx context.Context, dir string, cfg config.PluginsEffective)
 		if strings.TrimSpace(manifest.Docker.Network) == "host" && !cfg.AllowHostNetwork {
 			return nil, fmt.Errorf("plugins: %q requests docker.network: host but plugins.allow_host_network is not enabled", manifest.ID)
 		}
-		return loadDockerPluginDir(ctx, dir, manifest, hosts, paths)
+		return loadDockerPluginDir(ctx, dir, manifest, hosts, paths, cfg)
 	}
 	return loadWasmPluginDir(ctx, dir, manifest, hosts, paths, cfg)
 }
@@ -210,7 +210,7 @@ func loadWasmPluginDir(ctx context.Context, dir string, manifest Manifest, hosts
 // (default) it also locates the host honey-plugin-init binary to bind-mount
 // as the container entrypoint; in embedded mode the image supplies its own
 // init at manifest.Docker.InitPath, so no host binary is located or bound.
-func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hosts []string, paths map[string]string) (*loadedPlugin, error) {
+func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hosts []string, paths map[string]string, cfg config.PluginsEffective) (*loadedPlugin, error) {
 	cuePath := filepath.Join(dir, "plugin.cue")
 	cueBytes, err := safepath.ReadFile(cuePath)
 	if err != nil {
@@ -259,6 +259,8 @@ func loadDockerPluginDir(ctx context.Context, dir string, manifest Manifest, hos
 		InitMode:    initMode,
 		InitPath:    manifest.Docker.InitPath,
 		HostNetwork: manifest.Docker.Network == "host",
+		KeepWarm:    cfg.KeepWarm,
+		PluginID:    manifest.ID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plugins: instantiate docker plugin %q: %w", manifest.ID, err)
