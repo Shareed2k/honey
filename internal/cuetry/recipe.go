@@ -195,6 +195,14 @@ const schemaSource = `
 			rm?:        bool
 		}
 	})
+	http?: close({
+		method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+		url:     string
+		headers?: {[string]: string}
+		body?:          string
+		timeout?:       string
+		expect_status?: [...int]
+	})
 	k8s?: close({
 		namespace?: string
 		output?:    string
@@ -570,8 +578,8 @@ func validateStepRetry(i int, b *StepBase, defaults *RecipeDefaults) error {
 // kinds), so this single check is already more concentrated than distributing
 // it across the other 15 kinds would be.
 func validateStepEnvAndSecrets(i int, kind string, b *StepBase, secretPrefixes []string) error {
-	if len(b.Secrets) > 0 && kind != KindCommand && kind != KindScript && kind != KindPlugin && kind != KindTemplate {
-		return fmt.Errorf("cuetry: steps[%d]: secrets are only supported for command, script, plugin, and template steps", i)
+	if len(b.Secrets) > 0 && kind != KindCommand && kind != KindScript && kind != KindPlugin && kind != KindTemplate && kind != KindHTTP {
+		return fmt.Errorf("cuetry: steps[%d]: secrets are only supported for command, script, plugin, template, and http steps", i)
 	}
 	if len(b.Env) > 0 {
 		if err := ValidateRecipeEnvMap(b.Env); err != nil {

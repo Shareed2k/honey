@@ -503,6 +503,18 @@ type DockerStop struct {
 	Rm        bool   `json:"rm,omitempty"`
 }
 
+// RecipeStepHTTP configures an HTTP/REST call step. URL, header values and Body
+// are Go-templated with the step's resolved env (e.g. "{{ .env.TOKEN }}"), so a
+// secret in the step's secrets map reaches a header without appearing inline.
+type RecipeStepHTTP struct {
+	Method       string            `json:"method,omitempty" jsonschema:"enum=GET,enum=POST,enum=PUT,enum=PATCH,enum=DELETE,enum=HEAD"`
+	URL          string            `json:"url"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	Body         string            `json:"body,omitempty"`
+	Timeout      string            `json:"timeout,omitempty"`
+	ExpectStatus []int             `json:"expect_status,omitempty"`
+}
+
 // RecipeStepOpensearch configures an OpenSearch engine API step.
 type RecipeStepOpensearch struct {
 	Addresses []string       `json:"addresses,omitempty"`

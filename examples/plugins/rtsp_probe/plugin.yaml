@@ -1,0 +1,11 @@
+id: rtsp_probe
+version: "0.1.0"
+capabilities:
+  - custom_step
+runtime: docker
+# ffmpeg decode of a few frames over TCP can take several seconds; give it more
+# than the 30s default so a slow-but-alive camera is not a false negative.
+timeout_ms: 60000
+docker:
+  image: "linuxserver/ffmpeg:latest"
+  pull_policy: if_not_present

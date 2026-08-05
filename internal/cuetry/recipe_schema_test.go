@@ -21,7 +21,7 @@ func TestBuildRecipeStepJSONSchema(t *testing.T) {
 	}
 
 	// Each registered kind gets its own self-contained definition.
-	for _, kind := range []string{KindCommand, KindTemplate, KindPostgres, KindSummarize} {
+	for _, kind := range []string{KindCommand, KindTemplate, KindPostgres, KindSummarize, KindHTTP} {
 		def, ok := defs[kind].(map[string]any)
 		if !ok {
 			t.Fatalf("expected definition for kind %q", kind)

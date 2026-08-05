@@ -50,6 +50,7 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 | `plugin` | SSH / k8s exec | Custom step (WASM or `runtime: docker`) — [Plugin development](./plugins-development.md), optional `kv_key`/`kv_key_per_host` |
 | `tunnel` | SSH / k8s / TrueNAS | Operator-side listen (local/remote/dynamic/UDP/unix/tun) — [Tunnel steps](#tunnel-steps) |
 | `k8s` | Kubernetes API | Direct API calls: apply, delete, scale, rollout, get, exec, job — [Kubernetes steps](#kubernetes-steps) |
+| `http` | Local (operator) | A REST/HTTP request (method/url/headers/body); templated fields + `secrets`; HTTP-aware `retry` — [HTTP steps](#http-steps) |
 | `put` / `get` | SFTP or k8s tar stream | Relative `local` paths from recipe directory |
 | `agent_transfer` | A→cloud→B | Needs honey config for `cloud_backend_ref` |
 | `summarize` | Local (operator) | `host: "_"`; terminal step only — must be last, at most one per recipe, nothing may depend on it; summarizes the whole run/ancestor chain; needs `OPENAI_API_KEY` when executing |
@@ -497,6 +498,56 @@ The `k8s` provider auto-populates these when hosts are discovered from cluster i
 - `rollout_restart` supports Deployment, StatefulSet, DaemonSet only.
 - `wait` supports `condition=<Type>` format only; arbitrary JSONPath conditions are not yet supported.
 - Helm operations are out of scope — use the Helm plugin instead.
+
+## HTTP steps
+
+`http:` makes a REST/HTTP request. The request is issued by the operator process, so
+it targets the operator (`host: "_"`) or, when the step matches real hosts, runs once
+per host (with per-host templating). Success is decided by the response status.
+
+```cue
+{
+  id:   "restart"
+  host: "_"
+  secrets: {API_KEY: "secure:v1:…"}      // injected as env, referenced below
+  retry: {attempts: 3, delay_ms: 2000, backoff: "exponential"}
+  http: {
+    method:  "POST"                       // GET (default) | POST | PUT | PATCH | DELETE | HEAD
+    url:     "https://api.example.com/v1/restart"
+    timeout: "15s"                        // Go duration; default 30s
+    headers: {
+      "x-api-key":    "{{ .env.API_KEY }}"  // Go-templated with the step's resolved env
+      "Content-Type": "application/json"
+    }
+    body:          "{\"id\":\"abc\"}"     // raw string body; also templated
+    expect_status: [200, 202]             // success codes; default = any 2xx
+  }
+}
+```
+
+| Field | Notes |
+|-------|-------|
+| `method` | HTTP method; defaults to `GET`. |
+| `url` | Request URL (required). Go-templated with `{{ .env.NAME }}` / `{{ stepStdout "id" }}`. |
+| `headers` | Header map; each value is templated — put a `secrets:` value in a header via `{{ .env.NAME }}` so the secret never appears in plaintext. |
+| `body` | Raw request body string; templated. |
+| `timeout` | Whole-request deadline (Go duration). Unset → **30s**; any value overrides. |
+| `expect_status` | Accepted status codes. Unset → any `2xx`. A status outside the set fails the step with `http <status>: <body>`. |
+
+- **Templating**: `url`, header values and `body` are rendered with the same engine as
+  templated command/script steps (env, prior step stdout, KV) — see
+  [Template functions](#template-functions).
+- **Output & result**: the response body is the step's output (capture it with a
+  step-level `output:` or `env_from`). `assert:` and `failed_when` apply to it like any
+  step — e.g. `failed_when: 'stdout.contains("error")'` fails a 200 that returned an
+  error envelope.
+- **Retry** (see [Retry](#retry)) is HTTP-aware: a connection error or **408 / 429 /
+  5xx** is retried with the configured backoff (and honors a `Retry-After` header),
+  while any other **4xx** fails fast (a client error won't self-heal). Retries fire only
+  on a failed attempt, so a failed POST is safe to re-send; for a non-idempotent
+  endpoint set `retry: {attempts: 1}`.
+- **TLS** is always verified (no skip-verify option); use only `https`/`http` URLs you
+  trust — recipe URLs are operator-authored, so there is no SSRF allow-listing.
 
 ## Tunnel steps
 
