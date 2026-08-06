@@ -37,6 +37,20 @@ func (a *constAgent) Chat(_ context.Context, _ chatTurn) (chatReply, error) {
 	return a.reply, nil
 }
 
+// fakeApprover returns a scripted decision and records the requests it saw.
+type fakeApprover struct {
+	approved bool
+	note     string
+	seen     []approvalRequest
+}
+
+func (a *fakeApprover) approve(_ context.Context, req approvalRequest) approvalDecision {
+	a.seen = append(a.seen, req)
+	return approvalDecision{Approved: a.approved, Note: a.note}
+}
+
+func autoApprove() approver { return &fakeApprover{approved: true} }
+
 func controllerTestRecipe(t *testing.T, src string) cuetry.Recipe {
 	t.Helper()
 	r, err := cuetry.ParseRemoteRecipe([]byte(src), nil)
@@ -88,7 +102,7 @@ func TestController_HappyPath_RunsStepsThenSettles(t *testing.T) {
 	}
 	out := make(chan HostExecResult, 16)
 
-	if err := runController(context.Background(), recipe, out, agent, runStep); err != nil {
+	if err := runController(context.Background(), recipe, out, agent, runStep, autoApprove()); err != nil {
 		t.Fatalf("runController: %v", err)
 	}
 	if len(ran) != 2 || ran[0] != 0 || ran[1] != 1 {
@@ -123,7 +137,7 @@ func TestController_FailedTask_ReturnsError(t *testing.T) {
 	}}
 	out := make(chan HostExecResult, 8)
 	err := runController(context.Background(), recipe, out, agent,
-		func(context.Context, int) ([]HostExecResult, error) { return nil, nil })
+		func(context.Context, int) ([]HostExecResult, error) { return nil, nil }, autoApprove())
 	if err == nil || !strings.Contains(err.Error(), "failed task") {
 		t.Fatalf("err = %v, want a failed-task error", err)
 	}
@@ -142,12 +156,33 @@ recipe: {
 	var ran int
 	out := make(chan HostExecResult, 32)
 	err := runController(context.Background(), recipe, out, agent,
-		func(context.Context, int) ([]HostExecResult, error) { ran++; return nil, nil })
+		func(context.Context, int) ([]HostExecResult, error) { ran++; return nil, nil }, autoApprove())
 	if err == nil || !strings.Contains(err.Error(), "max_turns") {
 		t.Fatalf("err = %v, want a max_turns error", err)
 	}
 	if agent.calls != 3 || ran != 3 {
 		t.Errorf("calls=%d ran=%d, want 3/3 (bounded by max_turns)", agent.calls, ran)
+	}
+}
+
+func TestController_RequestApproval_FeedsDecisionBack(t *testing.T) {
+	recipe := controllerTestRecipe(t, twoStepOneTask)
+	app := &fakeApprover{approved: false, note: "operator denied"}
+	agent := &scriptedAgent{replies: []chatReply{
+		{ToolCalls: []chatToolCall{{ID: "1", Name: controllerApprovalTool, Args: `{"action":"delete data dir","reason":"cleanup"}`}}},
+		{ToolCalls: []chatToolCall{finishCall("2", `{"settlements":[{"task":"t","status":"skipped","note":"denied"}]}`)}},
+	}}
+	out := make(chan HostExecResult, 8)
+	if err := runController(context.Background(), recipe, out, agent,
+		func(context.Context, int) ([]HostExecResult, error) { return nil, nil }, app); err != nil {
+		t.Fatalf("runController: %v", err)
+	}
+	if len(app.seen) != 1 || app.seen[0].Action != "delete data dir" || app.seen[0].Reason != "cleanup" {
+		t.Fatalf("approver saw %+v, want one request for 'delete data dir'/'cleanup'", app.seen)
+	}
+	// The operator's denial must be reported back to the model on the next turn.
+	if len(agent.seen) < 2 || !turnHasToolResult(agent.seen[1], "1", "operator denied") {
+		t.Errorf("approval decision was not fed back to the model")
 	}
 }
 
@@ -168,7 +203,7 @@ recipe: {
 	}}
 	out := make(chan HostExecResult, 8)
 	if err := runController(context.Background(), recipe, out, agent,
-		func(context.Context, int) ([]HostExecResult, error) { return nil, nil }); err != nil {
+		func(context.Context, int) ([]HostExecResult, error) { return nil, nil }, autoApprove()); err != nil {
 		t.Fatalf("runController: %v", err)
 	}
 	if agent.calls != 2 {

@@ -15,6 +15,7 @@ const (
 	controllerDefaultModel    = "gpt-4o"
 	controllerDefaultMaxTurns = 25
 	controllerFinishTool      = "finish"
+	controllerApprovalTool    = "request_approval"
 	controllerStepToolPrefix  = "run_"
 	controllerLLMOutputCap    = 4000 // bytes of a step's output shown to the model
 )
@@ -37,13 +38,14 @@ func StreamCueRecipeStepsController(ctx context.Context, run *CueRun, out chan<-
 	runStep := func(sctx context.Context, idx int) ([]HostExecResult, error) {
 		return StreamCueRecipeStep(sctx, run, idx, recipe.Steps[idx].Step, nil, out)
 	}
-	return runController(ctx, recipe, out, agent, runStep)
+	return runController(ctx, recipe, out, agent, runStep, newStdinApprover())
 }
 
 // runController is the agent-driven loop, split from StreamCueRecipeStepsController
-// so tests can inject a scripted fake chatAgent and a fake step-runner (no network,
-// no host setup). runStep executes step index idx and returns its per-host results.
-func runController(ctx context.Context, recipe cuetry.Recipe, out chan<- HostExecResult, agent chatAgent, runStep func(context.Context, int) ([]HostExecResult, error)) error {
+// so tests can inject a scripted fake chatAgent, a fake step-runner, and a fake
+// approver (no network, no host setup, no operator prompt). runStep executes step
+// index idx and returns its per-host results; app decides human-approval requests.
+func runController(ctx context.Context, recipe cuetry.Recipe, out chan<- HostExecResult, agent chatAgent, runStep func(context.Context, int) ([]HostExecResult, error), app approver) error {
 	tools, stepByTool := buildControllerTools(recipe)
 	maxTurns := controllerMaxTurns(recipe)
 
@@ -84,6 +86,13 @@ func runController(ctx context.Context, recipe cuetry.Recipe, out chan<- HostExe
 				if complete {
 					done = true
 				}
+				continue
+			}
+			if tc.Name == controllerApprovalTool {
+				messages = append(messages, chatMessage{
+					Role: chatRoleTool, ToolCallID: tc.ID,
+					Content: applyApproval(ctx, tc.Args, app),
+				})
 				continue
 			}
 			idx, ok := stepByTool[tc.Name]
@@ -144,11 +153,43 @@ func buildControllerTools(r cuetry.Recipe) ([]chatTool, map[string]int) {
 		byTool[name] = i
 	}
 	tools = append(tools, chatTool{
+		Name:        controllerApprovalTool,
+		Description: "Ask the human operator to approve an action before you take it (e.g. a destructive or irreversible step). Returns whether it was approved.",
+		Parameters:  json.RawMessage(controllerApprovalSchema),
+	})
+	tools = append(tools, chatTool{
 		Name:        controllerFinishTool,
 		Description: "Settle each task once its goal is met (or cannot be). Call when done.",
 		Parameters:  json.RawMessage(controllerFinishSchema),
 	})
 	return tools, byTool
+}
+
+const controllerApprovalSchema = `{
+  "type": "object",
+  "properties": {
+    "action": {"type": "string", "description": "what you want to do, in one line"},
+    "reason": {"type": "string", "description": "why it is needed"}
+  },
+  "required": ["action"]
+}`
+
+// applyApproval prompts the operator (via app) for a request_approval tool call
+// and returns the decision as the tool reply.
+func applyApproval(ctx context.Context, args string, app approver) string {
+	var req struct {
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(args), &req); err != nil {
+		return fmt.Sprintf(`{"approved":false,"note":"invalid approval arguments: %s"}`, err.Error())
+	}
+	dec := app.approve(ctx, approvalRequest{Action: req.Action, Reason: req.Reason})
+	b, _ := json.Marshal(struct {
+		Approved bool   `json:"approved"`
+		Note     string `json:"note,omitempty"`
+	}{Approved: dec.Approved, Note: dec.Note})
+	return string(b)
 }
 
 const controllerFinishSchema = `{
@@ -175,7 +216,8 @@ func buildControllerSystemPrompt(r cuetry.Recipe) string {
 	b.WriteString("You are a controller for an infrastructure automation run. ")
 	b.WriteString("You are given TASKS (goals that must be true when finished) and a set of STEP tools you may call. ")
 	b.WriteString("Decide which steps to run, in what order, to satisfy every task. Observe each step's result; a failed step is an observation you can react to, not a fatal error. ")
-	b.WriteString("When a task's goal is met (or determined impossible), settle it via the finish tool (completed/skipped/failed). Call finish once every task is settled.\n\n")
+	b.WriteString("When a task's goal is met (or determined impossible), settle it via the finish tool (completed/skipped/failed). Call finish once every task is settled. ")
+	b.WriteString("Before any destructive or irreversible action, call request_approval and proceed only if the operator approves.\n\n")
 	b.WriteString("TASKS:\n")
 	for _, t := range r.Tasks {
 		fmt.Fprintf(&b, "- %s: %s\n", t.Name, t.Description)
