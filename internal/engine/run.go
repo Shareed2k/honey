@@ -480,6 +480,10 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 		runErr = StreamCueRecipeStepsGraph(ctx, run, out)
 		return runErr
 	}
+	if mode == cuetry.ExecutionModeController {
+		runErr = StreamCueRecipeStepsController(ctx, run, out)
+		return runErr
+	}
 
 	run.OutputStore = cuetry.NewStepOutputStore()
 	run.OutputCapture = cuetry.NewRecipeOutputCapture()

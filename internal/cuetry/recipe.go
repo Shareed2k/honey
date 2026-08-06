@@ -45,7 +45,8 @@ const schemaSource = `
 	})
 })
 #Step: close({
-	id?:      string
+	id?:          string
+	description?: string
 	depends?: [...string]
 	trigger_rule?: "all_success" | "one_failed" | "all_done"
 	rescue?:  [...string]
@@ -337,9 +338,19 @@ const schemaSource = `
 	timezone?: string
 	env?:      {[string]: string}
 })
+#Task: close({
+	name:        string
+	description: string
+})
 #Recipe: close({
 	name:  string
-	type?: "linear" | "graph"
+	type?: "linear" | "graph" | "controller"
+	tasks?: [...#Task]
+	controller?: close({
+		model?:         string
+		max_turns?:     int
+		system_prompt?: string
+	})
 	webhooks?:  {[string]: #Webhook}
 	schedules?: {[string]: #Schedule}
 	notification?: close({

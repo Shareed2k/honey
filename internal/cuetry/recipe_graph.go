@@ -14,6 +14,9 @@ const (
 	ExecutionModeLinear ExecutionMode = iota
 	// ExecutionModeGraph runs steps by id/depends DAG with parallel waves.
 	ExecutionModeGraph
+	// ExecutionModeController exposes each step as a tool and lets an LLM decide
+	// which to run, in what order, until the recipe's tasks (goals) are satisfied.
+	ExecutionModeController
 )
 
 var recipeStepIDPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_\-\[\]=,]*$`)
@@ -26,8 +29,10 @@ func RecipeExecutionMode(r Recipe) (ExecutionMode, error) {
 		return ExecutionModeLinear, nil
 	case "graph":
 		return ExecutionModeGraph, nil
+	case "controller":
+		return ExecutionModeController, nil
 	default:
-		return ExecutionModeLinear, fmt.Errorf("cuetry: recipe.type must be \"linear\" or \"graph\", got %q", r.Type)
+		return ExecutionModeLinear, fmt.Errorf("cuetry: recipe.type must be \"linear\", \"graph\", or \"controller\", got %q", r.Type)
 	}
 }
 
@@ -276,9 +281,57 @@ func ValidateRecipeGraph(r Recipe) error {
 			}
 		}
 		return nil
+	case ExecutionModeController:
+		return validateControllerRecipe(r)
 	default:
 		return fmt.Errorf("cuetry: unknown execution mode")
 	}
+}
+
+// validateControllerRecipe checks the rules for type: "controller": at least one
+// task (goal), and every step has a unique non-empty id (the LLM tool handle).
+// depends/env_from/trigger_rule/rescue are meaningless when the LLM orders steps,
+// so they are rejected.
+func validateControllerRecipe(r Recipe) error {
+	if len(r.Tasks) == 0 {
+		return fmt.Errorf("cuetry: controller mode requires at least one task")
+	}
+	for i, t := range r.Tasks {
+		if strings.TrimSpace(t.Name) == "" {
+			return fmt.Errorf("cuetry: tasks[%d].name is required", i)
+		}
+		if strings.TrimSpace(t.Description) == "" {
+			return fmt.Errorf("cuetry: tasks[%d].description is required", i)
+		}
+	}
+	seen := make(map[string]int, len(r.Steps))
+	for i, ws := range r.Steps {
+		b := ws.Step.Base()
+		id := strings.TrimSpace(b.ID)
+		if id == "" {
+			return fmt.Errorf("cuetry: steps[%d].id is required in controller mode (it is the LLM tool handle)", i)
+		}
+		if !recipeStepIDPattern.MatchString(id) {
+			return fmt.Errorf("cuetry: steps[%d].id %q must match [a-zA-Z][a-zA-Z0-9_-]*", i, id)
+		}
+		if prev, dup := seen[id]; dup {
+			return fmt.Errorf("cuetry: duplicate step id %q (steps[%d] and steps[%d])", id, prev, i)
+		}
+		seen[id] = i
+		if len(b.Depends) > 0 {
+			return fmt.Errorf("cuetry: steps[%d].depends is not allowed in controller mode (the LLM decides order)", i)
+		}
+		if len(b.EnvFrom) > 0 {
+			return fmt.Errorf("cuetry: steps[%d].env_from is not allowed in controller mode", i)
+		}
+		if b.TriggerRule != "" && b.TriggerRule != "all_success" {
+			return fmt.Errorf("cuetry: steps[%d].trigger_rule is not allowed in controller mode", i)
+		}
+		if len(b.Rescue) > 0 {
+			return fmt.Errorf("cuetry: steps[%d].rescue is not allowed in controller mode", i)
+		}
+	}
+	return nil
 }
 
 // FormatGraphWavesText returns a human-readable wave plan for graph recipes.
