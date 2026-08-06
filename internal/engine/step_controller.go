@@ -33,20 +33,28 @@ func StreamCueRecipeStepsController(ctx context.Context, run *CueRun, out chan<-
 		return err
 	}
 	recipe := run.Params.Recipe
+	// Sub-recipe steps expose their callee's declared prompts as tool parameters.
+	promptsByStep := loadControllerStepPrompts(recipe, run.Params.RecipeDir)
 	// Reuse the full single-step path (host expansion, OPA/when/risk gates, env,
-	// output capture) for every LLM-chosen step.
-	runStep := func(sctx context.Context, idx int) ([]HostExecResult, error) {
-		return StreamCueRecipeStep(sctx, run, idx, recipe.Steps[idx].Step, nil, out)
+	// output capture) for every LLM-chosen step. For a sub-recipe step, the LLM's
+	// arguments are merged into a cloned step's prompts before running.
+	runStep := func(sctx context.Context, idx int, args map[string]string) ([]HostExecResult, error) {
+		step := recipe.Steps[idx].Step
+		if rs, ok := step.(*cuetry.RecipeStep); ok && len(args) > 0 {
+			step = cloneRecipeStepWithPrompts(rs, args)
+		}
+		return StreamCueRecipeStep(sctx, run, idx, step, nil, out)
 	}
-	return runController(ctx, recipe, out, agent, runStep, newStdinApprover())
+	return runController(ctx, recipe, out, agent, runStep, newStdinApprover(), promptsByStep)
 }
 
 // runController is the agent-driven loop, split from StreamCueRecipeStepsController
 // so tests can inject a scripted fake chatAgent, a fake step-runner, and a fake
 // approver (no network, no host setup, no operator prompt). runStep executes step
-// index idx and returns its per-host results; app decides human-approval requests.
-func runController(ctx context.Context, recipe cuetry.Recipe, out chan<- HostExecResult, agent chatAgent, runStep func(context.Context, int) ([]HostExecResult, error), app approver) error {
-	tools, stepByTool := buildControllerTools(recipe)
+// index idx with the LLM's arguments and returns its per-host results; app decides
+// human-approval requests; promptsByStep supplies sub-recipe tool parameters.
+func runController(ctx context.Context, recipe cuetry.Recipe, out chan<- HostExecResult, agent chatAgent, runStep func(context.Context, int, map[string]string) ([]HostExecResult, error), app approver, promptsByStep map[int]map[string]cuetry.RecipePrompt) error {
+	tools, stepByTool := buildControllerTools(recipe, promptsByStep)
 	maxTurns := controllerMaxTurns(recipe)
 
 	messages := []chatMessage{
@@ -103,9 +111,17 @@ func runController(ctx context.Context, recipe cuetry.Recipe, out chan<- HostExe
 				})
 				continue
 			}
+			args, argErr := parseStepArgs(tc.Args)
+			if argErr != nil {
+				messages = append(messages, chatMessage{
+					Role: chatRoleTool, ToolCallID: tc.ID,
+					Content: fmt.Sprintf(`{"error":%q}`, argErr.Error()),
+				})
+				continue
+			}
 			zap.L().Debug("controller running step",
 				zap.String("id", recipe.Steps[idx].Step.Base().ID), zap.Int("turn", turn))
-			rows, runErr := runStep(ctx, idx)
+			rows, runErr := runStep(ctx, idx, args)
 			messages = append(messages, chatMessage{
 				Role: chatRoleTool, ToolCallID: tc.ID,
 				Content: summarizeStepForLLM(rows, runErr),
@@ -138,8 +154,8 @@ func controllerMaxTurns(r cuetry.Recipe) int {
 
 // buildControllerTools maps each step to a no-argument tool (name "run_<id>") plus
 // the built-in finish tool, and returns the toolName->stepIndex lookup.
-func buildControllerTools(r cuetry.Recipe) ([]chatTool, map[string]int) {
-	tools := make([]chatTool, 0, len(r.Steps)+1)
+func buildControllerTools(r cuetry.Recipe, promptsByStep map[int]map[string]cuetry.RecipePrompt) ([]chatTool, map[string]int) {
+	tools := make([]chatTool, 0, len(r.Steps)+2)
 	byTool := make(map[string]int, len(r.Steps))
 	for i, ws := range r.Steps {
 		step := ws.Step
@@ -149,7 +165,11 @@ func buildControllerTools(r cuetry.Recipe) ([]chatTool, map[string]int) {
 		if desc == "" {
 			desc = fmt.Sprintf("run the %q step (kind %s)", id, step.Kind())
 		}
-		tools = append(tools, chatTool{Name: name, Description: desc})
+		tool := chatTool{Name: name, Description: desc}
+		if prompts := promptsByStep[i]; len(prompts) > 0 { // sub-recipe step: LLM-fillable params
+			tool.Parameters = promptsToToolSchema(prompts)
+		}
+		tools = append(tools, tool)
 		byTool[name] = i
 	}
 	tools = append(tools, chatTool{
