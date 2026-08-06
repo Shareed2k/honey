@@ -197,6 +197,10 @@ recipe: {
 - **Bounded + auditable.** The LLM's action space is exactly the operator-authored steps —
   it cannot invent commands — and every step it picks still passes honey's host policy,
   `when`, and command-risk gates. `max_turns` (default 25) hard-caps the loop.
+- **Human approval.** The LLM can call a built-in `request_approval` tool before a
+  destructive/irreversible action; honey prompts the operator (y/N on the terminal) and
+  returns the decision, so the model proceeds only when approved. On non-interactive stdin
+  (piped / CI) the request is auto-denied.
 - **Requires an OpenAI-compatible endpoint:** `OPENAI_API_KEY` (required), `OPENAI_BASE_URL`
   (optional), and `controller.model` → `OPENAI_MODEL` → a default. A **dry-run** (no
   `--execute`) prints the plan and makes **no** LLM call. A controller run costs LLM tokens
