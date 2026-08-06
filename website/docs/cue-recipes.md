@@ -206,7 +206,7 @@ recipe: {
 - **Requires an OpenAI-compatible endpoint:** `OPENAI_API_KEY` (required), `OPENAI_BASE_URL`
   (optional), and `controller.model` → `OPENAI_MODEL` → a default. A **dry-run** (no
   `--execute`) prints the plan and makes **no** LLM call. A controller run costs LLM tokens
-  and is nondeterministic.
+  and is nondeterministic. The model's reasoning **streams** to the terminal as it runs.
 
 Example: [`controller_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/controller_demo.cue).
 

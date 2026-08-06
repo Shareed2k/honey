@@ -3,8 +3,11 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -61,6 +64,7 @@ type chatReply struct {
 type openAIAgent struct {
 	client *openai.Client
 	model  string
+	out    io.Writer // assistant tokens are streamed here for operator progress
 }
 
 func newOpenAIAgent(model string) (*openAIAgent, error) {
@@ -72,32 +76,84 @@ func newOpenAIAgent(model string) (*openAIAgent, error) {
 	if base := os.Getenv("OPENAI_BASE_URL"); base != "" {
 		cfg.BaseURL = base
 	}
-	return &openAIAgent{client: openai.NewClientWithConfig(cfg), model: model}, nil
+	return &openAIAgent{client: openai.NewClientWithConfig(cfg), model: model, out: os.Stderr}, nil
 }
 
+// Chat streams the completion so the operator sees the model think in real time:
+// text deltas are written to a.out as they arrive, and tool-call deltas (which
+// arrive in fragments) are reassembled into whole calls.
 func (a *openAIAgent) Chat(ctx context.Context, turn chatTurn) (chatReply, error) {
 	req := openai.ChatCompletionRequest{
 		Model:    a.model,
 		Messages: toOpenAIMessages(turn.Messages),
 		Tools:    toOpenAITools(turn.Tools),
+		Stream:   true,
 	}
-	resp, err := a.client.CreateChatCompletion(ctx, req)
+	stream, err := a.client.CreateChatCompletionStream(ctx, req)
 	if err != nil {
 		return chatReply{}, fmt.Errorf("controller: chat completion: %w", err)
 	}
-	if len(resp.Choices) == 0 {
-		return chatReply{}, fmt.Errorf("controller: model returned no choices")
+	defer stream.Close()
+
+	var acc streamAccumulator
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return chatReply{}, fmt.Errorf("controller: chat stream: %w", err)
+		}
+		if len(resp.Choices) == 0 {
+			continue
+		}
+		acc.feed(resp.Choices[0].Delta, a.out)
 	}
-	msg := resp.Choices[0].Message
-	reply := chatReply{AssistantText: msg.Content}
-	for _, tc := range msg.ToolCalls {
-		reply.ToolCalls = append(reply.ToolCalls, chatToolCall{
-			ID:   tc.ID,
-			Name: tc.Function.Name,
-			Args: tc.Function.Arguments,
-		})
+	return acc.reply(), nil
+}
+
+// streamAccumulator reassembles a streamed completion: text is concatenated (and
+// echoed to out as it arrives), and tool-call fragments are merged by their
+// stream index into whole calls.
+type streamAccumulator struct {
+	text  strings.Builder
+	calls []chatToolCall
+	byIdx map[int]int // openai stream tool-call index -> position in calls
+}
+
+func (s *streamAccumulator) feed(delta openai.ChatCompletionStreamChoiceDelta, out io.Writer) {
+	if delta.Content != "" {
+		s.text.WriteString(delta.Content)
+		if out != nil {
+			_, _ = io.WriteString(out, delta.Content)
+		}
 	}
-	return reply, nil
+	for _, tcd := range delta.ToolCalls {
+		idx := 0
+		if tcd.Index != nil {
+			idx = *tcd.Index
+		}
+		if s.byIdx == nil {
+			s.byIdx = make(map[int]int)
+		}
+		pos, ok := s.byIdx[idx]
+		if !ok {
+			pos = len(s.calls)
+			s.calls = append(s.calls, chatToolCall{})
+			s.byIdx[idx] = pos
+		}
+		if tcd.ID != "" {
+			s.calls[pos].ID = tcd.ID
+		}
+		if tcd.Function.Name != "" {
+			s.calls[pos].Name = tcd.Function.Name
+		}
+		s.calls[pos].Args += tcd.Function.Arguments
+	}
+}
+
+func (s *streamAccumulator) reply() chatReply {
+	return chatReply{AssistantText: s.text.String(), ToolCalls: s.calls}
 }
 
 func toOpenAIMessages(msgs []chatMessage) []openai.ChatCompletionMessage {
