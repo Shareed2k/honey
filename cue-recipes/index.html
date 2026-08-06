@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">CUE Recipes | Honey</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:url" content="https://shareed2k.github.io/honey/cue-recipes"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="CUE Recipes | Honey"><meta data-rh="true" name="description" content="Honey can run multi-step playbooks defined in CUE. Each step targets hosts from your current search and performs exactly one action: command, put, get, script, agent_transfer, summarize, ai, plugin (WASM — see Plugin development), tunnel (operator-side port forward), or k8s (Kubernetes API — see Kubernetes steps)."><meta data-rh="true" property="og:description" content="Honey can run multi-step playbooks defined in CUE. Each step targets hosts from your current search and performs exactly one action: command, put, get, script, agent_transfer, summarize, ai, plugin (WASM — see Plugin development), tunnel (operator-side port forward), or k8s (Kubernetes API — see Kubernetes steps)."><link data-rh="true" rel="icon" href="/honey/img/logo.svg"><link data-rh="true" rel="canonical" href="https://shareed2k.github.io/honey/cue-recipes"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/cue-recipes" hreflang="en"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/cue-recipes" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"CUE Recipes","item":"https://shareed2k.github.io/honey/cue-recipes"}]}</script><link rel="stylesheet" href="/honey/assets/css/styles.38bacd89.css">
-<script src="/honey/assets/js/runtime~main.e9910854.js" defer="defer"></script>
+<script src="/honey/assets/js/runtime~main.fb2376a5.js" defer="defer"></script>
 <script src="/honey/assets/js/main.4da68ed9.js" defer="defer"></script>
 </head>
 <body>
@@ -67,7 +67,9 @@ settled.</p>
 <li class=""><strong>Steps are tools.</strong> Each step needs an <code>id</code> (the tool handle) and a human-readable
 <strong><code>description</code></strong> (what the LLM sees). Any step kind works — command, script, <code>http</code>,
 k8s, docker plugin, … The LLM chooses <em>which</em> to run; each step&#x27;s own config is fixed in
-the recipe (the LLM does not supply arguments). <code>depends</code>/<code>trigger_rule</code>/<code>rescue</code>/<code>env_from</code>
+the recipe (the LLM does not supply arguments) — <strong>except a sub-recipe (<code>recipe:</code>) step</strong>,
+whose tool exposes the callee&#x27;s declared <code>defaults.prompts</code> as typed parameters the LLM
+fills (merged into the sub-recipe&#x27;s prompts before it runs). <code>depends</code>/<code>trigger_rule</code>/<code>rescue</code>/<code>env_from</code>
 are not used here — ordering is the LLM&#x27;s job.</li>
 <li class=""><strong>Tasks are goals.</strong> The LLM settles each task <code>completed</code> / <code>skipped</code> / <code>failed</code> via a
 built-in <code>finish</code> tool once its goal is met. The run <strong>fails</strong> if any task is settled
