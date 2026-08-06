@@ -96,13 +96,13 @@ func TestController_HappyPath_RunsStepsThenSettles(t *testing.T) {
 	}}
 
 	var ran []int
-	runStep := func(_ context.Context, idx int) ([]HostExecResult, error) {
+	runStep := func(_ context.Context, idx int, _ map[string]string) ([]HostExecResult, error) {
 		ran = append(ran, idx)
 		return []HostExecResult{{Name: "_", Success: true, Output: "ok"}}, nil
 	}
 	out := make(chan HostExecResult, 16)
 
-	if err := runController(context.Background(), recipe, out, agent, runStep, autoApprove()); err != nil {
+	if err := runController(context.Background(), recipe, out, agent, runStep, autoApprove(), nil); err != nil {
 		t.Fatalf("runController: %v", err)
 	}
 	if len(ran) != 2 || ran[0] != 0 || ran[1] != 1 {
@@ -137,7 +137,7 @@ func TestController_FailedTask_ReturnsError(t *testing.T) {
 	}}
 	out := make(chan HostExecResult, 8)
 	err := runController(context.Background(), recipe, out, agent,
-		func(context.Context, int) ([]HostExecResult, error) { return nil, nil }, autoApprove())
+		func(context.Context, int, map[string]string) ([]HostExecResult, error) { return nil, nil }, autoApprove(), nil)
 	if err == nil || !strings.Contains(err.Error(), "failed task") {
 		t.Fatalf("err = %v, want a failed-task error", err)
 	}
@@ -156,7 +156,7 @@ recipe: {
 	var ran int
 	out := make(chan HostExecResult, 32)
 	err := runController(context.Background(), recipe, out, agent,
-		func(context.Context, int) ([]HostExecResult, error) { ran++; return nil, nil }, autoApprove())
+		func(context.Context, int, map[string]string) ([]HostExecResult, error) { ran++; return nil, nil }, autoApprove(), nil)
 	if err == nil || !strings.Contains(err.Error(), "max_turns") {
 		t.Fatalf("err = %v, want a max_turns error", err)
 	}
@@ -174,7 +174,7 @@ func TestController_RequestApproval_FeedsDecisionBack(t *testing.T) {
 	}}
 	out := make(chan HostExecResult, 8)
 	if err := runController(context.Background(), recipe, out, agent,
-		func(context.Context, int) ([]HostExecResult, error) { return nil, nil }, app); err != nil {
+		func(context.Context, int, map[string]string) ([]HostExecResult, error) { return nil, nil }, app, nil); err != nil {
 		t.Fatalf("runController: %v", err)
 	}
 	if len(app.seen) != 1 || app.seen[0].Action != "delete data dir" || app.seen[0].Reason != "cleanup" {
@@ -183,6 +183,28 @@ func TestController_RequestApproval_FeedsDecisionBack(t *testing.T) {
 	// The operator's denial must be reported back to the model on the next turn.
 	if len(agent.seen) < 2 || !turnHasToolResult(agent.seen[1], "1", "operator denied") {
 		t.Errorf("approval decision was not fed back to the model")
+	}
+}
+
+func TestController_StepArgs_PassedToRunStep(t *testing.T) {
+	recipe := controllerTestRecipe(t, twoStepOneTask)
+	agent := &scriptedAgent{replies: []chatReply{
+		{ToolCalls: []chatToolCall{{ID: "1", Name: "run_a", Args: `{"foo":"bar","n":2}`}}},
+		{ToolCalls: []chatToolCall{finishCall("2", `{"settlements":[{"task":"t","status":"completed"}]}`)}},
+	}}
+	var gotArgs map[string]string
+	runStep := func(_ context.Context, idx int, args map[string]string) ([]HostExecResult, error) {
+		if idx == 0 {
+			gotArgs = args
+		}
+		return nil, nil
+	}
+	out := make(chan HostExecResult, 8)
+	if err := runController(context.Background(), recipe, out, agent, runStep, autoApprove(), nil); err != nil {
+		t.Fatalf("runController: %v", err)
+	}
+	if gotArgs["foo"] != "bar" || gotArgs["n"] != "2" {
+		t.Errorf("runStep got args %v, want foo=bar n=2 (LLM args parsed + passed through)", gotArgs)
 	}
 }
 
@@ -203,7 +225,7 @@ recipe: {
 	}}
 	out := make(chan HostExecResult, 8)
 	if err := runController(context.Background(), recipe, out, agent,
-		func(context.Context, int) ([]HostExecResult, error) { return nil, nil }, autoApprove()); err != nil {
+		func(context.Context, int, map[string]string) ([]HostExecResult, error) { return nil, nil }, autoApprove(), nil); err != nil {
 		t.Fatalf("runController: %v", err)
 	}
 	if agent.calls != 2 {

@@ -189,7 +189,9 @@ recipe: {
 - **Steps are tools.** Each step needs an `id` (the tool handle) and a human-readable
   **`description`** (what the LLM sees). Any step kind works — command, script, `http`,
   k8s, docker plugin, … The LLM chooses *which* to run; each step's own config is fixed in
-  the recipe (the LLM does not supply arguments). `depends`/`trigger_rule`/`rescue`/`env_from`
+  the recipe (the LLM does not supply arguments) — **except a sub-recipe (`recipe:`) step**,
+  whose tool exposes the callee's declared `defaults.prompts` as typed parameters the LLM
+  fills (merged into the sub-recipe's prompts before it runs). `depends`/`trigger_rule`/`rescue`/`env_from`
   are not used here — ordering is the LLM's job.
 - **Tasks are goals.** The LLM settles each task `completed` / `skipped` / `failed` via a
   built-in `finish` tool once its goal is met. The run **fails** if any task is settled
