@@ -126,7 +126,7 @@ recipe: {
 
 ### Graph extras
 
-**`env_from`** maps a dependency step’s output into env vars on the current step (per host). Each entry must reference a step in **`depends`**. Supported on `command`, `script`, and `plugin` only.
+**`env_from`** maps a dependency step’s output into env vars on the current step (per host). Each entry must reference a step in **`depends`**. Supported on `command`, `script`, `plugin`, `template`, `k8s`, and `http` steps.
 
 Each `env_from` entry uses **one** of these source fields:
 
