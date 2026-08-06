@@ -29,8 +29,8 @@ func validateStepEnvFrom(stepIdx int, kind string, mode ExecutionMode, step *Ste
 	if mode == ExecutionModeLinear {
 		return fmt.Errorf("cuetry: steps[%d].env_from is only allowed when recipe.type is \"graph\"", stepIdx)
 	}
-	if kind != KindCommand && kind != KindScript && kind != KindPlugin && kind != KindTemplate && kind != KindK8s {
-		return fmt.Errorf("cuetry: steps[%d]: env_from is only supported for command, script, plugin, template, and k8s steps", stepIdx)
+	if kind != KindCommand && kind != KindScript && kind != KindPlugin && kind != KindTemplate && kind != KindK8s && kind != KindHTTP {
+		return fmt.Errorf("cuetry: steps[%d]: env_from is only supported for command, script, plugin, template, k8s, and http steps", stepIdx)
 	}
 	return nil
 }

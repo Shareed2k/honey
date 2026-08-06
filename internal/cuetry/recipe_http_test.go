@@ -106,6 +106,36 @@ func TestValidateHTTPStep_errors(t *testing.T) {
 	}
 }
 
+func TestParseRemoteRecipe_httpEnvFromOk(t *testing.T) {
+	const src = `
+recipe: {
+	name: "http-env-from"
+	type: "graph"
+	steps: [
+		{id: "list", host: "_", http: {method: "POST", url: "http://x/api/list", body: "{}"}},
+		{
+			id:      "act"
+			host:    "_"
+			depends: ["list"]
+			env_from: [{step: "list", extract: {CID: ".id"}}]
+			http: {method: "POST", url: "http://x/api/act", body: "{\"id\":\"{{ .env.CID }}\"}"}
+		},
+	]
+}
+`
+	r, err := ParseRemoteRecipe([]byte(src), nil)
+	if err != nil {
+		t.Fatalf("http step with env_from should validate: %v", err)
+	}
+	act, ok := r.Steps[1].Step.(*HTTPStep)
+	if !ok {
+		t.Fatalf("step 1 is %T, want *HTTPStep", r.Steps[1].Step)
+	}
+	if len(act.Base().EnvFrom) != 1 || act.Base().EnvFrom[0].Extract["CID"] != ".id" {
+		t.Fatalf("env_from not parsed onto http step: %+v", act.Base().EnvFrom)
+	}
+}
+
 func TestParseRemoteRecipe_httpBadMethodRejected(t *testing.T) {
 	const src = `
 recipe: {
