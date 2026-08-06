@@ -70,6 +70,7 @@ type StepValidateCtx struct {
 // (anonymously) by each concrete step, so these fields flatten into the step's JSON.
 type StepBase struct {
 	ID            string                  `json:"id,omitempty"`
+	Description   string                  `json:"description,omitempty"`
 	Depends       []string                `json:"depends,omitempty"`
 	Host          string                  `json:"host" jsonschema:"default=*"`
 	Env           map[string]string       `json:"env,omitempty"`

@@ -23,7 +23,23 @@ type Recipe struct {
 	Defaults         *RecipeDefaults           `json:"defaults,omitempty"`
 	Steps            []StepWrapper             `json:"steps"`
 	Handlers         []StepWrapper             `json:"handlers,omitempty"`
-	MatrixExpansions map[string][]string       `json:"-"` // internal tracking, not unmarshaled
+	Tasks            []RecipeTask              `json:"tasks,omitempty"`      // goals for type: "controller"
+	Controller       *RecipeController         `json:"controller,omitempty"` // type: "controller" tuning
+	MatrixExpansions map[string][]string       `json:"-"`                    // internal tracking, not unmarshaled
+}
+
+// RecipeTask is a goal for a controller recipe: something that must be true when
+// the run finishes. The LLM chooses which steps to run to satisfy every task.
+type RecipeTask struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// RecipeController tunes a type: "controller" run. All fields are optional.
+type RecipeController struct {
+	Model        string `json:"model,omitempty"`         // LLM model (else OPENAI_MODEL, else a default)
+	MaxTurns     int    `json:"max_turns,omitempty"`     // hard cap on LLM turns (else a default)
+	SystemPrompt string `json:"system_prompt,omitempty"` // appended to the built-in controller system prompt
 }
 
 // RecipeNotification defines the notification routing configuration for a recipe.

@@ -163,6 +163,47 @@ Example: [`postgres_kv_demo.cue`](https://github.com/shareed2k/honey/blob/main/e
 
 Example: [`graph_parallel.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/graph_parallel.cue).
 
+## Controller mode (`type: "controller"`)
+
+Linear/graph say *what runs in what order*. A **controller** recipe instead says *what
+must be true when the run finishes* — you declare **`tasks`** (goals) and expose each step
+as a tool, and an **LLM decides which steps to run, in what order**, until every task is
+settled.
+
+```cue
+recipe: {
+  name: "controller-demo"
+  type: "controller"
+  controller: { max_turns: 8 }          // optional: model?, max_turns?, system_prompt?
+  tasks: [
+    { name: "time_reported", description: "the current server time has been reported" },
+    { name: "user_reported", description: "the OS user has been reported" },
+  ]
+  steps: [
+    { id: "server_time", description: "print the current server time", host: "_", command: "date" },
+    { id: "current_user", description: "print the current OS user",    host: "_", command: "whoami" },
+  ]
+}
+```
+
+- **Steps are tools.** Each step needs an `id` (the tool handle) and a human-readable
+  **`description`** (what the LLM sees). Any step kind works — command, script, `http`,
+  k8s, docker plugin, … The LLM chooses *which* to run; each step's own config is fixed in
+  the recipe (the LLM does not supply arguments). `depends`/`trigger_rule`/`rescue`/`env_from`
+  are not used here — ordering is the LLM's job.
+- **Tasks are goals.** The LLM settles each task `completed` / `skipped` / `failed` via a
+  built-in `finish` tool once its goal is met. The run **fails** if any task is settled
+  `failed`, or if `max_turns` is reached before all tasks are settled.
+- **Bounded + auditable.** The LLM's action space is exactly the operator-authored steps —
+  it cannot invent commands — and every step it picks still passes honey's host policy,
+  `when`, and command-risk gates. `max_turns` (default 25) hard-caps the loop.
+- **Requires an OpenAI-compatible endpoint:** `OPENAI_API_KEY` (required), `OPENAI_BASE_URL`
+  (optional), and `controller.model` → `OPENAI_MODEL` → a default. A **dry-run** (no
+  `--execute`) prints the plan and makes **no** LLM call. A controller run costs LLM tokens
+  and is nondeterministic.
+
+Example: [`controller_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/controller_demo.cue).
+
 ## Step-level assertions
 
 You can assert that a step succeeded based on its output or a specific exit code. When an assertion fails, the step is marked as failed even if the exit code was 0.

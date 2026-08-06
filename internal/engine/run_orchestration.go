@@ -85,6 +85,13 @@ func runCueRecipeStepsDry(out io.Writer, p CueRecipeRunParams, rec *SessionRecor
 		}
 		_, _ = fmt.Fprint(outWrite, text)
 	}
+	if mode == cuetry.ExecutionModeController {
+		_, _ = fmt.Fprintln(outWrite, "controller mode — an LLM chooses among the steps below to satisfy the tasks (no LLM call in dry-run):")
+		for _, t := range p.Recipe.Tasks {
+			_, _ = fmt.Fprintf(outWrite, "  task %q: %s\n", t.Name, t.Description)
+		}
+		_, _ = fmt.Fprintln(outWrite)
+	}
 	for i, ws := range p.Recipe.Steps {
 		if i > 0 {
 			_, _ = fmt.Fprintln(outWrite)
