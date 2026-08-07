@@ -35,6 +35,21 @@ type File struct {
 	Audit         Audit              `yaml:"audit,omitempty" json:"audit,omitempty"`
 	SMTP          *SMTPConfig        `yaml:"smtp,omitempty" json:"smtp,omitempty"`
 	Mesh          MeshConfig         `yaml:"mesh,omitempty" json:"mesh,omitempty"`
+	SSHGateway    *SSHGatewayConfig  `yaml:"ssh_gateway,omitempty" json:"ssh_gateway,omitempty"`
+}
+
+// SSHGatewayConfig configures the inbound SSH gateway (honey ssh-server): a
+// certificate-authenticated SSH front-end that proxies sessions to inventory
+// hosts, recorded, policy-gated, and audited. The block being present supplies
+// defaults for the command; the gateway itself is started by honey ssh-server.
+type SSHGatewayConfig struct {
+	Listen    string   `yaml:"listen,omitempty" json:"listen,omitempty" honey:"label=Listen address (host:port)" mod:"trim"`
+	HostKey   string   `yaml:"host_key,omitempty" json:"host_key,omitempty" honey:"label=Host key path (default: state dir)" mod:"trim"`
+	TrustedCA []string `yaml:"trusted_ca,omitempty" json:"trusted_ca,omitempty" honey:"label=Trusted CA public key files"`
+	UserAttr  string   `yaml:"user_attr,omitempty" json:"user_attr,omitempty" honey:"label=Identity attribute label" mod:"trim"`
+	CertAttr  string   `yaml:"cert_attr,omitempty" json:"cert_attr,omitempty" honey:"label=Certificate actor field;enum=principal|key_id;enum_as_warning" mod:"trim"`
+	Record    bool     `yaml:"record,omitempty" json:"record,omitempty" honey:"label=Record sessions"`
+	PolicyDir string   `yaml:"policy_dir,omitempty" json:"policy_dir,omitempty" honey:"label=OPA policy directory" mod:"trim"`
 }
 
 // MeshConfig configures this process's own libp2p mesh identity, used to
