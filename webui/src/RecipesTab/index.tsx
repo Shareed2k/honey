@@ -1,7 +1,7 @@
 // webui/src/RecipesTab/index.tsx
 import { useCallback, useState, Suspense, lazy } from 'react';
 import { Steps, message, Modal, Button } from 'antd';
-import type { HostRecord } from '../HostPicker';
+import { recordKey, type HostRecord } from '../HostPicker';
 import { parseDiskRecipe, fetchRecipeContent } from '../api/recipes';
 import { type ParsedRecipe, type RecentRunEntry } from '../api/types/recipes';
 import { reconcileHosts } from '../hostReconcile';

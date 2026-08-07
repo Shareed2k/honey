@@ -1,4 +1,4 @@
-import type { DockviewApi, IDockviewPanel } from 'dockview-react';
+import type { DockviewApi, DockviewActivePanelChangeEvent, IDockviewPanel } from 'dockview-react';
 import { recipeIdFromPanelId } from './registry';
 
 interface SyncStore {
@@ -23,8 +23,8 @@ export function attachDockviewSync(
       const stillOpen = api.panels.some((p) => recipeIdFromPanelId(p.id) === recipeId);
       if (!stillOpen) store.freeDoc(recipeId);
     }),
-    api.onDidActivePanelChange((panel: IDockviewPanel | undefined) => {
-      const recipeId = panel ? recipeIdFromPanelId(panel.id) : null;
+    api.onDidActivePanelChange((e: DockviewActivePanelChangeEvent) => {
+      const recipeId = e.panel ? recipeIdFromPanelId(e.panel.id) : null;
       if (recipeId) store.setActive(recipeId); // tool panels (null) leave active unchanged
     }),
     api.onDidLayoutChange(() => onLayoutChange?.()),

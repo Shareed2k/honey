@@ -1,4 +1,4 @@
-
+import type { HostRecord } from '../../HostPicker';
 
 export type ParsedRecipeStepTemplate = {
   template: string;

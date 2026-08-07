@@ -26,7 +26,7 @@ describe('FilesTab', () => {
     render(
       <ConfigProvider theme={{ algorithm: theme.darkAlgorithm }}>
         <RootProvider>
-          <FilesTab records={[]} backends={[]} />
+          <FilesTab />
         </RootProvider>
       </ConfigProvider>
     );

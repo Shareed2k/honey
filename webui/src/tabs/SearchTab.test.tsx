@@ -32,25 +32,7 @@ describe('SearchTab', () => {
     render(
       <ConfigProvider theme={{ algorithm: theme.darkAlgorithm }}>
         <RootProvider>
-        <SearchTab
-          records={[]}
-          selectedKeys={{}}
-          onRecordsChange={() => {}}
-          onSelectedKeysChange={() => {}}
-          selectedProviders={[]}
-          onSelectedProvidersChange={() => {}}
-          selectedBackends={[]}
-          onSelectedBackendsChange={() => {}}
-          backends={[]}
-          providerIds={[]}
-          sshUser=""
-          onSshUserChange={() => {}}
-          meta={null}
-          onOpenTunnel={() => {}}
-          onOpenReplay={() => {}}
-          onOpenReplayAll={() => {}}
-          onOpenTerminal={() => {}}
-        />
+        <SearchTab />
         </RootProvider>
       </ConfigProvider>
     );

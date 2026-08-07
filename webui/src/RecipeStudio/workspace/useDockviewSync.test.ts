@@ -11,7 +11,7 @@ type FakePanel = { id: string };
 // case below a genuine assertion rather than a type-only check.
 function makeApi(panelIds: string[]) {
   const removeCbs: ((p: FakePanel) => void)[] = [];
-  const activeCbs: ((p: FakePanel | undefined) => void)[] = [];
+  const activeCbs: ((e: { panel: FakePanel | undefined }) => void)[] = [];
   const layoutCbs: (() => void)[] = [];
   let ids = [...panelIds];
   function subscribe<T>(list: T[], cb: T) {
@@ -21,10 +21,10 @@ function makeApi(panelIds: string[]) {
   return {
     get panels() { return ids.map((id) => ({ id })); },
     onDidRemovePanel: (cb: (p: FakePanel) => void) => subscribe(removeCbs, cb),
-    onDidActivePanelChange: (cb: (p: FakePanel | undefined) => void) => subscribe(activeCbs, cb),
+    onDidActivePanelChange: (cb: (e: { panel: FakePanel | undefined }) => void) => subscribe(activeCbs, cb),
     onDidLayoutChange: (cb: () => void) => subscribe(layoutCbs, cb),
     _fireRemove(id: string) { ids = ids.filter((x) => x !== id); removeCbs.forEach((cb) => cb({ id })); },
-    _fireActive(id: string | undefined) { activeCbs.forEach((cb) => cb(id ? { id } : undefined)); },
+    _fireActive(id: string | undefined) { activeCbs.forEach((cb) => cb({ panel: id ? { id } : undefined })); },
     _fireLayout() { layoutCbs.forEach((cb) => cb()); },
   };
 }

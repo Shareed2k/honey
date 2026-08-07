@@ -52,6 +52,13 @@ tasks:
       - npm ci
       - npm run lint
 
+  webui-typecheck:
+    desc: Type-check the React web UI (tsc --noEmit)
+    dir: webui
+    cmds:
+      - npm ci
+      - npm run typecheck
+
   build:
     desc: Build the honey binary
     dir: cmd/honey

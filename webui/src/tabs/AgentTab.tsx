@@ -11,7 +11,9 @@ const AiMarkdown = lazy(async () => import('../AiMarkdown').then((m) => ({ defau
 
 const { Text } = Typography;
 
-const TOOLS: Tool[] = agentToolRegistry.getTools() as unknown[]; // cast to any to bypass TS error if Tool expects OpenAI format
+// The registry yields OpenAI-shaped tool defs; ag-ui's Tool is structurally
+// compatible at runtime, so cast through unknown (never any) to bridge the types.
+const TOOLS: Tool[] = agentToolRegistry.getTools() as unknown as Tool[];
 
 async function executeTool(tc: ToolCall): Promise<string> {
   const args = JSON.parse(tc.function.arguments ?? '{}');
@@ -83,18 +85,18 @@ export function AgentTab() {
     setError(null);
     setInputText('');
     
-    const userMsg: Message = { role: 'user', content: text };
+    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', content: text };
     const allMessages = [...messages, userMsg];
     setMessages(allMessages);
     agentRef.current.messages = allMessages;
     
     const subscriber: AgentSubscriber = {
       onNewMessage: ({ message: msg }) => setMessages(prev => [...prev.filter(m => m.id !== msg.id), msg]),
-      onMessagesChanged: ({ messages: msgs }) => setMessages(msgs),
+      onMessagesChanged: ({ messages: msgs }) => setMessages([...msgs]),
       onNewToolCall: async ({ toolCall, messages: msgs, agent }) => {
         try {
             const result = await executeTool(toolCall);
-            const toolMsg: Message = { role: 'tool', toolCallId: toolCall.id, content: result };
+            const toolMsg: Message = { id: crypto.randomUUID(), role: 'tool', toolCallId: toolCall.id, content: result };
             agent.messages = [...msgs, toolMsg];
             // Ensure the URL still has the correct model
             const url = new URL('/api/v1/agent', window.location.href);
@@ -102,7 +104,7 @@ export function AgentTab() {
             if (agent instanceof HttpAgent) {
               agent.url = url.toString();
             }
-            await agent.runAgent({ messages: agent.messages, tools: TOOLS }, subscriber);
+            await agent.runAgent({ tools: TOOLS }, subscriber); // messages taken from agent.messages
         } catch (e: unknown) {
             setError(`Tool error: ${(e as Error).message}`);
             setStreaming(false);
@@ -121,7 +123,7 @@ export function AgentTab() {
       const url = new URL('/api/v1/agent', window.location.href);
       url.searchParams.set('model', selectedModel);
       agentRef.current.url = url.toString();
-      await agentRef.current.runAgent({ messages: allMessages, tools: TOOLS }, subscriber);
+      await agentRef.current.runAgent({ tools: TOOLS }, subscriber); // messages taken from agent.messages
     } catch (e: unknown) {
       setError(`Run error: ${(e as Error).message}`);
       setStreaming(false);
@@ -156,7 +158,7 @@ export function AgentTab() {
               return (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
                   <div style={{ background: '#177ddc', color: 'white', padding: '8px 12px', borderRadius: 8, maxWidth: '80%' }}>
-                    {msg.content}
+                    {typeof msg.content === 'string' ? msg.content : ''}
                   </div>
                 </div>
               );
@@ -192,7 +194,7 @@ export function AgentTab() {
                 <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }}>
                   <div style={{ background: '#1f1f1f', padding: '12px 16px', borderRadius: 8, maxWidth: '90%' }}>
                     <Suspense fallback={<Spin size="small" />}>
-                      <AiMarkdown text={msg.content || ''} />
+                      <AiMarkdown content={typeof msg.content === 'string' ? msg.content : ''} />
                     </Suspense>
                   </div>
                 </div>

@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiDelete } from './core';
 import { RecordingsListResponse, RecordingListEntry, RecordingEvent } from './types/recordings';
+import type { HostRecord } from '../HostPicker';
 
 
 

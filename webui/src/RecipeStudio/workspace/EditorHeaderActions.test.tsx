@@ -54,6 +54,7 @@ function headerProps(activePanelId: string | undefined): IDockviewHeaderActionsP
     panels: [],
     activePanel,
     isGroupActive: true,
+    headerPosition: 'top',
     group: {} as unknown as IDockviewHeaderActionsProps['group'],
   };
 }
