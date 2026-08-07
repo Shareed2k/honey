@@ -14,7 +14,7 @@ export function getToken(): string {
   return sessionStorage.getItem(TOKEN_KEY) || '';
 }
 
-export function apiHeaders(): HeadersInit {
+export function apiHeaders(): Record<string, string> {
   const t = getToken();
   const h: Record<string, string> = { Accept: 'application/json' };
   if (t) {

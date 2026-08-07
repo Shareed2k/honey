@@ -26,7 +26,7 @@ beforeEach(() => {
       git_pass_configured: false,
       git_ssh_configured: false,
     }),
-  });
+  } as unknown as Response);
 });
 
 afterEach(() => {

@@ -26,7 +26,7 @@ describe('TunnelsTab', () => {
     render(
       <ConfigProvider theme={{ algorithm: theme.darkAlgorithm }}>
         <RootProvider>
-          <TunnelsTab onNavigateToSearch={() => {}} />
+          <TunnelsTab />
         </RootProvider>
       </ConfigProvider>
     );

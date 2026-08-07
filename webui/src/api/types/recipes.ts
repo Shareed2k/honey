@@ -2,6 +2,7 @@ import { ParsedRecipeStepTemplate } from './logs';
 import { ParsedRecipeFileTransfer, ParsedRecipeAgentTransfer } from './files';
 import { ParsedRecipeTunnel } from './tunnels';
 import { GraphPlanNode, GraphPlanEdge } from './core';
+import type { HostRecord } from '../../HostPicker';
 
 
 
@@ -19,7 +20,7 @@ export type RecipePrompt = {
   regex?: string;
 };
 
-export /** Structured recipe shape that mirrors internal/cuetry.Recipe (JSON keys match Go json tags). */
+/** Structured recipe shape that mirrors internal/cuetry.Recipe (JSON keys match Go json tags). */
 export type ParsedRecipe = {
   name: string;
   type?: string;

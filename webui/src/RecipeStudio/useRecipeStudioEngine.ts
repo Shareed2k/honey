@@ -295,7 +295,7 @@ export function useRecipeStudioEngine() {
       return;
     }
 
-    let reqBody: any = {};
+    let reqBody: any;
     if (rawMode) {
       reqBody = { recipe_content_raw: rawContent };
     } else {
@@ -420,7 +420,7 @@ export function useRecipeStudioEngine() {
     gitUrl?: string;
     gitBranch?: string;
   }) => {
-    let contentStr = '';
+    let contentStr: string;
     if (rawMode) {
       contentStr = rawContent;
     } else {

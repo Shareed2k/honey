@@ -6,6 +6,7 @@ export type ConfigSchemaFieldSpec = {
   key: string;
   label: string;
   type: ConfigSchemaFieldType;
+  format?: string; // mirrors Go SchemaField.Format ("ip", "url", …)
   required?: boolean;
   secret?: boolean;
   enum?: string[];

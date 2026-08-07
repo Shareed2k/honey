@@ -64,12 +64,12 @@ export type AgentTransferEvent = {
   timestamp: string;
 };
 
-export /** Bytes sent to this origin; then server may still work (e.g. SFTP to a host). */
+/** Bytes sent to this origin; then server may still work (e.g. SFTP to a host). */
 export type FormDataUploadProgressEvent =
   | { kind: 'uploading'; loaded: number; total: number | null }
   | { kind: 'awaiting_response' };
 
-export /** Server-sent upload stream after the multipart body is stored (SFTP byte progress). */
+/** Server-sent upload stream after the multipart body is stored (SFTP byte progress). */
 export type UploadStreamServerEvent =
   | { phase: 'sftp_start'; total_bytes: number }
   | { phase: 'sftp'; sent_bytes: number; total_bytes: number }
