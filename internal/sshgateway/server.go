@@ -189,15 +189,22 @@ func (s *Server) serveConn(ctx context.Context, raw net.Conn) {
 
 	var wg sync.WaitGroup
 	for newCh := range chans {
-		if newCh.ChannelType() != "session" {
-			_ = newCh.Reject(ssh.UnknownChannelType, "only session channels are supported")
-			continue
+		switch newCh.ChannelType() {
+		case "session":
+			wg.Add(1)
+			go func(nc ssh.NewChannel) {
+				defer wg.Done()
+				s.serveSession(connCtx, nc, actor)
+			}(newCh)
+		case "direct-tcpip":
+			wg.Add(1)
+			go func(nc ssh.NewChannel) {
+				defer wg.Done()
+				s.serveDirectTCPIP(connCtx, nc, actor)
+			}(newCh)
+		default:
+			_ = newCh.Reject(ssh.UnknownChannelType, "unsupported channel type")
 		}
-		wg.Add(1)
-		go func(nc ssh.NewChannel) {
-			defer wg.Done()
-			s.serveSession(connCtx, nc, actor)
-		}(newCh)
 	}
 	cancel()
 	wg.Wait()

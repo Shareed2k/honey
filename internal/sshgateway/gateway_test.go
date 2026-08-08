@@ -175,12 +175,51 @@ func serveTargetConn(raw net.Conn, cfg *ssh.ServerConfig) {
 	go ssh.DiscardRequests(reqs)
 
 	for newCh := range chans {
-		if newCh.ChannelType() != "session" {
+		switch newCh.ChannelType() {
+		case "session":
+			go serveTargetSession(newCh)
+		case "direct-tcpip":
+			go serveTargetDirectTCPIP(newCh)
+		default:
 			_ = newCh.Reject(ssh.UnknownChannelType, "unsupported")
-			continue
 		}
-		go serveTargetSession(newCh)
 	}
+}
+
+// serveTargetDirectTCPIP mimics a real sshd: it decodes the direct-tcpip
+// payload, net.Dials the requested destination on the target host, and bridges
+// the channel to it. The gateway opens 127.0.0.1:<port> on the target, so this
+// reaches the in-process echo listener the test stood up on that port.
+func serveTargetDirectTCPIP(newCh ssh.NewChannel) {
+	var p struct {
+		DestHost string
+		DestPort uint32
+		OrigHost string
+		OrigPort uint32
+	}
+	if err := ssh.Unmarshal(newCh.ExtraData(), &p); err != nil {
+		_ = newCh.Reject(ssh.ConnectionFailed, "bad payload")
+		return
+	}
+	conn, err := net.Dial("tcp", net.JoinHostPort(p.DestHost, strconv.Itoa(int(p.DestPort))))
+	if err != nil {
+		_ = newCh.Reject(ssh.ConnectionFailed, err.Error())
+		return
+	}
+	ch, reqs, err := newCh.Accept()
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	go ssh.DiscardRequests(reqs)
+
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(ch, conn); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(conn, ch); done <- struct{}{} }()
+	<-done
+	_ = ch.Close()
+	_ = conn.Close()
+	<-done
 }
 
 func serveTargetSession(newCh ssh.NewChannel) {
