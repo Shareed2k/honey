@@ -46,6 +46,10 @@ func runAuditTail(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	if !auditLogPresent(path) {
+		printAuditLogMissing(cmd.ErrOrStderr(), path)
+		return nil
+	}
 
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
@@ -114,6 +118,10 @@ func runAuditExport(cmd *cobra.Command, _ []string) error {
 	since, err := parseSince(auditExportSince)
 	if err != nil {
 		return err
+	}
+	if !auditLogPresent(path) {
+		printAuditLogMissing(cmd.ErrOrStderr(), path)
+		return nil
 	}
 	events, err := readAuditEvents(path, since, auditExportActor, auditExportAction, auditExportDec)
 	if err != nil {
@@ -190,6 +198,22 @@ func auditEffectivePath() string {
 		cfg = resolvedCfg.Audit
 	}
 	return cfg.EffectivePath()
+}
+
+// auditLogPresent reports whether the audit log file exists. When audit is
+// enabled the FileSink creates it at startup, so absence means audit is
+// disabled (or has simply never run) rather than an error condition.
+func auditLogPresent(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// printAuditLogMissing explains an absent audit log instead of erroring: it is
+// opt-in, so the common case is that it was never enabled.
+func printAuditLogMissing(w io.Writer, path string) {
+	fmt.Fprintf(w, "no audit log at %s\n", path)
+	fmt.Fprintln(w, "audit is opt-in — enable it to record events:")
+	fmt.Fprintln(w, "  audit:\n    enabled: true   # in your honey config")
 }
 
 func parseSince(s string) (time.Time, error) {
