@@ -1,7 +1,12 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,6 +27,12 @@ var (
 	sshCASignKeyID      string
 	sshCASignTTL        time.Duration
 	sshCASignOut        string
+
+	sshEnrollAdminURL   string
+	sshEnrollToken      string
+	sshEnrollPrincipals []string
+	sshEnrollKeyID      string
+	sshEnrollTTL        time.Duration
 )
 
 var sshCACmd = &cobra.Command{
@@ -65,6 +76,21 @@ the issued certificate:
 	RunE: runSSHCASign,
 }
 
+var sshCAEnrollCodeCmd = &cobra.Command{
+	Use:   "enroll-code",
+	Short: "Mint a one-time SSH enrollment code a user redeems for a short-lived cert",
+	Long: `Calls the running honey server's admin API to mint a single-use SSH enrollment
+code. Hand the code to a user; they generate an SSH keypair and redeem the code
+for a signed certificate over the SSH enroll endpoint — no honey session token
+required on their side (the one-time code is the credential).
+
+Examples:
+  honey ssh-ca enroll-code --principal alice --ttl 1h --token "$HONEY_WEB_TOKEN"
+  honey ssh-ca enroll-code --admin-url https://honey.example --principal alice --principal ops`,
+	Args: cobra.NoArgs,
+	RunE: runSSHCAEnrollCode,
+}
+
 func init() {
 	sshCACmd.PersistentFlags().StringVar(&sshCADir, "dir", "", "Directory holding the SSH CA key (default: state dir)")
 
@@ -74,7 +100,13 @@ func init() {
 	sshCASignCmd.Flags().DurationVar(&sshCASignTTL, "ttl", time.Hour, "Certificate validity duration")
 	sshCASignCmd.Flags().StringVar(&sshCASignOut, "out", "", "Output path for the certificate ('-' for stdout; default: <pubkey>-cert.pub)")
 
-	sshCACmd.AddCommand(sshCAInitCmd, sshCAPrintCmd, sshCASignCmd)
+	sshCAEnrollCodeCmd.Flags().StringVar(&sshEnrollAdminURL, "admin-url", "http://localhost:8765", "Base URL of the running honey server (to mint the code)")
+	sshCAEnrollCodeCmd.Flags().StringVar(&sshEnrollToken, "token", os.Getenv("HONEY_WEB_TOKEN"), "Admin auth token (default $HONEY_WEB_TOKEN)")
+	sshCAEnrollCodeCmd.Flags().StringArrayVar(&sshEnrollPrincipals, "principal", nil, "Principal the certificate is valid for (repeatable; at least one required)")
+	sshCAEnrollCodeCmd.Flags().StringVar(&sshEnrollKeyID, "key-id", "", "Certificate key ID (default: first principal)")
+	sshCAEnrollCodeCmd.Flags().DurationVar(&sshEnrollTTL, "ttl", time.Hour, "Certificate validity duration requested for the cert")
+
+	sshCACmd.AddCommand(sshCAInitCmd, sshCAPrintCmd, sshCASignCmd, sshCAEnrollCodeCmd)
 	rootCmd.AddCommand(sshCACmd)
 }
 
@@ -193,6 +225,74 @@ func runSSHCASign(cmd *cobra.Command, _ []string) error {
 		now.Add(-time.Minute).Format(time.RFC3339),
 		now.Add(sshCASignTTL).Format(time.RFC3339),
 		sshCASignTTL)
+	return nil
+}
+
+// sshEnrollCodeResponse mirrors handleMintSSHEnrollCode's JSON.
+type sshEnrollCodeResponse struct {
+	Code             string `json:"code"`
+	ExpiresInSeconds int    `json:"expires_in_seconds"`
+	CA               string `json:"ca"`
+}
+
+func runSSHCAEnrollCode(cmd *cobra.Command, _ []string) error {
+	adminURL := strings.TrimRight(strings.TrimSpace(sshEnrollAdminURL), "/")
+	if adminURL == "" {
+		return fmt.Errorf("--admin-url is required")
+	}
+	principals := trimmedNonEmpty(sshEnrollPrincipals)
+	if len(principals) == 0 {
+		return fmt.Errorf("--principal is required (at least one)")
+	}
+
+	payload := map[string]any{
+		"principals": principals,
+		"ttl":        sshEnrollTTL.String(),
+	}
+	if keyID := strings.TrimSpace(sshEnrollKeyID); keyID != "" {
+		payload["key_id"] = keyID
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost,
+		adminURL+"/api/v1/ssh/enroll-code", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if t := strings.TrimSpace(sshEnrollToken); t != "" {
+		req.Header.Set("Authorization", "Bearer "+t)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("mint ssh enrollment code: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("mint ssh enrollment code: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	var mr sshEnrollCodeResponse
+	if err := json.Unmarshal(raw, &mr); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "SSH enrollment code: %s\n", mr.Code)
+	fmt.Fprintf(out, "  principals: %s\n", strings.Join(principals, ", "))
+	fmt.Fprintf(out, "  expires in: %ds\n", mr.ExpiresInSeconds)
+	fmt.Fprintf(out, "\nHand the code to the user; they redeem it (no honey token needed):\n")
+	fmt.Fprintf(out, "  ssh-keygen -t ed25519 -f id_honey -N ''\n")
+	fmt.Fprintf(out, "  curl -sS -X POST %s/api/v1/ssh/enroll \\\n", adminURL)
+	fmt.Fprintf(out, "    -H 'Content-Type: application/json' \\\n")
+	fmt.Fprintf(out, "    -d \"{\\\"code\\\":\\\"%s\\\",\\\"public_key\\\":\\\"$(cat id_honey.pub)\\\"}\" \\\n", mr.Code)
+	fmt.Fprintf(out, "    | jq -r .cert > id_honey-cert.pub\n")
+	fmt.Fprintf(out, "  ssh -i id_honey -i id_honey-cert.pub %s@gateway\n", principals[0])
 	return nil
 }
 
