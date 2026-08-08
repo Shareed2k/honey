@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/audit"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
 )
@@ -60,6 +61,11 @@ type Options struct {
 	// Records resolves the current inventory. Called per session (the CLI wraps
 	// it with a short TTL cache).
 	Records func(ctx context.Context) ([]hosts.Record, error)
+	// ExecRegistry resolves a record to a provider executor (docker/k8s/mesh/ssh)
+	// through the shared hostexec seam, so the gateway proxies the same targets as
+	// the web terminal. nil = SSH-only via the ui helpers, the pre-Phase-F
+	// behavior (backwards compatible).
+	ExecRegistry hostexec.Registry
 	// GuardMode selects the best-effort per-command interactive guardrail:
 	// "off" (default), "audit", or "enforce". In interactive shells it runs the
 	// same risk+policy assessment exec uses against each command line the user

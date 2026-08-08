@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"go.uber.org/zap"
@@ -14,9 +15,32 @@ import (
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/ui"
 )
+
+// sshStreamer is the gateway's SSH interactive fallback: it dials the record's
+// leaf SSH directly via ui.RunSSHInteractiveStreams, independent of the exec
+// registry. It mirrors the web server's sshFallbackStreamer so a nil
+// ExecRegistry (or an executor that cannot stream a TTY) preserves the
+// pre-Phase-F SSH-only interactive path exactly.
+type sshStreamer struct{}
+
+func (sshStreamer) RunInteractiveStreams(ctx context.Context, user string, r hosts.Record, stdin io.Reader, stdout io.Writer, cols, rows int, resize <-chan [2]int) error {
+	return ui.RunSSHInteractiveStreams(ctx, user, r, stdin, stdout, cols, rows, resize)
+}
+
+var _ hostexec.InteractiveStreamer = sshStreamer{}
+
+// isNativeTarget reports whether rec should be reached through the provider seam
+// rather than a raw SSH leaf: a mesh-proxied record (the executor forwards it
+// elsewhere), a docker container, or a k8s pod. Everything else (plain SSH) uses
+// the leaf path.
+func isNativeTarget(rec hosts.Record, ex hostexec.Executor) bool {
+	return hostexec.IsProxy(ex) || rec.IsDocker() ||
+		(rec.Provider == "k8s" && strings.EqualFold(rec.Meta["kind"], "pod"))
+}
 
 // resizeBuffer bounds the window-change queue so a flood of resizes cannot grow
 // unbounded; excess events are dropped (the latest size still wins on the next
@@ -284,7 +308,19 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 		}
 	}()
 
-	runErr := ui.RunSSHInteractiveStreams(ctx, targetUser, rec, stdin, mw, cols, rows, uiResize)
+	// Route the shell through the provider seam when a registry is wired: an
+	// executor that can stream a TTY (docker/k8s locally, or the honey proxy for a
+	// mesh-routed record) serves it; otherwise fall back to the SSH leaf. The
+	// recorder+mask+guard wrappers around stdin/mw are provider-agnostic, so every
+	// target is recorded, masked, and guarded identically. A nil registry keeps
+	// the pre-Phase-F SSH-only path (sshStreamer == ui.RunSSHInteractiveStreams).
+	var is hostexec.InteractiveStreamer = sshStreamer{}
+	if s.opts.ExecRegistry != nil {
+		if r, ok := s.opts.ExecRegistry.ForRecord(rec).(hostexec.InteractiveStreamer); ok {
+			is = r
+		}
+	}
+	runErr := is.RunInteractiveStreams(ctx, targetUser, rec, stdin, mw, cols, rows, uiResize)
 	close(stopFwd)
 	<-fwdDone
 	_ = mw.Close()
@@ -322,6 +358,39 @@ func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec 
 
 	recorder := s.newRecorder(rec, actor, "exec")
 	defer func() { _ = recorder.Close() }()
+
+	// Transport selection: native providers (docker container, k8s pod) and
+	// mesh-proxied records run through the hostexec seam; plain SSH targets keep
+	// the raw-leaf path below (with the #169 PTY handling). A nil registry always
+	// takes the SSH path. The gate + audit above already ran for both.
+	var ex hostexec.Executor
+	if s.opts.ExecRegistry != nil {
+		ex = s.opts.ExecRegistry.ForRecord(rec)
+	}
+	if ex != nil && isNativeTarget(rec, ex) {
+		// Native exec is non-tty: HostClient.RunWithStreams runs a one-shot command
+		// on docker/k8s/mesh with no remote PTY (a client -t is honored only on the
+		// SSH leaf path). Wire the same recorder+mask-wrapped streams so output is
+		// recorded and redacted identically.
+		hc, derr := ex.Dial(s.targetUser(rec, actor), rec)
+		if derr != nil {
+			fmt.Fprintf(stderr, "error: connect: %v\n", derr)
+			recorder.RecordError(derr)
+			return 1
+		}
+		defer func() { _ = hc.Close() }()
+
+		nStdin := engine.WrapRecordingReader(ch, recorder, "in")
+		nOut := NewMaskingWriter(engine.WrapRecordingWriter(ch, recorder, "out"), s.opts.MaskRules)
+		nErr := NewMaskingWriter(engine.WrapRecordingWriter(stderr, recorder, "out"), s.opts.MaskRules)
+		runErr := hc.RunWithStreams(command, nStdin, nOut, nErr)
+		_ = nOut.Close()
+		_ = nErr.Close()
+		exit := exitCode(runErr)
+		code := exit
+		s.audit(ctx, audit.Event{Actor: actor, Action: "command_exit", Target: rec.Name, Command: command, Risk: risk, Decision: "allow", ExitCode: &code})
+		return exit
+	}
 
 	client, cleanup, err := ui.DialSSHLeafForRecord(s.targetUser(rec, actor), rec)
 	if err != nil {
