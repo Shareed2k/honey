@@ -20,6 +20,7 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/safepath"
+	"github.com/shareed2k/honey/internal/sshca"
 	"github.com/shareed2k/honey/internal/sshgateway"
 )
 
@@ -88,7 +89,25 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if len(trustedCAs) == 0 {
-			return fmt.Errorf("no trusted CA configured: pass --trusted-ca <file> (or set ssh_gateway.trusted_ca), or --no-auth for dev")
+			// No explicit --trusted-ca / config CAs: auto-trust the built-in SSH
+			// CA if `honey ssh-ca init` has created one under the state dir (the
+			// same dir the gateway host key uses), so no manual --trusted-ca is
+			// needed after init.
+			stateDir, derr := gatewayStateDir(firstNonEmptyString(gwHostKeyDir, gwCfg.HostKey, ""))
+			if derr != nil {
+				return derr
+			}
+			caPub, ok, cerr := sshca.LoadCAPublicKey(stateDir)
+			if cerr != nil {
+				return cerr
+			}
+			if ok {
+				trustedCAs = append(trustedCAs, caPub)
+				_, _ = fmt.Fprintf(os.Stdout, "Trusting built-in ssh-ca from %s\n", stateDir)
+			}
+		}
+		if len(trustedCAs) == 0 {
+			return fmt.Errorf("no trusted CA configured: run `honey ssh-ca init`, pass --trusted-ca <file> (or set ssh_gateway.trusted_ca), or --no-auth for dev")
 		}
 	}
 
@@ -156,15 +175,26 @@ func gatewaySettings(cfg *config.File) config.SSHGatewayConfig {
 // loadGatewayHostKey loads or creates the gateway host key. dir defaults to the
 // resolved state dir when empty.
 func loadGatewayHostKey(dir string) (ssh.Signer, error) {
+	resolved, err := gatewayStateDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	return sshgateway.LoadOrCreateHostKey(resolved)
+}
+
+// gatewayStateDir resolves the gateway state dir: dir when set, else the honey
+// state dir. This is the directory used both for the host key and for the
+// built-in SSH CA (see internal/sshca) that the gateway auto-trusts.
+func gatewayStateDir(dir string) (string, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		sd, err := config.ResolveStateDir()
 		if err != nil {
-			return nil, fmt.Errorf("resolve state dir: %w", err)
+			return "", fmt.Errorf("resolve state dir: %w", err)
 		}
 		dir = sd
 	}
-	return sshgateway.LoadOrCreateHostKey(dir)
+	return dir, nil
 }
 
 // parseTrustedCAFiles reads each authorized-keys-format CA public key file and
