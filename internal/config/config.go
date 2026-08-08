@@ -52,6 +52,16 @@ type SSHGatewayConfig struct {
 	PolicyDir string   `yaml:"policy_dir,omitempty" json:"policy_dir,omitempty" honey:"label=OPA policy directory" mod:"trim"`
 	// Mask redacts secrets in the target→client output (live stream + recording).
 	Mask SSHGatewayMask `yaml:"mask,omitempty" json:"mask,omitempty"`
+	// Guardrail configures the best-effort per-command interactive guardrail.
+	Guardrail SSHGatewayGuardrail `yaml:"guardrail,omitempty" json:"guardrail,omitempty"`
+}
+
+// SSHGatewayGuardrail configures the best-effort per-command guardrail for
+// interactive shells: each command line the user types is run through the same
+// risk+policy gate exec uses; enforce blocks a denied line locally. This is
+// defense-in-depth on top of the authoritative target-side command-risk gate.
+type SSHGatewayGuardrail struct {
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" honey:"label=Interactive guardrail mode (off/audit/enforce)" mod:"trim"`
 }
 
 // SSHGatewayMask configures live output redaction for the SSH gateway: literal
