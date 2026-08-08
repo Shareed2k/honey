@@ -425,6 +425,30 @@ func (s *Store) Redeem(code string) (Grant, error) {
 	return copyGrant(match), nil
 }
 
+// Peek looks a grant up by hashing the presented code and comparing against
+// every stored hash in constant time, WITHOUT consuming a redemption or
+// altering the matched grant. Returns ErrGrantNotFound if no code matches. Unlike
+// Redeem it returns the grant regardless of active state, so callers can show
+// an accurate status (pending / expired / revoked) for a valid code.
+func (s *Store) Peek(code string) (Grant, error) {
+	hash := []byte(hashCode(code))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gcLocked()
+
+	var match *Grant
+	for _, g := range s.grants {
+		if subtle.ConstantTimeCompare([]byte(g.CodeHash), hash) == 1 {
+			match = g
+		}
+	}
+	if match == nil {
+		return Grant{}, fmt.Errorf("jit: peek: %w", ErrGrantNotFound)
+	}
+	return copyGrant(match), nil
+}
+
 // gcLocked drops grants that are terminal (denied, revoked, or an approved
 // grant past its expiry) and whose terminal reference time — the later of
 // CreatedAt, ExpiresAt, and DecidedAt — is older than retention. Caller
