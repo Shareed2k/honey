@@ -54,6 +54,17 @@ type SSHGatewayConfig struct {
 	Mask SSHGatewayMask `yaml:"mask,omitempty" json:"mask,omitempty"`
 	// Guardrail configures the best-effort per-command interactive guardrail.
 	Guardrail SSHGatewayGuardrail `yaml:"guardrail,omitempty" json:"guardrail,omitempty"`
+	// Search scopes the inventory search used to resolve a requested resource to
+	// a host, so the gateway need not query every backend on each connection (an
+	// unreachable backend would otherwise stall resolution). Comma-separated,
+	// matching honey search --provider / --backends.
+	Search SSHGatewaySearch `yaml:"search,omitempty" json:"search,omitempty"`
+}
+
+// SSHGatewaySearch scopes the gateway's resource-resolution search.
+type SSHGatewaySearch struct {
+	Providers string `yaml:"providers,omitempty" json:"providers,omitempty" honey:"label=Search providers (comma-separated)" mod:"trim"`
+	Backends  string `yaml:"backends,omitempty" json:"backends,omitempty" honey:"label=Search backends (comma-separated)" mod:"trim"`
 }
 
 // SSHGatewayGuardrail configures the best-effort per-command guardrail for

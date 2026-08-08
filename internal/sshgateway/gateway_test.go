@@ -687,3 +687,53 @@ func findRecording(t *testing.T, dir string) string {
 	t.Fatalf("no recording found in %s", dir)
 	return ""
 }
+
+// TestGateway_ShutdownBoundedWithStuckConnection proves Ctrl+C is never blocked
+// by an in-flight connection wedged in a slow operation (e.g. resolving a
+// resource against an unreachable backend). The records provider here ignores
+// its context and blocks forever; Start must still return within the shutdown
+// grace after the context is cancelled.
+func TestGateway_ShutdownBoundedWithStuckConnection(t *testing.T) {
+	sandboxSSHEnv(t)
+	ca := newEd25519Signer(t)
+	block := make(chan struct{})
+	defer close(block)
+	stuckRecords := func(context.Context) ([]hosts.Record, error) {
+		<-block // ignore ctx: a backend that never returns
+		return nil, nil
+	}
+	srv, err := New(Options{
+		ListenAddr: "127.0.0.1:0",
+		HostKey:    newEd25519Signer(t),
+		TrustedCAs: []ssh.PublicKey{ca.PublicKey()},
+		Records:    stuckRecords,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+	<-srv.Ready()
+
+	client, err := dialGateway(t, srv.Addr(), "alice",
+		signedCertAuth(t, ca, "alice", "alice@corp", time.Now().Add(time.Hour)))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	sess, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	// exec a resource -> serveSession -> resolveResource -> stuckRecords blocks.
+	go func() { _ = sess.Run("someresource") }()
+	time.Sleep(500 * time.Millisecond) // let it reach the stuck provider
+
+	cancel()
+	select {
+	case <-done: // Start returned despite the wedged connection
+	case <-time.After(shutdownGrace + 3*time.Second):
+		t.Fatal("Start did not return within the shutdown grace despite a stuck connection")
+	}
+	_ = client.Close()
+}
