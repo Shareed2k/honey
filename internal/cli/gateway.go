@@ -29,6 +29,10 @@ import (
 // scan.
 const recordsCacheTTL = 30 * time.Second
 
+// recordsSearchTimeout bounds a single inventory search for resource resolution
+// so an unreachable backend cannot stall a connection (and thereby shutdown).
+const recordsSearchTimeout = 20 * time.Second
+
 var (
 	gwListen     string
 	gwHostKeyDir string
@@ -36,6 +40,9 @@ var (
 	gwUserAttr   string
 	gwCertAttr   string
 	gwNoAuth     bool
+
+	gwSearchProviders string
+	gwSearchBackends  string
 )
 
 var gatewayCmd = &cobra.Command{
@@ -61,6 +68,8 @@ func init() {
 	gatewayCmd.Flags().StringVar(&gwUserAttr, "user-attr", "principal", "Identity attribute label recorded for audit")
 	gatewayCmd.Flags().StringVar(&gwCertAttr, "cert-attr", "principal", "Certificate field used as the actor: principal or key_id")
 	gatewayCmd.Flags().BoolVar(&gwNoAuth, "no-auth", false, "Disable certificate authentication (dev only; accepts any client)")
+	gatewayCmd.Flags().StringVar(&gwSearchProviders, "search-providers", "", "Comma-separated providers to search when resolving a resource (default: all; e.g. gcp,consul)")
+	gatewayCmd.Flags().StringVar(&gwSearchBackends, "search-backends", "", "Comma-separated backend names to search when resolving a resource (default: all)")
 	rootCmd.AddCommand(gatewayCmd)
 }
 
@@ -124,7 +133,9 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 		recordDir = config.ResolveRecordDir(cfg, cfgPath, flagRecordDir, recordDirFlagChanged(cmd))
 	}
 
-	provider := newRecordsProvider(cfg, cfgPath)
+	provider := newRecordsProvider(cfg, cfgPath,
+		firstNonEmptyString(gwSearchProviders, gwCfg.Search.Providers),
+		firstNonEmptyString(gwSearchBackends, gwCfg.Search.Backends))
 
 	maskRules, err := sshgateway.NewMaskRuleset(gwCfg.Mask.Values, gwCfg.Mask.Patterns)
 	if err != nil {
@@ -266,7 +277,12 @@ func gatewayAuditSink(cfg *config.File) audit.Sink {
 // newRecordsProvider returns a records provider that runs the standard host
 // search and caches the result for a short TTL, so each inbound connection does
 // not re-search the whole inventory.
-func newRecordsProvider(cfg *config.File, cfgPath string) func(ctx context.Context) ([]hosts.Record, error) {
+// newRecordsProvider returns the gateway's cached inventory resolver. providers
+// and backends (comma-separated, may be empty for "all") scope the search so the
+// gateway need not query every backend on each connection. The search is
+// time-boxed by recordsSearchTimeout so an unreachable backend cannot stall
+// resource resolution — and, in turn, connection handling and shutdown.
+func newRecordsProvider(cfg *config.File, cfgPath, providers, backends string) func(ctx context.Context) ([]hosts.Record, error) {
 	var (
 		mu     sync.Mutex
 		cached []hosts.Record
@@ -278,11 +294,15 @@ func newRecordsProvider(cfg *config.File, cfgPath string) func(ctx context.Conte
 		if time.Now().Before(expiry) && cached != nil {
 			return cached, nil
 		}
+		sctx, cancel := context.WithTimeout(ctx, recordsSearchTimeout)
+		defer cancel()
 		in := hostapi.SearchHostsInput{
 			ConfigPath: cfgPath,
 			Config:     cfg,
+			Providers:  strings.TrimSpace(providers),
+			Backends:   strings.TrimSpace(backends),
 		}
-		out, err := hostapi.SearchHosts(ctx, &in, buildHostExecRegistry(), GetSearchRegistry())
+		out, err := hostapi.SearchHosts(sctx, &in, buildHostExecRegistry(), GetSearchRegistry())
 		if err != nil {
 			return nil, err
 		}

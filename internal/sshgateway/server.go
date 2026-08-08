@@ -21,6 +21,13 @@ import (
 // authenticates. It is cleared once the handshake completes.
 const handshakeTimeout = 30 * time.Second
 
+// shutdownGrace bounds how long Start waits for in-flight connections to unwind
+// after the context is cancelled. A session blocked in a slow operation (e.g.
+// resolving a resource against an unreachable backend, or dialing an unreachable
+// target) must never make Ctrl+C hang: once this elapses Start returns anyway and
+// the lingering goroutines are terminated when the process exits.
+const shutdownGrace = 5 * time.Second
+
 // Options configures a gateway Server. Zero AuditSink/Enforcer/RecordDir are
 // safe: audit is a no-op, policy allows (subject to the command-risk floor),
 // and sessions are not recorded.
@@ -164,7 +171,16 @@ func (s *Server) Start(ctx context.Context) error {
 		}(raw)
 	}
 	cancel()
-	wg.Wait()
+	// Bounded drain: connections get a grace period to unwind after their
+	// contexts and the listener are closed, but shutdown never blocks
+	// indefinitely on a stuck session (see shutdownGrace).
+	drained := make(chan struct{})
+	go func() { wg.Wait(); close(drained) }()
+	select {
+	case <-drained:
+	case <-time.After(shutdownGrace):
+		s.log.Warn("sshgateway: shutdown grace elapsed; exiting with connections still draining")
+	}
 	<-closerDone
 	return acceptErr
 }
