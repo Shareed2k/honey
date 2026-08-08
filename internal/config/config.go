@@ -50,6 +50,16 @@ type SSHGatewayConfig struct {
 	CertAttr  string   `yaml:"cert_attr,omitempty" json:"cert_attr,omitempty" honey:"label=Certificate actor field;enum=principal|key_id;enum_as_warning" mod:"trim"`
 	Record    bool     `yaml:"record,omitempty" json:"record,omitempty" honey:"label=Record sessions"`
 	PolicyDir string   `yaml:"policy_dir,omitempty" json:"policy_dir,omitempty" honey:"label=OPA policy directory" mod:"trim"`
+	// Mask redacts secrets in the target→client output (live stream + recording).
+	Mask SSHGatewayMask `yaml:"mask,omitempty" json:"mask,omitempty"`
+}
+
+// SSHGatewayMask configures live output redaction for the SSH gateway: literal
+// secret values and regex patterns whose matches are replaced in the
+// target→client output, both in the live stream and in the recording.
+type SSHGatewayMask struct {
+	Values   []string `yaml:"values,omitempty" json:"values,omitempty" honey:"label=Literal secrets to mask;secret"`
+	Patterns []string `yaml:"patterns,omitempty" json:"patterns,omitempty" honey:"label=Regex patterns to mask"`
 }
 
 // MeshConfig configures this process's own libp2p mesh identity, used to

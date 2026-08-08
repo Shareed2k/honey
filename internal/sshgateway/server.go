@@ -46,6 +46,10 @@ type Options struct {
 	AuditSink audit.Sink
 	// RecordDir is where session recordings are written; empty disables recording.
 	RecordDir string
+	// MaskRules redacts secrets in the target→client output — both in the live
+	// stream and in the recording — via a streaming redactor (see mask.go). Nil
+	// disables masking. Build it with NewMaskRuleset.
+	MaskRules *MaskRuleset
 	// Records resolves the current inventory. Called per session (the CLI wraps
 	// it with a short TTL cache).
 	Records func(ctx context.Context) ([]hosts.Record, error)

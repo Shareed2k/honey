@@ -126,6 +126,11 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 
 	provider := newRecordsProvider(cfg, cfgPath)
 
+	maskRules, err := sshgateway.NewMaskRuleset(gwCfg.Mask.Values, gwCfg.Mask.Patterns)
+	if err != nil {
+		return fmt.Errorf("ssh_gateway.mask: %w", err)
+	}
+
 	var defaultSSHUser string
 	if cfg != nil {
 		defaultSSHUser = cfg.Defaults.SSHUser
@@ -142,6 +147,7 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 		AuditSink:      sink,
 		RecordDir:      recordDir,
 		Records:        provider,
+		MaskRules:      maskRules,
 		DisableAuth:    gwNoAuth,
 	})
 	if err != nil {
