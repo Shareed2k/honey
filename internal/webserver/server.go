@@ -34,6 +34,7 @@ import (
 	"github.com/shareed2k/honey/internal/scheduler"
 	"github.com/shareed2k/honey/internal/searchrun"
 	"github.com/shareed2k/honey/internal/snippets"
+	"github.com/shareed2k/honey/internal/sshca"
 	"github.com/shareed2k/honey/internal/webauthn"
 	"github.com/shareed2k/honey/internal/webserver/workspacestore"
 )
@@ -148,6 +149,10 @@ type Server struct {
 	// (endpoints report 503) when no state dir is available.
 	enrollAPI *EnrollAPI
 
+	// sshEnrollAPI owns the self-service SSH-cert enrollment endpoints; its CA is
+	// nil (endpoints report 503) when no state dir is available.
+	sshEnrollAPI *SSHEnrollAPI
+
 	// forwardingAPI owns the WebSocket forwarding/relay endpoints (ws/tunnel,
 	// ws/remote-forward, ws/udp) and their test-injectable seams.
 	forwardingAPI *ForwardingAPI
@@ -244,6 +249,16 @@ func NewServer(opts Options) (*Server, error) {
 	} else {
 		s.enrollAPI = NewEnrollAPI(nil, nil)
 	}
+
+	// Self-service SSH-cert enrollment: load-or-create an SSH CA under the state
+	// dir. Non-fatal — endpoints report 503 when unavailable (nil CA).
+	var sshCA *sshca.CA
+	if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
+		if ca, caErr := sshca.LoadOrCreateCA(stateDir); caErr == nil {
+			sshCA = ca
+		}
+	}
+	s.sshEnrollAPI = NewSSHEnrollAPI(sshCA)
 
 	if err := s.routes(); err != nil {
 		return nil, err
@@ -385,6 +400,9 @@ func (s *Server) routes() error {
 		r.Post("/devices/enroll-code", s.enrollAPI.handleMintEnrollCode)
 		r.Get("/devices", s.enrollAPI.handleListDevices)
 
+		// Self-service SSH-cert enrollment: mint a one-time code (operator).
+		r.Post("/ssh/enroll-code", s.sshEnrollAPI.handleMintSSHEnrollCode)
+
 		r.Route("/studio", func(sr chi.Router) {
 			sr.Get("/workspace", s.handleGetStudioWorkspace)
 			sr.Put("/workspace", s.handlePutStudioWorkspace)
@@ -394,6 +412,10 @@ func (s *Server) routes() error {
 	// Device enrollment is authenticated by the one-time code, not the session
 	// token, so it mounts outside the main auth group.
 	s.router.Post("/api/v1/devices/enroll", s.enrollAPI.handleDeviceEnroll)
+
+	// SSH-cert enrollment is authenticated by the one-time code, not the session
+	// token, so it mounts outside the main auth group.
+	s.router.Post("/api/v1/ssh/enroll", s.sshEnrollAPI.handleSSHEnroll)
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
 	s.router.With(recipesAPI.webhookRateLimit).
