@@ -68,6 +68,15 @@ func (s *Server) serveDirectTCPIP(ctx context.Context, newCh ssh.NewChannel, act
 		return
 	}
 
+	// Console-only targets (Proxmox serial, TrueNAS shell) expose no forwardable
+	// service; reject the port-forward cleanly rather than attempting a dial.
+	if isConsoleTarget(rec) {
+		const reason = "console-only target: port-forward not supported"
+		s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: rec.Name, Decision: "deny", DenyReason: reason})
+		_ = newCh.Reject(ssh.Prohibited, reason)
+		return
+	}
+
 	// Dial the tunnel upstream. With a registry (the CLI default) route through the
 	// hostexec seam so docker (nc/socat in the container), k8s (SPDY port-forward),
 	// and mesh records forward like the web tunnel; the seam's SSH fallback dials
