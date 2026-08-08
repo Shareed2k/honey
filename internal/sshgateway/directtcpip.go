@@ -68,19 +68,40 @@ func (s *Server) serveDirectTCPIP(ctx context.Context, newCh ssh.NewChannel, act
 		return
 	}
 
-	client, cleanup, err := ui.DialSSHLeafForRecord(s.targetUser(rec, actor), rec)
-	if err != nil {
-		s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: rec.Name, Decision: "deny", DenyReason: err.Error()})
-		_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("connect: %v", err))
-		return
-	}
-
-	upstream, err := client.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(destPort)))
-	if err != nil {
-		s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: rec.Name, Decision: "deny", DenyReason: err.Error()})
-		_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("dial service: %v", err))
-		cleanup()
-		return
+	// Dial the tunnel upstream. With a registry (the CLI default) route through the
+	// hostexec seam so docker (nc/socat in the container), k8s (SPDY port-forward),
+	// and mesh records forward like the web tunnel; the seam's SSH fallback dials
+	// the leaf for plain hosts. A nil registry keeps the pre-Phase-F leaf path. On
+	// the registry path the returned conn owns its transport, so the teardown's
+	// upstream.Close() releases it and cleanup stays a no-op; on the leaf path
+	// cleanup releases the borrowed SSH client exactly as before.
+	var (
+		upstream net.Conn
+		cleanup  = func() {}
+	)
+	if s.opts.ExecRegistry != nil {
+		ex := s.opts.ExecRegistry.ForRecord(rec)
+		upstream, err = ex.DialUpstream(ctx, s.targetUser(rec, actor), rec, net.JoinHostPort("127.0.0.1", strconv.Itoa(destPort)))
+		if err != nil {
+			s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: rec.Name, Decision: "deny", DenyReason: err.Error()})
+			_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("dial service: %v", err))
+			return
+		}
+	} else {
+		client, cl, derr := ui.DialSSHLeafForRecord(s.targetUser(rec, actor), rec)
+		if derr != nil {
+			s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: rec.Name, Decision: "deny", DenyReason: derr.Error()})
+			_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("connect: %v", derr))
+			return
+		}
+		upstream, err = client.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(destPort)))
+		if err != nil {
+			s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: rec.Name, Decision: "deny", DenyReason: err.Error()})
+			_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("dial service: %v", err))
+			cl()
+			return
+		}
+		cleanup = cl
 	}
 
 	ch, reqs, err := newCh.Accept()

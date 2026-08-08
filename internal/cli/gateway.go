@@ -158,6 +158,7 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 		AuditSink:      sink,
 		RecordDir:      recordDir,
 		Records:        provider,
+		ExecRegistry:   buildHostExecRegistry(),
 		MaskRules:      maskRules,
 		GuardMode:      gwCfg.Guardrail.Mode,
 		DisableAuth:    gwNoAuth,
