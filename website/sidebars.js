@@ -14,6 +14,7 @@ const sidebars = {
     'recordings',
     'web-ui',
     'inventory',
+    'ssh-gateway',
     'authorization',
     'command-risk',
     'cue-recipes',
