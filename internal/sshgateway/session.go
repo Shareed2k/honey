@@ -51,6 +51,7 @@ type startAction struct {
 	isExec  bool
 	command string
 	wantPTY bool
+	term    string
 	cols    int
 	rows    int
 }
@@ -97,6 +98,7 @@ func readSessionRequests(reqs <-chan *ssh.Request, start chan<- startAction, res
 
 	var (
 		wantPTY bool
+		term    string
 		cols    int
 		rows    int
 		started bool
@@ -107,6 +109,7 @@ func readSessionRequests(reqs <-chan *ssh.Request, start chan<- startAction, res
 			var p ptyRequestPayload
 			if err := ssh.Unmarshal(req.Payload, &p); err == nil {
 				wantPTY = true
+				term = p.Term
 				cols = int(p.Columns)
 				rows = int(p.Rows)
 				reply(req, true)
@@ -131,7 +134,7 @@ func readSessionRequests(reqs <-chan *ssh.Request, start chan<- startAction, res
 			}
 			started = true
 			reply(req, true)
-			start <- startAction{wantPTY: wantPTY, cols: cols, rows: rows}
+			start <- startAction{wantPTY: wantPTY, term: term, cols: cols, rows: rows}
 		case "exec":
 			if started {
 				reply(req, false)
@@ -144,7 +147,7 @@ func readSessionRequests(reqs <-chan *ssh.Request, start chan<- startAction, res
 			}
 			started = true
 			reply(req, true)
-			start <- startAction{isExec: true, command: p.Command, wantPTY: wantPTY, cols: cols, rows: rows}
+			start <- startAction{isExec: true, command: p.Command, wantPTY: wantPTY, term: term, cols: cols, rows: rows}
 		default:
 			reply(req, false)
 		}
@@ -183,7 +186,7 @@ func (s *Server) dispatch(ctx context.Context, ch ssh.Channel, actor string, act
 		}
 		return s.runInteractive(ctx, ch, actor, rec, act.cols, act.rows, resize)
 	}
-	return s.runExec(ctx, ch, actor, rec, remainder)
+	return s.runExec(ctx, ch, actor, rec, remainder, act)
 }
 
 // runInteractive gates the open (OPA interactive_session), records the session,
@@ -298,7 +301,7 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 // runExec gates the command (command-risk + OPA command_exec), records it, then
 // runs it non-interactively on the target, streaming stdin/stdout/stderr and
 // returning the remote exit status.
-func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec hosts.Record, command string) int {
+func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec hosts.Record, command string, act startAction) int {
 	stderr := ch.Stderr()
 
 	analysis, decisions, err := cmdgate.AssessTargets(ctx, s.opts.Enforcer, command, "sh",
@@ -335,6 +338,29 @@ func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec 
 		return 1
 	}
 	defer func() { _ = sess.Close() }()
+
+	// Honor a requested PTY (ssh -t <resource> <cmd>): allocate a tty on the
+	// target so its terminal driver does LF->CRLF (no "staircase" output) and
+	// merges stderr into the pty stream, matching OpenSSH's `ssh -t host cmd`.
+	if act.wantPTY {
+		term := act.term
+		if strings.TrimSpace(term) == "" {
+			term = "xterm-256color"
+		}
+		modes := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
+		rows, cols := act.rows, act.cols
+		if rows <= 0 {
+			rows = 24
+		}
+		if cols <= 0 {
+			cols = 80
+		}
+		if perr := sess.RequestPty(term, rows, cols, modes); perr != nil {
+			fmt.Fprintf(stderr, "error: request pty: %v\n", perr)
+			recorder.RecordError(perr)
+			return 1
+		}
+	}
 
 	sess.Stdin = engine.WrapRecordingReader(ch, recorder, "in")
 	// Mask outermost (closest to the target output) so the recorder and the

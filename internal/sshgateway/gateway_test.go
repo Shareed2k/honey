@@ -434,6 +434,27 @@ func TestGateway_ExecAndRouting(t *testing.T) {
 		}
 	})
 
+	t.Run("exec with pty (ssh -t) allocates a target tty and still returns output", func(t *testing.T) {
+		sess, err := client.NewSession()
+		if err != nil {
+			t.Fatalf("session: %v", err)
+		}
+		defer func() { _ = sess.Close() }()
+		// A client pty-req (ssh -t <resource> <cmd>) must make the gateway allocate
+		// a tty on the target (so its driver does LF->CRLF, no staircase) — the exec
+		// must still succeed and return output.
+		if err := sess.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{ssh.ECHO: 0}); err != nil {
+			t.Fatalf("request pty: %v", err)
+		}
+		out, err := sess.Output("web1 echo hello")
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if !strings.Contains(string(out), "hello") {
+			t.Fatalf("stdout = %q, want to contain hello", out)
+		}
+	})
+
 	t.Run("nonzero exit status propagates", func(t *testing.T) {
 		sess, err := client.NewSession()
 		if err != nil {
