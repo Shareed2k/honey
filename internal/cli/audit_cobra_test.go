@@ -159,11 +159,19 @@ func TestAuditCobra_Export_missingFile(t *testing.T) {
 	withAuditConfig(t, "/no/such/path/audit.jsonl")
 	withExportFlags(t, "jsonl", "", "", "", "")
 
-	var buf bytes.Buffer
+	var out, errBuf bytes.Buffer
 	cmd := &cobra.Command{}
-	cmd.SetOut(&buf)
-	if err := runAuditExport(cmd, nil); err == nil {
-		t.Fatal("expected error for missing audit file")
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	// Audit is opt-in: a missing log is explained (hint on stderr), not an error.
+	if err := runAuditExport(cmd, nil); err != nil {
+		t.Fatalf("missing audit file should not error, got %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "no audit log") {
+		t.Errorf("expected a missing-log hint on stderr, got %q", errBuf.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected no stdout output, got %q", out.String())
 	}
 }
 
