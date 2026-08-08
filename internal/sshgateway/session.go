@@ -210,7 +210,10 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 	recorder.RecordResize(cols, rows)
 
 	stdin := engine.WrapRecordingReader(ch, recorder, "in")
-	stdout := engine.WrapRecordingWriter(ch, recorder, "out")
+	// Mask outermost (closest to the target output) so the recorder and the
+	// client both receive redacted bytes. Closed after the stream returns to
+	// flush the retained tail.
+	mw := NewMaskingWriter(engine.WrapRecordingWriter(ch, recorder, "out"), s.opts.MaskRules)
 	targetUser := s.targetUser(rec, actor)
 
 	// Forward resizes to the ui streamer while recording each one. The forwarder
@@ -240,9 +243,10 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 		}
 	}()
 
-	runErr := ui.RunSSHInteractiveStreams(ctx, targetUser, rec, stdin, stdout, cols, rows, uiResize)
+	runErr := ui.RunSSHInteractiveStreams(ctx, targetUser, rec, stdin, mw, cols, rows, uiResize)
 	close(stopFwd)
 	<-fwdDone
+	_ = mw.Close()
 
 	if runErr != nil {
 		recorder.RecordError(runErr)
@@ -295,10 +299,16 @@ func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec 
 	defer func() { _ = sess.Close() }()
 
 	sess.Stdin = engine.WrapRecordingReader(ch, recorder, "in")
-	sess.Stdout = engine.WrapRecordingWriter(ch, recorder, "out")
-	sess.Stderr = engine.WrapRecordingWriter(stderr, recorder, "out")
+	// Mask outermost (closest to the target output) so the recorder and the
+	// client both receive redacted bytes on stdout and stderr.
+	outMask := NewMaskingWriter(engine.WrapRecordingWriter(ch, recorder, "out"), s.opts.MaskRules)
+	errMask := NewMaskingWriter(engine.WrapRecordingWriter(stderr, recorder, "out"), s.opts.MaskRules)
+	sess.Stdout = outMask
+	sess.Stderr = errMask
 
 	runErr := sess.Run(command)
+	_ = outMask.Close()
+	_ = errMask.Close()
 	exit := exitCode(runErr)
 	code := exit
 	s.audit(ctx, audit.Event{Actor: actor, Action: "command_exit", Target: rec.Name, Command: command, Risk: risk, Decision: "allow", ExitCode: &code})
