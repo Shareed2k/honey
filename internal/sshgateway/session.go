@@ -17,6 +17,8 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/pvelxc"
+	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 )
 
@@ -308,19 +310,33 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 		}
 	}()
 
-	// Route the shell through the provider seam when a registry is wired: an
-	// executor that can stream a TTY (docker/k8s locally, or the honey proxy for a
-	// mesh-routed record) serves it; otherwise fall back to the SSH leaf. The
-	// recorder+mask+guard wrappers around stdin/mw are provider-agnostic, so every
-	// target is recorded, masked, and guarded identically. A nil registry keeps
-	// the pre-Phase-F SSH-only path (sshStreamer == ui.RunSSHInteractiveStreams).
-	var is hostexec.InteractiveStreamer = sshStreamer{}
-	if s.opts.ExecRegistry != nil {
-		if r, ok := s.opts.ExecRegistry.ForRecord(rec).(hostexec.InteractiveStreamer); ok {
-			is = r
+	// Console-only targets (Proxmox serial, TrueNAS shell) are reached over a
+	// provider websocket rather than an SSH leaf or the exec seam; dispatch them
+	// to the matching stream bridge, which reuses the same provider Session the web
+	// terminal uses. The recorder+mask+guard wrappers on stdin/mw still apply, so
+	// these sessions are recorded, masked, and guarded like every other target.
+	var runErr error
+	switch {
+	case pvelxc.ShouldUsePVETTY(rec):
+		runErr = s.runProxmoxConsole(ctx, rec, stdin, mw, cols, rows, uiResize)
+	case truenasshell.ShouldUseTrueNASShell(rec, truenasshell.ConsoleTrueNASAPI):
+		runErr = s.runTrueNASConsole(ctx, rec, stdin, mw, cols, rows, uiResize)
+	default:
+		// Route the shell through the provider seam when a registry is wired: an
+		// executor that can stream a TTY (docker/k8s locally, or the honey proxy for
+		// a mesh-routed record) serves it; otherwise fall back to the SSH leaf. The
+		// recorder+mask+guard wrappers around stdin/mw are provider-agnostic, so
+		// every target is recorded, masked, and guarded identically. A nil registry
+		// keeps the pre-Phase-F SSH-only path (sshStreamer ==
+		// ui.RunSSHInteractiveStreams).
+		var is hostexec.InteractiveStreamer = sshStreamer{}
+		if s.opts.ExecRegistry != nil {
+			if r, ok := s.opts.ExecRegistry.ForRecord(rec).(hostexec.InteractiveStreamer); ok {
+				is = r
+			}
 		}
+		runErr = is.RunInteractiveStreams(ctx, targetUser, rec, stdin, mw, cols, rows, uiResize)
 	}
-	runErr := is.RunInteractiveStreams(ctx, targetUser, rec, stdin, mw, cols, rows, uiResize)
 	close(stopFwd)
 	<-fwdDone
 	_ = mw.Close()
@@ -339,6 +355,15 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 // returning the remote exit status.
 func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec hosts.Record, command string, act startAction) int {
 	stderr := ch.Stderr()
+
+	// Console-only targets have no ad-hoc exec transport (they proxy an
+	// interactive provider console, not a command channel); reject cleanly before
+	// any gate or dial so the client gets an actionable message.
+	if isConsoleTarget(rec) {
+		fmt.Fprintf(stderr, "error: %s is a console-only target; use an interactive shell (ssh -t)\n", rec.Name)
+		s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Decision: "deny", DenyReason: "console-only target"})
+		return 1
+	}
 
 	analysis, decisions, err := cmdgate.AssessTargets(ctx, s.opts.Enforcer, command, "sh",
 		[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: commandPolicyInput(actor, rec, command)}}, false)

@@ -44,6 +44,26 @@ The **target login user** is resolved from the record's `ssh_user` meta, then
 `defaults.ssh_user`, then the certificate principal — the principal is the
 *authorization* identity, not necessarily the account on the target.
 
+## Target types
+
+`<resource>` may be any connectable record from the inventory; the gateway routes
+it through the same executor seam the web terminal uses:
+
+| Target | Interactive shell (`-t`) | Ad-hoc exec | `ssh -L` |
+| --- | --- | --- | --- |
+| SSH host | ✓ | ✓ | ✓ |
+| Docker container | ✓ (container exec) | ✓ | ✓ (via the container) |
+| Kubernetes pod | ✓ (ephemeral debug container) | ✓ | ✓ (SPDY port-forward) |
+| honey-mesh record | ✓ (forwarded to the owning node) | ✓ | ✓ |
+| Proxmox serial / TrueNAS shell | ✓ (provider console) | — | — |
+
+k8s pods use an **ephemeral debug container** (needs k8s ≥1.25 + RBAC to create
+`pods/ephemeralcontainers`) since the pod's own image often has no shell. Proxmox
+and TrueNAS records are **console-only**: an interactive shell works, but exec and
+port-forward are rejected (a serial/shell console is neither a command channel nor
+a TCP endpoint). All target types are recorded, masked, guarded, and OPA-gated
+identically.
+
 ## Certificate authentication
 
 The gateway accepts only SSH **certificates** signed by a trusted CA (plain
