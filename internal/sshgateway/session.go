@@ -383,7 +383,18 @@ func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec 
 		nStdin := engine.WrapRecordingReader(ch, recorder, "in")
 		nOut := NewMaskingWriter(engine.WrapRecordingWriter(ch, recorder, "out"), s.opts.MaskRules)
 		nErr := NewMaskingWriter(engine.WrapRecordingWriter(stderr, recorder, "out"), s.opts.MaskRules)
-		runErr := hc.RunWithStreams(command, nStdin, nOut, nErr)
+		// Native exec has no remote tty, so its LF-only output would staircase in a
+		// client that requested a PTY (ssh -t). Cook LF->CRLF for that case (the
+		// masker/recorder sit under the cooker, so both the client and the recording
+		// get the tty-equivalent output). Without -t the client is not in raw mode
+		// and LF renders fine.
+		var outW io.Writer = nOut
+		var errW io.Writer = nErr
+		if act.wantPTY {
+			outW = newCRLFWriter(nOut)
+			errW = newCRLFWriter(nErr)
+		}
+		runErr := hc.RunWithStreams(command, nStdin, outW, errW)
 		_ = nOut.Close()
 		_ = nErr.Close()
 		exit := exitCode(runErr)
