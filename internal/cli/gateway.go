@@ -148,6 +148,7 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 		RecordDir:      recordDir,
 		Records:        provider,
 		MaskRules:      maskRules,
+		GuardMode:      gwCfg.Guardrail.Mode,
 		DisableAuth:    gwNoAuth,
 	})
 	if err != nil {

@@ -53,6 +53,13 @@ type Options struct {
 	// Records resolves the current inventory. Called per session (the CLI wraps
 	// it with a short TTL cache).
 	Records func(ctx context.Context) ([]hosts.Record, error)
+	// GuardMode selects the best-effort per-command interactive guardrail:
+	// "off" (default), "audit", or "enforce". In interactive shells it runs the
+	// same risk+policy assessment exec uses against each command line the user
+	// types; enforce blocks a denied line locally. This is defense-in-depth
+	// layered on top of the authoritative target-side command-risk gate, not a
+	// replacement for it — see guardReader for the caveats. Empty/unknown = off.
+	GuardMode string
 	// DisableAuth accepts any client without a certificate (dev only).
 	DisableAuth bool
 }

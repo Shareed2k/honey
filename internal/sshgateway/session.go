@@ -11,6 +11,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cmdgate"
+	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -210,6 +211,43 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 	recorder.RecordResize(cols, rows)
 
 	stdin := engine.WrapRecordingReader(ch, recorder, "in")
+	// Best-effort per-command interactive guardrail (defense-in-depth on top of
+	// the authoritative target-side command-risk gate). decide runs the SAME
+	// risk+policy assessment runExec uses against each reconstructed command
+	// line; onDecision audits the verdict. When the mode is off, newGuardReader
+	// returns stdin unchanged (zero overhead, zero behavior change). notify is
+	// the raw client channel (ch) because a policy notice is honey's own text,
+	// not target output, so it must bypass the masking writer; ssh.Channel
+	// serializes concurrent writes, so writing it alongside the stdout pump is
+	// safe.
+	decide := func(gctx context.Context, cmd string) (string, bool) {
+		_, decisions, derr := cmdgate.AssessTargets(gctx, s.opts.Enforcer, cmd, "sh",
+			[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: commandPolicyInput(actor, rec, cmd)}}, false)
+		if derr != nil {
+			// Fail closed only in enforce mode; audit mode records but never blocks.
+			return "policy error: " + derr.Error(), s.guardModeVal() == guardEnforce
+		}
+		if len(decisions) > 0 && decisions[0].Denied {
+			return decisions[0].Reason, true
+		}
+		return "", false
+	}
+	onDecision := func(cmd, reason string, denied bool) {
+		ev := audit.Event{
+			Actor:    actor,
+			Action:   "interactive_command",
+			Target:   rec.Name,
+			Command:  cmd,
+			Risk:     string(commandrisk.AnalyzeStep(cmd, "sh").MaxSeverity),
+			Decision: "allow",
+		}
+		if denied {
+			ev.Decision = "deny"
+			ev.DenyReason = reason
+		}
+		s.audit(ctx, ev)
+	}
+	stdin = newGuardReader(ctx, stdin, ch, s.guardModeVal(), decide, onDecision)
 	// Mask outermost (closest to the target output) so the recorder and the
 	// client both receive redacted bytes. Closed after the stream returns to
 	// flush the retained tail.
@@ -327,6 +365,12 @@ func (s *Server) resolveResource(ctx context.Context, name string) (hosts.Record
 		return hosts.Record{}, err
 	}
 	return rec, nil
+}
+
+// guardModeVal resolves the configured interactive guardrail mode (off/audit/
+// enforce), defaulting to off for empty or unknown values.
+func (s *Server) guardModeVal() guardMode {
+	return parseGuardMode(s.opts.GuardMode)
 }
 
 // gateInteractive asks OPA whether actor may open an interactive shell on rec
