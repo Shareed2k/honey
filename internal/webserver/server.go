@@ -24,6 +24,7 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/jit"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
 	plugincache "github.com/shareed2k/honey/internal/plugincache"
@@ -89,6 +90,10 @@ type Options struct {
 	// WebAuthn, when non-nil, enables passkey biometric step-up for
 	// require_biometric verdicts and the /api/v1/webauthn/* endpoints.
 	WebAuthn *webauthn.Manager
+	// Jit holds durable JIT access grants ("share links"). When nil, NewServer
+	// default-constructs one under the resolved state dir if available;
+	// otherwise it stays nil and the /jit/grants endpoints report 503.
+	Jit *jit.Store
 
 	// WebhookRatePerSecond and WebhookBurst control the per-app-name rate limit on
 	// unauthenticated webhook endpoints. Defaults: 10 req/s, burst 20.
@@ -260,6 +265,16 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	s.sshEnrollAPI = NewSSHEnrollAPI(sshCA)
 
+	// JIT access grants ("share links"): a durable store under the state dir.
+	// Non-fatal — the /jit/grants endpoints report 503 when unavailable.
+	if s.opts.Jit == nil {
+		if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
+			if store, jerr := jit.NewStore(filepath.Join(stateDir, "jit_grants.jsonl"), nil); jerr == nil {
+				s.opts.Jit = store
+			}
+		}
+	}
+
 	if err := s.routes(); err != nil {
 		return nil, err
 	}
@@ -298,6 +313,9 @@ func (s *Server) routes() error {
 		r.Get("/openapi.json", s.handleOpenAPIJSON)
 		r.Get("/approvals", s.handleListApprovals)
 		r.Post("/approvals/{id}", s.handleDecideApproval)
+		r.Post("/jit/grants", s.handleCreateJITGrant)
+		r.Get("/jit/grants", s.handleListJITGrants)
+		r.Post("/jit/grants/{id}", s.handleDecideJITGrant)
 		r.Post("/webauthn/register/begin", s.handleWebAuthnRegisterBegin)
 		r.Post("/webauthn/register/finish", s.handleWebAuthnRegisterFinish)
 		r.Post("/webauthn/assert/begin", s.handleWebAuthnAssertBegin)
