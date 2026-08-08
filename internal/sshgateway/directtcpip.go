@@ -51,30 +51,34 @@ func (s *Server) serveDirectTCPIP(ctx context.Context, newCh ssh.NewChannel, act
 	destHost := p.DestHost
 	destPort := int(p.DestPort)
 
+	// In every rejection path the audit event is emitted BEFORE newCh.Reject: the
+	// two run in this goroutine's program order, so a client that observes the
+	// reject is guaranteed the audit has already been recorded (no race between
+	// the client-side channel-open failure and the server-side audit).
 	if err := s.gateTunnel(ctx, actor, "tcp", destHost, destPort); err != nil {
-		_ = newCh.Reject(ssh.Prohibited, err.Error())
 		s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: destHost, Decision: "deny", DenyReason: err.Error()})
+		_ = newCh.Reject(ssh.Prohibited, err.Error())
 		return
 	}
 
 	rec, err := s.resolveResource(ctx, destHost)
 	if err != nil {
-		_ = newCh.Reject(ssh.ConnectionFailed, err.Error())
 		s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: destHost, Decision: "deny", DenyReason: err.Error()})
+		_ = newCh.Reject(ssh.ConnectionFailed, err.Error())
 		return
 	}
 
 	client, cleanup, err := ui.DialSSHLeafForRecord(s.targetUser(rec, actor), rec)
 	if err != nil {
-		_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("connect: %v", err))
 		s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: rec.Name, Decision: "deny", DenyReason: err.Error()})
+		_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("connect: %v", err))
 		return
 	}
 
 	upstream, err := client.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(destPort)))
 	if err != nil {
-		_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("dial service: %v", err))
 		s.audit(ctx, audit.Event{Actor: actor, Action: "tunnel", Target: rec.Name, Decision: "deny", DenyReason: err.Error()})
+		_ = newCh.Reject(ssh.ConnectionFailed, fmt.Sprintf("dial service: %v", err))
 		cleanup()
 		return
 	}
