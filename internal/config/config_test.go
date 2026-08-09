@@ -812,3 +812,149 @@ func TestJitConfigRoundTripYAML(t *testing.T) {
 		t.Fatalf("round-trip mismatch: got %+v, want %+v", out.Jit, f.Jit)
 	}
 }
+
+func TestLoadK8sProxyConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `
+version: 1
+k8s_proxy:
+  listen: "  0.0.0.0:6443  "
+  policy_dir: "  /etc/honey/policy  "
+  clusters:
+    - name: "  prod  "
+      kubeconfig: "  /etc/honey/kubeconfig-prod  "
+      context: "  prod-ctx  "
+      impersonate:
+        user_from: "cn"
+        default_groups:
+          - "developers"
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.K8sProxy == nil {
+		t.Fatal("expected non-nil K8sProxy block")
+	}
+	// mod:"trim" should have stripped surrounding whitespace via Sanitize.
+	if f.K8sProxy.Listen != "0.0.0.0:6443" {
+		t.Fatalf("Listen = %q", f.K8sProxy.Listen)
+	}
+	if f.K8sProxy.PolicyDir != "/etc/honey/policy" {
+		t.Fatalf("PolicyDir = %q", f.K8sProxy.PolicyDir)
+	}
+	if len(f.K8sProxy.Clusters) != 1 {
+		t.Fatalf("expected 1 cluster, got %d", len(f.K8sProxy.Clusters))
+	}
+	c := f.K8sProxy.Clusters[0]
+	if c.Name != "prod" {
+		t.Fatalf("Name = %q", c.Name)
+	}
+	if c.Kubeconfig != "/etc/honey/kubeconfig-prod" {
+		t.Fatalf("Kubeconfig = %q", c.Kubeconfig)
+	}
+	if c.Context != "prod-ctx" {
+		t.Fatalf("Context = %q", c.Context)
+	}
+	if c.Impersonate.UserFrom != "cn" {
+		t.Fatalf("UserFrom = %q", c.Impersonate.UserFrom)
+	}
+	if len(c.Impersonate.DefaultGroups) != 1 || c.Impersonate.DefaultGroups[0] != "developers" {
+		t.Fatalf("DefaultGroups = %+v", c.Impersonate.DefaultGroups)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestK8sProxyConfigAbsentMeansNil(t *testing.T) {
+	t.Parallel()
+	f, err := ParseYAML([]byte("version: 1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.K8sProxy != nil {
+		t.Fatalf("expected nil K8sProxy block when absent, got %+v", f.K8sProxy)
+	}
+}
+
+func TestK8sProxyConfigRoundTripYAML(t *testing.T) {
+	t.Parallel()
+	f := File{
+		Version: 1,
+		K8sProxy: &K8sProxyConfig{
+			Listen:    "0.0.0.0:6443",
+			PolicyDir: "/etc/honey/policy",
+			Clusters: []K8sProxyCluster{
+				{
+					Name:       "prod",
+					Kubeconfig: "/etc/honey/kubeconfig-prod",
+					Context:    "prod-ctx",
+					Impersonate: K8sImpersonation{
+						UserFrom:      "cn",
+						DefaultGroups: []string{"developers"},
+					},
+				},
+			},
+		},
+	}
+	b, err := yaml.Marshal(&f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ParseYAML(b)
+	if err != nil {
+		t.Fatalf("re-parse: %v\nyaml:\n%s", err, b)
+	}
+	if out.K8sProxy == nil {
+		t.Fatal("expected non-nil K8sProxy block after round-trip")
+	}
+	if len(out.K8sProxy.Clusters) != 1 {
+		t.Fatalf("round-trip mismatch: got %+v, want %+v", out.K8sProxy.Clusters, f.K8sProxy.Clusters)
+	}
+	got, want := out.K8sProxy.Clusters[0], f.K8sProxy.Clusters[0]
+	if got.Name != want.Name || got.Kubeconfig != want.Kubeconfig || got.Context != want.Context ||
+		got.Impersonate.UserFrom != want.Impersonate.UserFrom ||
+		len(got.Impersonate.DefaultGroups) != len(want.Impersonate.DefaultGroups) {
+		t.Fatalf("round-trip mismatch: got %+v, want %+v", got, want)
+	}
+	for i, g := range want.Impersonate.DefaultGroups {
+		if got.Impersonate.DefaultGroups[i] != g {
+			t.Fatalf("DefaultGroups round-trip mismatch: got %+v, want %+v", got.Impersonate.DefaultGroups, want.Impersonate.DefaultGroups)
+		}
+	}
+}
+
+func TestK8sProxyConfigValidateRequiresClusterName(t *testing.T) {
+	t.Parallel()
+	f := File{
+		Version: 1,
+		K8sProxy: &K8sProxyConfig{
+			Clusters: []K8sProxyCluster{{Kubeconfig: "/etc/honey/kubeconfig-prod"}},
+		},
+	}
+	if err := f.Validate(); err == nil {
+		t.Fatal("expected validation error for cluster with empty name")
+	}
+}
+
+func TestK8sProxyConfigValidateRejectsUnknownUserFrom(t *testing.T) {
+	t.Parallel()
+	f := File{
+		Version: 1,
+		K8sProxy: &K8sProxyConfig{
+			Clusters: []K8sProxyCluster{{
+				Name:        "prod",
+				Impersonate: K8sImpersonation{UserFrom: "email"},
+			}},
+		},
+	}
+	if err := f.Validate(); err == nil {
+		t.Fatal("expected validation error for unknown impersonate.user_from")
+	}
+}

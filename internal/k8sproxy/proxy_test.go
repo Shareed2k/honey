@@ -46,10 +46,10 @@ func newEchoServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-func newInboundRequest(t *testing.T, method, target string) *http.Request {
+func newInboundRequest(t *testing.T, target string) *http.Request {
 	t.Helper()
 
-	r, err := http.NewRequest(method, target, nil)
+	r, err := http.NewRequest(http.MethodGet, target, nil)
 	require.NoError(t, err)
 	return r
 }
@@ -66,7 +66,7 @@ func TestClusterProxy_Serve_ImpersonationAndStrip(t *testing.T) {
 	p, err := newClusterProxy(&rest.Config{Host: srv.URL})
 	require.NoError(t, err)
 
-	r := newInboundRequest(t, http.MethodGet, "http://honey.local/api/v1/namespaces/default/pods")
+	r := newInboundRequest(t, "http://honey.local/api/v1/namespaces/default/pods")
 	r.Header.Set("Impersonate-User", "cluster-admin")
 	r.Header.Add("Impersonate-Group", "system:masters")
 	r.Header.Set("Impersonate-Extra-Foo", "bar")
@@ -102,7 +102,7 @@ func TestClusterProxy_Serve_PathAndQueryForwarded(t *testing.T) {
 	p, err := newClusterProxy(&rest.Config{Host: srv.URL})
 	require.NoError(t, err)
 
-	r := newInboundRequest(t, http.MethodGet, "http://honey.local/api/v1/namespaces/default/pods?limit=5")
+	r := newInboundRequest(t, "http://honey.local/api/v1/namespaces/default/pods?limit=5")
 
 	w := httptest.NewRecorder()
 	p.serve(w, r, Identity{User: "alice"})
@@ -124,7 +124,7 @@ func TestClusterProxy_Serve_ResponsePassthrough(t *testing.T) {
 	p, err := newClusterProxy(&rest.Config{Host: srv.URL})
 	require.NoError(t, err)
 
-	r := newInboundRequest(t, http.MethodGet, "http://honey.local/healthz")
+	r := newInboundRequest(t, "http://honey.local/healthz")
 	w := httptest.NewRecorder()
 	p.serve(w, r, Identity{User: "alice"})
 
