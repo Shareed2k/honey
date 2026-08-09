@@ -12,9 +12,13 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/policy"
+	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 	"github.com/shareed2k/honey/internal/webserver"
 )
 
@@ -113,6 +117,17 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// One audit sink, shared by the web server and the k8s access proxy so both
+	// append to the same log. Closed on return (mirrors the gateway command).
+	auditSink := gatewayAuditSink(cfg)
+	defer func() { _ = auditSink.Close() }()
+
+	// Inbound Kubernetes access proxy: built (fail-closed) only when configured.
+	k8sProxyCfg, err := buildK8sProxyServerConfig(cfg, authCfg.enforcer, auditSink)
+	if err != nil {
+		return err
+	}
+
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:         webListen,
 		Token:              token,
@@ -140,6 +155,8 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		TrustedProxyNets:   authCfg.trustedNets,
 		WebAuthn:           authCfg.webauthn,
 		EnableMesh:         meshnet.Enabled(),
+		AuditSink:          auditSink,
+		K8sProxy:           k8sProxyCfg,
 	})
 	if err != nil {
 		return err
@@ -147,6 +164,47 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return srv.Start(ctx)
+}
+
+// buildK8sProxyServerConfig builds the inbound Kubernetes access proxy's server
+// config from cfg.K8sProxy. It returns (nil, nil) when the block is absent so
+// the proxy stays disabled. Any cluster whose kubeconfig/context or registry
+// fails to resolve is a hard startup error (fail-closed): honey never starts the
+// boundary in a partially-configured state.
+func buildK8sProxyServerConfig(cfg *config.File, enforcer *policy.Enforcer, sink audit.Sink) (*k8sproxy.ServerConfig, error) {
+	if cfg == nil || cfg.K8sProxy == nil {
+		return nil, nil
+	}
+	kp := cfg.K8sProxy
+
+	specs := make([]k8sproxy.ClusterSpec, 0, len(kp.Clusters))
+	for _, c := range kp.Clusters {
+		restCfg, err := k8sprovider.RestConfigForKubeconfig(c.Kubeconfig, c.Context)
+		if err != nil {
+			return nil, fmt.Errorf("k8s_proxy: cluster %q: %w", c.Name, err)
+		}
+		specs = append(specs, k8sproxy.ClusterSpec{
+			Name:          c.Name,
+			Config:        restCfg,
+			UserFrom:      c.Impersonate.UserFrom,
+			DefaultGroups: c.Impersonate.DefaultGroups,
+		})
+	}
+
+	reg, err := k8sproxy.NewRegistry(specs)
+	if err != nil {
+		return nil, fmt.Errorf("k8s_proxy: %w", err)
+	}
+
+	return &k8sproxy.ServerConfig{
+		Listen:          kp.Listen,
+		ServingCertPath: kp.TLSCert,
+		ServingKeyPath:  kp.TLSKey,
+		ClientCAPath:    kp.ClientCA,
+		Registry:        reg,
+		Enforcer:        enforcer,
+		AuditSink:       sink,
+	}, nil
 }
 
 // stopMeshBestEffort stops the mesh singleton (internal/meshnet) if it was
