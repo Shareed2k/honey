@@ -158,6 +158,11 @@ type Server struct {
 	// nil (endpoints report 503) when no state dir is available.
 	sshEnrollAPI *SSHEnrollAPI
 
+	// sshCA is the same SSH certificate authority wired into sshEnrollAPI,
+	// stored here as well so the JIT redeem-cert handler can mint certs
+	// directly. nil (endpoints report 503) when no state dir is available.
+	sshCA *sshca.CA
+
 	// forwardingAPI owns the WebSocket forwarding/relay endpoints (ws/tunnel,
 	// ws/remote-forward, ws/udp) and their test-injectable seams.
 	forwardingAPI *ForwardingAPI
@@ -264,6 +269,7 @@ func NewServer(opts Options) (*Server, error) {
 		}
 	}
 	s.sshEnrollAPI = NewSSHEnrollAPI(sshCA)
+	s.sshCA = sshCA
 
 	// JIT access grants ("share links"): a durable store under the state dir.
 	// Non-fatal — the /jit/grants endpoints report 503 when unavailable.
@@ -434,6 +440,12 @@ func (s *Server) routes() error {
 	// SSH-cert enrollment is authenticated by the one-time code, not the session
 	// token, so it mounts outside the main auth group.
 	s.router.Post("/api/v1/ssh/enroll", s.sshEnrollAPI.handleSSHEnroll)
+
+	// JIT redeem is authenticated by the share-link code, not the session
+	// token, so it mounts outside the main auth group — a link recipient has
+	// no honey login.
+	s.router.Get("/api/v1/jit/redeem/{code}", s.handleJITRedeemStatus)
+	s.router.Post("/api/v1/jit/redeem/{code}/cert", s.handleJITRedeemCert)
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
 	s.router.With(recipesAPI.webhookRateLimit).

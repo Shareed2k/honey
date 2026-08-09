@@ -411,6 +411,70 @@ func TestConcurrentCreateAndRedeem(t *testing.T) {
 	}
 }
 
+func TestPeek_ApprovedGrant(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	stored, code, err := s.Create(validGrant())
+	require.NoError(t, err)
+
+	peeked, err := s.Peek(code)
+	require.NoError(t, err)
+	require.Equal(t, stored.ID, peeked.ID)
+	require.Equal(t, StatusApproved, peeked.Status)
+	require.Equal(t, 0, peeked.Redemptions)
+
+	// Peek must not consume a redemption or otherwise mutate the grant.
+	got, ok := s.Get(stored.ID)
+	require.True(t, ok)
+	require.Equal(t, 0, got.Redemptions)
+	require.Equal(t, stored, got)
+}
+
+func TestPeek_PendingGrant(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	g := validGrant()
+	g.RequireApproval = true
+	stored, code, err := s.Create(g)
+	require.NoError(t, err)
+
+	peeked, err := s.Peek(code)
+	require.NoError(t, err)
+	require.Equal(t, stored.ID, peeked.ID)
+	require.Equal(t, StatusPending, peeked.Status)
+}
+
+func TestPeek_UnknownCode(t *testing.T) {
+	s, _ := newTestStore(t)
+	_, _, err := s.Create(validGrant())
+	require.NoError(t, err)
+
+	_, err = s.Peek("this-code-does-not-exist")
+	require.ErrorIs(t, err, ErrGrantNotFound)
+}
+
+func TestPeek_DoesNotConsumeRedemption(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	stored, code, err := s.Create(validGrant())
+	require.NoError(t, err)
+
+	// Multiple peeks must never increment Redemptions.
+	for i := 0; i < 3; i++ {
+		_, err := s.Peek(code)
+		require.NoError(t, err)
+	}
+
+	got, ok := s.Get(stored.ID)
+	require.True(t, ok)
+	require.Equal(t, 0, got.Redemptions)
+
+	// A real Redeem afterward still works normally (peeking didn't cap it).
+	redeemed, err := s.Redeem(code)
+	require.NoError(t, err)
+	require.Equal(t, 1, redeemed.Redemptions)
+}
+
 func TestErrors_AreSentinelsNotJustStrings(t *testing.T) {
 	require.True(t, errors.Is(ErrGrantNotFound, ErrGrantNotFound))
 	require.True(t, errors.Is(ErrGrantNotActive, ErrGrantNotActive))
