@@ -16,6 +16,7 @@ import { useTunnel } from '../contexts/TunnelContext';
 import { useReplay } from '../contexts/ReplayContext';
 import { useTerminal } from '../contexts/TerminalContext';
 import type { BackendRow } from '../contexts/AppContext';
+import { ShareAccessModal } from './ShareAccessModal';
 
 const CodeEditor = lazy(() => import('../CodeEditor'));
 import type { HostRecord } from '../HostPicker';
@@ -212,6 +213,7 @@ export function SearchTab() {
 
   const [hostDetailRecord, setHostDetailRecord] = useState<HostRecord | null>(null);
   const [visibleRecords, setVisibleRecords] = useState<HostRecord[]>([]);
+  const [shareTarget, setShareTarget] = useState<HostRecord | null>(null);
 
   const [recordWebSession, setRecordWebSession] = useState(() => {
     return new URLSearchParams(window.location.search).get('recordWebSession') === 'true';
@@ -959,6 +961,9 @@ export function SearchTab() {
               <Button size="small" onClick={() => openUploadModal(rec)}>
                 Upload
               </Button>
+              <Button size="small" onClick={() => setShareTarget(rec)}>
+                Share
+              </Button>
               <Button
                 size="small"
                 disabled={!canPortForwardTunnel(rec)}
@@ -1123,6 +1128,12 @@ export function SearchTab() {
           ) : null}
         </Space>
       </Modal>
+
+      <ShareAccessModal
+        record={shareTarget}
+        open={shareTarget !== null}
+        onClose={() => setShareTarget(null)}
+      />
     </section>
   );
 }

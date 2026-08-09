@@ -184,9 +184,12 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 	})
 
 	resp := map[string]any{
-		"id":               stored.ID,
-		"code":             code,
-		"link_path":        "/access/" + code,
+		"id":   stored.ID,
+		"code": code,
+		// Query form so a cold link click resolves to the SPA's index.html
+		// through the static file server without a server-side path fallback;
+		// the web UI reads ?access=<code>.
+		"link_path":        "/?access=" + code,
 		"status":           string(stored.Status),
 		"require_approval": stored.RequireApproval,
 	}

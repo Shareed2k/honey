@@ -67,8 +67,8 @@ func TestHandleCreateJITGrant_DirectGrant(t *testing.T) {
 		t.Fatal("expected non-empty code")
 	}
 	linkPath, _ := resp["link_path"].(string)
-	if linkPath != "/access/"+code {
-		t.Fatalf("link_path = %q, want /access/%s", linkPath, code)
+	if linkPath != "/?access="+code {
+		t.Fatalf("link_path = %q, want /?access=%s", linkPath, code)
 	}
 	if exp, _ := resp["expires_at"].(string); exp == "" {
 		t.Fatal("expected non-empty expires_at for a direct grant")
