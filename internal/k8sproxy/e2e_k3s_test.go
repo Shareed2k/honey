@@ -15,10 +15,13 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +35,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/shareed2k/honey/internal/policy"
 )
@@ -185,13 +189,15 @@ func TestK8sProxyE2E_Impersonation(t *testing.T) {
 	require.True(t, ok, "test client key must be ECDSA")
 	aliceKeyDER, err := x509.MarshalECPrivateKey(aliceKey)
 	require.NoError(t, err)
+	aliceCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: aliceCert.Certificate[0]})
+	aliceKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: aliceKeyDER})
 
 	proxyRest := &rest.Config{
 		Host: "https://" + addr + "/prod",
 		TLSClientConfig: rest.TLSClientConfig{
 			CAData:   certPEM, // the proxy's serving cert is the client's trust anchor
-			CertData: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: aliceCert.Certificate[0]}),
-			KeyData:  pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: aliceKeyDER}),
+			CertData: aliceCertPEM,
+			KeyData:  aliceKeyPEM,
 		},
 	}
 	proxyClient, err := kubernetes.NewForConfig(proxyRest)
@@ -231,6 +237,94 @@ func TestK8sProxyE2E_Impersonation(t *testing.T) {
 		}
 	}
 	require.True(t, found, "expected an allow k8s_request audit event for alice/prod, got: %+v", events)
+
+	// Beyond client-go, also drive a REAL kubectl binary through the same
+	// proxy listener. client-go proves the wire protocol works; kubectl
+	// additionally proves the proxy behaves correctly against kubectl's own
+	// auth/RBAC UX (kubectl auth whoami, kubectl's Forbidden rendering),
+	// which is how honey's actual users will hit this in practice. Skips
+	// (does not fail) when kubectl isn't installed, since the client-go
+	// assertions above already fully cover the impersonation contract.
+	func() {
+		kubectlPath, lookErr := exec.LookPath("kubectl")
+		if lookErr != nil {
+			t.Log("kubectl not installed; skipping kubectl assertions")
+			return
+		}
+		if p := os.Getenv("KUBECTL"); p != "" {
+			kubectlPath = p
+		}
+		t.Logf("using kubectl binary: %s", kubectlPath)
+
+		// Write a real kubeconfig pointing at the proxy's "prod" path prefix,
+		// trusting the proxy's serving cert and authenticating as alice —
+		// exactly the config a real honey user would be handed.
+		kcfg := api.NewConfig()
+		cluster := api.NewCluster()
+		cluster.Server = "https://" + addr + "/prod"
+		cluster.CertificateAuthorityData = certPEM
+		kcfg.Clusters["honey-prod"] = cluster
+
+		authInfo := api.NewAuthInfo()
+		authInfo.ClientCertificateData = aliceCertPEM
+		authInfo.ClientKeyData = aliceKeyPEM
+		kcfg.AuthInfos["honey-alice"] = authInfo
+
+		kubeContext := api.NewContext()
+		kubeContext.Cluster = "honey-prod"
+		kubeContext.AuthInfo = "honey-alice"
+		kcfg.Contexts["honey-prod"] = kubeContext
+		kcfg.CurrentContext = "honey-prod"
+
+		kubeconfigPath := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, clientcmd.WriteToFile(*kcfg, kubeconfigPath))
+
+		runKubectl := func(args ...string) (string, error) {
+			cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			fullArgs := append([]string{"--kubeconfig", kubeconfigPath, "--context", "honey-prod"}, args...)
+			out, runErr := exec.CommandContext(cmdCtx, kubectlPath, fullArgs...).CombinedOutput()
+			return string(out), runErr
+		}
+
+		// (e) kubectl's own "auth whoami" is native proof the proxy
+		// impersonates alice/honey-viewers, independent of client-go.
+		whoamiOut, err := runKubectl("auth", "whoami", "-o", "json")
+		require.NoError(t, err, "kubectl auth whoami failed: %s", truncateOutput(whoamiOut))
+		var review authenticationv1.SelfSubjectReview
+		require.NoError(t, json.Unmarshal([]byte(whoamiOut), &review), "parse kubectl auth whoami output: %s", truncateOutput(whoamiOut))
+		require.Equal(t, "alice", review.Status.UserInfo.Username)
+		require.Contains(t, review.Status.UserInfo.Groups, "honey-viewers")
+
+		// (f) Allowed: kubectl can list pods as the impersonated group.
+		// Eventually, to tolerate the same RBAC-cache lag as the client-go
+		// pods check above.
+		require.Eventually(t, func() bool {
+			out, listErr := runKubectl("get", "pods", "-n", "default")
+			if listErr != nil {
+				t.Logf("kubectl get pods not yet allowed: %v: %s", listErr, truncateOutput(out))
+				return false
+			}
+			return true
+		}, 15*time.Second, 500*time.Millisecond, "kubectl get pods as the impersonated group must eventually succeed")
+
+		// (g) Denied: kubectl requests run as the impersonated identity, not
+		// the proxy's admin credentials — secrets must fail as Forbidden.
+		secretsOut, err := runKubectl("get", "secrets", "-n", "default")
+		require.Error(t, err, "kubectl get secrets unexpectedly succeeded: %s", truncateOutput(secretsOut))
+		require.Contains(t, strings.ToLower(secretsOut), "forbidden", "expected forbidden in kubectl output: %s", truncateOutput(secretsOut))
+	}()
+}
+
+// truncateOutput bounds command output for test log/failure messages so a
+// runaway kubectl error doesn't flood test output.
+func truncateOutput(s string) string {
+	const max = 2000
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "...(truncated)"
 }
 
 // waitForAPIServer polls the k8s API server up to timeout; k3s can take a
