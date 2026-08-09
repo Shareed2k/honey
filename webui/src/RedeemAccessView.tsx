@@ -130,8 +130,42 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
   }
 
   return (
-    <div style={{ maxWidth: 640, margin: '0 auto', paddingTop: 48, paddingBottom: 48 }}>
-      <Card title="honey — access" loading={loading}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#0f1115' }}>
+      <header
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '12px 20px',
+          borderBottom: '1px solid #2a3140',
+          flex: '0 0 auto',
+        }}
+      >
+        <svg viewBox="0 0 120 120" width="20" height="20" aria-hidden style={{ flexShrink: 0 }}>
+          <defs>
+            <linearGradient id="honeyGradAccess" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#FFC107" />
+              <stop offset="100%" stopColor="#F57C00" />
+            </linearGradient>
+          </defs>
+          <polygon points="60,10 105,35 105,85 60,110 15,85 15,35" fill="url(#honeyGradAccess)" />
+          <polygon points="60,20 95,40 95,80 60,100 25,80 25,40" fill="#14171c" />
+        </svg>
+        <Typography.Text strong style={{ color: '#e6e6e6', fontSize: 15 }}>
+          honey — access
+        </Typography.Text>
+      </header>
+      <main
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+        }}
+      >
+        <div style={{ width: '100%', maxWidth: 640 }}>
+          <Card title="Access link" loading={loading}>
         {notFound ? (
           <Result status="404" title="Link not found" subTitle="This link is invalid or expired." />
         ) : null}
@@ -235,7 +269,9 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
             ) : null}
           </Space>
         ) : null}
-      </Card>
+          </Card>
+        </div>
+      </main>
     </div>
   );
 }
