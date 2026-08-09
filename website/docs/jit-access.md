@@ -52,17 +52,19 @@ redeem endpoints will honor:
 
 `require_approval: true` creates the grant as **Pending** instead of
 **Approved**; its share link exists but every redeem endpoint reports it
-inactive until an approver decides it via:
+inactive until an approver decides it. Decide it from the **Access Requests**
+tab in the web UI (approve / deny a pending request, or revoke an active one),
+or over the API:
 
 ```
 POST /api/v1/jit/grants/{id}
 {"decision": "approve"}   // or "deny", or "revoke" on an active grant
 ```
 
-There is no approve/deny button in the web UI yet — decide via the API (or
-`honey audit`/your own tooling) until one ships. Approving is itself
-OPA-gated (`jit_approve`) and the API rejects an approver deciding their own
-request when a policy enforces that.
+Approving is itself OPA-gated (`jit_approve`) and the API rejects an approver
+deciding their own request when a policy enforces that. While a link is
+Pending, the recipient's redeem page polls and flips to the live
+terminal/certificate offers on its own once it is approved — no reload.
 
 On creation of a Pending grant, honey sends a **best-effort notification**
 through whatever [recipe notify](./cue-recipes.md) backend is configured via
@@ -71,7 +73,8 @@ environment variables — `HONEY_NOTIFY_SLACK_WEBHOOK_URL`,
 `HONEY_NOTIFY_TELEGRAM_CHAT_IDS`. The message names the requester, resource,
 capabilities, and the grant id to approve — **it never contains the redeem
 code**. With no notify backend configured, nothing is sent and the grant just
-sits Pending until someone checks `GET /api/v1/jit/grants`.
+sits Pending until someone reviews the **Access Requests** tab (or
+`GET /api/v1/jit/grants`).
 
 ## Endpoints
 
@@ -173,4 +176,5 @@ export HONEY_NOTIFY_TELEGRAM_CHAT_IDS=123456789
 ```
 
 Any subset may be set; with none set, Pending grants simply are not
-announced and rely on someone polling `GET /api/v1/jit/grants`.
+announced and rely on someone reviewing the **Access Requests** tab (or
+`GET /api/v1/jit/grants`).
