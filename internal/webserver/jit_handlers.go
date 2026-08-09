@@ -116,7 +116,7 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	duration := jitDefaultDuration
+	duration := s.jitDefaultDuration
 	if raw := strings.TrimSpace(body.Duration); raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil {
@@ -129,8 +129,8 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 		}
 		duration = d
 	}
-	if duration > jitMaxDuration {
-		duration = jitMaxDuration
+	if duration > s.jitMaxDuration {
+		duration = s.jitMaxDuration
 	}
 
 	actor := actorFromCtx(r.Context())

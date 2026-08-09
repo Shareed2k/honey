@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shareed2k/honey/internal/audit"
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/jit"
 )
 
@@ -340,5 +342,63 @@ deny_reason := "no jit grants allowed" if { input.action == "jit_grant" }`
 	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", body)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d body=%s", w.Code, w.Body)
+	}
+}
+
+// TestNewServer_JitDisabledByConfig verifies config.Jit.Enabled=false stops
+// NewServer from default-constructing a jit.Store at all (unlike
+// TestJITEndpoints_NilStore, which constructs a bare *Server to exercise the
+// "no state dir" 503 path, this goes through real NewServer/routing since the
+// disabling must happen before the state-dir store construction runs).
+func TestNewServer_JitDisabledByConfig(t *testing.T) {
+	disabled := false
+	s := newTestServer(t, Options{Config: &config.File{Jit: &config.JitConfig{Enabled: &disabled}}})
+	if s.opts.Jit != nil {
+		t.Fatal("expected nil Jit store when config.Jit.Enabled=false")
+	}
+
+	body := map[string]any{
+		"resource":     map[string]any{"name": "host1"},
+		"capabilities": []string{"shell"},
+		"delivery":     "web",
+		"duration":     "1h",
+	}
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", body)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body)
+	}
+}
+
+// TestHandleCreateJITGrant_MaxDurationConfigCap verifies config.Jit.MaxDuration
+// caps a requested duration even when it is well under the package's built-in
+// jitMaxDuration (24h) default.
+func TestHandleCreateJITGrant_MaxDurationConfigCap(t *testing.T) {
+	s, _ := newJitTestServer(t, Options{Config: &config.File{Jit: &config.JitConfig{MaxDuration: "1h"}}})
+
+	body := map[string]any{
+		"resource":     map[string]any{"name": "host1"},
+		"capabilities": []string{"shell"},
+		"delivery":     "web",
+		"duration":     "8h",
+	}
+	before := time.Now()
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	expRaw, _ := resp["expires_at"].(string)
+	if expRaw == "" {
+		t.Fatal("expected non-empty expires_at for a direct grant")
+	}
+	exp, err := time.Parse(time.RFC3339, expRaw)
+	if err != nil {
+		t.Fatalf("parse expires_at: %v", err)
+	}
+	if got := exp.Sub(before); got < 55*time.Minute || got > 65*time.Minute {
+		t.Fatalf("expires_at ~%s after now, want ~1h (config max_duration cap must win over the 8h request and the 24h built-in default)", got)
 	}
 }

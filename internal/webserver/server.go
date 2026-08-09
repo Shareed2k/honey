@@ -166,6 +166,13 @@ type Server struct {
 	// forwardingAPI owns the WebSocket forwarding/relay endpoints (ws/tunnel,
 	// ws/remote-forward, ws/udp) and their test-injectable seams.
 	forwardingAPI *ForwardingAPI
+
+	// jitDefaultDuration and jitMaxDuration are the JIT grant duration default
+	// and cap used by handleCreateJITGrant / handleJITRedeemCert. They start at
+	// the jitDefaultDuration/jitMaxDuration package consts and may be overridden
+	// by config.Jit.DefaultDuration / config.Jit.MaxDuration in NewServer.
+	jitDefaultDuration time.Duration
+	jitMaxDuration     time.Duration
 }
 
 // NewServer builds handlers with the given auth token.
@@ -221,6 +228,8 @@ func NewServer(opts Options) (*Server, error) {
 			Metrics:        opts.Metrics,
 			RecordDir:      opts.RecordDir,
 		}),
+		jitDefaultDuration: jitDefaultDuration,
+		jitMaxDuration:     jitMaxDuration,
 	}
 	if opts.Config != nil {
 		schedMgr, err := scheduler.New(scheduler.Options{
@@ -271,20 +280,51 @@ func NewServer(opts Options) (*Server, error) {
 	s.sshEnrollAPI = NewSSHEnrollAPI(sshCA)
 	s.sshCA = sshCA
 
-	// JIT access grants ("share links"): a durable store under the state dir.
-	// Non-fatal — the /jit/grants endpoints report 503 when unavailable.
-	if s.opts.Jit == nil {
-		if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
-			if store, jerr := jit.NewStore(filepath.Join(stateDir, "jit_grants.jsonl"), nil); jerr == nil {
-				s.opts.Jit = store
-			}
-		}
-	}
+	s.resolveJitConfig()
 
 	if err := s.routes(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// resolveJitConfig applies config.Jit to the JIT store and duration knobs. A
+// disabled block (enabled=false) leaves s.opts.Jit nil so the /jit endpoints
+// report 503; the default_duration / max_duration overrides bound every grant
+// and issued certificate. It never fails: a bad duration keeps the built-in
+// default, and a store that can't be created is left nil. Kept out of
+// NewServer to hold that function's cyclomatic complexity down.
+func (s *Server) resolveJitConfig() {
+	jitEnabled := true
+	jitStorePath := ""
+	if cfg := s.opts.Config; cfg != nil && cfg.Jit != nil {
+		jc := cfg.Jit
+		if jc.Enabled != nil && !*jc.Enabled {
+			jitEnabled = false
+		}
+		jitStorePath = strings.TrimSpace(jc.StorePath)
+		if d, err := time.ParseDuration(strings.TrimSpace(jc.DefaultDuration)); err == nil && d > 0 {
+			s.jitDefaultDuration = d
+		}
+		if d, err := time.ParseDuration(strings.TrimSpace(jc.MaxDuration)); err == nil && d > 0 {
+			s.jitMaxDuration = d
+		}
+	}
+	if s.opts.Jit != nil || !jitEnabled {
+		return
+	}
+	storePath := jitStorePath
+	if storePath == "" {
+		if stateDir, err := config.ResolveStateDir(); err == nil && strings.TrimSpace(stateDir) != "" {
+			storePath = filepath.Join(stateDir, "jit_grants.jsonl")
+		}
+	}
+	if storePath == "" {
+		return
+	}
+	if store, err := jit.NewStore(storePath, nil); err == nil {
+		s.opts.Jit = store
+	}
 }
 
 // workspaceStoreDir returns the dir for the studio workspace store: beside
