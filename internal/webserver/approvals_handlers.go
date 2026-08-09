@@ -1,6 +1,7 @@
 package webserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,14 +12,23 @@ import (
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
-// gateInteractiveSession asks OPA whether actor may open an interactive shell on
-// the target (action "interactive_session"). A nil enforcer always allows.
+// gateInteractiveSession asks OPA whether the request's actor may open an
+// interactive shell on the target (action "interactive_session"). A nil
+// enforcer always allows.
 func (s *Server) gateInteractiveSession(r *http.Request, rec hosts.Record) error {
+	return s.evalInteractiveSession(r.Context(), userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey), rec)
+}
+
+// evalInteractiveSession asks OPA whether actor may open an interactive shell
+// on rec (action "interactive_session"). A nil enforcer always allows. Unlike
+// gateInteractiveSession it takes the actor explicitly, so callers with no
+// request session (e.g. a share-link recipient) can gate with a derived
+// identity.
+func (s *Server) evalInteractiveSession(ctx context.Context, actor string, rec hosts.Record) error {
 	if s.opts.Enforcer == nil {
 		return nil
 	}
-	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
-	d, err := s.opts.Enforcer.Evaluate(r.Context(), map[string]any{
+	d, err := s.opts.Enforcer.Evaluate(ctx, map[string]any{
 		"action": "interactive_session",
 		"actor":  actor,
 		"target": map[string]any{

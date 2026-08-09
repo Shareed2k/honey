@@ -446,6 +446,7 @@ func (s *Server) routes() error {
 	// no honey login.
 	s.router.Get("/api/v1/jit/redeem/{code}", s.handleJITRedeemStatus)
 	s.router.Post("/api/v1/jit/redeem/{code}/cert", s.handleJITRedeemCert)
+	s.router.Get("/api/v1/jit/redeem/{code}/terminal", s.handleJITRedeemTerminal)
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
 	s.router.With(recipesAPI.webhookRateLimit).
