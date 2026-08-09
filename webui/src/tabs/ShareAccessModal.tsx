@@ -84,6 +84,9 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
   };
 
   const link = result ? window.location.origin + result.link_path : '';
+  // Tunnel access is redeemed as an SSH certificate (for `ssh -L`), so a
+  // web-terminal-only delivery would produce a dead link — block that combo.
+  const tunnelNeedsCert = capabilities.includes('tunnel') && delivery === 'web';
 
   const copyLink = () => {
     if (!link) {
@@ -120,7 +123,7 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
                 key="create"
                 type="primary"
                 loading={busy}
-                disabled={!record || capabilities.length === 0}
+                disabled={!record || capabilities.length === 0 || tunnelNeedsCert}
                 onClick={() => void onSubmit()}
               >
                 Create link
@@ -172,6 +175,11 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
               <Radio value="cert">SSH certificate</Radio>
               <Radio value="both">Both</Radio>
             </Radio.Group>
+            {tunnelNeedsCert ? (
+              <Typography.Text type="warning" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+                Tunnel access is delivered via an SSH certificate — pick SSH certificate or Both.
+              </Typography.Text>
+            ) : null}
           </div>
 
           <div>
