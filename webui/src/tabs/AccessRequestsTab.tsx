@@ -165,7 +165,7 @@ export function AccessRequestsTab() {
   ];
 
   return (
-    <div style={{ maxWidth: 1200 }}>
+    <div style={{ width: '100%' }}>
       <Typography.Title level={4}>Access requests</Typography.Title>
       <Typography.Paragraph type="secondary">
         JIT share-link access grants. Requests marked <Tag color="orange">pending</Tag> are awaiting
@@ -183,6 +183,7 @@ export function AccessRequestsTab() {
           columns={columns}
           dataSource={grants}
           pagination={false}
+          scroll={{ x: 'max-content' }}
           locale={{ emptyText: 'No access requests yet' }}
         />
       </Card>
