@@ -4,7 +4,7 @@ import type { MenuProps } from 'antd';
 import {
   SearchOutlined, FileOutlined, CloudOutlined, SettingOutlined,
   PlayCircleOutlined, ApiOutlined, AppstoreOutlined, DatabaseOutlined, UnorderedListOutlined,
-  CommentOutlined, RobotOutlined, SafetyCertificateOutlined,
+  CommentOutlined, RobotOutlined, SafetyCertificateOutlined, KeyOutlined,
 } from '@ant-design/icons';
 import { RecipesTab } from './RecipesTab';
 import { AppsTab } from './AppsTab';
@@ -18,6 +18,7 @@ import { SearchTab } from './tabs/SearchTab';
 import { FeedbackTab } from './tabs/FeedbackTab';
 import { AgentTab } from './tabs/AgentTab';
 import { DevicesTab } from './tabs/DevicesTab';
+import { AccessRequestsTab } from './tabs/AccessRequestsTab';
 import { useNavigation, type Tab } from './contexts/NavigationContext';
 import { useAppContext } from './contexts/AppContext';
 import { useTerminal } from './contexts/TerminalContext';
@@ -48,6 +49,7 @@ export function App() {
     { key: 'feedback', icon: <CommentOutlined />,       label: 'Logs Feedback' },
     { key: 'agent',    icon: <RobotOutlined />,         label: 'AI Agent' },
     { key: 'devices',  icon: <SafetyCertificateOutlined />, label: 'Devices' },
+    { key: 'access',   icon: <KeyOutlined />,               label: 'Access Requests' },
   ];
 
   return (
@@ -118,6 +120,7 @@ export function App() {
           {tab === 'feedback' ? <FeedbackTab /> : null}
           {tab === 'agent' ? <AgentTab /> : null}
           {tab === 'devices' ? <DevicesTab /> : null}
+          {tab === 'access' ? <AccessRequestsTab /> : null}
         </Layout.Content>
       </Layout>
 

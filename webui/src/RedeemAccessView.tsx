@@ -56,6 +56,43 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
     };
   }, [code]);
 
+  // While a grant is pending approval, poll until it flips to active (or gets
+  // denied/revoked) so the recipient doesn't have to manually reload the page.
+  // Deps are the primitive fields (not `status` itself) so the effect only
+  // re-runs on an actual state transition, not on every unrelated re-render.
+  const statusStatus = status?.status;
+  const statusActive = status?.active ?? false;
+  useEffect(() => {
+    if (statusStatus !== 'pending' || statusActive) {
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+    const id = setInterval(() => {
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
+      getRedeemStatus(code)
+        .then((s) => {
+          if (!cancelled) {
+            setStatus(s);
+          }
+        })
+        .catch(() => {
+          // Transient poll failure — keep the last known status and retry
+          // on the next tick rather than surfacing an error banner.
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [code, statusStatus, statusActive]);
+
   const copy = useCallback((field: string, value: string) => {
     navigator.clipboard.writeText(value).then(
       () => {
