@@ -64,17 +64,25 @@ type K8sPodExecutor struct {
 	interactive InteractiveRunner
 }
 
-// k8sClientConfigFromRecord builds a *rest.Config from kubeconfig/context stored in r.Meta.
-func k8sClientConfigFromRecord(r hosts.Record) (*rest.Config, error) {
+// RestConfigForKubeconfig builds a *rest.Config from a kubeconfig path and
+// context name, either of which may be empty: an empty kubeconfigPath falls
+// back to clientcmd's default loading rules (KUBECONFIG env / ~/.kube/config),
+// and an empty kubeContext keeps the kubeconfig's current-context.
+func RestConfigForKubeconfig(kubeconfigPath, kubeContext string) (*rest.Config, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kc := r.Meta["kubeconfig"]; kc != "" {
-		loadingRules.ExplicitPath = kc
+	if kubeconfigPath != "" {
+		loadingRules.ExplicitPath = kubeconfigPath
 	}
 	overrides := &clientcmd.ConfigOverrides{}
-	if kctx := r.Meta["kube_context"]; kctx != "" {
-		overrides.CurrentContext = kctx
+	if kubeContext != "" {
+		overrides.CurrentContext = kubeContext
 	}
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
+}
+
+// k8sClientConfigFromRecord builds a *rest.Config from kubeconfig/context stored in r.Meta.
+func k8sClientConfigFromRecord(r hosts.Record) (*rest.Config, error) {
+	return RestConfigForKubeconfig(r.Meta["kubeconfig"], r.Meta["kube_context"])
 }
 
 // summarizeK8sExecCmd returns a short preview of argv for debug logs (avoids huge sh -c bodies).

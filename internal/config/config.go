@@ -36,6 +36,7 @@ type File struct {
 	SMTP          *SMTPConfig        `yaml:"smtp,omitempty" json:"smtp,omitempty"`
 	Mesh          MeshConfig         `yaml:"mesh,omitempty" json:"mesh,omitempty"`
 	SSHGateway    *SSHGatewayConfig  `yaml:"ssh_gateway,omitempty" json:"ssh_gateway,omitempty"`
+	K8sProxy      *K8sProxyConfig    `yaml:"k8s_proxy,omitempty" json:"k8s_proxy,omitempty"`
 	Jit           *JitConfig         `yaml:"jit,omitempty" json:"jit,omitempty"`
 	Guardrails    []GuardrailRule    `yaml:"guardrails,omitempty" json:"guardrails,omitempty" validate:"dive" mod:"dive"`
 }
@@ -110,6 +111,40 @@ type SSHGatewayGuardrail struct {
 type SSHGatewayMask struct {
 	Values   []string `yaml:"values,omitempty" json:"values,omitempty" honey:"label=Literal secrets to mask;secret"`
 	Patterns []string `yaml:"patterns,omitempty" json:"patterns,omitempty" honey:"label=Regex patterns to mask"`
+}
+
+// K8sProxyConfig configures the inbound Kubernetes access proxy (honey
+// k8s-proxy): a certificate-authenticated, kubectl-facing TLS front-end that
+// forwards API requests to one or more real clusters under an impersonated
+// honey identity, policy-gated and (eventually) recorded. The block being
+// present supplies defaults for the command; the listener itself is started
+// by honey k8s-proxy (wired in a later phase).
+type K8sProxyConfig struct {
+	Listen    string            `yaml:"listen,omitempty" json:"listen,omitempty" honey:"label=Listen address (host:port)" mod:"trim"`
+	TLSCert   string            `yaml:"tls_cert,omitempty" json:"tls_cert,omitempty" honey:"label=Serving certificate path (default: self-signed under state dir)" mod:"trim"`
+	TLSKey    string            `yaml:"tls_key,omitempty" json:"tls_key,omitempty" honey:"label=Serving key path" mod:"trim"`
+	ClientCA  string            `yaml:"client_ca,omitempty" json:"client_ca,omitempty" honey:"label=Client CA path (mTLS; default: the built-in device CA)" mod:"trim"`
+	PolicyDir string            `yaml:"policy_dir,omitempty" json:"policy_dir,omitempty" honey:"label=OPA policy directory" mod:"trim"`
+	Record    bool              `yaml:"record,omitempty" json:"record,omitempty" honey:"label=Record exec sessions (reserved)"`
+	Clusters  []K8sProxyCluster `yaml:"clusters,omitempty" json:"clusters,omitempty" honey:"label=Clusters" validate:"dive" mod:"dive"`
+}
+
+// K8sProxyCluster configures one cluster the proxy fronts, addressed by
+// kubectl as the path prefix /<Name>/....
+type K8sProxyCluster struct {
+	Name        string           `yaml:"name" json:"name" honey:"label=Name (path prefix)" validate:"required" mod:"trim"`
+	Kubeconfig  string           `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty" honey:"label=Kubeconfig path" mod:"trim"`
+	Context     string           `yaml:"context,omitempty" json:"context,omitempty" honey:"label=Kubeconfig context" mod:"trim"`
+	Impersonate K8sImpersonation `yaml:"impersonate,omitempty" json:"impersonate,omitempty" honey:"label=Impersonation"`
+}
+
+// K8sImpersonation configures how the proxy derives the Impersonate-User/
+// Impersonate-Group headers it sets on every forwarded request for a cluster.
+type K8sImpersonation struct {
+	// UserFrom selects how Impersonate-User is derived from the authenticated
+	// honey actor. "cn" (the default) uses the client-certificate CN.
+	UserFrom      string   `yaml:"user_from,omitempty" json:"user_from,omitempty" honey:"label=Derive Impersonate-User from;enum=cn;enum_as_warning;default=cn" validate:"omitempty,oneof=cn" mod:"trim"`
+	DefaultGroups []string `yaml:"default_groups,omitempty" json:"default_groups,omitempty" honey:"label=Impersonate-Group values applied to every request"`
 }
 
 // MeshConfig configures this process's own libp2p mesh identity, used to
