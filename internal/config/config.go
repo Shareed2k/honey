@@ -37,6 +37,25 @@ type File struct {
 	Mesh          MeshConfig         `yaml:"mesh,omitempty" json:"mesh,omitempty"`
 	SSHGateway    *SSHGatewayConfig  `yaml:"ssh_gateway,omitempty" json:"ssh_gateway,omitempty"`
 	Jit           *JitConfig         `yaml:"jit,omitempty" json:"jit,omitempty"`
+	Guardrails    []GuardrailRule    `yaml:"guardrails,omitempty" json:"guardrails,omitempty" validate:"dive" mod:"dive"`
+}
+
+// GuardrailRule is one operator-defined guardrail as authored in config. It
+// mirrors the fields of the guardrails engine's Rule; the CLI maps a slice of
+// these into a compiled *guardrails.Ruleset at startup (fail-closed on error).
+// A guardrail is a deterministic floor: it inspects a command (or SQL) text and
+// either denies it (hard block) or warns (allow, with a surfaced message),
+// evaluated before any OPA policy and never able to downgrade a deny.
+type GuardrailRule struct {
+	Name        string   `yaml:"name" json:"name" honey:"label=Rule name" validate:"required" mod:"trim"`
+	Description string   `yaml:"description,omitempty" json:"description,omitempty" honey:"label=Description" mod:"trim"`
+	Action      string   `yaml:"action,omitempty" json:"action,omitempty" honey:"label=Action;enum=deny|warn;enum_as_warning" validate:"omitempty,oneof=deny warn" mod:"trim"`
+	AppliesTo   string   `yaml:"applies_to,omitempty" json:"applies_to,omitempty" honey:"label=Applies to;enum=command|sql|any;enum_as_warning" validate:"omitempty,oneof=command sql any" mod:"trim"`
+	Words       []string `yaml:"words,omitempty" json:"words,omitempty" honey:"label=Literal substrings (any match; case-insensitive)"`
+	Patterns    []string `yaml:"patterns,omitempty" json:"patterns,omitempty" honey:"label=RE2 patterns (any match)"`
+	Absent      []string `yaml:"absent,omitempty" json:"absent,omitempty" honey:"label=RE2 patterns that must NOT match"`
+	Message     string   `yaml:"message,omitempty" json:"message,omitempty" honey:"label=Message shown/audited on match" mod:"trim"`
+	Targets     []string `yaml:"targets,omitempty" json:"targets,omitempty" honey:"label=Target globs (provider/group/name; empty = all)"`
 }
 
 // JitConfig configures the web-driven JIT access + share-link feature

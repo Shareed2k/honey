@@ -18,7 +18,7 @@ import (
 func newE2ESession(t *testing.T, enf *policy.Enforcer) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	srv := NewServer(&config.File{}, enf, searchrun.NewRegistry(nil), nil)
+	srv := NewServer(&config.File{}, enf, nil, searchrun.NewRegistry(nil), nil)
 	serverT, clientT := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(ctx, serverT, nil); err != nil {
 		t.Fatalf("server connect: %v", err)

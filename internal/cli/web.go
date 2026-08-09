@@ -108,6 +108,11 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("web auth config: %w", err)
 	}
 
+	guardrailRules, err := buildGuardrailRuleset(cfg)
+	if err != nil {
+		return err
+	}
+
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:         webListen,
 		Token:              token,
@@ -130,6 +135,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		AllowLogsCommand:   webAllowLogsCommand,
 		OnReady:            onReady,
 		Enforcer:           authCfg.enforcer,
+		Guardrails:         guardrailRules,
 		JWTPubKey:          authCfg.jwtPubKey,
 		TrustedProxyNets:   authCfg.trustedNets,
 		WebAuthn:           authCfg.webauthn,

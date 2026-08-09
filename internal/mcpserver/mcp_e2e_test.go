@@ -20,7 +20,7 @@ import (
 func newMCPSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := NewServer(nil, nil, searchrun.NewRegistry(nil), nil)
+	server := NewServer(nil, nil, nil, searchrun.NewRegistry(nil), nil)
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, st, nil); err != nil {
 		t.Fatalf("server.Connect: %v", err)
@@ -266,7 +266,7 @@ func TestMCPE2E_GetHostDetails_notFound(t *testing.T) {
 func newMCPSessionWithExecReg(t *testing.T, execReg hostexec.Registry) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := NewServer(nil, nil, searchrun.NewRegistry(nil), execReg)
+	server := NewServer(nil, nil, nil, searchrun.NewRegistry(nil), execReg)
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, st, nil); err != nil {
 		t.Fatalf("server.Connect: %v", err)

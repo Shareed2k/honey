@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/audit"
+	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
@@ -50,6 +51,10 @@ type Options struct {
 	DefaultSSHUser string
 	// Enforcer is the OPA policy enforcer; nil is a no-op allow.
 	Enforcer *policy.Enforcer
+	// Guardrails is the deterministic operator-defined guardrail floor applied to
+	// every gated command (interactive per-line assessment and ad-hoc exec),
+	// evaluated before OPA. nil (or empty) is a no-op.
+	Guardrails *guardrails.Ruleset
 	// AuditSink receives audit events; nil becomes a no-op sink.
 	AuditSink audit.Sink
 	// RecordDir is where session recordings are written; empty disables recording.

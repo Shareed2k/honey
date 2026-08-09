@@ -19,6 +19,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -51,6 +52,7 @@ type Options struct {
 	Pools          *postgres.PoolManager
 	Cache          *engine.ClientCache // optional shared SSH client cache; nil = per-run cache
 	Enforcer       *policy.Enforcer    // optional OPA gate; nil = allow all
+	Guardrails     *guardrails.Ruleset // optional deterministic guardrail floor; nil/empty = no-op
 }
 
 // Manager builds and runs all cron schedules derived from recipe apps.
@@ -79,6 +81,7 @@ func New(opts Options) (*Manager, error) {
 		Cache:          opts.Cache,
 		RecordDir:      opts.RecordDir,
 		Enforcer:       opts.Enforcer,
+		Guardrails:     opts.Guardrails,
 		SearchRegistry: opts.SearchRegistry,
 	})
 	m.register()

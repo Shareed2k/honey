@@ -12,6 +12,7 @@ import (
 	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -51,7 +52,8 @@ type execOnHostInput struct {
 }
 
 type execOnHostOutput struct {
-	Results []execHostResult `json:"results"`
+	Results  []execHostResult `json:"results"`
+	Warnings []string         `json:"warnings,omitempty"`
 }
 
 type execHostResult struct {
@@ -76,14 +78,16 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 	}
 	record := hosts.Record{Name: name, PrimaryIP: in.Host}
 
-	// Gate via command-risk engine + deny-by-default + OPA enforcer.
+	// Gate via command-risk engine + deny-by-default + guardrail floor + OPA enforcer.
 	// Built-in critical signals always deny; non-critical exec requires either a
 	// configured OPA enforcer or HONEY_EXEC_ALLOW_UNVERIFIED=1.
+	var guardWarnings []string
 	if !riskGateDisabled() {
-		reason, denied, gerr := gateMCPExec(ctx, in.Command, in.Shell, record)
+		reason, denied, warnings, gerr := gateMCPExec(ctx, in.Command, in.Shell, record)
 		if gerr != nil {
 			return nil, execOnHostOutput{}, gerr
 		}
+		guardWarnings = warnings
 		evt := audit.Event{
 			Actor:   mcpActor,
 			Source:  "mcp",
@@ -96,6 +100,14 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 			evt.DenyReason = reason
 			_ = auditSink.Log(ctx, evt)
 			return nil, execOnHostOutput{}, fmt.Errorf("blocked: %s", reason)
+		}
+		// Audit each guardrail warning (rule message only; no captured text) so a
+		// warn-action rule leaves a trail even when it did not block execution.
+		for _, w := range warnings {
+			_ = auditSink.Log(ctx, audit.Event{
+				Actor: mcpActor, Source: "mcp", Action: "exec", Target: record.Name,
+				Command: in.Command, Decision: "warn", DenyReason: w,
+			})
 		}
 		evt.Decision = "allow"
 		_ = auditSink.Log(ctx, evt)
@@ -112,7 +124,7 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 		return nil, execOnHostOutput{}, fmt.Errorf("ssh exec: %w", err)
 	}
 
-	out := execOnHostOutput{Results: make([]execHostResult, 0, len(rawResults))}
+	out := execOnHostOutput{Results: make([]execHostResult, 0, len(rawResults)), Warnings: guardWarnings}
 	for _, r := range rawResults {
 		res := execHostResult{
 			Host:     r.Name,
@@ -134,30 +146,31 @@ func handleExecOnHost(ctx context.Context, _ *mcp.CallToolRequest, in execOnHost
 }
 
 // gateMCPExec analyzes the raw command and decides whether it may run, building
-// the policy input for the "mcp_exec" action. Returns (reason, denied, err).
+// the policy input for the "mcp_exec" action. Returns (reason, denied, warnings, err).
 //
 // Decision order:
 //  1. Built-in critical signals (mkfs/dd/curl|sh/…) → always deny, bypass-proof.
 //  2. Deny-by-default: no OPA enforcer + no HONEY_EXEC_ALLOW_UNVERIFIED → deny.
-//  3. OPA enforcer evaluation (if configured).
-func gateMCPExec(ctx context.Context, rawCommand, interpreter string, t hosts.Record) (string, bool, error) {
+//  3. Guardrail floor + OPA enforcer evaluation via cmdgate.Decide (guardrails
+//     run before OPA and can only add denies/warnings).
+func gateMCPExec(ctx context.Context, rawCommand, interpreter string, t hosts.Record) (string, bool, []string, error) {
 	if strings.TrimSpace(rawCommand) == "" {
-		return "", false, nil
+		return "", false, nil, nil
 	}
 	analysis := commandrisk.AnalyzeStep(rawCommand, interpreter)
 
 	// Step 1: built-in critical hard-deny.
 	if crit := analysis.FirstCritical(); crit != nil {
-		return "command risk: " + crit.Reason, true, nil
+		return "command risk: " + crit.Reason, true, nil, nil
 	}
 
 	// Step 2: deny-by-default when no OPA enforcer is wired in.
 	if policyEnforcer == nil && !execUnverifiedAllowed() {
 		return "exec_on_host requires a policy enforcer (set HONEY_POLICY_DIR) " +
-			"or set HONEY_EXEC_ALLOW_UNVERIFIED=1 to allow execution without a policy", true, nil
+			"or set HONEY_EXEC_ALLOW_UNVERIFIED=1 to allow execution without a policy", true, nil, nil
 	}
 
-	// Step 3: OPA contextual evaluation.
+	// Step 3: guardrail floor + OPA contextual evaluation.
 	input := map[string]any{
 		"action": "mcp_exec",
 		"actor":  mcpActor,
@@ -173,7 +186,11 @@ func gateMCPExec(ctx context.Context, rawCommand, interpreter string, t hosts.Re
 			"provider": t.Provider,
 		},
 	}
-	return cmdgate.Decide(ctx, policyEnforcer, analysis, input)
+	res, err := cmdgate.Decide(ctx, policyEnforcer, guardrailRuleset, analysis, input, rawCommand, guardrails.Attrs{Provider: t.Provider, Groups: t.Groups, Name: t.Name})
+	if err != nil {
+		return "", false, nil, err
+	}
+	return res.Reason, res.Denied, res.Warnings, nil
 }
 
 // buildShellCmd wraps the command with an explicit interpreter when shell is set.
