@@ -103,13 +103,20 @@ export function JitTerminal({ code }: JitTerminalProps) {
       }
     };
     window.addEventListener('resize', onResize);
+    // Also refit when the container itself resizes (e.g. opening full-page or a
+    // layout change), not just the window — keeps the terminal filling its box.
+    const ro = new ResizeObserver(() => onResize());
+    ro.observe(el);
 
     return () => {
+      ro.disconnect();
       window.removeEventListener('resize', onResize);
       ws.close();
       term.dispose();
     };
   }, [code]);
 
-  return <div ref={containerRef} style={{ width: '100%', height: 420 }} />;
+  // Fill the parent so callers control the size (a small card box or the full
+  // viewport); the ResizeObserver above keeps xterm fitted to whatever that is.
+  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 }
