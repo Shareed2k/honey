@@ -125,8 +125,8 @@ func (s *Server) handleJITRedeemCert(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("invalid or expired link"), http.StatusNotFound)
 		return
 	}
-	if ttl > jitMaxDuration {
-		ttl = jitMaxDuration
+	if ttl > s.jitMaxDuration {
+		ttl = s.jitMaxDuration
 	}
 
 	cert, err := s.sshCA.Sign(sshca.SignRequest{

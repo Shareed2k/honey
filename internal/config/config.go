@@ -36,6 +36,16 @@ type File struct {
 	SMTP          *SMTPConfig        `yaml:"smtp,omitempty" json:"smtp,omitempty"`
 	Mesh          MeshConfig         `yaml:"mesh,omitempty" json:"mesh,omitempty"`
 	SSHGateway    *SSHGatewayConfig  `yaml:"ssh_gateway,omitempty" json:"ssh_gateway,omitempty"`
+	Jit           *JitConfig         `yaml:"jit,omitempty" json:"jit,omitempty"`
+}
+
+// JitConfig configures the web-driven JIT access + share-link feature
+// (honey web). Absent block = enabled with built-in defaults.
+type JitConfig struct {
+	Enabled         *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty" honey:"label=Enable JIT share links"`
+	StorePath       string `yaml:"store_path,omitempty" json:"store_path,omitempty" honey:"label=Grant store path (default: state dir)" mod:"trim"`
+	DefaultDuration string `yaml:"default_duration,omitempty" json:"default_duration,omitempty" honey:"label=Default access window (e.g. 2h)" mod:"trim"`
+	MaxDuration     string `yaml:"max_duration,omitempty" json:"max_duration,omitempty" honey:"label=Maximum access window (cap)" mod:"trim"`
 }
 
 // SSHGatewayConfig configures the inbound SSH gateway (honey ssh-server): a

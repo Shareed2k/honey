@@ -15,6 +15,7 @@ const sidebars = {
     'web-ui',
     'inventory',
     'ssh-gateway',
+    'jit-access',
     'authorization',
     'command-risk',
     'cue-recipes',

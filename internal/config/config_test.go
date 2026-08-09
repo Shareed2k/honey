@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadBackends(t *testing.T) {
@@ -729,5 +731,84 @@ backends:
 				t.Fatalf("expected no error, got: %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadJitConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `
+version: 1
+jit:
+  enabled: false
+  store_path: "  /var/lib/honey/jit_grants.jsonl  "
+  default_duration: "  2h  "
+  max_duration: "8h"
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Jit == nil {
+		t.Fatal("expected non-nil Jit block")
+	}
+	if f.Jit.Enabled == nil || *f.Jit.Enabled {
+		t.Fatalf("Enabled = %v, want false", f.Jit.Enabled)
+	}
+	// mod:"trim" should have stripped surrounding whitespace via Sanitize.
+	if f.Jit.StorePath != "/var/lib/honey/jit_grants.jsonl" {
+		t.Fatalf("StorePath = %q", f.Jit.StorePath)
+	}
+	if f.Jit.DefaultDuration != "2h" {
+		t.Fatalf("DefaultDuration = %q", f.Jit.DefaultDuration)
+	}
+	if f.Jit.MaxDuration != "8h" {
+		t.Fatalf("MaxDuration = %q", f.Jit.MaxDuration)
+	}
+}
+
+func TestJitConfigAbsentMeansNil(t *testing.T) {
+	t.Parallel()
+	f, err := ParseYAML([]byte("version: 1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Jit != nil {
+		t.Fatalf("expected nil Jit block when absent, got %+v", f.Jit)
+	}
+}
+
+func TestJitConfigRoundTripYAML(t *testing.T) {
+	t.Parallel()
+	enabled := true
+	f := File{
+		Version: 1,
+		Jit: &JitConfig{
+			Enabled:         &enabled,
+			StorePath:       "/tmp/jit_grants.jsonl",
+			DefaultDuration: "1h",
+			MaxDuration:     "12h",
+		},
+	}
+	b, err := yaml.Marshal(&f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ParseYAML(b)
+	if err != nil {
+		t.Fatalf("re-parse: %v\nyaml:\n%s", err, b)
+	}
+	if out.Jit == nil {
+		t.Fatal("expected non-nil Jit block after round-trip")
+	}
+	if out.Jit.Enabled == nil || !*out.Jit.Enabled {
+		t.Fatalf("Enabled = %v, want true", out.Jit.Enabled)
+	}
+	if out.Jit.StorePath != f.Jit.StorePath || out.Jit.DefaultDuration != f.Jit.DefaultDuration || out.Jit.MaxDuration != f.Jit.MaxDuration {
+		t.Fatalf("round-trip mismatch: got %+v, want %+v", out.Jit, f.Jit)
 	}
 }
