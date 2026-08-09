@@ -83,6 +83,52 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
   const inactive = !loading && !!status && (status.status !== 'approved' || !status.active);
   const active = !loading && !!status && status.status === 'approved' && status.active;
 
+  // Once the recipient opens the terminal, give it the whole viewport — a
+  // terminal in a narrow card is cramped. A slim bar keeps the resource
+  // context and a way back to the lobby.
+  if (showTerminal && status) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          background: '#0f1115',
+          zIndex: 1000,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '8px 16px',
+            borderBottom: '1px solid #2a3140',
+            flex: '0 0 auto',
+          }}
+        >
+          <Typography.Text strong style={{ color: '#e8e8e8' }}>
+            {status.resource.name}{' '}
+            <Typography.Text type="secondary">({status.resource.provider})</Typography.Text>
+          </Typography.Text>
+          {status.expires_at ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              expires {new Date(status.expires_at).toLocaleString()}
+            </Typography.Text>
+          ) : null}
+          <span style={{ flex: 1 }} />
+          <Button size="small" onClick={() => setShowTerminal(false)}>
+            Close
+          </Button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, padding: 8 }}>
+          <JitTerminal code={code} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', paddingTop: 48, paddingBottom: 48 }}>
       <Card title="honey — access" loading={loading}>
@@ -123,13 +169,9 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
 
             {status.offers.web ? (
               <div>
-                {!showTerminal ? (
-                  <Button type="primary" onClick={() => setShowTerminal(true)}>
-                    Open terminal in browser
-                  </Button>
-                ) : (
-                  <JitTerminal code={code} />
-                )}
+                <Button type="primary" onClick={() => setShowTerminal(true)}>
+                  Open terminal in browser
+                </Button>
               </div>
             ) : null}
 
