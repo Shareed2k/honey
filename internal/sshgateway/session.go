@@ -15,6 +15,7 @@ import (
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/pvelxc"
@@ -250,14 +251,32 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 	// serializes concurrent writes, so writing it alongside the stdout pump is
 	// safe.
 	decide := func(gctx context.Context, cmd string) (string, bool) {
-		_, decisions, derr := cmdgate.AssessTargets(gctx, s.opts.Enforcer, cmd, "sh",
-			[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: commandPolicyInput(actor, rec, cmd)}}, false)
+		_, decisions, derr := cmdgate.AssessTargets(gctx, s.opts.Enforcer, s.opts.Guardrails, cmd, "sh",
+			[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: commandPolicyInput(actor, rec, cmd), Attrs: recordAttrs(rec)}}, false)
 		if derr != nil {
 			// Fail closed only in enforce mode; audit mode records but never blocks.
 			return "policy error: " + derr.Error(), s.guardModeVal() == guardEnforce
 		}
-		if len(decisions) > 0 && decisions[0].Denied {
+		if len(decisions) == 0 {
+			return "", false
+		}
+		if decisions[0].Denied {
 			return decisions[0].Reason, true
+		}
+		// Guardrail warn (not denied): surface a yellow notice on the client
+		// channel and audit each rule message. ch serializes concurrent writes,
+		// so writing here alongside the stdout pump is safe (see the note above).
+		for _, w := range decisions[0].Warnings {
+			fmt.Fprint(ch, "\r\n\x1b[33m[guardrail: "+w+"]\x1b[0m\r\n")
+			s.audit(ctx, audit.Event{
+				Actor:      actor,
+				Action:     "interactive_command",
+				Target:     rec.Name,
+				Command:    cmd,
+				Risk:       string(commandrisk.AnalyzeStep(cmd, "sh").MaxSeverity),
+				Decision:   "warn",
+				DenyReason: w,
+			})
 		}
 		return "", false
 	}
@@ -365,8 +384,8 @@ func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec 
 		return 1
 	}
 
-	analysis, decisions, err := cmdgate.AssessTargets(ctx, s.opts.Enforcer, command, "sh",
-		[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: commandPolicyInput(actor, rec, command)}}, false)
+	analysis, decisions, err := cmdgate.AssessTargets(ctx, s.opts.Enforcer, s.opts.Guardrails, command, "sh",
+		[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: commandPolicyInput(actor, rec, command), Attrs: recordAttrs(rec)}}, false)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: policy: %v\n", err)
 		s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Decision: "deny", DenyReason: err.Error()})
@@ -378,6 +397,14 @@ func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec 
 		fmt.Fprintf(stderr, "denied: %s\n", reason)
 		s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Risk: risk, Decision: "deny", DenyReason: reason})
 		return 1
+	}
+	// Guardrail warn-action rules are non-fatal: write each rule message to the
+	// client stderr stream and audit it, then run the command.
+	if len(decisions) > 0 {
+		for _, w := range decisions[0].Warnings {
+			fmt.Fprintf(stderr, "[guardrail: %s]\n", w)
+			s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Risk: risk, Decision: "warn", DenyReason: w})
+		}
 	}
 	s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Risk: risk, Decision: "allow"})
 
@@ -561,6 +588,11 @@ func targetInput(rec hosts.Record) map[string]any {
 		"env":      rec.Meta["env"],
 		"groups":   rec.Groups,
 	}
+}
+
+// recordAttrs builds the guardrail Targets-scoping attributes from a record.
+func recordAttrs(rec hosts.Record) guardrails.Attrs {
+	return guardrails.Attrs{Provider: rec.Provider, Groups: rec.Groups, Name: rec.Name}
 }
 
 // newRecorder creates a session recorder under RecordDir, or returns nil when

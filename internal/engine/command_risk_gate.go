@@ -6,8 +6,11 @@ import (
 	"os"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
+	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
 )
@@ -47,9 +50,16 @@ func gateCommandRisk(ctx context.Context, opts ExecutionOptions, kind, rawComman
 	actor := actorOrAPI(opts.ActorID)
 
 	for _, t := range targets {
-		reason, denied, evalErr := commandRiskDecision(ctx, enforcer, actor, kind, rawCommand, analysis, opts, t.Record)
+		reason, denied, warnings, evalErr := commandRiskDecision(ctx, enforcer, opts.Guardrails, actor, kind, rawCommand, analysis, opts, t.Record)
 		if evalErr != nil {
 			return nil, nil, evalErr
+		}
+		// Guardrail warn-action rules are non-fatal: log the rule message (no
+		// captured command text) on the step + host so operators have a trail,
+		// then let the command through.
+		for _, w := range warnings {
+			zap.L().Warn("guardrail warning",
+				zap.String("step", kind), zap.String("host", t.Record.Name), zap.String("message", w))
 		}
 		if !denied {
 			allowed = append(allowed, t)
@@ -82,12 +92,12 @@ func (f *RiskStepFilter) Filter(ctx context.Context, targets []TargetContext) ([
 	return gateCommandRisk(ctx, f.opts, f.kind, f.rawCommand, f.interpreter, targets)
 }
 
-// commandRiskDecision returns (reason, denied, err) for one target. Built-in
-// critical signals deny first; otherwise the OPA enforcer (if any) decides. The
-// shared decision logic lives in cmdgate.Decide so the engine, web API, and MCP
-// server all gate exec identically; this function only builds the recipe-context
-// policy input.
-func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, kind, rawCommand string, analysis commandrisk.Analysis, opts ExecutionOptions, t hosts.Record) (string, bool, error) {
+// commandRiskDecision returns (reason, denied, warnings, err) for one target.
+// Built-in critical signals deny first, then the guardrail floor, then the OPA
+// enforcer (if any). The shared decision logic lives in cmdgate.Decide so the
+// engine, web API, and MCP server all gate exec identically; this function only
+// builds the recipe-context policy input and the guardrail Attrs.
+func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, rules *guardrails.Ruleset, actor, kind, rawCommand string, analysis commandrisk.Analysis, opts ExecutionOptions, t hosts.Record) (string, bool, []string, error) {
 	input := map[string]any{
 		"action": "command_exec",
 		"actor":  actor,
@@ -112,9 +122,10 @@ func commandRiskDecision(ctx context.Context, enforcer *policy.Enforcer, actor, 
 		},
 	}
 
-	reason, denied, err := cmdgate.Decide(ctx, enforcer, analysis, input)
+	res, err := cmdgate.Decide(ctx, enforcer, rules, analysis, input, rawCommand,
+		guardrails.Attrs{Provider: t.Provider, Groups: t.Groups, Name: t.Name})
 	if err != nil {
-		return "", false, fmt.Errorf("command risk policy: %w", err)
+		return "", false, nil, fmt.Errorf("command risk policy: %w", err)
 	}
-	return reason, denied, nil
+	return res.Reason, res.Denied, res.Warnings, nil
 }

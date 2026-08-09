@@ -17,7 +17,11 @@ import (
 // when any step is a built-in critical pattern or denied by policy.
 func runCueExecCheck(ctx context.Context, w io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record) error {
 	enf := checkEnforcer(ctx)
-	runner := engine.NewRecipeRunner(engine.RunnerOptions{Enforcer: enf})
+	guardrailRules, err := buildGuardrailRuleset(resolvedCfg)
+	if err != nil {
+		return err
+	}
+	runner := engine.NewRecipeRunner(engine.RunnerOptions{Enforcer: enf, Guardrails: guardrailRules})
 	risks := runner.AssessCommandRisk(ctx, engine.RunRequest{
 		Recipe:    recipe,
 		RecipeDir: recipeDir,
@@ -53,6 +57,9 @@ func reportRecipeRisk(w io.Writer, risks []engine.StepRisk, hasPolicy bool) bool
 		}
 		for _, s := range r.Analysis.Signals {
 			fmt.Fprintf(w, "    - [%s] %s: %s\n", s.Severity, s.ID, s.Reason)
+		}
+		for _, gw := range r.Warnings {
+			fmt.Fprintf(w, "  Guardrail warning: %s\n", gw)
 		}
 
 		if r.Analysis.Critical {
