@@ -53,6 +53,9 @@ export interface JitGrantView {
 export interface RedeemStatus {
   status: string;
   active: boolean;
+  // Why the link is (in)active: "active" | "pending" | "denied" | "revoked" |
+  // "expired" | "exhausted" | "not_started" | "inactive".
+  reason?: string;
   resource: { name: string; provider: string };
   capabilities: JitCapability[];
   delivery: JitDelivery;
