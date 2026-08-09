@@ -1,11 +1,12 @@
 //go:build k8s_e2e
 
 // Package k8sproxy k8s_e2e test: exercises the proxy's Kubernetes
-// impersonation against a REAL k3s cluster via testcontainers. Excluded from
-// the normal `go test` run (and CI) by the k8s_e2e build tag — the rest of
-// this package follows a no-real-cluster unit test convention. Requires a
-// reachable Docker daemon; skips (rather than fails) when one isn't
-// available. Run explicitly:
+// impersonation against a REAL k3s cluster via testcontainers, driven through
+// the REAL production entrypoint (RunServer + its mTLS listener) rather than a
+// hand-built httptest server. Excluded from the normal `go test` run (and CI)
+// by the k8s_e2e build tag — the rest of this package follows a no-real-cluster
+// unit test convention. Requires a reachable Docker daemon; skips (rather than
+// fails) when one isn't available. Run explicitly:
 //
 //	go test -tags k8s_e2e -run TestK8sProxyE2E_Impersonation -v ./internal/k8sproxy/ -timeout 15m
 package k8sproxy
@@ -13,10 +14,11 @@ package k8sproxy
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"net/http/httptest"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -30,12 +32,15 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/shareed2k/honey/internal/policy"
 )
 
 // TestK8sProxyE2E_Impersonation drives real Kubernetes API calls through the
-// proxy as a honey client and proves the request is evaluated by the API
-// server as the impersonated identity, not as the admin credentials the
-// proxy authenticates to the cluster with:
+// REAL production proxy server (RunServer's mTLS listener, not a hand-built
+// httptest harness) as a honey client, and proves the request is evaluated by
+// the API server as the impersonated identity, not as the admin credentials
+// the proxy authenticates to the cluster with:
 //
 //   - A SelfSubjectReview made through the proxy reports the impersonated
 //     user/groups, not the k3s admin identity.
@@ -43,6 +48,8 @@ import (
 //   - A request the impersonated group is NOT allowed (listing secrets) is
 //     rejected as Forbidden, even though the proxy's own upstream
 //     credentials are cluster-admin and could list secrets themselves.
+//   - The real OPA gate + audit sink run in-line: at least one allow
+//     "k8s_request" event is recorded for the impersonated actor.
 func TestK8sProxyE2E_Impersonation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -95,31 +102,84 @@ func TestK8sProxyE2E_Impersonation(t *testing.T) {
 	}, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	// Front the real cluster with the proxy over mTLS, the same way it's set
-	// up in the mTLS harness in handler_test.go.
 	reg, err := NewRegistry([]ClusterSpec{
 		{Name: "prod", Config: adminRest, UserFrom: "cn", DefaultGroups: []string{"honey-viewers"}},
 	})
 	require.NoError(t, err)
 
-	proxyHandler := NewHandler(reg, nil, nil)
+	// Front the real cluster with the REAL production server entrypoint
+	// (RunServer's mTLS listener), the same way the webserver runs it in
+	// production, rather than a hand-built httptest server.
+	stateDir := t.TempDir()
 
+	// EnsureServingCert mints (and persists) the proxy's serving keypair. Its
+	// cert PEM doubles as the client's trust anchor (CAData) for the proxy's
+	// TLS below.
+	certPEM, keyPEM, err := EnsureServingCert(stateDir, []string{"127.0.0.1", "localhost"})
+	require.NoError(t, err)
+	crtPath := filepath.Join(stateDir, "serving.crt")
+	keyPath := filepath.Join(stateDir, "serving.key")
+	require.NoError(t, os.WriteFile(crtPath, certPEM, 0o644))
+	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0o600))
+
+	// A real allow-enforcer (embedded default policy = allow) so the
+	// k8s_request OPA gate actually runs, plus a capturing audit sink so we
+	// can assert the gate + audit path executed for real.
+	enf, err := policy.New(ctx, "", nil)
+	require.NoError(t, err)
+	sink := &captureSink{}
+
+	// testCA signs the client cert "alice" presents; its cert PEM is handed to
+	// RunServer as the default client-CA trust anchor so the proxy's mTLS
+	// verifies alice's client cert.
 	ca := newTestCA(t)
-	clientCAPool := x509.NewCertPool()
-	require.True(t, clientCAPool.AppendCertsFromPEM(ca.certPEM))
 
-	front := httptest.NewUnstartedServer(proxyHandler)
-	front.TLS = &tls.Config{
-		ClientCAs:  clientCAPool,
-		ClientAuth: tls.RequireAndVerifyClientCert,
-		MinVersion: tls.VersionTLS12,
+	// Pick a free port for the real listener (accept the tiny race; standard
+	// in tests).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+
+	cfg := ServerConfig{
+		Listen:          addr,
+		ServingCertPath: crtPath,
+		ServingKeyPath:  keyPath,
+		Registry:        reg,
+		Enforcer:        enf,
+		AuditSink:       sink,
 	}
-	front.StartTLS()
-	defer front.Close()
 
-	// Build a client-go config that authenticates to the proxy as honey
-	// client "alice" and talks to the "prod" path prefix, exactly as a real
-	// honey client (e.g. kubectl configured against the proxy) would.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- RunServer(runCtx, cfg, ca.certPEM, stateDir)
+	}()
+	defer func() {
+		cancelRun() // trigger RunServer's bounded-drain shutdown
+		select {
+		case err := <-serverErrCh:
+			if err != nil {
+				t.Logf("RunServer returned: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Log("RunServer did not exit within 10s of cancellation")
+		}
+	}()
+
+	// Wait for the real listener to come up before dialing it for real.
+	require.Eventually(t, func() bool {
+		conn, dialErr := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if dialErr != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}, 10*time.Second, 100*time.Millisecond, "proxy server did not become ready")
+
+	// Build a client-go config that authenticates to the REAL proxy listener
+	// as honey client "alice" and talks to the "prod" path prefix, exactly as
+	// a real honey client (e.g. kubectl configured against the proxy) would.
 	aliceCert := ca.clientCert(t)
 	aliceKey, ok := aliceCert.PrivateKey.(*ecdsa.PrivateKey)
 	require.True(t, ok, "test client key must be ECDSA")
@@ -127,9 +187,9 @@ func TestK8sProxyE2E_Impersonation(t *testing.T) {
 	require.NoError(t, err)
 
 	proxyRest := &rest.Config{
-		Host: front.URL + "/prod",
+		Host: "https://" + addr + "/prod",
 		TLSClientConfig: rest.TLSClientConfig{
-			CAData:   pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: front.Certificate().Raw}),
+			CAData:   certPEM, // the proxy's serving cert is the client's trust anchor
 			CertData: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: aliceCert.Certificate[0]}),
 			KeyData:  pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: aliceKeyDER}),
 		},
@@ -159,6 +219,18 @@ func TestK8sProxyE2E_Impersonation(t *testing.T) {
 	_, err = proxyClient.CoreV1().Secrets("default").List(ctx, metav1.ListOptions{})
 	require.Error(t, err)
 	require.True(t, apierrors.IsForbidden(err), "expected a Forbidden error, got: %v", err)
+
+	// (d) The real OPA gate + audit sink ran in-line through RunServer: at
+	// least one allow "k8s_request" event was recorded for alice/prod.
+	events := sink.snapshot()
+	found := false
+	for _, e := range events {
+		if e.Action == "k8s_request" && e.Actor == "alice" && e.Target == "prod" && e.Decision == "allow" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected an allow k8s_request audit event for alice/prod, got: %+v", events)
 }
 
 // waitForAPIServer polls the k8s API server up to timeout; k3s can take a
