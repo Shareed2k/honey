@@ -245,6 +245,27 @@ func TestHandleJITRedeemCert_WebOnlyGrantRejected(t *testing.T) {
 	}
 }
 
+// A tunnel-capability grant is redeemable as an SSH certificate (used for
+// `ssh -L` through the gateway), so a cert-delivery tunnel grant mints a cert.
+func TestHandleJITRedeemCert_TunnelGrant(t *testing.T) {
+	s, store := newJITRedeemTestServer(t)
+	_, code, err := store.Create(jit.Grant{
+		Actor:        "alice",
+		Recipient:    "bob",
+		Resource:     jit.ResourceRef{Name: "host1"},
+		Capabilities: []jit.Capability{jit.CapTunnel},
+		Delivery:     jit.DeliveryCert,
+		Duration:     time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("store.Create: %v", err)
+	}
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/redeem/"+code+"/cert", map[string]any{"public_key": newSSHPubKey(t)})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a tunnel cert grant, got %d body=%s", w.Code, w.Body)
+	}
+}
+
 func TestHandleJITRedeemCert_NilCA(t *testing.T) {
 	s, store := newJitTestServer(t, Options{})
 	s.sshCA = nil

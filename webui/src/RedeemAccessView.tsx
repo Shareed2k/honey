@@ -201,6 +201,15 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
               ) : null}
             </div>
 
+            {!status.offers.web && !status.offers.cert ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="No redeemable action for this link"
+                description="This link's capabilities are delivered via an SSH certificate, but it was issued with browser-terminal-only delivery. Ask the issuer to re-create it with 'SSH certificate' (or 'Both') delivery."
+              />
+            ) : null}
+
             {status.offers.web ? (
               <div>
                 <Button type="primary" onClick={() => setShowTerminal(true)}>
@@ -258,9 +267,18 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
                       type="info"
                       message="Ready to run"
                       description={
-                        <code>
-                          {`ssh -i <key> -i <key>-cert.pub ${cert.principals[0]}@<gateway> -p 12222 ${status.resource.name}`}
-                        </code>
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          {status.capabilities.includes('shell') || status.capabilities.includes('exec') ? (
+                            <code>
+                              {`ssh -i <key> -i <key>-cert.pub ${cert.principals[0]}@<gateway> -p 12222 ${status.resource.name}`}
+                            </code>
+                          ) : null}
+                          {status.capabilities.includes('tunnel') ? (
+                            <code>
+                              {`ssh -i <key> -i <key>-cert.pub -N -L <LOCAL_PORT>:${status.resource.name}:<REMOTE_PORT> ${cert.principals[0]}@<gateway> -p 12222`}
+                            </code>
+                          ) : null}
+                        </Space>
                       }
                     />
                   </Space>

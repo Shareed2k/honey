@@ -165,12 +165,17 @@ func jitOffersWeb(g jit.Grant) bool {
 }
 
 // jitOffersCert reports whether g's delivery + capabilities allow minting an
-// SSH certificate via handleJITRedeemCert.
+// SSH certificate via handleJITRedeemCert. Shell/exec use the cert for an
+// interactive/ad-hoc session through the gateway; tunnel uses it for `ssh -L`
+// port-forwarding (the signed cert carries permit-port-forwarding, and the
+// gateway gates the forward with the OPA tunnel action).
 func jitOffersCert(g jit.Grant) bool {
 	if g.Delivery != jit.DeliveryCert && g.Delivery != jit.DeliveryBoth {
 		return false
 	}
-	return hasCapability(g.Capabilities, jit.CapShell) || hasCapability(g.Capabilities, jit.CapExec)
+	return hasCapability(g.Capabilities, jit.CapShell) ||
+		hasCapability(g.Capabilities, jit.CapExec) ||
+		hasCapability(g.Capabilities, jit.CapTunnel)
 }
 
 // hasCapability reports whether caps contains want.

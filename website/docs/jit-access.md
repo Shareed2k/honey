@@ -38,11 +38,15 @@ Set on creation (`delivery` field):
 redeem endpoints will honor:
 
 - The **`web`** (browser terminal) redeem requires `shell`.
-- The **`cert`** redeem requires `shell` or `exec` (a certificate is a
-  general-purpose credential; what it can actually do on the target is still
+- The **`cert`** redeem requires `shell`, `exec`, or `tunnel` (a certificate is
+  a general-purpose credential; what it can actually do on the target is still
   bounded by the target-side gates).
-- `tunnel` is accepted but not currently wired to a share-link redeem path —
-  it has no effect yet.
+- `tunnel` is delivered as a **certificate** — the recipient uses it for
+  `ssh -L` port-forwarding through the gateway (the signed certificate carries
+  `permit-port-forwarding`, and each forward is authorized by the OPA `tunnel`
+  action). A tunnel grant therefore needs `cert` (or `both`) delivery; a
+  `web`-only tunnel link has no redeemable action, and the Share dialog blocks
+  that combination.
 
 ## Approval + notification
 
