@@ -245,6 +245,39 @@ func TestHandleJITRedeemCert_WebOnlyGrantRejected(t *testing.T) {
 	}
 }
 
+func TestJitRedeemInactiveReason(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	approved := func(mut func(*jit.Grant)) jit.Grant {
+		g := jit.Grant{
+			Status:    jit.StatusApproved,
+			StartsAt:  now.Add(-time.Hour),
+			ExpiresAt: now.Add(time.Hour),
+		}
+		mut(&g)
+		return g
+	}
+	tests := []struct {
+		name string
+		g    jit.Grant
+		want string
+	}{
+		{"pending", jit.Grant{Status: jit.StatusPending}, "pending"},
+		{"denied", jit.Grant{Status: jit.StatusDenied}, "denied"},
+		{"revoked", jit.Grant{Status: jit.StatusRevoked}, "revoked"},
+		{"expired", approved(func(g *jit.Grant) { g.ExpiresAt = now.Add(-time.Minute) }), "expired"},
+		{"not_started", approved(func(g *jit.Grant) { g.StartsAt = now.Add(time.Minute) }), "not_started"},
+		{"exhausted", approved(func(g *jit.Grant) { g.MaxRedemptions = 1; g.Redemptions = 1 }), "exhausted"},
+		{"inactive_fallback", approved(func(*jit.Grant) {}), "inactive"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := jitRedeemInactiveReason(tt.g, now); got != tt.want {
+				t.Fatalf("jitRedeemInactiveReason = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // A tunnel-capability grant is redeemable as an SSH certificate (used for
 // `ssh -L` through the gateway), so a cert-delivery tunnel grant mints a cert.
 func TestHandleJITRedeemCert_TunnelGrant(t *testing.T) {

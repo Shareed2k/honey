@@ -34,10 +34,15 @@ func (s *Server) handleJITRedeemStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	active := s.opts.Jit.Active(g.ID)
+	reason := "active"
+	if !active {
+		reason = jitRedeemInactiveReason(g, time.Now())
+	}
 
 	resp := map[string]any{
 		"status": string(g.Status),
 		"active": active,
+		"reason": reason,
 		"resource": map[string]any{
 			"name":     g.Resource.Name,
 			"provider": g.Resource.Provider,
@@ -156,6 +161,33 @@ func (s *Server) handleJITRedeemCert(w http.ResponseWriter, r *http.Request) {
 		"principals":        []string{principal},
 		"valid_before_unix": cert.ValidBefore,
 	})
+}
+
+// jitRedeemInactiveReason explains why a grant is not currently redeemable, so
+// the redeem page can say "expired" / "denied" / "used up" instead of a bare
+// status. Only called when the grant is not active.
+func jitRedeemInactiveReason(g jit.Grant, now time.Time) string {
+	switch g.Status {
+	case jit.StatusPending:
+		return "pending"
+	case jit.StatusDenied:
+		return "denied"
+	case jit.StatusRevoked:
+		return "revoked"
+	case jit.StatusApproved:
+		if !g.StartsAt.IsZero() && now.Before(g.StartsAt) {
+			return "not_started"
+		}
+		if !g.ExpiresAt.IsZero() && !now.Before(g.ExpiresAt) {
+			return "expired"
+		}
+		if g.MaxRedemptions > 0 && g.Redemptions >= g.MaxRedemptions {
+			return "exhausted"
+		}
+		return "inactive"
+	default:
+		return "inactive"
+	}
 }
 
 // jitOffersWeb reports whether g's delivery + capabilities would let a

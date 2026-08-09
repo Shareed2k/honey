@@ -14,6 +14,24 @@ const CAPABILITY_LABELS: Record<JitCapability, string> = {
   tunnel: 'Tunnel',
 };
 
+// Human explanation for an inactive link, keyed by the server's `reason`.
+const INACTIVE_MESSAGES: Record<string, { title: string; sub: string }> = {
+  pending: {
+    title: 'Awaiting approval',
+    sub: 'This access request needs approval before the link becomes usable.',
+  },
+  denied: { title: 'Request denied', sub: 'An approver denied this access request.' },
+  revoked: { title: 'Link revoked', sub: 'This access link was revoked.' },
+  expired: { title: 'Link expired', sub: 'This access link is past its expiry window.' },
+  exhausted: { title: 'Link used up', sub: 'This link has reached its redemption limit.' },
+  not_started: { title: 'Not active yet', sub: 'This link is not active yet.' },
+  inactive: { title: 'This link is no longer active', sub: '' },
+};
+
+function inactiveMessage(s: RedeemStatus): { title: string; sub: string } {
+  return INACTIVE_MESSAGES[s.reason ?? ''] ?? INACTIVE_MESSAGES[s.status] ?? INACTIVE_MESSAGES.inactive;
+}
+
 // RedeemAccessView is the standalone, unauthenticated page a share-link
 // recipient lands on. It carries no honey session: every call it makes
 // (getRedeemStatus, redeemCert, the terminal WebSocket) authenticates with the
@@ -208,15 +226,7 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
         ) : null}
 
         {inactive && status ? (
-          <Result
-            status="info"
-            title={status.status === 'pending' ? 'Awaiting approval' : 'This link is no longer active'}
-            subTitle={
-              status.status === 'pending'
-                ? 'Someone needs to approve this access request before the link becomes usable.'
-                : `Status: ${status.status}`
-            }
-          />
+          <Result status="info" title={inactiveMessage(status).title} subTitle={inactiveMessage(status).sub} />
         ) : null}
 
         {active && status ? (
