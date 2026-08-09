@@ -63,7 +63,7 @@ func TestStartMeshDisabledIsUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := contextWithCancelAfter(t, 3*time.Second)
+	ctx, cancel := contextWithCancelAfter(t)
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Start(ctx) }()
@@ -119,7 +119,7 @@ func TestStartMeshEnabledButNotStartedWarnsAndKeepsServing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := contextWithCancelAfter(t, 3*time.Second)
+	ctx, cancel := contextWithCancelAfter(t)
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Start(ctx) }()
