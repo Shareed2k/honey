@@ -17,17 +17,20 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/k3s"
+	"github.com/testcontainers/testcontainers-go/wait"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -239,30 +242,34 @@ func TestK8sProxyE2E_Impersonation(t *testing.T) {
 	require.True(t, found, "expected an allow k8s_request audit event for alice/prod, got: %+v", events)
 
 	// Beyond client-go, also drive a REAL kubectl binary through the same
-	// proxy listener. client-go proves the wire protocol works; kubectl
-	// additionally proves the proxy behaves correctly against kubectl's own
-	// auth/RBAC UX (kubectl auth whoami, kubectl's Forbidden rendering),
-	// which is how honey's actual users will hit this in practice. Skips
-	// (does not fail) when kubectl isn't installed, since the client-go
-	// assertions above already fully cover the impersonation contract.
+	// proxy listener — running kubectl INSIDE a Docker container (via
+	// testcontainers) rather than requiring a host-installed kubectl.
+	// client-go proves the wire protocol works; kubectl additionally proves
+	// the proxy behaves correctly against kubectl's own auth/RBAC UX
+	// (kubectl auth whoami, kubectl's Forbidden rendering), which is how
+	// honey's actual users will hit this in practice. Docker is already a
+	// hard requirement for the k3s container above, so this needs no
+	// host-installed kubectl binary: the kubectl container reaches the
+	// proxy's host-side listener through testcontainers' HostAccessPorts
+	// tunnel, exposed inside the container as host.testcontainers.internal.
 	func() {
-		kubectlPath, lookErr := exec.LookPath("kubectl")
-		if lookErr != nil {
-			t.Log("kubectl not installed; skipping kubectl assertions")
-			return
-		}
-		if p := os.Getenv("KUBECTL"); p != "" {
-			kubectlPath = p
-		}
-		t.Logf("using kubectl binary: %s", kubectlPath)
+		_, portStr, splitErr := net.SplitHostPort(addr)
+		require.NoError(t, splitErr)
+		proxyPort, err := strconv.Atoi(portStr)
+		require.NoError(t, err)
 
-		// Write a real kubeconfig pointing at the proxy's "prod" path prefix,
-		// trusting the proxy's serving cert and authenticating as alice —
-		// exactly the config a real honey user would be handed.
+		// Write a real kubeconfig pointing at the proxy's "prod" path
+		// prefix and authenticating as alice — exactly the config a real
+		// honey user would be handed — but targeting the proxy through the
+		// container->host tunnel hostname rather than 127.0.0.1. The
+		// proxy's serving cert SANs are 127.0.0.1/localhost, not
+		// host.testcontainers.internal, so server-cert verification is
+		// skipped here; the mTLS *client* cert (alice's) is still presented
+		// and verified by the proxy, which is the property under test.
 		kcfg := api.NewConfig()
 		cluster := api.NewCluster()
-		cluster.Server = "https://" + addr + "/prod"
-		cluster.CertificateAuthorityData = certPEM
+		cluster.Server = "https://" + testcontainers.HostInternal + ":" + strconv.Itoa(proxyPort) + "/prod"
+		cluster.InsecureSkipTLSVerify = true
 		kcfg.Clusters["honey-prod"] = cluster
 
 		authInfo := api.NewAuthInfo()
@@ -279,39 +286,75 @@ func TestK8sProxyE2E_Impersonation(t *testing.T) {
 		kubeconfigPath := filepath.Join(t.TempDir(), "kubeconfig")
 		require.NoError(t, clientcmd.WriteToFile(*kcfg, kubeconfigPath))
 
-		runKubectl := func(args ...string) (string, error) {
-			cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			fullArgs := append([]string{"--kubeconfig", kubeconfigPath, "--context", "honey-prod"}, args...)
-			out, runErr := exec.CommandContext(cmdCtx, kubectlPath, fullArgs...).CombinedOutput()
-			return string(out), runErr
+		// alpine/k8s bundles both kubectl and a shell; override its
+		// entrypoint/cmd to just idle so the container stays up for Exec
+		// calls, and preload the kubeconfig at kubectl's default lookup
+		// path so no --kubeconfig flag is needed on each Exec.
+		kubectlReq := testcontainers.ContainerRequest{
+			Image:           "alpine/k8s:1.31.7",
+			HostAccessPorts: []int{proxyPort},
+			Entrypoint:      []string{"sleep"},
+			Cmd:             []string{"3600"},
+			Files: []testcontainers.ContainerFile{{
+				HostFilePath:      kubeconfigPath,
+				ContainerFilePath: "/root/.kube/config",
+				FileMode:          0o600,
+			}},
+			WaitingFor: wait.ForExec([]string{"kubectl", "version", "--client"}).WithStartupTimeout(60 * time.Second),
+		}
+		kubectlC, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: kubectlReq,
+			Started:          true,
+		})
+		if err != nil {
+			t.Skipf("kubectl container unavailable: %v", err)
+		}
+		defer func() {
+			if err := testcontainers.TerminateContainer(kubectlC); err != nil {
+				t.Logf("terminate kubectl container: %v", err)
+			}
+		}()
+
+		runKubectl := func(args ...string) (string, int, error) {
+			// tcexec.Multiplexed() strips Docker's stream-multiplexing
+			// frame headers so the reader yields plain combined
+			// stdout+stderr instead of raw exec-attach protocol bytes.
+			code, reader, execErr := kubectlC.Exec(ctx, append([]string{"kubectl"}, args...), tcexec.Multiplexed())
+			if execErr != nil {
+				return "", code, execErr
+			}
+			out, readErr := io.ReadAll(reader)
+			return string(out), code, readErr
 		}
 
 		// (e) kubectl's own "auth whoami" is native proof the proxy
 		// impersonates alice/honey-viewers, independent of client-go.
-		whoamiOut, err := runKubectl("auth", "whoami", "-o", "json")
-		require.NoError(t, err, "kubectl auth whoami failed: %s", truncateOutput(whoamiOut))
+		whoamiOut, code, err := runKubectl("auth", "whoami", "-o", "json")
+		require.NoError(t, err, "kubectl auth whoami exec failed: %s", truncateOutput(whoamiOut))
+		require.Equal(t, 0, code, "kubectl auth whoami failed: %s", truncateOutput(whoamiOut))
 		var review authenticationv1.SelfSubjectReview
 		require.NoError(t, json.Unmarshal([]byte(whoamiOut), &review), "parse kubectl auth whoami output: %s", truncateOutput(whoamiOut))
 		require.Equal(t, "alice", review.Status.UserInfo.Username)
 		require.Contains(t, review.Status.UserInfo.Groups, "honey-viewers")
 
 		// (f) Allowed: kubectl can list pods as the impersonated group.
-		// Eventually, to tolerate the same RBAC-cache lag as the client-go
-		// pods check above.
+		// Eventually, and with a longer window than the client-go pods
+		// check above, to tolerate the same RBAC-cache lag plus the extra
+		// container-exec/tunnel hop.
 		require.Eventually(t, func() bool {
-			out, listErr := runKubectl("get", "pods", "-n", "default")
-			if listErr != nil {
-				t.Logf("kubectl get pods not yet allowed: %v: %s", listErr, truncateOutput(out))
+			out, code, listErr := runKubectl("get", "pods", "-n", "default")
+			if listErr != nil || code != 0 {
+				t.Logf("kubectl get pods not yet allowed (exit=%d): %v: %s", code, listErr, truncateOutput(out))
 				return false
 			}
 			return true
-		}, 15*time.Second, 500*time.Millisecond, "kubectl get pods as the impersonated group must eventually succeed")
+		}, 20*time.Second, 500*time.Millisecond, "kubectl get pods as the impersonated group must eventually succeed")
 
 		// (g) Denied: kubectl requests run as the impersonated identity, not
 		// the proxy's admin credentials — secrets must fail as Forbidden.
-		secretsOut, err := runKubectl("get", "secrets", "-n", "default")
-		require.Error(t, err, "kubectl get secrets unexpectedly succeeded: %s", truncateOutput(secretsOut))
+		secretsOut, code, err := runKubectl("get", "secrets", "-n", "default")
+		require.NoError(t, err, "kubectl get secrets exec failed: %s", truncateOutput(secretsOut))
+		require.NotEqual(t, 0, code, "kubectl get secrets unexpectedly succeeded: %s", truncateOutput(secretsOut))
 		require.Contains(t, strings.ToLower(secretsOut), "forbidden", "expected forbidden in kubectl output: %s", truncateOutput(secretsOut))
 	}()
 }
