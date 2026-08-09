@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">JIT Access &amp; Share Links | Honey</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:url" content="https://shareed2k.github.io/honey/jit-access"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="JIT Access &amp; Share Links | Honey"><meta data-rh="true" name="description" content="From the web UI&#x27;s search results, any connectable record can be"><meta data-rh="true" property="og:description" content="From the web UI&#x27;s search results, any connectable record can be"><link data-rh="true" rel="icon" href="/honey/img/logo.svg"><link data-rh="true" rel="canonical" href="https://shareed2k.github.io/honey/jit-access"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/jit-access" hreflang="en"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/jit-access" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"JIT Access & Share Links","item":"https://shareed2k.github.io/honey/jit-access"}]}</script><link rel="stylesheet" href="/honey/assets/css/styles.38bacd89.css">
-<script src="/honey/assets/js/runtime~main.5f626831.js" defer="defer"></script>
+<script src="/honey/assets/js/runtime~main.f053de96.js" defer="defer"></script>
 <script src="/honey/assets/js/main.498714e1.js" defer="defer"></script>
 </head>
 <body>
@@ -36,11 +36,15 @@ send it to the recipient.</li>
 redeem endpoints will honor:</p>
 <ul>
 <li class="">The <strong><code>web</code></strong> (browser terminal) redeem requires <code>shell</code>.</li>
-<li class="">The <strong><code>cert</code></strong> redeem requires <code>shell</code> or <code>exec</code> (a certificate is a
-general-purpose credential; what it can actually do on the target is still
+<li class="">The <strong><code>cert</code></strong> redeem requires <code>shell</code>, <code>exec</code>, or <code>tunnel</code> (a certificate is
+a general-purpose credential; what it can actually do on the target is still
 bounded by the target-side gates).</li>
-<li class=""><code>tunnel</code> is accepted but not currently wired to a share-link redeem path —
-it has no effect yet.</li>
+<li class=""><code>tunnel</code> is delivered as a <strong>certificate</strong> — the recipient uses it for
+<code>ssh -L</code> port-forwarding through the gateway (the signed certificate carries
+<code>permit-port-forwarding</code>, and each forward is authorized by the OPA <code>tunnel</code>
+action). A tunnel grant therefore needs <code>cert</code> (or <code>both</code>) delivery; a
+<code>web</code>-only tunnel link has no redeemable action, and the Share dialog blocks
+that combination.</li>
 </ul>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="approval--notification">Approval + notification<a href="#approval--notification" class="hash-link" aria-label="Direct link to Approval + notification" title="Direct link to Approval + notification" translate="no">​</a></h2>
 <p><code>require_approval: true</code> creates the grant as <strong>Pending</strong> instead of
