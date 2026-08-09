@@ -16,6 +16,7 @@ const sidebars = {
     'inventory',
     'ssh-gateway',
     'jit-access',
+    'k8s-proxy',
     'authorization',
     'command-risk',
     'cue-recipes',

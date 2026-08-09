@@ -113,12 +113,13 @@ type SSHGatewayMask struct {
 	Patterns []string `yaml:"patterns,omitempty" json:"patterns,omitempty" honey:"label=Regex patterns to mask"`
 }
 
-// K8sProxyConfig configures the inbound Kubernetes access proxy (honey
-// k8s-proxy): a certificate-authenticated, kubectl-facing TLS front-end that
-// forwards API requests to one or more real clusters under an impersonated
-// honey identity, policy-gated and (eventually) recorded. The block being
-// present supplies defaults for the command; the listener itself is started
-// by honey k8s-proxy (wired in a later phase).
+// K8sProxyConfig configures the inbound Kubernetes access proxy: a
+// certificate-authenticated, kubectl-facing TLS front-end that forwards API
+// requests to one or more real clusters under an impersonated honey identity,
+// policy-gated and audited. When this block is present with a non-empty
+// listen, honey web starts the proxy as an additional mTLS listener (it is not
+// a separate command). policy_dir and record are reserved: the proxy shares
+// honey web's OPA enforcer, and exec-session recording is not yet implemented.
 type K8sProxyConfig struct {
 	Listen    string            `yaml:"listen,omitempty" json:"listen,omitempty" honey:"label=Listen address (host:port)" mod:"trim"`
 	TLSCert   string            `yaml:"tls_cert,omitempty" json:"tls_cert,omitempty" honey:"label=Serving certificate path (default: self-signed under state dir)" mod:"trim"`
