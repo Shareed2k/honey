@@ -143,7 +143,7 @@ func (a *EnrollAPI) handleDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("parse CSR: %w", err), http.StatusBadRequest)
 		return
 	}
-	certPEM, err := a.ca.Sign(csr, cn, deviceCertTTL)
+	certPEM, err := a.ca.Sign(csr, cn, nil, deviceCertTTL)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return

@@ -119,14 +119,17 @@ func parseDeviceCA(certPEM, keyPEM []byte) (*DeviceCA, error) {
 }
 
 // Sign issues a client certificate for cn (valid for ttl) using the CSR's public
-// key. The CSR signature is verified first.
-func (ca *DeviceCA) Sign(csr *x509.CertificateRequest, cn string, ttl time.Duration) ([]byte, error) {
+// key. The CSR signature is verified first. groups, when non-empty, are recorded
+// in the certificate's Subject Organization (O=) fields — the vanilla-Kubernetes
+// convention where the client cert CN is the user and each O is a group; honey's
+// access gateways read them back as the impersonated groups.
+func (ca *DeviceCA) Sign(csr *x509.CertificateRequest, cn string, groups []string, ttl time.Duration) ([]byte, error) {
 	if err := csr.CheckSignature(); err != nil {
 		return nil, fmt.Errorf("csr signature: %w", err)
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: randSerial(),
-		Subject:      pkix.Name{CommonName: cn},
+		Subject:      pkix.Name{CommonName: cn, Organization: groups},
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(ttl),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
