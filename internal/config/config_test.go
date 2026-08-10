@@ -958,3 +958,105 @@ func TestK8sProxyConfigValidateRejectsUnknownUserFrom(t *testing.T) {
 		t.Fatal("expected validation error for unknown impersonate.user_from")
 	}
 }
+
+func TestLoadOIDCAndDeviceCertTTLAndClusterLabels(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `
+version: 1
+device_cert_ttl: 8h
+oidc:
+  issuer: https://issuer.example/realm
+  client_id: honey-kube
+  scopes:
+    - groups
+    - profile
+  username_claim: email
+  groups_claim: groups
+k8s_proxy:
+  clusters:
+    - name: prod
+      labels:
+        env: dev
+        region: eu
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.OIDC == nil {
+		t.Fatal("expected OIDC block to parse")
+	}
+	if f.OIDC.Issuer != "https://issuer.example/realm" {
+		t.Fatalf("oidc.issuer = %q", f.OIDC.Issuer)
+	}
+	if f.OIDC.ClientID != "honey-kube" {
+		t.Fatalf("oidc.client_id = %q", f.OIDC.ClientID)
+	}
+	if f.OIDC.UsernameClaim != "email" || f.OIDC.GroupsClaim != "groups" {
+		t.Fatalf("oidc claims = %q/%q", f.OIDC.UsernameClaim, f.OIDC.GroupsClaim)
+	}
+	if len(f.OIDC.Scopes) != 2 || f.OIDC.Scopes[0] != "groups" || f.OIDC.Scopes[1] != "profile" {
+		t.Fatalf("oidc.scopes = %v", f.OIDC.Scopes)
+	}
+	if got := f.DeviceCertTTLValue(); got != 8*time.Hour {
+		t.Fatalf("device_cert_ttl = %s, want 8h", got)
+	}
+	if len(f.K8sProxy.Clusters) != 1 {
+		t.Fatalf("clusters = %d, want 1", len(f.K8sProxy.Clusters))
+	}
+	labels := f.K8sProxy.Clusters[0].Labels
+	if labels["env"] != "dev" || labels["region"] != "eu" {
+		t.Fatalf("cluster labels = %v", labels)
+	}
+}
+
+func TestLoadNoOIDCAndDefaultDeviceCertTTL(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := "version: 1\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.OIDC != nil {
+		t.Fatalf("expected nil OIDC when absent, got %+v", f.OIDC)
+	}
+	if got := f.DeviceCertTTLValue(); got != DefaultDeviceCertTTL {
+		t.Fatalf("device_cert_ttl default = %s, want %s", got, DefaultDeviceCertTTL)
+	}
+	if got := DefaultDeviceCertTTL; got != 12*time.Hour {
+		t.Fatalf("DefaultDeviceCertTTL = %s, want 12h", got)
+	}
+}
+
+func TestDeviceCertTTLValueResolver(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		file *File
+		want time.Duration
+	}{
+		{name: "nil file", file: nil, want: DefaultDeviceCertTTL},
+		{name: "empty", file: &File{}, want: DefaultDeviceCertTTL},
+		{name: "explicit", file: &File{DeviceCertTTL: "2h30m"}, want: 2*time.Hour + 30*time.Minute},
+		{name: "unparseable falls back", file: &File{DeviceCertTTL: "nope"}, want: DefaultDeviceCertTTL},
+		{name: "non-positive falls back", file: &File{DeviceCertTTL: "0s"}, want: DefaultDeviceCertTTL},
+		{name: "negative falls back", file: &File{DeviceCertTTL: "-5m"}, want: DefaultDeviceCertTTL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.file.DeviceCertTTLValue(); got != tt.want {
+				t.Fatalf("DeviceCertTTLValue() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}

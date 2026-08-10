@@ -37,8 +37,14 @@ type File struct {
 	Mesh          MeshConfig         `yaml:"mesh,omitempty" json:"mesh,omitempty"`
 	SSHGateway    *SSHGatewayConfig  `yaml:"ssh_gateway,omitempty" json:"ssh_gateway,omitempty"`
 	K8sProxy      *K8sProxyConfig    `yaml:"k8s_proxy,omitempty" json:"k8s_proxy,omitempty"`
-	Jit           *JitConfig         `yaml:"jit,omitempty" json:"jit,omitempty"`
-	Guardrails    []GuardrailRule    `yaml:"guardrails,omitempty" json:"guardrails,omitempty" validate:"dive" mod:"dive"`
+	OIDC          *OIDCConfig        `yaml:"oidc,omitempty" json:"oidc,omitempty"`
+	// DeviceCertTTL is the validity of SSO/enroll-issued device (client mTLS and
+	// SSH) certificates, e.g. "12h". Empty ⇒ the built-in 12h default (see
+	// DeviceCertTTLValue). Short by design: no certificate revocation exists, so a
+	// short lifetime is the mitigation.
+	DeviceCertTTL string          `yaml:"device_cert_ttl,omitempty" json:"device_cert_ttl,omitempty" honey:"label=Device/SSO certificate TTL (e.g. 12h; default 12h)" mod:"trim"`
+	Jit           *JitConfig      `yaml:"jit,omitempty" json:"jit,omitempty"`
+	Guardrails    []GuardrailRule `yaml:"guardrails,omitempty" json:"guardrails,omitempty" validate:"dive" mod:"dive"`
 }
 
 // GuardrailRule is one operator-defined guardrail as authored in config. It
@@ -137,6 +143,10 @@ type K8sProxyCluster struct {
 	Kubeconfig  string           `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty" honey:"label=Kubeconfig path" mod:"trim"`
 	Context     string           `yaml:"context,omitempty" json:"context,omitempty" honey:"label=Kubeconfig context" mod:"trim"`
 	Impersonate K8sImpersonation `yaml:"impersonate,omitempty" json:"impersonate,omitempty" honey:"label=Impersonation"`
+	// Labels are arbitrary key/value tags for this cluster, exposed to the OPA
+	// k8s_request gate as input.cluster_labels so policy can select clusters by
+	// label (e.g. region, platform) rather than only by name.
+	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty" honey:"label=Cluster labels (exposed to policy as cluster_labels)"`
 }
 
 // K8sImpersonation configures how the proxy derives the Impersonate-User/
@@ -146,6 +156,41 @@ type K8sImpersonation struct {
 	// honey actor. "cn" (the default) uses the client-certificate CN.
 	UserFrom      string   `yaml:"user_from,omitempty" json:"user_from,omitempty" honey:"label=Derive Impersonate-User from;enum=cn;enum_as_warning;default=cn" validate:"omitempty,oneof=cn" mod:"trim"`
 	DefaultGroups []string `yaml:"default_groups,omitempty" json:"default_groups,omitempty" honey:"label=Impersonate-Group values applied to every request"`
+}
+
+// OIDCConfig configures single-sign-on login for honey's access gateways: honey
+// verifies an id_token from the configured issuer (honey kube login / honey ssh
+// login run the browser flow) and maps its verified claims to a gateway identity
+// via the OPA identity policy. Absent block = SSO login disabled (the endpoints
+// report 404); the existing enrollment path is unaffected.
+type OIDCConfig struct {
+	Issuer        string   `yaml:"issuer,omitempty" json:"issuer,omitempty" honey:"label=Issuer URL (OIDC discovery)" mod:"trim"`
+	ClientID      string   `yaml:"client_id,omitempty" json:"client_id,omitempty" honey:"label=Client ID (expected token audience)" mod:"trim"`
+	Scopes        []string `yaml:"scopes,omitempty" json:"scopes,omitempty" honey:"label=Additional scopes requested at login (openid is always included)"`
+	UsernameClaim string   `yaml:"username_claim,omitempty" json:"username_claim,omitempty" honey:"label=Claim mapped to username (default email)" mod:"trim"`
+	GroupsClaim   string   `yaml:"groups_claim,omitempty" json:"groups_claim,omitempty" honey:"label=Claim mapped to groups (default groups)" mod:"trim"`
+}
+
+// DefaultDeviceCertTTL is the fallback validity for SSO/enroll-issued device
+// certificates when device_cert_ttl is unset or unparseable. Short by design:
+// no certificate revocation exists, so a short lifetime is the mitigation.
+const DefaultDeviceCertTTL = 12 * time.Hour
+
+// DeviceCertTTLValue returns the configured device-certificate TTL, or
+// DefaultDeviceCertTTL (12h) when unset, unparseable, or non-positive. Nil-safe.
+func (f *File) DeviceCertTTLValue() time.Duration {
+	if f == nil {
+		return DefaultDeviceCertTTL
+	}
+	s := strings.TrimSpace(f.DeviceCertTTL)
+	if s == "" {
+		return DefaultDeviceCertTTL
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return DefaultDeviceCertTTL
+	}
+	return d
 }
 
 // MeshConfig configures this process's own libp2p mesh identity, used to

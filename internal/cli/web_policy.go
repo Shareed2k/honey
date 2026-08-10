@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/oidc"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/webauthn"
 )
@@ -36,6 +37,10 @@ type webAuthConfig struct {
 	jwtPubKey   ed25519.PublicKey
 	trustedNets []*net.IPNet
 	webauthn    *webauthn.Manager
+	// oidcVerifier is built (via OIDC discovery) only when file.OIDC is set. nil
+	// keeps SSO login disabled. Discovery is network I/O, so it uses the passed
+	// context and is a hard startup error on failure (never a silent disable).
+	oidcVerifier *oidc.Verifier
 }
 
 // resolveWebAuthConfig reads HONEY_POLICY_DIR, HONEY_JWT_PUBLIC_KEY, and
@@ -82,6 +87,20 @@ func resolveWebAuthConfig(ctx context.Context, file *config.File) (webAuthConfig
 		}
 		cfg.webauthn = mgr
 		zap.L().Info("WebAuthn biometric step-up enabled", zap.String("rpid", rpID))
+	}
+
+	if file != nil && file.OIDC != nil {
+		v, err := oidc.New(ctx, oidc.Config{
+			Issuer:        file.OIDC.Issuer,
+			ClientID:      file.OIDC.ClientID,
+			UsernameClaim: file.OIDC.UsernameClaim,
+			GroupsClaim:   file.OIDC.GroupsClaim,
+		})
+		if err != nil {
+			return cfg, fmt.Errorf("oidc: %w", err)
+		}
+		cfg.oidcVerifier = v
+		zap.L().Info("SSO login (OIDC) enabled", zap.String("issuer", file.OIDC.Issuer))
 	}
 
 	return cfg, nil

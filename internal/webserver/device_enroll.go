@@ -19,9 +19,22 @@ import (
 
 const (
 	enrollCodeTTL = 10 * time.Minute
-	deviceCertTTL = 720 * time.Hour // 30 days
-	maxEnrollBody = 1 << 20
+	// defaultDeviceCertTTL is the fallback validity for issued device / SSO
+	// client certificates when no explicit TTL is configured. Short by design:
+	// no certificate revocation exists, so a short lifetime is the mitigation.
+	defaultDeviceCertTTL = 12 * time.Hour
+	maxEnrollBody        = 1 << 20
 )
+
+// resolveDeviceCertTTL returns d when it is positive, otherwise the built-in
+// defaultDeviceCertTTL (12h). Shared by the enroll and (future) SSO login paths
+// so both honor the configured value with a common default.
+func resolveDeviceCertTTL(d time.Duration) time.Duration {
+	if d <= 0 {
+		return defaultDeviceCertTTL
+	}
+	return d
+}
 
 // enrollStore holds pending one-time enrollment codes (code -> desired CN) and a
 // record of issued device certs. Codes are single-use and short-lived.
@@ -71,12 +84,14 @@ func (s *enrollStore) list() []DeviceRecord {
 type EnrollAPI struct {
 	ca    *DeviceCA
 	store *enrollStore
+	ttl   time.Duration
 }
 
 // NewEnrollAPI wires the device CA and enroll store. Pass (nil, nil) when
-// enrollment is unavailable.
-func NewEnrollAPI(ca *DeviceCA, store *enrollStore) *EnrollAPI {
-	return &EnrollAPI{ca: ca, store: store}
+// enrollment is unavailable. ttl is the validity of issued device certs; a
+// non-positive value falls back to defaultDeviceCertTTL (12h).
+func NewEnrollAPI(ca *DeviceCA, store *enrollStore, ttl time.Duration) *EnrollAPI {
+	return &EnrollAPI{ca: ca, store: store, ttl: resolveDeviceCertTTL(ttl)}
 }
 
 // handleMintEnrollCode (authenticated) creates a one-time enrollment code the
@@ -143,7 +158,7 @@ func (a *EnrollAPI) handleDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 		httpError(w, fmt.Errorf("parse CSR: %w", err), http.StatusBadRequest)
 		return
 	}
-	certPEM, err := a.ca.Sign(csr, cn, nil, deviceCertTTL)
+	certPEM, err := a.ca.Sign(csr, cn, nil, a.ttl)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
