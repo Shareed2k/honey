@@ -31,6 +31,19 @@ type Decision struct {
 	// Requires lists optional preconditions a policy demands, e.g.
 	// ["explicit_approval", "biometric"]. Empty when unset.
 	Requires []string
+	// Identity is the optional impersonated identity a policy resolves (the
+	// "role"): the Kubernetes user/groups or SSH principals honey should issue a
+	// certificate for. Nil when the policy sets no `identity` object.
+	Identity *IdentityResult
+}
+
+// IdentityResult is the identity a policy maps an authenticated subject to: the
+// Kubernetes Impersonate-User (User) and Impersonate-Group values (Groups),
+// and/or the SSH certificate principals (Principals).
+type IdentityResult struct {
+	User       string
+	Groups     []string
+	Principals []string
 }
 
 // Enforcer holds a prepared rego query over the data.honey package. It is safe
@@ -71,11 +84,21 @@ func (e *Enforcer) Evaluate(ctx context.Context, input map[string]any) (Decision
 	allow, _ := obj["allow"].(bool)
 	reason, _ := obj["deny_reason"].(string)
 	decision, _ := obj["decision"].(string)
+	var identity *IdentityResult
+	if idObj, ok := obj["identity"].(map[string]any); ok {
+		user, _ := idObj["user"].(string)
+		identity = &IdentityResult{
+			User:       user,
+			Groups:     toStringSlice(idObj["groups"]),
+			Principals: toStringSlice(idObj["principals"]),
+		}
+	}
 	return Decision{
 		Allow:      allow,
 		DenyReason: reason,
 		Decision:   decision,
 		Requires:   toStringSlice(obj["requires"]),
+		Identity:   identity,
 	}, nil
 }
 

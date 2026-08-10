@@ -131,3 +131,50 @@ allow if input.actor == "ops"
 		}
 	}
 }
+
+func TestEvaluate_Identity(t *testing.T) {
+	src := `package honey
+import rego.v1
+identity := {"user": "alice@corp", "groups": ["developers"], "principals": ["ubuntu"]} if {
+	input.action == "identity"
+	"eng" in input.groups
+}
+default allow := false
+allow if { input.action == "identity"; identity }`
+	enf, err := NewFromSource(context.Background(), "id.rego", src)
+	if err != nil {
+		t.Fatalf("NewFromSource: %v", err)
+	}
+
+	d, err := enf.Evaluate(context.Background(), map[string]any{"action": "identity", "groups": []string{"eng"}})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if !d.Allow {
+		t.Fatalf("expected allow")
+	}
+	if d.Identity == nil {
+		t.Fatalf("expected identity, got nil")
+	}
+	if d.Identity.User != "alice@corp" {
+		t.Errorf("user = %q, want alice@corp", d.Identity.User)
+	}
+	if len(d.Identity.Groups) != 1 || d.Identity.Groups[0] != "developers" {
+		t.Errorf("groups = %v, want [developers]", d.Identity.Groups)
+	}
+	if len(d.Identity.Principals) != 1 || d.Identity.Principals[0] != "ubuntu" {
+		t.Errorf("principals = %v, want [ubuntu]", d.Identity.Principals)
+	}
+
+	// A non-member resolves no identity: deny, nil identity.
+	d2, err := enf.Evaluate(context.Background(), map[string]any{"action": "identity", "groups": []string{"other"}})
+	if err != nil {
+		t.Fatalf("Evaluate(non-member): %v", err)
+	}
+	if d2.Allow {
+		t.Errorf("expected deny for non-member")
+	}
+	if d2.Identity != nil {
+		t.Errorf("expected nil identity for non-member, got %+v", d2.Identity)
+	}
+}
