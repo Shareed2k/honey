@@ -112,10 +112,17 @@ type Options struct {
 	// server. nil leaves the proxy disabled (no listener, zero behavior change).
 	K8sProxy *k8sproxy.ServerConfig
 
-	// OIDCVerifier, when non-nil, enables single-sign-on login: the (future)
-	// kube/ssh login endpoints verify an id_token with it before mapping claims
-	// to a gateway identity. nil ⇒ SSO login disabled (endpoints report 404).
+	// OIDCVerifier, when non-nil, enables single-sign-on login: the kube/ssh
+	// login endpoints verify an id_token with it before mapping claims to a
+	// gateway identity. nil ⇒ SSO login disabled (endpoints report 404).
 	OIDCVerifier *oidc.Verifier
+
+	// OIDCPublic carries the non-secret OIDC values (issuer, client_id, scopes)
+	// the kube/ssh login command needs to start a browser sign-in. Populated from
+	// the oidc config block by the web command; nil ⇒ the oidc-config endpoint
+	// reports empty values. Kept separate from OIDCVerifier so the webserver need
+	// not import the config package for these three strings.
+	OIDCPublic *OIDCPublicConfig
 
 	// DeviceCertTTL is the validity of SSO/enroll-issued device certificates.
 	// Zero falls back to the built-in 12h default (short by design: no
@@ -204,8 +211,19 @@ type Server struct {
 
 	// deviceCertTTL is the resolved validity for device / SSO-issued client
 	// certificates (Options.DeviceCertTTL, defaulted to 12h). Shared by the
-	// enroll API and the (future) SSO login endpoints so both honor the config.
+	// enroll API and the SSO login endpoints so both honor the config.
 	deviceCertTTL time.Duration
+
+	// oidcVerifier verifies id_tokens for the SSO login endpoints. Set from
+	// opts.OIDCVerifier in NewServer only when non-nil, through the
+	// idTokenVerifier interface so tests can inject a stub without a live
+	// identity provider.
+	oidcVerifier idTokenVerifier
+
+	// stateDir is the resolved runtime state dir where the device/ssh CAs live.
+	// The SSO kube-login handler reads the k8s access proxy's serving CA under it
+	// (best-effort) so the client kubeconfig can trust the proxy.
+	stateDir string
 }
 
 // NewServer builds handlers with the given auth token.
@@ -294,6 +312,7 @@ func NewServer(opts Options) (*Server, error) {
 	// Non-fatal — endpoints report 503 when unavailable (nil CA/store).
 	var deviceCA *DeviceCA
 	if stateDir, derr := config.ResolveStateDir(); derr == nil && strings.TrimSpace(stateDir) != "" {
+		s.stateDir = strings.TrimSpace(stateDir)
 		if ca, caErr := LoadOrCreateDeviceCA(stateDir); caErr == nil {
 			deviceCA = ca
 		}
@@ -317,6 +336,14 @@ func NewServer(opts Options) (*Server, error) {
 	s.sshCA = sshCA
 
 	s.resolveJitConfig()
+
+	// SSO login: hold the verifier through the idTokenVerifier interface so the
+	// login handlers depend on the interface (test-injectable). Only set when a
+	// real verifier is configured — a nil *oidc.Verifier stored in an interface
+	// would be a non-nil interface value, defeating the enabled/disabled check.
+	if opts.OIDCVerifier != nil {
+		s.oidcVerifier = opts.OIDCVerifier
+	}
 
 	if err := s.routes(); err != nil {
 		return nil, err
@@ -523,6 +550,15 @@ func (s *Server) routes() error {
 	s.router.Get("/api/v1/jit/redeem/{code}", s.handleJITRedeemStatus)
 	s.router.Post("/api/v1/jit/redeem/{code}/cert", s.handleJITRedeemCert)
 	s.router.Get("/api/v1/jit/redeem/{code}/terminal", s.handleJITRedeemTerminal)
+
+	// SSO login endpoints (kube/ssh): authenticated by the id_token itself, so
+	// they mount outside the session-auth group. Registered only when SSO login
+	// is enabled (OIDCVerifier set); absent ⇒ the routes stay unregistered (404).
+	if s.opts.OIDCVerifier != nil {
+		s.router.Get("/api/v1/kube/oidc-config", s.handleOIDCConfig)
+		s.router.Post("/api/v1/kube/login", s.handleKubeLogin)
+		s.router.Post("/api/v1/ssh/login", s.handleSSHLogin)
+	}
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group
 	s.router.With(recipesAPI.webhookRateLimit).
