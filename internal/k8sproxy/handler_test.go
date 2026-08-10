@@ -57,14 +57,21 @@ func newTestCA(t *testing.T) *testCA {
 	}
 }
 
-// clientCert issues a client certificate with CommonName "alice".
+// clientCert issues a client certificate with CommonName "alice" and no groups.
 func (ca *testCA) clientCert(t *testing.T) tls.Certificate {
+	t.Helper()
+	return ca.clientCertWithGroups(t, "alice", nil)
+}
+
+// clientCertWithGroups issues a client certificate with the given CommonName and
+// groups (recorded in Subject Organization, O=).
+func (ca *testCA) clientCertWithGroups(t *testing.T, cn string, groups []string) tls.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
-		Subject:      pkix.Name{CommonName: "alice"},
+		Subject:      pkix.Name{CommonName: cn, Organization: groups},
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -112,12 +119,18 @@ func (h *mtlsHarness) close() {
 }
 
 func newMTLSHarness(t *testing.T, enf *policy.Enforcer) *mtlsHarness {
+	return newMTLSHarnessSpec(t, enf, []string{"developers"}, nil)
+}
+
+// newMTLSHarnessSpec is newMTLSHarness with the cluster's DefaultGroups and
+// Labels configurable (for the groups + cluster_labels gate tests).
+func newMTLSHarnessSpec(t *testing.T, enf *policy.Enforcer, defaultGroups []string, labels map[string]string) *mtlsHarness {
 	t.Helper()
 
 	upstream := newEchoServer(t)
 
 	reg, err := NewRegistry([]ClusterSpec{
-		{Name: "prod", Config: &rest.Config{Host: upstream.URL}, DefaultGroups: []string{"developers"}},
+		{Name: "prod", Config: &rest.Config{Host: upstream.URL}, DefaultGroups: defaultGroups, Labels: labels},
 	})
 	require.NoError(t, err)
 
@@ -273,4 +286,38 @@ default deny_reason := ""
 `)
 	require.NoError(t, err)
 	return enf
+}
+
+// TestHandler_GroupsAndClusterLabelsInPolicy proves the k8s_request gate sees
+// the client cert's groups (O=) and the cluster's labels: a policy requiring
+// both admits an O=developers cert against an env:dev cluster and denies a cert
+// with no groups (no DefaultGroups fallback configured here).
+func TestHandler_GroupsAndClusterLabelsInPolicy(t *testing.T) {
+	enf, err := policy.NewFromSource(t.Context(), "p.rego", `package honey
+import rego.v1
+default allow := false
+default deny_reason := "denied"
+allow if {
+	input.action == "k8s_request"
+	"developers" in input.groups
+	input.cluster_labels.env == "dev"
+}`)
+	require.NoError(t, err)
+
+	h := newMTLSHarnessSpec(t, enf, nil, map[string]string{"env": "dev"})
+	defer h.close()
+
+	// O=developers against env:dev → allowed (echo upstream returns 418).
+	cert := h.ca.clientCertWithGroups(t, "alice", []string{"developers"})
+	resp, err := h.client(t, &cert).Get(h.front.URL + "/prod/api/v1/namespaces/default/pods")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusTeapot, resp.StatusCode)
+
+	// No groups (and no DefaultGroups fallback) → forbidden by policy.
+	certNoGrp := h.ca.clientCert(t)
+	resp2, err := h.client(t, &certNoGrp).Get(h.front.URL + "/prod/api/v1/namespaces/default/pods")
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	require.Equal(t, http.StatusForbidden, resp2.StatusCode)
 }

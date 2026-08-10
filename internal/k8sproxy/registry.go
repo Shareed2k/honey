@@ -18,9 +18,13 @@ type ClusterSpec struct {
 	// UserFrom selects how Impersonate-User is derived from the authenticated
 	// actor. "cn" (or empty) uses the actor as-is (the client-cert CN).
 	UserFrom string
-	// DefaultGroups are the Impersonate-Group values applied to every request
-	// forwarded to this cluster.
+	// DefaultGroups are the Impersonate-Group values applied to a request when
+	// the client certificate carries no groups of its own (its O= fields).
 	DefaultGroups []string
+	// Labels are arbitrary key/value tags for this cluster, exposed to the OPA
+	// k8s_request gate as input.cluster_labels so policy can select clusters by
+	// label (e.g. region, platform) rather than only by name.
+	Labels map[string]string
 }
 
 // clusterEntry pairs a built proxy with the cluster's impersonation mapping.
@@ -70,11 +74,29 @@ func (r *Registry) Has(cluster string) bool {
 	return ok
 }
 
+// LabelsFor returns cluster's configured labels (nil if the cluster is unknown
+// or has none). Exposed to the OPA gate as input.cluster_labels.
+func (r *Registry) LabelsFor(cluster string) map[string]string {
+	entry, ok := r.clusters[cluster]
+	if !ok {
+		return nil
+	}
+	return entry.spec.Labels
+}
+
 // IdentityFor maps the authenticated actor to the impersonated identity for
-// cluster. For UserFrom "cn" (the default, and the empty value) the
-// Impersonate-User is the actor itself; Groups are the cluster's
-// DefaultGroups. ok is false if the cluster is unknown.
+// cluster using the cluster's DefaultGroups. Equivalent to
+// IdentityForWithGroups(cluster, actor, nil).
 func (r *Registry) IdentityFor(cluster, actor string) (Identity, bool) {
+	return r.IdentityForWithGroups(cluster, actor, nil)
+}
+
+// IdentityForWithGroups maps the authenticated actor to the impersonated
+// identity for cluster. For UserFrom "cn" (the default, and the empty value)
+// the Impersonate-User is the actor itself. Groups are certGroups (the client
+// certificate's O= fields) when non-empty, otherwise the cluster's
+// DefaultGroups fallback. ok is false if the cluster is unknown.
+func (r *Registry) IdentityForWithGroups(cluster, actor string, certGroups []string) (Identity, bool) {
 	entry, ok := r.clusters[cluster]
 	if !ok {
 		return Identity{}, false
@@ -83,9 +105,13 @@ func (r *Registry) IdentityFor(cluster, actor string) (Identity, bool) {
 	// UserFrom currently only supports "cn" (client-cert CN, passed in as
 	// actor by the caller); other values behave the same for now and are
 	// reserved for future derivation modes.
+	groups := certGroups
+	if len(groups) == 0 {
+		groups = entry.spec.DefaultGroups
+	}
 	return Identity{
 		User:   actor,
-		Groups: entry.spec.DefaultGroups,
+		Groups: groups,
 	}, true
 }
 
