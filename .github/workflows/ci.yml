@@ -49,7 +49,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   e2e-k8s:
-    name: E2E (k8s proxy)
+    name: E2E (k8s proxy + SSO)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -60,10 +60,12 @@ jobs:
           cache: true
 
       # ubuntu-latest ships a running Docker daemon, so testcontainers spins up
-      # a real k3s cluster + kubectl containers with no extra setup. These tests
-      # live behind the k8s_e2e build tag and are excluded from the unit run.
-      - name: Kubernetes access proxy e2e (real k3s via testcontainers)
-        run: go test -tags k8s_e2e -run TestK8sProxyE2E ./internal/k8sproxy/... -v -count=1 -timeout 30m
+      # real k3s + kubectl + OIDC-provider containers with no extra setup. These
+      # tests live behind the k8s_e2e build tag and are excluded from the unit
+      # run. TestSSOE2E additionally boots an SSO identity provider, so it shares
+      # this one Docker environment rather than a separate job.
+      - name: Kubernetes access proxy + SSO e2e (real k3s via testcontainers)
+        run: go test -tags k8s_e2e -run 'TestK8sProxyE2E|TestSSOE2E' ./internal/k8sproxy/... ./internal/ssoe2e/... -v -count=1 -timeout 40m
 
   lint:
     name: Lint
