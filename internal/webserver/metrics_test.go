@@ -31,7 +31,7 @@ func TestMetricsListenEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := contextWithCancelAfter(t, 3*time.Second)
+	ctx, cancel := contextWithCancelAfter(t)
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Start(ctx) }()
@@ -61,11 +61,11 @@ func TestMetricsListenEndpoint(t *testing.T) {
 	<-errCh
 }
 
-func contextWithCancelAfter(t *testing.T, d time.Duration) (context.Context, context.CancelFunc) {
+func contextWithCancelAfter(t *testing.T) (context.Context, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		time.Sleep(d)
+		time.Sleep(3 * time.Second)
 		cancel()
 	}()
 	return ctx, cancel

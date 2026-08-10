@@ -26,6 +26,7 @@ import (
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/jit"
+	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
 	plugincache "github.com/shareed2k/honey/internal/plugincache"
@@ -104,6 +105,11 @@ type Options struct {
 	// unauthenticated webhook endpoints. Defaults: 10 req/s, burst 20.
 	WebhookRatePerSecond float64
 	WebhookBurst         int
+
+	// K8sProxy, when non-nil with a non-empty Listen, starts the inbound
+	// Kubernetes access proxy as an additional mTLS listener owned by this
+	// server. nil leaves the proxy disabled (no listener, zero behavior change).
+	K8sProxy *k8sproxy.ServerConfig
 }
 
 // Server is the honey web UI HTTP server.
@@ -158,6 +164,12 @@ type Server struct {
 	// enrollAPI owns the mTLS device-enrollment endpoints; its CA/store are nil
 	// (endpoints report 503) when no state dir is available.
 	enrollAPI *EnrollAPI
+
+	// deviceCA is the device certificate authority (same instance wired into
+	// enrollAPI). It is stored here so Start can hand its cert PEM to the k8s
+	// access proxy as the default mTLS client-CA trust anchor. nil when no state
+	// dir is available.
+	deviceCA *DeviceCA
 
 	// sshEnrollAPI owns the self-service SSH-cert enrollment endpoints; its CA is
 	// nil (endpoints report 503) when no state dir is available.
@@ -269,6 +281,7 @@ func NewServer(opts Options) (*Server, error) {
 			deviceCA = ca
 		}
 	}
+	s.deviceCA = deviceCA
 	if deviceCA != nil {
 		s.enrollAPI = NewEnrollAPI(deviceCA, newEnrollStore())
 	} else {
@@ -594,7 +607,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	var metricsSrv *http.Server
-	errCh := make(chan error, 2)
+	// Capacity covers every listener goroutine (web, metrics, mesh, k8s-proxy) so
+	// none blocks on send if Start returns early on another's error.
+	errCh := make(chan error, 4)
 	if addr := strings.TrimSpace(s.opts.MetricsListenAddr); addr != "" && s.metrics != nil {
 		metricsSrv = &http.Server{
 			Addr:              addr,
@@ -633,6 +648,25 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
+	// Inbound Kubernetes access proxy: an additional mTLS listener owned by this
+	// server, running the k8sproxy handler. It has its own ctx-driven bounded
+	// shutdown, so it needs no entry in the srv.Shutdown block below — just a
+	// slot in the errCh drain. Disabled (no listener) when unconfigured.
+	k8sProxyRunning := false
+	if s.opts.K8sProxy != nil && strings.TrimSpace(s.opts.K8sProxy.Listen) != "" {
+		stateDir, _ := config.ResolveStateDir()
+		var clientCA []byte
+		if s.deviceCA != nil {
+			clientCA = s.deviceCA.CertPEM()
+		}
+		cfg := *s.opts.K8sProxy
+		go func() {
+			zap.L().Info("honey k8s-proxy listening", zap.String("addr", cfg.Listen))
+			errCh <- k8sproxy.RunServer(ctx, cfg, clientCA, stateDir)
+		}()
+		k8sProxyRunning = true
+	}
+
 	s.startRecordingRetention(ctx)
 	if s.scheduleManager != nil {
 		s.scheduleManager.Start(ctx)
@@ -643,6 +677,9 @@ func (s *Server) Start(ctx context.Context) error {
 		nListeners++
 	}
 	if meshLn != nil {
+		nListeners++
+	}
+	if k8sProxyRunning {
 		nListeners++
 	}
 	for {
