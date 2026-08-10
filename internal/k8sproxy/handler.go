@@ -44,7 +44,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	ident, ok := h.reg.IdentityFor(cluster, actor)
+	// Groups come from the client certificate's O= fields (honey-CA attested);
+	// they feed both the impersonated identity and the OPA gate. Empty ⇒ the
+	// cluster's DefaultGroups fallback.
+	groups := certGroups(r)
+	ident, ok := h.reg.IdentityForWithGroups(cluster, actor, groups)
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -54,34 +58,39 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.URL.RawPath = ""
 	ri := parseRequestInfo(r.Method, upstreamPath, r.URL.RawQuery)
 
-	if !h.gate(w, r, actor, cluster, ri) {
+	// Gate against the EFFECTIVE impersonated groups (ident.Groups, after the
+	// DefaultGroups fallback), so authorization matches the identity actually
+	// forwarded to the API server.
+	if !h.gate(w, r, actor, cluster, ident.Groups, ri) {
 		return
 	}
 
-	h.logAudit(r.Context(), actor, cluster, "", ri, "allow")
+	h.logAudit(r.Context(), actor, cluster, "", ident.Groups, ri, "allow")
 	h.reg.Serve(w, r, cluster, ident)
 }
 
 // gate evaluates the OPA policy. It returns true when the request may proceed.
 // On denial (or, fail-closed, on an evaluation error) it audits the deny, writes
 // a 403, and returns false. A nil enforcer allows.
-func (h *handler) gate(w http.ResponseWriter, r *http.Request, actor, cluster string, ri RequestInfo) bool {
+func (h *handler) gate(w http.ResponseWriter, r *http.Request, actor, cluster string, groups []string, ri RequestInfo) bool {
 	if h.enf == nil {
 		return true
 	}
 	d, err := h.enf.Evaluate(r.Context(), map[string]any{
-		"action":      "k8s_request",
-		"actor":       actor,
-		"cluster":     cluster,
-		"verb":        ri.Verb,
-		"resource":    ri.Resource,
-		"namespace":   ri.Namespace,
-		"name":        ri.Name,
-		"subresource": ri.Subresource,
+		"action":         "k8s_request",
+		"actor":          actor,
+		"cluster":        cluster,
+		"groups":         groups,
+		"cluster_labels": h.reg.LabelsFor(cluster),
+		"verb":           ri.Verb,
+		"resource":       ri.Resource,
+		"namespace":      ri.Namespace,
+		"name":           ri.Name,
+		"subresource":    ri.Subresource,
 	})
 	if err != nil {
 		// Fail closed: a broken policy denies rather than opening the boundary.
-		h.logAudit(r.Context(), actor, cluster, "policy evaluation error", ri, "deny")
+		h.logAudit(r.Context(), actor, cluster, "policy evaluation error", groups, ri, "deny")
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return false
 	}
@@ -90,7 +99,7 @@ func (h *handler) gate(w http.ResponseWriter, r *http.Request, actor, cluster st
 		if reason == "" {
 			reason = "forbidden by policy"
 		}
-		h.logAudit(r.Context(), actor, cluster, reason, ri, "deny")
+		h.logAudit(r.Context(), actor, cluster, reason, groups, ri, "deny")
 		http.Error(w, reason, http.StatusForbidden)
 		return false
 	}
@@ -100,7 +109,7 @@ func (h *handler) gate(w http.ResponseWriter, r *http.Request, actor, cluster st
 // logAudit records one k8s_request decision. It never logs certificate or
 // service-account material — only the actor CN, cluster, and parsed request
 // shape.
-func (h *handler) logAudit(ctx context.Context, actor, cluster, reason string, ri RequestInfo, decision string) {
+func (h *handler) logAudit(ctx context.Context, actor, cluster, reason string, groups []string, ri RequestInfo, decision string) {
 	if h.sink == nil {
 		return
 	}
@@ -112,6 +121,7 @@ func (h *handler) logAudit(ctx context.Context, actor, cluster, reason string, r
 		Decision:   decision,
 		DenyReason: reason,
 		Extra: map[string]string{
+			"groups":      strings.Join(groups, ","),
 			"verb":        ri.Verb,
 			"resource":    ri.Resource,
 			"namespace":   ri.Namespace,
@@ -133,6 +143,17 @@ func actorFromCert(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return cn, true
+}
+
+// certGroups returns the verified client certificate's Organization (O=) fields
+// as the actor's groups. These are honey-CA attested (only honey's device CA
+// signs them), never client-asserted. Order is not significant (a pkix SET);
+// callers treat groups as a set.
+func certGroups(r *http.Request) []string {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return nil
+	}
+	return r.TLS.PeerCertificates[0].Subject.Organization
 }
 
 // splitClusterPath splits an inbound path "/<cluster>/<rest>" into the cluster
