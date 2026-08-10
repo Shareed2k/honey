@@ -26,6 +26,7 @@ require (
 	github.com/aws/smithy-go v1.27.6
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/coregx/coregex v0.12.23
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/creack/pty v1.1.24
 	github.com/creasty/defaults v1.8.0
 	github.com/distribution/reference v0.6.0
