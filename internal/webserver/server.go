@@ -29,6 +29,7 @@ import (
 	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
+	"github.com/shareed2k/honey/internal/oidc"
 	plugincache "github.com/shareed2k/honey/internal/plugincache"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/postgres"
@@ -110,6 +111,16 @@ type Options struct {
 	// Kubernetes access proxy as an additional mTLS listener owned by this
 	// server. nil leaves the proxy disabled (no listener, zero behavior change).
 	K8sProxy *k8sproxy.ServerConfig
+
+	// OIDCVerifier, when non-nil, enables single-sign-on login: the (future)
+	// kube/ssh login endpoints verify an id_token with it before mapping claims
+	// to a gateway identity. nil ⇒ SSO login disabled (endpoints report 404).
+	OIDCVerifier *oidc.Verifier
+
+	// DeviceCertTTL is the validity of SSO/enroll-issued device certificates.
+	// Zero falls back to the built-in 12h default (short by design: no
+	// certificate revocation exists, so a short lifetime is the mitigation).
+	DeviceCertTTL time.Duration
 }
 
 // Server is the honey web UI HTTP server.
@@ -190,6 +201,11 @@ type Server struct {
 	// by config.Jit.DefaultDuration / config.Jit.MaxDuration in NewServer.
 	jitDefaultDuration time.Duration
 	jitMaxDuration     time.Duration
+
+	// deviceCertTTL is the resolved validity for device / SSO-issued client
+	// certificates (Options.DeviceCertTTL, defaulted to 12h). Shared by the
+	// enroll API and the (future) SSO login endpoints so both honor the config.
+	deviceCertTTL time.Duration
 }
 
 // NewServer builds handlers with the given auth token.
@@ -247,6 +263,7 @@ func NewServer(opts Options) (*Server, error) {
 		}),
 		jitDefaultDuration: jitDefaultDuration,
 		jitMaxDuration:     jitMaxDuration,
+		deviceCertTTL:      resolveDeviceCertTTL(opts.DeviceCertTTL),
 	}
 	if opts.Config != nil {
 		schedMgr, err := scheduler.New(scheduler.Options{
@@ -283,9 +300,9 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	s.deviceCA = deviceCA
 	if deviceCA != nil {
-		s.enrollAPI = NewEnrollAPI(deviceCA, newEnrollStore())
+		s.enrollAPI = NewEnrollAPI(deviceCA, newEnrollStore(), s.deviceCertTTL)
 	} else {
-		s.enrollAPI = NewEnrollAPI(nil, nil)
+		s.enrollAPI = NewEnrollAPI(nil, nil, s.deviceCertTTL)
 	}
 
 	// Self-service SSH-cert enrollment: load-or-create an SSH CA under the state

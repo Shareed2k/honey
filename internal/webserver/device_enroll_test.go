@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testEnrollAPI(t *testing.T) *EnrollAPI {
@@ -20,7 +21,7 @@ func testEnrollAPI(t *testing.T) *EnrollAPI {
 	if err != nil {
 		t.Fatalf("LoadOrCreateDeviceCA: %v", err)
 	}
-	return NewEnrollAPI(ca, newEnrollStore())
+	return NewEnrollAPI(ca, newEnrollStore(), 0)
 }
 
 // newTestCSR returns a PEM CSR for CN (the CN is overridden by the server from
@@ -135,8 +136,56 @@ func TestDeviceEnrollBadCode(t *testing.T) {
 	}
 }
 
+func TestResolveDeviceCertTTL(t *testing.T) {
+	if got := resolveDeviceCertTTL(0); got != defaultDeviceCertTTL {
+		t.Fatalf("zero → %s, want %s", got, defaultDeviceCertTTL)
+	}
+	if got := resolveDeviceCertTTL(-time.Minute); got != defaultDeviceCertTTL {
+		t.Fatalf("negative → %s, want %s", got, defaultDeviceCertTTL)
+	}
+	if got := resolveDeviceCertTTL(3 * time.Hour); got != 3*time.Hour {
+		t.Fatalf("explicit → %s, want 3h", got)
+	}
+	if defaultDeviceCertTTL != 12*time.Hour {
+		t.Fatalf("defaultDeviceCertTTL = %s, want 12h", defaultDeviceCertTTL)
+	}
+}
+
+func TestDeviceEnrollUsesConfiguredTTL(t *testing.T) {
+	ca, err := LoadOrCreateDeviceCA(t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadOrCreateDeviceCA: %v", err)
+	}
+	a := NewEnrollAPI(ca, newEnrollStore(), 2*time.Hour)
+	code := mintCode(t, a, "device:ttl")
+
+	before := time.Now()
+	rec := enroll(t, a, code, newTestCSR(t))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enroll: got %d, body %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Cert string `json:"cert"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	blk, _ := pem.Decode([]byte(out.Cert))
+	if blk == nil {
+		t.Fatal("cert not PEM")
+	}
+	cert, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Validity window should be ~2h from issuance, not the old 720h default.
+	if got := cert.NotAfter.Sub(before); got > 2*time.Hour+5*time.Minute || got < 2*time.Hour-5*time.Minute {
+		t.Fatalf("cert validity = %s, want ~2h", got)
+	}
+}
+
 func TestDeviceEnrollDisabled(t *testing.T) {
-	a := NewEnrollAPI(nil, nil) // disabled: nil CA and store
+	a := NewEnrollAPI(nil, nil, 0) // disabled: nil CA and store
 	rec := httptest.NewRecorder()
 	a.handleDeviceEnroll(rec, httptest.NewRequest(http.MethodPost, "/api/v1/devices/enroll", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusServiceUnavailable {

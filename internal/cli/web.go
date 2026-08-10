@@ -107,7 +107,9 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		onReady = func() { _ = openBrowser(url) }
 	}
 
-	authCfg, err := resolveWebAuthConfig(context.Background(), cfg)
+	// Use the command context: resolveWebAuthConfig performs OIDC discovery
+	// (network I/O) when cfg.OIDC is set, and startup should honor cancellation.
+	authCfg, err := resolveWebAuthConfig(cmd.Context(), cfg)
 	if err != nil {
 		return fmt.Errorf("web auth config: %w", err)
 	}
@@ -157,6 +159,8 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		EnableMesh:         meshnet.Enabled(),
 		AuditSink:          auditSink,
 		K8sProxy:           k8sProxyCfg,
+		OIDCVerifier:       authCfg.oidcVerifier,
+		DeviceCertTTL:      cfg.DeviceCertTTLValue(),
 	})
 	if err != nil {
 		return err
@@ -188,6 +192,7 @@ func buildK8sProxyServerConfig(cfg *config.File, enforcer *policy.Enforcer, sink
 			Config:        restCfg,
 			UserFrom:      c.Impersonate.UserFrom,
 			DefaultGroups: c.Impersonate.DefaultGroups,
+			Labels:        c.Labels,
 		})
 	}
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/shareed2k/honey/internal/config"
 )
@@ -151,5 +152,38 @@ func TestResolveWebAuthConfig_BadProxyErrors(t *testing.T) {
 
 	if _, err := resolveWebAuthConfig(context.Background(), nil); err == nil {
 		t.Fatal("expected error for invalid proxy entry")
+	}
+}
+
+func TestResolveWebAuthConfig_NoOIDCLeavesVerifierNil(t *testing.T) {
+	t.Setenv("HONEY_POLICY_DIR", "")
+	t.Setenv(jwtPublicKeyEnv, "")
+	t.Setenv(trustedProxiesEnv, "")
+
+	// A config with no oidc block must not build a verifier (SSO stays disabled).
+	cfg, err := resolveWebAuthConfig(context.Background(), &config.File{Version: 1})
+	if err != nil {
+		t.Fatalf("resolveWebAuthConfig: %v", err)
+	}
+	if cfg.oidcVerifier != nil {
+		t.Fatal("expected nil oidcVerifier when cfg.OIDC is absent")
+	}
+}
+
+func TestResolveWebAuthConfig_OIDCUnreachableIssuerFailsClosed(t *testing.T) {
+	t.Setenv("HONEY_POLICY_DIR", "")
+	t.Setenv(jwtPublicKeyEnv, "")
+	t.Setenv(trustedProxiesEnv, "")
+
+	// A configured issuer that fails discovery must be a hard startup error, not
+	// a silent disable. 127.0.0.1:1 refuses immediately (no external network).
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	file := &config.File{Version: 1, OIDC: &config.OIDCConfig{
+		Issuer:   "http://127.0.0.1:1/",
+		ClientID: "honey-kube",
+	}}
+	if _, err := resolveWebAuthConfig(ctx, file); err == nil {
+		t.Fatal("expected error when OIDC discovery fails")
 	}
 }
