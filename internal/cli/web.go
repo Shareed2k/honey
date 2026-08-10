@@ -130,6 +130,17 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Non-secret OIDC values the login command echoes back to clients. Kept out
+	// of the webserver package so it needn't import config for these strings.
+	var oidcPublic *webserver.OIDCPublicConfig
+	if cfg != nil && cfg.OIDC != nil {
+		oidcPublic = &webserver.OIDCPublicConfig{
+			Issuer:   cfg.OIDC.Issuer,
+			ClientID: cfg.OIDC.ClientID,
+			Scopes:   cfg.OIDC.Scopes,
+		}
+	}
+
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:         webListen,
 		Token:              token,
@@ -160,6 +171,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		AuditSink:          auditSink,
 		K8sProxy:           k8sProxyCfg,
 		OIDCVerifier:       authCfg.oidcVerifier,
+		OIDCPublic:         oidcPublic,
 		DeviceCertTTL:      cfg.DeviceCertTTLValue(),
 	})
 	if err != nil {
