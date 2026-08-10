@@ -48,6 +48,23 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  e2e-k8s:
+    name: E2E (k8s proxy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # ubuntu-latest ships a running Docker daemon, so testcontainers spins up
+      # a real k3s cluster + kubectl containers with no extra setup. These tests
+      # live behind the k8s_e2e build tag and are excluded from the unit run.
+      - name: Kubernetes access proxy e2e (real k3s via testcontainers)
+        run: go test -tags k8s_e2e -run TestK8sProxyE2E ./internal/k8sproxy/... -v -count=1 -timeout 30m
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
