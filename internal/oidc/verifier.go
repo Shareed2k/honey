@@ -55,8 +55,17 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 	}, nil
 }
 
-// Verify checks signature, iss, aud, exp (go-oidc rejects alg:none) and the
-// nonce, then extracts the configured username/groups claims. Fail-closed.
+// Verify checks the id_token signature, iss, aud (== client_id), and exp
+// (go-oidc rejects alg:none and treats an empty client_id as an error), then
+// extracts the configured username/groups claims. Fail-closed.
+//
+// expectedNonce is compared against the token's nonce claim. Because the caller
+// supplies both the token and expectedNonce, this binds the token to the
+// caller's own login request (the CLI generates the nonce, the provider echoes
+// it) but is NOT a server-side replay guard: honey stores no nonce, so it does
+// not prevent replay of a leaked, still-valid id_token. Short token lifetimes
+// and TLS transport are the mitigations for that. Pass "" when no nonce is used
+// (e.g. a direct-grant token that carries no nonce claim).
 func (v *Verifier) Verify(ctx context.Context, rawIDToken, expectedNonce string) (Claims, error) {
 	tok, err := v.verifier.Verify(ctx, rawIDToken)
 	if err != nil {

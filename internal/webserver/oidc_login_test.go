@@ -49,13 +49,15 @@ func hasAuditEvent(sink *captureSink, action, actor, decision string) bool {
 	return false
 }
 
-// newCSRPEM returns a fresh ECDSA P-256 certificate-request in PEM form.
-func newCSRPEM(t *testing.T, cn string) string {
+// newCSRPEM returns a fresh ECDSA P-256 certificate-request in PEM form. The
+// CSR subject is irrelevant to the login handlers — the issued cert's CN/O come
+// from the identity policy, not the CSR — so a fixed placeholder CN is used.
+func newCSRPEM(t *testing.T) string {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	der, err := x509.CreateCertificateRequest(rand.Reader,
-		&x509.CertificateRequest{Subject: pkix.Name{CommonName: cn}}, key)
+		&x509.CertificateRequest{Subject: pkix.Name{CommonName: "client"}}, key)
 	require.NoError(t, err)
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
 }
@@ -117,7 +119,7 @@ func TestOIDCKubeLogin_Happy(t *testing.T) {
 		stubVerifier{claims: oidc.Claims{Subject: "u-1", Email: "alice@corp", Groups: []string{"eng"}}}, sink)
 
 	body, _ := json.Marshal(map[string]any{
-		"id_token": "tok", "nonce": "N", "csr": newCSRPEM(t, "client"), "cluster": "prod",
+		"id_token": "tok", "nonce": "N", "csr": newCSRPEM(t), "cluster": "prod",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/kube/login", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -154,7 +156,7 @@ func TestOIDCKubeLogin_Deny(t *testing.T) {
 		stubVerifier{claims: oidc.Claims{Subject: "u-2", Email: "bob@corp", Groups: []string{"other"}}}, sink)
 
 	body, _ := json.Marshal(map[string]any{
-		"id_token": "tok", "nonce": "N", "csr": newCSRPEM(t, "client"), "cluster": "prod",
+		"id_token": "tok", "nonce": "N", "csr": newCSRPEM(t), "cluster": "prod",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/kube/login", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -172,7 +174,7 @@ func TestOIDCKubeLogin_VerifyFailure(t *testing.T) {
 	s := newOIDCTestServer(t, enf, stubVerifier{err: fmt.Errorf("bad signature")}, &captureSink{})
 
 	body, _ := json.Marshal(map[string]any{
-		"id_token": "tok", "nonce": "N", "csr": newCSRPEM(t, "client"), "cluster": "prod",
+		"id_token": "tok", "nonce": "N", "csr": newCSRPEM(t), "cluster": "prod",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/kube/login", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -287,4 +289,41 @@ func TestOIDCLogin_DisabledReturns404(t *testing.T) {
 		s.router.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusNotFound, rec.Code, "%s %s", tc.method, tc.path)
 	}
+}
+
+// TestOIDCKubeLogin_NoDeviceCAReturns503 proves the login stays fail-closed when
+// SSO is enabled but the device CA is unavailable (no state dir): a 503, never a
+// panic and never a certificate, even for an otherwise-authorized identity.
+func TestOIDCKubeLogin_NoDeviceCAReturns503(t *testing.T) {
+	enf, err := policy.NewFromSource(t.Context(), "id.rego", kubeIdentityPolicy)
+	require.NoError(t, err)
+	s := &Server{
+		opts:          Options{Enforcer: enf, AuditSink: &captureSink{}},
+		deviceCA:      nil, // state dir unavailable
+		oidcVerifier:  stubVerifier{claims: oidc.Claims{Subject: "u-1", Email: "alice@corp", Groups: []string{"eng"}}},
+		deviceCertTTL: time.Hour,
+	}
+	body, _ := json.Marshal(map[string]any{
+		"id_token": "tok", "nonce": "", "csr": newCSRPEM(t), "cluster": "prod",
+	})
+	rec := httptest.NewRecorder()
+	s.handleKubeLogin(rec, httptest.NewRequest(http.MethodPost, "/api/v1/kube/login", bytes.NewReader(body)))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.NotContains(t, rec.Body.String(), "CERTIFICATE")
+}
+
+// TestOIDCSSHLogin_NoSSHCAReturns503 is the ssh counterpart.
+func TestOIDCSSHLogin_NoSSHCAReturns503(t *testing.T) {
+	enf, err := policy.NewFromSource(t.Context(), "id.rego", sshIdentityPolicy)
+	require.NoError(t, err)
+	s := &Server{
+		opts:          Options{Enforcer: enf, AuditSink: &captureSink{}},
+		sshCA:         nil, // state dir unavailable
+		oidcVerifier:  stubVerifier{claims: oidc.Claims{Subject: "u-1", Email: "alice@corp", Groups: []string{"eng"}}},
+		deviceCertTTL: time.Hour,
+	}
+	body, _ := json.Marshal(map[string]any{"id_token": "tok", "nonce": "", "public_key": ""})
+	rec := httptest.NewRecorder()
+	s.handleSSHLogin(rec, httptest.NewRequest(http.MethodPost, "/api/v1/ssh/login", bytes.NewReader(body)))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
