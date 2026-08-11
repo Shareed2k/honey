@@ -1,0 +1,110 @@
+# Reference topology: honey SSO access to a Kubernetes cluster.
+#
+#   keycloak  — an OIDC identity provider (realm "corp", user alice in group "eng")
+#   k3s       — a single-node Kubernetes cluster
+#   init      — one-shot: waits for k3s, rewrites its kubeconfig for honey, applies RBAC
+#   honey     — runs `honey web`, hosting the SSO login endpoints (:8765) and the
+#               mTLS Kubernetes access proxy (:6443, exposed on the host as :7443)
+#
+# This demonstrates the wiring; see README.md for the step-by-step run. The
+# automated end-to-end proof of the same chain lives in internal/ssoe2e.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # The issuer honey and the CLI both discover. It MUST resolve to this
+      # container from every party (see README: add `127.0.0.1 keycloak` to your
+      # host /etc/hosts so the host-side `honey kube login` reaches the same URL).
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    volumes:
+      - ./keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /realms/corp/.well-known/openid-configuration HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q issuer <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  k3s:
+    image: rancher/k3s:v1.31.5-k3s1
+    command:
+      - server
+      - --tls-san=k3s          # cert valid for the in-network hostname honey uses
+      - --tls-san=127.0.0.1
+      - --disable=traefik
+      - --disable=metrics-server
+      - --write-kubeconfig-mode=666
+    tmpfs:
+      - /run
+      - /var/run
+    privileged: true
+    environment:
+      K3S_KUBECONFIG_OUTPUT: /output/kubeconfig.yaml
+    volumes:
+      - kube:/output
+    ports:
+      - "6443:6443"
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /output/kubeconfig.yaml && k3s kubectl get --raw=/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  # One-shot: rewrite the k3s kubeconfig so honey reaches the API at https://k3s:6443,
+  # drop it where honey reads it, then apply the demo RBAC (a pods-viewer ClusterRole
+  # bound to the Kubernetes group "honey-viewers" that the identity policy maps to).
+  init:
+    image: rancher/k3s:v1.31.5-k3s1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        until [ -f /output/kubeconfig.yaml ]; do echo "waiting for k3s kubeconfig..."; sleep 2; done
+        sed 's#https://127.0.0.1:6443#https://k3s:6443#' /output/kubeconfig.yaml > /honey/kubeconfig.yaml
+        export KUBECONFIG=/output/kubeconfig.yaml
+        until k3s kubectl get --raw=/readyz >/dev/null 2>&1; do echo "waiting for k3s api..."; sleep 2; done
+        k3s kubectl apply -f /rbac.yaml
+        echo "init complete: kubeconfig written + RBAC applied"
+    depends_on:
+      k3s:
+        condition: service_healthy
+    volumes:
+      - kube:/output
+      - honeydata:/honey
+      - ./k8s/rbac.yaml:/rbac.yaml:ro
+
+  honey:
+    build:
+      context: ../..
+      dockerfile: examples/sso-k8s/Dockerfile.honey
+    command:
+      - web
+      - --listen=0.0.0.0:8765
+      - --browser=false
+    environment:
+      HONEY_CONFIG: /data/config.yaml
+      XDG_STATE_HOME: /data/state
+      HONEY_WEB_TOKEN: demo-admin-token   # for admin ops; SSO login does not need it
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - ./honey/config.yaml:/data/config.yaml:ro
+      - ./honey/policies:/data/policies:ro
+      - honeydata:/honey            # holds the rewritten kubeconfig from init
+      - honeystate:/data/state      # device CA + proxy serving cert persist here
+    ports:
+      - "8765:8765"   # honey web API (SSO login endpoints)
+      - "7443:6443"   # honey mTLS Kubernetes access proxy
+
+volumes:
+  kube:
+  honeydata:
+  honeystate:

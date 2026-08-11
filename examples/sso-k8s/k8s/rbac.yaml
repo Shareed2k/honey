@@ -1,0 +1,33 @@
+# Demo RBAC applied to the cluster by the init service.
+#
+# honey impersonates the identity the OPA policy resolves (Kubernetes user =
+# email, group = honey-viewers). In-cluster RBAC then governs what that identity
+# may do. Here: the group "honey-viewers" may read pods cluster-wide.
+#
+# NOTE on the impersonate prerequisite: honey authenticates to the API server
+# with the kubeconfig's identity and layers Impersonate-* headers. That identity
+# must be allowed to impersonate users/groups. This example uses the k3s admin
+# kubeconfig (cluster-admin, which can impersonate) for simplicity. In
+# production, use a dedicated service account granted a ClusterRole with the
+# "impersonate" verb on users/groups, not cluster-admin.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: honey-pods-viewer
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: honey-viewers-pods
+subjects:
+  - kind: Group
+    name: honey-viewers          # the group honey's identity policy maps "eng" members to
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: honey-pods-viewer
+  apiGroup: rbac.authorization.k8s.io

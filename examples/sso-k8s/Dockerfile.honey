@@ -1,0 +1,17 @@
+# Build honey from source for the SSO example. Build context is the repo root
+# (see docker-compose.yml: context ../.. ). This is a lean build for the k8s
+# access proxy + SSO login endpoints — it does not embed the web UI or the
+# optional ONNX anomaly runtime, which the proxy/login paths do not need.
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=1 go build -trimpath -o /out/honey ./cmd/honey
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/honey /usr/local/bin/honey
+EXPOSE 8765 6443
+ENTRYPOINT ["/usr/local/bin/honey"]
