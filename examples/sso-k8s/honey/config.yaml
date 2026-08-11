@@ -1,0 +1,32 @@
+# honey config for the SSO k8s example. Loaded via HONEY_CONFIG=/data/config.yaml.
+
+# SSO login: honey verifies id_tokens from this OIDC provider and maps their
+# claims (via the identity policy below) to a Kubernetes identity.
+oidc:
+  issuer: http://keycloak:8080/realms/corp   # must resolve identically from honey + the CLI/browser
+  client_id: honey-kube                       # the public client; also the expected token audience
+  scopes: [email]                             # openid is always included; groups arrives via a realm mapper
+  username_claim: email                       # -> Impersonate-User / cert CN / ssh KeyId
+  groups_claim: groups                        # -> Impersonate-Group / cert O=
+
+# SSO/enroll certificates are short-lived (no revocation exists; short TTL is the mitigation).
+device_cert_ttl: 1h
+
+# The inbound Kubernetes access proxy (started by `honey web`). kubectl connects
+# here over mTLS with an honey-issued client cert; honey impersonates the mapped
+# identity and reverse-proxies to the real API server.
+k8s_proxy:
+  listen: "0.0.0.0:6443"
+  policy_dir: /data/policies      # holds the identity + k8s_request rego
+  clusters:
+    - name: prod                  # kubectl reaches it at /prod
+      kubeconfig: /honey/kubeconfig.yaml   # written by the init service (server: https://k3s:6443)
+      labels:
+        env: dev                  # exposed to k8s_request policy as input.cluster_labels
+      impersonate:
+        user_from: cn             # Impersonate-User from the client-cert CN (only supported value)
+        # No default_groups: groups come from the SSO identity (cert O=).
+
+# The identity + k8s_request policies both live in policy_dir; honey web also
+# loads this dir for the identity decision.
+policy_dir: /data/policies
