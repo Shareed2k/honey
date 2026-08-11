@@ -93,6 +93,10 @@ func (s *Server) resolveIdentity(ctx context.Context, target, cluster string, cl
 // session-auth group. Fail-closed: 401 on verification failure, 403 on a denied
 // identity. Never logs id_token, certificate, or CSR material.
 func (s *Server) handleKubeLogin(w http.ResponseWriter, r *http.Request) {
+	if s.deviceCA == nil {
+		httpError(w, fmt.Errorf("device certificate authority not available (no state dir)"), http.StatusServiceUnavailable)
+		return
+	}
 	var body struct {
 		IDToken string `json:"id_token"`
 		Nonce   string `json:"nonce"`
@@ -155,6 +159,10 @@ func (s *Server) handleKubeLogin(w http.ResponseWriter, r *http.Request) {
 // no principals — the ssh CA requires at least one). Never logs id_token,
 // certificate, or public-key material.
 func (s *Server) handleSSHLogin(w http.ResponseWriter, r *http.Request) {
+	if s.sshCA == nil {
+		httpError(w, fmt.Errorf("ssh certificate authority not available (no state dir)"), http.StatusServiceUnavailable)
+		return
+	}
 	var body struct {
 		IDToken   string `json:"id_token"`
 		Nonce     string `json:"nonce"`

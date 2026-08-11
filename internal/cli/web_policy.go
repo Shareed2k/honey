@@ -90,6 +90,15 @@ func resolveWebAuthConfig(ctx context.Context, file *config.File) (webAuthConfig
 	}
 
 	if file != nil && file.OIDC != nil {
+		// Fail fast on a misconfigured block rather than starting with an
+		// enabled-but-permanently-failing verifier (an empty client_id makes
+		// every token verification fail closed, which is safe but confusing).
+		if strings.TrimSpace(file.OIDC.Issuer) == "" {
+			return cfg, fmt.Errorf("oidc: issuer is required when the oidc block is set")
+		}
+		if strings.TrimSpace(file.OIDC.ClientID) == "" {
+			return cfg, fmt.Errorf("oidc: client_id is required when the oidc block is set")
+		}
 		v, err := oidc.New(ctx, oidc.Config{
 			Issuer:        file.OIDC.Issuer,
 			ClientID:      file.OIDC.ClientID,

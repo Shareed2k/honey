@@ -137,6 +137,14 @@ the SSH certificate's valid principals. **Groups and principals are
 honey-CA-attested**: they are read back out of the certificate honey itself
 signed, never asserted by the client at connection time.
 
+The `identity` policy also receives `input.cluster` (the cluster named at
+`honey kube login <cluster>`), but the issued certificate is **not**
+cluster-scoped — it carries only the user and groups. Use `input.cluster` to
+decide *which identity* to grant, not to fence access to a single cluster;
+per-cluster and per-resource access is enforced on every request by the
+`k8s_request` policy below (via `input.cluster`, `input.cluster_labels`, and the
+request fields), which is the authoritative gate.
+
 ## The `k8s_request` policy: fine-grained resource authorization
 
 Once a Kubernetes identity is issued, every proxied API call is a separate
@@ -230,15 +238,20 @@ ssh -i ~/.ssh/honey_ed25519 alice@gateway-host -p 12222 <resource>
   `127.0.0.1:0`, and only accepts the authorization code back on that
   loopback address — there is no shared client secret and no
   network-reachable redirect target.
-- **A server-bound `nonce`.** A random `nonce` is sent with the authorization
-  request and re-verified against the `id_token`'s `nonce` claim during
-  verification, binding the token to this specific login attempt.
+- **A caller-bound `nonce` (defense-in-depth, not a replay store).** The CLI
+  generates a random `nonce`, sends it with the authorization request, and honey
+  re-verifies it against the `id_token`'s `nonce` claim — binding the token to
+  the caller's own login request. honey stores no nonce server-side, so this is
+  **not** a replay guard for a leaked, still-valid token; short token lifetimes
+  (the provider controls the `id_token` TTL) and TLS transport are the
+  mitigations there. The `id_token` is a bearer credential — treat it as a
+  short-lived secret.
 - **Full `id_token` verification, fail-closed.** honey verifies the token's
   signature against the issuer's published keys, and checks `iss`, `aud`
-  (must equal `client_id`), `exp`, and the `nonce` — an `alg: none` token, an
-  expired token, a wrong-audience token, or a nonce mismatch are all rejected
-  outright. Any verification or policy-evaluation error denies the login;
-  nothing defaults to allow.
+  (must equal `client_id`), and `exp` — an `alg: none` token, an expired token,
+  a wrong-audience token, or a nonce mismatch are all rejected outright. Any
+  verification or policy-evaluation error denies the login; nothing defaults to
+  allow.
 - **Groups and principals are honey-CA-attested, never client-asserted.**
   The `identity` policy's output is baked into the certificate at issuance
   (`O=` for Kubernetes groups, valid principals for SSH); the gateways read
