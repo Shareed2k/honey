@@ -215,6 +215,10 @@ func TestSSOE2E_BrokeredIntercept(t *testing.T) {
 			"id_token": aliceToken,
 		})
 		require.Equal(t, http.StatusNotFound, status, "stopping an unknown session: %s", truncate(body))
+		// Self-contained proof the route is mounted and the HANDLER produced this
+		// 404 (its JSON "unknown session" body), not chi's plain-text 404 for an
+		// unregistered route ("404 page not found").
+		require.Contains(t, body, "unknown session", "expected the handler's JSON 404, got: %s", truncate(body))
 	})
 
 	t.Run("stop_bad_token_401", func(t *testing.T) {
@@ -346,5 +350,9 @@ func testInterceptRBACSplit(t *testing.T, adminRest *rest.Config, adminCS *kuber
 		TargetContainerName: "main",
 	})
 	_, err = adminCS.CoreV1().Pods(ns).UpdateEphemeralContainers(ctx, podName, adminPod, metav1.UpdateOptions{})
-	require.False(t, apierrors.IsForbidden(err), "honey's own credentials must not be forbidden: %v", err)
+	// Assert the call SUCCEEDS (not merely "not Forbidden"): a generic failure
+	// would mean the call is broken for everyone, which would make the operator's
+	// Forbidden above meaningless. NoError subsumes not-Forbidden and proves the
+	// authoritative half of the split — honey's service account can deploy.
+	require.NoError(t, err, "honey's own credentials must succeed at UpdateEphemeralContainers: %v", err)
 }
