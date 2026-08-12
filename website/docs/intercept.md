@@ -214,6 +214,26 @@ honey already deployed; they are never used to create one. This makes the
 gate **authoritative**: there is no code path, other than honey's own gated
 `authorize` endpoint, that can put an interception agent into a pod.
 
+Those port-forward credentials come from `honey kube login <cluster>`: it
+writes a `honey-<cluster>` kubeconfig context pointing at the honey access
+proxy, and `honey intercept --cluster <cluster>` **picks that context up
+automatically** — you don't need a separate local cluster mapping. Port-forward
+traffic then flows through the honey proxy under your impersonated identity,
+which is exactly where the [RBAC split](#the-rbac-split) is enforced (your
+identity has `pods/portforward` but not `pods/ephemeralcontainers`). The
+typical operator flow is therefore two commands:
+
+```bash
+honey kube login prod                         # once: SSO → honey-prod kubeconfig context
+honey intercept api-7d9f -n prod --cluster prod --mode egress -- curl ...
+```
+
+If you would rather point at a specific kubeconfig, an explicit
+`k8s_proxy.clusters` entry naming the cluster in your **own** config overrides
+the login context. honey never silently falls back to your current kubeconfig
+context — the port-forward must reach the same cluster honey authorized and
+audited, so an unknown `--cluster` is an error, not a guess.
+
 ```
 honey intercept <pod>  (brokered)
       │ 1. browser SSO sign-in                     (same flow as `honey kube login`)

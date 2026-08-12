@@ -301,11 +301,13 @@ func runInterceptBrokered(ctx context.Context, cfg *config.File, f interceptFlag
 
 	// The operator's OWN (typically more limited) cluster credentials, used
 	// only to port-forward to the agent honey web already deployed — never to
-	// deploy or exec into anything.
-	restCfg, err := interceptRestConfig(cfg, cluster)
+	// deploy or exec into anything. Prefers the kubeconfig `honey kube login`
+	// wrote for this cluster, so no separate local cluster mapping is needed.
+	restCfg, credSource, err := brokeredOperatorRestConfig(cfg, cluster)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stderr, "intercept: port-forward credentials: %s\n", credSource)
 	pf := &interceptPortForwarder{cfg: restCfg}
 
 	controlAddr, stopControl, err := pf.Forward(ctx, cluster, namespace, pod, resp.ControlPort)
@@ -465,6 +467,61 @@ func interceptRestConfig(cfg *config.File, cluster string) (*rest.Config, error)
 		return nil, fmt.Errorf("intercept: resolve cluster %q kubeconfig: %w", cluster, err)
 	}
 	return restCfg, nil
+}
+
+// brokeredOperatorRestConfig resolves the LOCAL credentials the operator uses to
+// port-forward to an agent honey web already deployed on the brokered path. These
+// creds only port-forward — they never deploy or exec. Precedence:
+//
+//  1. an explicit k8s_proxy.clusters entry in the operator's own config, if one
+//     names this cluster;
+//  2. the "honey-<cluster>" kubeconfig context that `honey kube login <cluster>`
+//     writes — port-forwarding then flows through the honey proxy under the
+//     operator's impersonated identity, which is exactly where the intercept RBAC
+//     split (portforward yes, ephemeralcontainers no) is enforced;
+//  3. otherwise an error telling the operator to log in or configure the cluster.
+//
+// It deliberately does NOT fall back to an arbitrary current kubeconfig context:
+// the port-forward must reach the same cluster honey authorized and audited. The
+// returned source string names the resolved credential origin for a transparency
+// line and carries no secret.
+func brokeredOperatorRestConfig(cfg *config.File, cluster string) (*rest.Config, string, error) {
+	cluster = strings.TrimSpace(cluster)
+	if cluster == "" {
+		return nil, "", errors.New("intercept: --cluster is required for brokered interception")
+	}
+	if cfg != nil && cfg.K8sProxy != nil {
+		for _, c := range cfg.K8sProxy.Clusters {
+			if c.Name == cluster {
+				rc, err := k8sprovider.RestConfigForKubeconfig(c.Kubeconfig, c.Context)
+				if err != nil {
+					return nil, "", fmt.Errorf("intercept: resolve cluster %q kubeconfig: %w", cluster, err)
+				}
+				return rc, fmt.Sprintf("k8s_proxy.clusters[%q]", cluster), nil
+			}
+		}
+	}
+	kubeconfigPath := defaultKubeconfigPath()
+	loginContext := "honey-" + cluster
+	if hasKubeContext(kubeconfigPath, loginContext) {
+		rc, err := k8sprovider.RestConfigForKubeconfig(kubeconfigPath, loginContext)
+		if err != nil {
+			return nil, "", fmt.Errorf("intercept: resolve %q login context: %w", loginContext, err)
+		}
+		return rc, fmt.Sprintf("honey kube login context %q", loginContext), nil
+	}
+	return nil, "", fmt.Errorf("intercept: no local credentials for cluster %q — run `honey kube login %s` first, or define it under k8s_proxy.clusters", cluster, cluster)
+}
+
+// hasKubeContext reports whether the kubeconfig at path defines a context named
+// name. A missing or unreadable kubeconfig reports false.
+func hasKubeContext(path, name string) bool {
+	cfg, err := loadOrNewKubeconfig(path)
+	if err != nil {
+		return false
+	}
+	_, ok := cfg.Contexts[name]
+	return ok
 }
 
 // interceptPortForwarder opens client-go SPDY port-forwards to a target pod,
