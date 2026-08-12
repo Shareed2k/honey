@@ -8,6 +8,10 @@ before:
     - sh -c 'test -f internal/webserver/static/index.html || go tool task webui'
     - go generate ./...
     - go tool task download-onnx-runtime
+    # Build the per-arch interception injector libraries into the go:embed dirs
+    # (replaces the committed placeholders). Host lib always; cross targets when
+    # their toolchain is present on the release builder.
+    - go tool task build-intercept-injector
     - go tool task build-honey-plugin-init
     - mkdir -p completions
     # Wrapped in `sh -c` so the `>` redirect is honored — goreleaser runs

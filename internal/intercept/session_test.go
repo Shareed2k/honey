@@ -373,6 +373,32 @@ func TestSession_teardownOnRunnerError(t *testing.T) {
 	assert.Equal(t, "runner boom", h.sink.events[1].Extra["reason"])
 }
 
+func TestSession_resolveInjectorOverridePrecedence(t *testing.T) {
+	// An explicit InjectorLib takes precedence over the embedded library and is
+	// returned verbatim (proving Run would load the operator/test-supplied lib).
+	override := filepath.Join(t.TempDir(), "libhoney-injector.test")
+	require.NoError(t, os.WriteFile(override, []byte("injector"), 0o600))
+
+	s := New(Deps{}, Options{InjectorLib: override})
+	got, err := s.resolveInjector(t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, override, got, "an explicit InjectorLib must be used verbatim")
+
+	// A missing override path is a clear error, not a silent fallback.
+	sMissing := New(Deps{}, Options{InjectorLib: filepath.Join(t.TempDir(), "does-not-exist")})
+	_, err = sMissing.resolveInjector(t.TempDir())
+	require.Error(t, err)
+
+	// With no override, resolveInjector falls back to extracting the embedded
+	// library into the session dir (a path under that dir, not the override).
+	dir := t.TempDir()
+	sDefault := New(Deps{}, Options{})
+	extracted, err := sDefault.resolveInjector(dir)
+	require.NoError(t, err)
+	assert.Equal(t, dir, filepath.Dir(extracted), "the embedded library is extracted into the session dir")
+	assert.NotEqual(t, override, extracted)
+}
+
 func TestSession_ctxCancelDrainsWithinGrace(t *testing.T) {
 	defer goleak.VerifyNone(t)
 

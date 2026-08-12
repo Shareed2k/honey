@@ -137,6 +137,11 @@ tasks:
               "onnxruntime-linux-aarch64-{{.ONNX_VERSION}}/lib/libonnxruntime.so.{{.ONNX_VERSION}}"
         ln -sf "libonnxruntime.so.{{.ONNX_VERSION}}" runtime/onnx/linux/arm64/libonnxruntime.so
 
+  build-intercept-injector:
+    desc: Build the interception injector library per OS/arch into internal/intercept/injector (release-time; dev builds only the host lib, cross targets need their toolchains)
+    cmds:
+      - bash scripts/build-intercept-injector.sh
+
   anomaly-install:
     desc: Install Python dependencies for anomaly detection training
     cmds:
