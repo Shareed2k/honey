@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/tools/clientcmd"
@@ -37,6 +38,15 @@ var (
 	kubeLoginInsecure   bool
 	kubeLoginKubeconfig string
 	kubeLoginContext    string
+)
+
+// browserAuthCodeFlowFn and kubeOIDCLoginFn are test seams over the real
+// browserAuthCodeFlow and kubeOIDCLogin functions: fetchKubeCertViaSSO calls
+// through these vars so unit tests can stub out the browser/IdP round trip
+// instead of driving a live login.
+var (
+	browserAuthCodeFlowFn = browserAuthCodeFlow
+	kubeOIDCLoginFn       = kubeOIDCLogin
 )
 
 var kubeCmd = &cobra.Command{
@@ -120,15 +130,12 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	keyPEM, csrPEM, err := generateKeyAndCSR()
-	if err != nil {
-		return fmt.Errorf("generate key and csr: %w", err)
-	}
-
 	var (
 		certPEM []byte
+		keyPEM  []byte
 		caPEM   []byte
 		cn      string
+		err     error
 	)
 	if code != "" {
 		// Enroll-code path: an explicit trust source is required, as before.
@@ -138,20 +145,22 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 		if proxyCAPath == "" {
 			fmt.Fprintln(errOut, "warning: --insecure-skip-tls-verify disables verification of the proxy's serving certificate; prefer --proxy-ca")
 		}
+		var csrPEM []byte
+		keyPEM, csrPEM, err = generateKeyAndCSR()
+		if err != nil {
+			return fmt.Errorf("generate key and csr: %w", err)
+		}
 		caPEM = flagProxyCA
 		certPEM, cn, err = enrollDevice(cmd.Context(), adminURL, code, csrPEM)
 		if err != nil {
 			return err
 		}
 	} else {
-		// SSO (OIDC) path: browser sign-in, then exchange the id_token + CSR for a
-		// signed certificate. The server returns the proxy CA when it knows it.
-		idToken, nonce, ferr := browserAuthCodeFlow(cmd.Context(), adminURL, nil)
-		if ferr != nil {
-			return fmt.Errorf("oidc login: %w", ferr)
-		}
+		// SSO (OIDC) path: browser sign-in, then exchange the id_token + a freshly
+		// generated CSR for a signed certificate. The server returns the proxy CA
+		// when it knows it.
 		var serverCA []byte
-		certPEM, serverCA, cn, _, err = kubeOIDCLogin(cmd.Context(), adminURL, cluster, idToken, nonce, csrPEM)
+		certPEM, keyPEM, serverCA, cn, _, err = fetchKubeCertViaSSO(cmd.Context(), adminURL, cluster, nil)
 		if err != nil {
 			return err
 		}
@@ -204,6 +213,36 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(out, "\nNext steps:\n")
 	fmt.Fprintf(out, "  kubectl --context %s get pods\n", contextName)
 	return nil
+}
+
+// fetchKubeCertViaSSO runs a browser SSO (OIDC) sign-in and exchanges the
+// resulting id_token, together with a freshly generated key/CSR pair, for a
+// signed mTLS client certificate. It is the single "get a fresh cert" path
+// shared by interactive kube login and the kubectl exec credential plugin.
+// caPEM is the proxy's serving CA when the server returned one, otherwise
+// empty. Never log certPEM or keyPEM.
+func fetchKubeCertViaSSO(ctx context.Context, adminURL, cluster string, extraScopes []string) (certPEM, keyPEM, caPEM []byte, cn string, notAfter time.Time, err error) {
+	idToken, nonce, err := browserAuthCodeFlowFn(ctx, adminURL, extraScopes)
+	if err != nil {
+		return nil, nil, nil, "", time.Time{}, fmt.Errorf("oidc login: %w", err)
+	}
+
+	keyPEM, csrPEM, err := generateKeyAndCSR()
+	if err != nil {
+		return nil, nil, nil, "", time.Time{}, fmt.Errorf("generate key and csr: %w", err)
+	}
+
+	certPEM, caPEM, cn, _, err = kubeOIDCLoginFn(ctx, adminURL, cluster, idToken, nonce, csrPEM)
+	if err != nil {
+		return nil, nil, nil, "", time.Time{}, fmt.Errorf("kube oidc login: %w", err)
+	}
+
+	notAfter, err = certNotAfter(certPEM)
+	if err != nil {
+		return nil, nil, nil, "", time.Time{}, fmt.Errorf("parse certificate expiry: %w", err)
+	}
+
+	return certPEM, keyPEM, caPEM, cn, notAfter, nil
 }
 
 // generateKeyAndCSR creates an EC P-256 key and a PEM-encoded certificate
