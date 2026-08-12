@@ -1060,3 +1060,44 @@ func TestDeviceCertTTLValueResolver(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadInterceptBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(`intercept:
+  enabled: true
+  agent_image: ghcr.io/example/mogate:latest
+  default_mode: [egress, incoming]
+  policy_dir: /etc/honey/policies
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if f.Intercept == nil {
+		t.Fatal("Intercept nil")
+	}
+	if !f.Intercept.Enabled || f.Intercept.AgentImage != "ghcr.io/example/mogate:latest" {
+		t.Errorf("intercept = %+v", f.Intercept)
+	}
+	if len(f.Intercept.DefaultMode) != 2 || f.Intercept.DefaultMode[0] != "egress" {
+		t.Errorf("default_mode = %v", f.Intercept.DefaultMode)
+	}
+}
+
+func TestLoadNoInterceptBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("device_cert_ttl: 12h\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if f.Intercept != nil {
+		t.Errorf("expected nil Intercept, got %+v", f.Intercept)
+	}
+}
