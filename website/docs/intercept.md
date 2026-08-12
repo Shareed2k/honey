@@ -410,6 +410,18 @@ brokered session is bounded by `intercept.session_ttl` (default **1h**) from
 the moment it's created, and a background janitor stops any session past its
 `expires_at` whether or not the CLI ever calls `stop`.
 
+:::note Known limitation — honey web restart
+The session registry and its TTL janitor are **in-memory**. If honey web
+itself restarts (a deploy, an OOM kill, a crash) while brokered sessions are
+live, it loses track of them: the janitor can only reap sessions it still
+holds, and — by the [RBAC split](#the-rbac-split) — only honey's own service
+account can `exec` into the agent to signal it, so no operator can tear it
+down either. Such an agent (notably an `incoming`-mode one) keeps its
+redirects until the pod is deleted. Keep `session_ttl` modest, and prefer
+draining brokered sessions before restarting honey web. Reconciling live
+agents on startup is a planned improvement.
+:::
+
 ## Prerequisites & limits
 
 - **Ephemeral containers** must be available on the target cluster (GA since
