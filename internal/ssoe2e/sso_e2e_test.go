@@ -68,6 +68,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/intercept"
 	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/oidc"
 	"github.com/shareed2k/honey/internal/policy"
@@ -387,6 +388,12 @@ type serverArgs struct {
 	issuer    string
 	adminRest *rest.Config
 	sink      audit.Sink
+
+	// interceptBroker and interceptModes are optional: nil/empty leaves the
+	// intercept routes unregistered (webserver.Options.InterceptBroker nil),
+	// so TestSSOE2E_KubeAndSSH — which never sets these — is unaffected.
+	interceptBroker *intercept.Broker
+	interceptModes  []string
 }
 
 // startServer boots ONE real webserver.Server hosting the SSO login endpoints
@@ -410,13 +417,15 @@ func startServer(t *testing.T, args serverArgs) (apiAddr, proxyAddr string) {
 	proxyAddr = pickAddr(t)
 
 	srv, err := webserver.NewServer(webserver.Options{
-		ListenAddr:    apiAddr,
-		Token:         "sso-e2e-token",
-		AuditSink:     args.sink,
-		Enforcer:      args.enf,
-		OIDCVerifier:  args.verifier,
-		OIDCPublic:    &webserver.OIDCPublicConfig{Issuer: args.issuer, ClientID: oidcClientID, Scopes: []string{"openid", "email"}},
-		DeviceCertTTL: time.Hour,
+		ListenAddr:           apiAddr,
+		Token:                "sso-e2e-token",
+		AuditSink:            args.sink,
+		Enforcer:             args.enf,
+		OIDCVerifier:         args.verifier,
+		OIDCPublic:           &webserver.OIDCPublicConfig{Issuer: args.issuer, ClientID: oidcClientID, Scopes: []string{"openid", "email"}},
+		DeviceCertTTL:        time.Hour,
+		InterceptBroker:      args.interceptBroker,
+		InterceptDefaultMode: args.interceptModes,
 		K8sProxy: &k8sproxy.ServerConfig{
 			Listen:    proxyAddr,
 			Registry:  reg,
