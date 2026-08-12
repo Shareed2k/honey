@@ -1,4 +1,4 @@
-// Package reverseproxy provides a Teleport-inspired HTTP reverse proxy.
+// Package reverseproxy provides an HTTP reverse proxy.
 package reverseproxy
 
 import (
