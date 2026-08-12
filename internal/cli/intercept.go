@@ -211,12 +211,23 @@ func interceptActor(flag string) string {
 func interceptRestConfig(cfg *config.File, cluster string) (*rest.Config, error) {
 	cluster = strings.TrimSpace(cluster)
 	kubeconfig, kubeContext := "", ""
-	if cluster != "" && cfg.K8sProxy != nil {
-		for _, c := range cfg.K8sProxy.Clusters {
-			if c.Name == cluster {
-				kubeconfig, kubeContext = c.Kubeconfig, c.Context
-				break
+	if cluster != "" {
+		// A named cluster MUST resolve to a configured kubeconfig. Silently
+		// falling back to the current context would deploy the agent to a
+		// different cluster than the one the OPA gate authorized and the audit
+		// records — a gate/audit-integrity gap. Error instead.
+		found := false
+		if cfg.K8sProxy != nil {
+			for _, c := range cfg.K8sProxy.Clusters {
+				if c.Name == cluster {
+					kubeconfig, kubeContext = c.Kubeconfig, c.Context
+					found = true
+					break
+				}
 			}
+		}
+		if !found {
+			return nil, fmt.Errorf("intercept: cluster %q is not defined in k8s_proxy.clusters", cluster)
 		}
 	}
 	restCfg, err := k8sprovider.RestConfigForKubeconfig(kubeconfig, kubeContext)
