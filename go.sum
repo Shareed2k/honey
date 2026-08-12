@@ -1273,8 +1273,8 @@ github.com/segmentio/go-snakecase v1.2.0 h1:4cTmEjPGi03WmyAHWBjX53viTpBkn/z+4DO+
 github.com/segmentio/go-snakecase v1.2.0/go.mod h1:jk1miR5MS7Na32PZUykG89Arm+1BUSYhuGR6b7+hJto=
 github.com/sergi/go-diff v1.4.0 h1:n/SP9D5ad1fORl+llWyN+D6qoUETXNZARKjyY2/KVCw=
 github.com/sergi/go-diff v1.4.0/go.mod h1:A0bzQcvG0E7Rwjx0REVgAGH58e96+X0MeOfepqsbeW4=
-github.com/shareed2k/mogate v0.1.0 h1:PHrS1iUwZL/fBfR4k8N0JqYz3W20GkjfWdJlhIB1LGc=
-github.com/shareed2k/mogate v0.1.0/go.mod h1:c3WIAVagtXuiz4G6ofZMA/Jp+HZpFUdrnGWOW/baxAI=
+github.com/shareed2k/mogate v0.1.1 h1:8KJ4CW7EW0VImdibljuAM+QTuyl7Ua8owPLwssmLFhE=
+github.com/shareed2k/mogate v0.1.1/go.mod h1:c3WIAVagtXuiz4G6ofZMA/Jp+HZpFUdrnGWOW/baxAI=
 github.com/shirou/gopsutil/v4 v4.26.7 h1:IXzpHz/dkMRYAhKkOXr1HB6SuzWU3eoyyeWe7g3bNZc=
 github.com/shirou/gopsutil/v4 v4.26.7/go.mod h1:5O9FjBiXoTDFatIWjZZosqj4pV0DRtLx598xGbBehzM=
 github.com/shopspring/decimal v1.4.0 h1:bxl37RwXBklmTi0C79JfXCEBD1cqqHt0bbgBAGFp81k=
