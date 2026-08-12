@@ -68,3 +68,31 @@ func TestBrokeredOperatorRestConfig_EmptyClusterErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--cluster is required")
 }
+
+// A k8s_proxy.clusters entry that names the cluster but supplies neither a
+// kubeconfig nor a context must NOT resolve to the ambient current-context; it
+// is treated as no mapping and falls through to the honey kube login context.
+func TestBrokeredOperatorRestConfig_EmptyMappingFallsThroughToLoginContext(t *testing.T) {
+	path := writeKubeconfigWithContext(t, "honey-prod", "https://proxy.example:6443/prod")
+	t.Setenv("KUBECONFIG", path)
+	cfg := &config.File{K8sProxy: &config.K8sProxyConfig{
+		Clusters: []config.K8sProxyCluster{{Name: "prod"}}, // no Kubeconfig, no Context
+	}}
+
+	rc, source, err := brokeredOperatorRestConfig(cfg, "prod")
+	require.NoError(t, err)
+	require.Equal(t, "https://proxy.example:6443/prod", rc.Host)
+	require.Contains(t, source, "honey kube login context")
+}
+
+// An empty mapping with no login context must error (never the current-context).
+func TestBrokeredOperatorRestConfig_EmptyMappingNoLoginErrors(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "kubeconfig")) // no honey-prod context
+	cfg := &config.File{K8sProxy: &config.K8sProxyConfig{
+		Clusters: []config.K8sProxyCluster{{Name: "prod"}},
+	}}
+
+	_, _, err := brokeredOperatorRestConfig(cfg, "prod")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no local credentials")
+}

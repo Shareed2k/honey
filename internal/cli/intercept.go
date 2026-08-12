@@ -262,6 +262,14 @@ func runInterceptBrokered(ctx context.Context, cfg *config.File, f interceptFlag
 	}
 	cluster := strings.TrimSpace(f.cluster)
 	container := strings.TrimSpace(f.container)
+	// Validate the cluster up front: the brokered path needs it both to route the
+	// server-side deploy and to resolve the operator's port-forward credentials.
+	// Fail here, before the SSO round-trip and any server-side deploy, rather than
+	// after — an empty --cluster otherwise pays for a full authorize+deploy+teardown
+	// before the local credential resolver rejects it.
+	if cluster == "" {
+		return errors.New("intercept: --cluster is required for brokered interception")
+	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -492,13 +500,22 @@ func brokeredOperatorRestConfig(cfg *config.File, cluster string) (*rest.Config,
 	}
 	if cfg != nil && cfg.K8sProxy != nil {
 		for _, c := range cfg.K8sProxy.Clusters {
-			if c.Name == cluster {
-				rc, err := k8sprovider.RestConfigForKubeconfig(c.Kubeconfig, c.Context)
-				if err != nil {
-					return nil, "", fmt.Errorf("intercept: resolve cluster %q kubeconfig: %w", cluster, err)
-				}
-				return rc, fmt.Sprintf("k8s_proxy.clusters[%q]", cluster), nil
+			if c.Name != cluster {
+				continue
 			}
+			// An entry that names the cluster but supplies neither a kubeconfig
+			// nor a context would resolve to clientcmd's ambient current-context
+			// — the exact silent fallback this resolver forbids. Treat it as no
+			// mapping and fall through to the honey kube login context. Cluster
+			// names are unique, so stop scanning.
+			if strings.TrimSpace(c.Kubeconfig) == "" && strings.TrimSpace(c.Context) == "" {
+				break
+			}
+			rc, err := k8sprovider.RestConfigForKubeconfig(c.Kubeconfig, c.Context)
+			if err != nil {
+				return nil, "", fmt.Errorf("intercept: resolve cluster %q kubeconfig: %w", cluster, err)
+			}
+			return rc, fmt.Sprintf("k8s_proxy.clusters[%q]", cluster), nil
 		}
 	}
 	kubeconfigPath := defaultKubeconfigPath()
