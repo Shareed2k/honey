@@ -105,14 +105,24 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 	if cluster == "" {
 		return fmt.Errorf("cluster name is required")
 	}
+	adminURL := strings.TrimRight(strings.TrimSpace(kubeLoginAdminURL), "/")
+	if adminURL == "" {
+		return fmt.Errorf("--admin-url is required")
+	}
+
+	// kubectl invokes "honey kube login <cluster>" as a client-go credential
+	// plugin (see inExecCredentialMode), in which case it wants a single
+	// ExecCredential JSON document on stdout and nothing else: --proxy is not
+	// needed for that path, so this dispatch happens before the --proxy
+	// required check below.
+	if inExecCredentialMode() {
+		return runKubeCredential(cmd, cluster, adminURL)
+	}
+
 	code := strings.TrimSpace(kubeLoginEnrollCode)
 	proxy := strings.TrimSpace(kubeLoginProxy)
 	if proxy == "" {
 		return fmt.Errorf("--proxy is required")
-	}
-	adminURL := strings.TrimRight(strings.TrimSpace(kubeLoginAdminURL), "/")
-	if adminURL == "" {
-		return fmt.Errorf("--admin-url is required")
 	}
 
 	proxyCAPath := strings.TrimSpace(kubeLoginProxyCA)
