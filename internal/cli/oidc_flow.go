@@ -29,10 +29,18 @@ const callbackPageHTML = `<!doctype html><html><head><meta charset="utf-8">` +
 	`<h2>Sign-in complete</h2>` +
 	`<p>You may close this tab and return to the terminal.</p></body></html>`
 
+// openBrowserFn is a seam so tests can override the OS-specific browser open
+// without shelling out.
+var openBrowserFn = openBrowser
+
 // authURLPrinter surfaces the sign-in URL to the user. It is a package variable
-// so tests can capture the URL instead of printing it; production prints to
-// stderr rather than shelling out to a browser (no exec).
+// so tests can capture the URL instead of printing it; production attempts to
+// open the browser (best-effort) unless oidcNoBrowser is set, and always prints
+// the URL to stderr as a fallback.
 var authURLPrinter = func(authURL string) {
+	if !oidcNoBrowser {
+		_ = openBrowserFn(authURL) // best-effort; the printed URL below is the fallback
+	}
 	fmt.Fprintf(os.Stderr, "\nOpen this URL in your browser to sign in:\n\n  %s\n\n", authURL)
 }
 
