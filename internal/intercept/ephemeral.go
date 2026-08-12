@@ -14,6 +14,11 @@ import (
 // the target's network namespace (redirect rules, tunnel devices).
 const capNetAdmin corev1.Capability = "NET_ADMIN"
 
+// agentBypassGID is the group id the agent runs under when elevated so that its
+// own egress bypasses the redirect it installs. It matches the agent's own
+// default owner-bypass group.
+const agentBypassGID int64 = 65533
+
 // ephemeralPollInterval is how often waitEphemeralRunning re-reads the pod
 // while waiting for the interception container to reach the running state.
 const ephemeralPollInterval = 200 * time.Millisecond
@@ -34,6 +39,24 @@ func ephemeralContainer(name, image, targetContainer string, args []string) core
 			},
 		},
 		TargetContainerName: targetContainer,
+	}
+}
+
+// elevateEphemeralPrivilege rewrites ec's security context to run privileged as
+// root with the agent's bypass group. It is used only by the end-to-end test on
+// a nested k3s where NET_ADMIN alone is not reliably propagated; production
+// leaves the NET_ADMIN-only context ephemeralContainer builds.
+func elevateEphemeralPrivilege(ec *corev1.EphemeralContainer) {
+	privileged := true
+	runAsUser := int64(0)
+	runAsGroup := agentBypassGID
+	ec.SecurityContext = &corev1.SecurityContext{
+		Privileged: &privileged,
+		RunAsUser:  &runAsUser,
+		RunAsGroup: &runAsGroup,
+		Capabilities: &corev1.Capabilities{
+			Add: []corev1.Capability{capNetAdmin},
+		},
 	}
 }
 

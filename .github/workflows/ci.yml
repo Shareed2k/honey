@@ -49,7 +49,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   e2e-k8s:
-    name: E2E (k8s proxy + SSO)
+    name: E2E (k8s proxy + SSO + intercept)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -66,6 +66,13 @@ jobs:
       # this one Docker environment rather than a separate job.
       - name: Kubernetes access proxy + SSO e2e (real k3s via testcontainers)
         run: go test -tags k8s_e2e -run 'TestK8sProxyE2E|TestSSOE2E' ./internal/k8sproxy/... ./internal/ssoe2e/... -v -count=1 -timeout 40m
+
+      # The interception e2e additionally clones the public data-plane module,
+      # builds the linux injector library (make build, needs cc/make which
+      # ubuntu-latest ships) and a linux agent image (docker build), imports both
+      # into the k3s node, and drives the full honey intercept matrix.
+      - name: Local interception e2e (real k3s + agent image + injector via testcontainers)
+        run: go test -tags k8s_e2e -run 'TestInterceptE2E' ./internal/intercept/... -v -count=1 -timeout 45m
 
   lint:
     name: Lint

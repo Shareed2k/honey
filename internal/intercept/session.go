@@ -126,6 +126,21 @@ type Options struct {
 	Command []string
 	// Actor is the authenticated subject requesting the interception.
 	Actor string
+	// InjectorLib optionally overrides the injector library used for local
+	// injection. When empty (the default), Run extracts the platform library
+	// bundled with honey. When set, Run uses this path verbatim instead of
+	// extracting the embedded library — for operators who ship a prebuilt
+	// injector out of band, and for tests that inject a freshly built library.
+	InjectorLib string
+
+	// agentPrivileged runs the interception agent's ephemeral container with a
+	// privileged security context (privileged, uid 0, gid capNetAdminGID) instead
+	// of the default NET_ADMIN-only context. It exists only for the end-to-end
+	// test running against a nested k3s (Docker-in-Docker), where NET_ADMIN is not
+	// reliably propagated to the agent so it cannot program the network namespace.
+	// It is unexported, so production callers keep the default NET_ADMIN-only
+	// context; the zero value leaves production behaviour unchanged.
+	agentPrivileged bool
 }
 
 // Session orchestrates a single OPA-gated, audited interception: it gates the
@@ -174,9 +189,9 @@ func (s *Session) Run(ctx context.Context) (err error) {
 	}
 	cleanups = append(cleanups, func() { _ = os.RemoveAll(dir) })
 
-	injectorLib, err := extractInjector(dir)
+	injectorLib, err := s.resolveInjector(dir)
 	if err != nil {
-		return fmt.Errorf("intercept: extract injector: %w", err)
+		return fmt.Errorf("intercept: resolve injector: %w", err)
 	}
 
 	token, err := mintToken()
@@ -193,6 +208,9 @@ func (s *Session) Run(ctx context.Context) (err error) {
 		return err
 	}
 	ec := ephemeralContainer(agentName, s.opts.AgentImage, s.opts.Container, agentArgs(s.opts.UDP))
+	if s.opts.agentPrivileged {
+		elevateEphemeralPrivilege(&ec)
+	}
 	if err = applyEphemeral(ctx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod, ec); err != nil {
 		return err
 	}
@@ -273,6 +291,22 @@ func (s *Session) newSessionDir() (string, error) {
 		return "", fmt.Errorf("intercept: create session dir: %w", err)
 	}
 	return dir, nil
+}
+
+// resolveInjector returns the injector library path for this session. When
+// Options.InjectorLib is set it is used verbatim (after confirming it exists),
+// so an operator-supplied or test-supplied library takes precedence over the
+// embedded one. Otherwise the platform library bundled with honey is extracted
+// into dir. Keeping the override ahead of extraction means production behaviour
+// is unchanged whenever InjectorLib is empty.
+func (s *Session) resolveInjector(dir string) (string, error) {
+	if s.opts.InjectorLib != "" {
+		if _, err := os.Stat(s.opts.InjectorLib); err != nil {
+			return "", fmt.Errorf("injector library %q: %w", s.opts.InjectorLib, err)
+		}
+		return s.opts.InjectorLib, nil
+	}
+	return extractInjector(dir)
 }
 
 // gateInput builds the OPA authorization input for this session.
