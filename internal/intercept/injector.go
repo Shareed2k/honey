@@ -1,0 +1,88 @@
+package intercept
+
+import (
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"runtime"
+)
+
+// injectorFS embeds the per-platform interception injector libraries, one
+// subdirectory per GOOS_GOARCH. The committed entries are placeholders; the
+// release build replaces them with the real libraries.
+//
+//go:embed injector/*/*
+var injectorFS embed.FS
+
+// ErrNoInjector reports that no interception injector library is bundled for
+// the running platform. The caller should surface a clear message; on some
+// platforms local interception may additionally be blocked by the operating
+// system's integrity protection.
+var ErrNoInjector = errors.New("intercept: no bundled injector for this platform")
+
+// injectorRoot is the directory within the embedded FS that holds the
+// per-platform injector subdirectories.
+const injectorRoot = "injector"
+
+// injectorFileName is the basename the extracted injector library is written
+// under inside the destination directory.
+const injectorFileName = "injector.lib"
+
+// extractInjector writes the injector library for the running platform into dir
+// at mode 0700 and returns its path. It returns ErrNoInjector when no library
+// is bundled for the current GOOS/GOARCH.
+func extractInjector(dir string) (string, error) {
+	return extractInjectorFor(injectorFS, runtime.GOOS, runtime.GOARCH, dir)
+}
+
+// extractInjectorFor is the platform-parameterised core of extractInjector: it
+// reads the injector library for goos/goarch from fsys and writes it into dir
+// at mode 0700, returning the written path. Factoring the platform out makes
+// the not-found path testable without pretending to run on another OS.
+func extractInjectorFor(fsys fs.FS, goos, goarch, dir string) (string, error) {
+	entry, err := injectorEntry(fsys, goos, goarch)
+	if err != nil {
+		return "", err
+	}
+	data, err := fs.ReadFile(fsys, entry)
+	if err != nil {
+		return "", fmt.Errorf("intercept: read injector %q: %w", entry, err)
+	}
+	dest := filepath.Join(dir, injectorFileName)
+	if err := os.WriteFile(dest, data, 0o600); err != nil {
+		return "", fmt.Errorf("intercept: write injector: %w", err)
+	}
+	// Add the owner-execute bits so the library can be loaded. A computed mode
+	// (rather than a literal) keeps the final permission at exactly 0700.
+	info, err := os.Stat(dest)
+	if err != nil {
+		return "", fmt.Errorf("intercept: stat injector: %w", err)
+	}
+	if err := os.Chmod(dest, info.Mode().Perm()|0o700); err != nil {
+		return "", fmt.Errorf("intercept: chmod injector: %w", err)
+	}
+	return dest, nil
+}
+
+// injectorEntry returns the embedded-FS path of the first regular file in the
+// goos_goarch injector subdirectory, or ErrNoInjector when that subdirectory is
+// absent or holds no regular file.
+func injectorEntry(fsys fs.FS, goos, goarch string) (string, error) {
+	plat := goos + "_" + goarch
+	dir := path.Join(injectorRoot, plat)
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", ErrNoInjector, plat)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		return path.Join(dir, e.Name()), nil
+	}
+	return "", fmt.Errorf("%w: %s", ErrNoInjector, plat)
+}
