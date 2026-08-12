@@ -38,6 +38,7 @@ type File struct {
 	SSHGateway    *SSHGatewayConfig  `yaml:"ssh_gateway,omitempty" json:"ssh_gateway,omitempty"`
 	K8sProxy      *K8sProxyConfig    `yaml:"k8s_proxy,omitempty" json:"k8s_proxy,omitempty"`
 	OIDC          *OIDCConfig        `yaml:"oidc,omitempty" json:"oidc,omitempty"`
+	Intercept     *InterceptConfig   `yaml:"intercept,omitempty" json:"intercept,omitempty"`
 	// DeviceCertTTL is the validity of SSO/enroll-issued device (client mTLS and
 	// SSH) certificates, e.g. "12h". Empty ⇒ the built-in 12h default (see
 	// DeviceCertTTLValue). Short by design: no certificate revocation exists, so a
@@ -169,6 +170,17 @@ type OIDCConfig struct {
 	Scopes        []string `yaml:"scopes,omitempty" json:"scopes,omitempty" honey:"label=Additional scopes requested at login (openid is always included)"`
 	UsernameClaim string   `yaml:"username_claim,omitempty" json:"username_claim,omitempty" honey:"label=Claim mapped to username (default email)" mod:"trim"`
 	GroupsClaim   string   `yaml:"groups_claim,omitempty" json:"groups_claim,omitempty" honey:"label=Claim mapped to groups (default groups)" mod:"trim"`
+}
+
+// InterceptConfig enables `honey intercept`: an OPA-gated, audited session that
+// deploys a local↔cluster interception agent into a target pod and runs a local
+// command whose egress/DNS/incoming/files traverse the pod. Absent block =
+// intercept disabled (the command reports "not configured").
+type InterceptConfig struct {
+	Enabled     bool     `yaml:"enabled,omitempty" json:"enabled,omitempty" honey:"label=Enable honey intercept"`
+	AgentImage  string   `yaml:"agent_image,omitempty" json:"agent_image,omitempty" honey:"label=Interception agent container image" mod:"trim"`
+	DefaultMode []string `yaml:"default_mode,omitempty" json:"default_mode,omitempty" honey:"label=Default intercept modes (egress|incoming|files)"`
+	PolicyDir   string   `yaml:"policy_dir,omitempty" json:"policy_dir,omitempty" honey:"label=OPA policy directory for the intercept gate" mod:"trim"`
 }
 
 // DefaultDeviceCertTTL is the fallback validity for SSO/enroll-issued device
