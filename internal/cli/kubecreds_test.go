@@ -97,6 +97,22 @@ func TestCachedCert_LoadMissingKeyReturnsFalse(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestCachedCert_LoadCorruptKeyReturnsFalse proves loadCachedCert validates
+// key.pem (not just cert.pem): a garbage/partial key must never be handed
+// back verbatim, even if the cert alongside it is fine.
+func TestCachedCert_LoadCorruptKeyReturnsFalse(t *testing.T) {
+	t.Setenv("HONEY_HOME", t.TempDir())
+	cert, key := selfSignedForTest(t, time.Now().Add(time.Hour))
+	require.NoError(t, storeCachedCert("prod", cachedCert{CertPEM: cert, KeyPEM: key}))
+
+	dir, err := kubeCredsDir("prod")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "key.pem"), []byte("not a pem"), 0o600))
+
+	_, ok := loadCachedCert("prod")
+	require.False(t, ok)
+}
+
 // TestCachedCert_PerClusterIsolation proves the cache is keyed per cluster:
 // storing under one cluster name must not be visible under another, and each
 // cluster's own entry must round-trip independently.
@@ -124,11 +140,50 @@ func TestCachedCert_PerClusterIsolation(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestCachedCert_DistinctNamesNoCollision proves distinct cluster names that
+// sanitize to the same prefix (a "/" and a "_" both fold to "_") still land
+// in different cache dirs and never read/clobber each other's cert.
+func TestCachedCert_DistinctNamesNoCollision(t *testing.T) {
+	t.Setenv("HONEY_HOME", t.TempDir())
+
+	slashCert, slashKey := selfSignedForTest(t, time.Now().Add(time.Hour))
+	require.NoError(t, storeCachedCert("prod/x", cachedCert{CertPEM: slashCert, KeyPEM: slashKey}))
+
+	underscoreCert, underscoreKey := selfSignedForTest(t, time.Now().Add(2*time.Hour))
+	require.NoError(t, storeCachedCert("prod_x", cachedCert{CertPEM: underscoreCert, KeyPEM: underscoreKey}))
+
+	slashDir, err := kubeCredsDir("prod/x")
+	require.NoError(t, err)
+	underscoreDir, err := kubeCredsDir("prod_x")
+	require.NoError(t, err)
+	require.NotEqual(t, slashDir, underscoreDir, "distinct cluster names must not share a cache dir")
+
+	got, ok := loadCachedCert("prod/x")
+	require.True(t, ok)
+	require.Equal(t, slashCert, got.CertPEM)
+	require.Equal(t, slashKey, got.KeyPEM)
+
+	got, ok = loadCachedCert("prod_x")
+	require.True(t, ok)
+	require.Equal(t, underscoreCert, got.CertPEM)
+	require.Equal(t, underscoreKey, got.KeyPEM)
+}
+
 func TestCachedCert_IsFresh(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	require.True(t, cachedCert{NotAfter: now.Add(10 * time.Minute)}.isFresh(now, time.Minute))
 	require.False(t, cachedCert{NotAfter: now.Add(30 * time.Second)}.isFresh(now, time.Minute)) // within skew
 	require.False(t, cachedCert{}.isFresh(now, time.Minute))                                    // zero NotAfter
+
+	// exact boundary: NotAfter - skew == now → not fresh (isFresh is a strict "before").
+	require.False(t, cachedCert{NotAfter: now.Add(time.Minute)}.isFresh(now, time.Minute))
+	// one nanosecond past the boundary → fresh.
+	require.True(t, cachedCert{NotAfter: now.Add(time.Minute + time.Nanosecond)}.isFresh(now, time.Minute))
+
+	// skew genuinely changes the renewal threshold: same NotAfter, different
+	// skew values land on opposite sides of freshness.
+	require.True(t, cachedCert{NotAfter: now.Add(2 * time.Minute)}.isFresh(now, 90*time.Second))
+	require.False(t, cachedCert{NotAfter: now.Add(2 * time.Minute)}.isFresh(now, 3*time.Minute))
 }
 
 func TestCachedCert_CertNotAfter(t *testing.T) {
@@ -147,33 +202,45 @@ func TestCachedCert_CertNotAfterInvalidPEM(t *testing.T) {
 
 // TestCachedCert_SanitizesClusterName proves a crafted, traversal-y --cluster
 // value is reduced to a single safe path segment that stays under the cache
-// root, rather than escaping it via "../".
+// root, across several traversal styles (relative "../", bare "..", an
+// absolute leading "/", and a Windows-style "..\..\").
 func TestCachedCert_SanitizesClusterName(t *testing.T) {
-	base := t.TempDir()
-	t.Setenv("HONEY_HOME", base)
+	names := []string{
+		"../../etc/passwd",
+		"..",
+		"/etc/passwd",
+		"..\\..\\windows",
+	}
 
-	dir, err := kubeCredsDir("../../etc/passwd")
-	require.NoError(t, err)
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			base := t.TempDir()
+			t.Setenv("HONEY_HOME", base)
 
-	// The resolved dir must live directly under <base>/kube/<segment>, i.e. the
-	// path must not have escaped outside base via traversal.
-	kubeRoot := filepath.Join(base, "kube")
-	rel, err := filepath.Rel(kubeRoot, dir)
-	require.NoError(t, err)
-	require.False(t, strings.HasPrefix(rel, ".."), "cache dir %q escaped cache root %q", dir, kubeRoot)
-	require.False(t, filepath.IsAbs(rel))
-	require.Equal(t, filepath.Base(dir), rel, "cluster name must sanitize to a single path segment")
+			dir, err := kubeCredsDir(name)
+			require.NoError(t, err)
 
-	// The sanitized segment itself must contain no separators or literal dots,
-	// which would otherwise allow traversal.
-	segment := filepath.Base(dir)
-	require.NotContains(t, segment, "/")
-	require.NotContains(t, segment, "\\")
-	require.NotContains(t, segment, ".")
+			// The resolved dir must live directly under <base>/kube/<segment>, i.e.
+			// the path must not have escaped outside base via traversal.
+			kubeRoot := filepath.Join(base, "kube")
+			rel, err := filepath.Rel(kubeRoot, dir)
+			require.NoError(t, err)
+			require.False(t, strings.HasPrefix(rel, ".."), "cache dir %q escaped cache root %q", dir, kubeRoot)
+			require.False(t, filepath.IsAbs(rel))
+			require.Equal(t, filepath.Base(dir), rel, "cluster name must sanitize to a single path segment")
 
-	// The dir must actually have been created (0700) under the cache root.
-	di, err := os.Stat(dir)
-	require.NoError(t, err)
-	require.True(t, di.IsDir())
-	require.Equal(t, os.FileMode(0o700), di.Mode().Perm())
+			// The sanitized segment itself must contain no separators or literal
+			// dots, which would otherwise allow traversal.
+			segment := filepath.Base(dir)
+			require.NotContains(t, segment, "/")
+			require.NotContains(t, segment, "\\")
+			require.NotContains(t, segment, ".")
+
+			// The dir must actually have been created (0700) under the cache root.
+			di, err := os.Stat(dir)
+			require.NoError(t, err)
+			require.True(t, di.IsDir())
+			require.Equal(t, os.FileMode(0o700), di.Mode().Perm())
+		})
+	}
 }
