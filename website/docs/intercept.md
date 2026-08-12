@@ -192,6 +192,224 @@ Modes combine freely — `--mode egress,files` runs a command whose network
 egress leaves from the pod and whose file reads resolve against the pod's
 root in the same session.
 
+## Server-brokered (SSO) interception
+
+Everything above is the **direct** path: the CLI builds its Kubernetes client
+from your own kubeconfig and runs the whole session itself — gate, deploy,
+token delivery, port-forward. That makes the [intercept gate](#the-intercept-opa-gate)
+**advisory**: it runs in your own process, against your own cluster
+credentials, so it only stops you if you choose to go through `honey
+intercept` in the first place. A user who already holds credentials able to
+create an ephemeral container can deploy one directly and skip the gate
+entirely.
+
+When `honey web` is configured with SSO login and a cluster registry, `honey
+intercept <pod>` instead uses the **server-brokered** path, and picks it up
+automatically: if `--admin-url` (or `$HONEY_WEB_URL`) points at a honey web
+that reports brokered intercept enabled, the CLI runs a browser SSO sign-in,
+and honey web itself — not the CLI — verifies your identity, evaluates the
+gate, and deploys the agent using **honey's own cluster service-account**.
+Your own cluster credentials are only ever used to port-forward to the agent
+honey already deployed; they are never used to create one. This makes the
+gate **authoritative**: there is no code path, other than honey's own gated
+`authorize` endpoint, that can put an interception agent into a pod.
+
+```
+honey intercept <pod>  (brokered)
+      │ 1. browser SSO sign-in                     (same flow as `honey kube login`)
+      ▼
+honey web  POST /api/v1/intercept/authorize
+      │ 2. verify id_token, resolve identity, evaluate the intercept gate
+      │ 3. deploy the agent as an ephemeral container     — honey's cluster SA
+      │ 4. deliver the per-session token to the agent     — honey's cluster SA
+      ▼
+   {session_id, token, control_port, egress_port, expires_at}
+      │
+      ▼
+CLI  5. port-forward to the agent's ports                 — YOUR cluster identity
+     6. run <command> against those ports with the returned token
+      │ (command exits, or Ctrl-C)
+      ▼
+honey web  POST /api/v1/intercept/{session_id}/stop        — signals + tears down
+```
+
+If no honey web / SSO is reachable, `honey intercept` falls back to the
+direct path unchanged — the direct path is not being removed, only
+documented as the weaker of the two.
+
+### The RBAC split
+
+The split between the identity that *deploys* the agent and the identity
+that *connects* to it is the entire authoritative boundary, and it is
+enforced by your cluster's RBAC, not by honey:
+
+| Principal | `pods` | `pods/ephemeralcontainers` | `pods/exec` | `pods/portforward` |
+| --- | --- | --- | --- | --- |
+| **honey web's cluster service-account** (deploys) | get | get, patch, update | create | — |
+| **the operator's own cluster identity** (connects) | get | **none** | — | create |
+
+honey cannot enforce this split — it is a **cluster-side RBAC prerequisite**
+you must configure, exactly like the [Kubernetes access
+proxy's `impersonate` grant](./k8s-proxy.md#cluster-side-rbac-prerequisite).
+If the operator's own identity is also granted `pods/ephemeralcontainers`,
+that operator can bypass the gate the same way the direct path always could.
+The value of the split is that, done correctly, the operator's own
+credentials are mechanically incapable of creating an ephemeral container —
+so honey's gated `authorize` endpoint becomes the *only* way to get an agent
+into a pod. Once honey has deployed one, port-forwarding to it is inert on
+its own: driving the agent requires the per-session token, and honey hands
+that token only to the caller who passed the gate. The token is the
+capability; the gate decides who receives it.
+
+### Claims model
+
+On the brokered path, the [intercept gate](#the-intercept-opa-gate) receives
+your full verified id_token claim set, not just a group list. `gate()` adds
+`subject`, `email`, `groups`, and `claims` (the complete decoded claim map)
+to the OPA input alongside the existing `action`/`actor`/`cluster`/
+`namespace`/`pod`/`container`/`mode`/`agent_image` fields:
+
+```json
+{
+  "action": "intercept",
+  "actor": "alice@corp.example",
+  "cluster": "prod",
+  "namespace": "payments",
+  "pod": "api-7d9f",
+  "container": "web",
+  "mode": ["egress", "files"],
+  "agent_image": "registry.example.com/honey-intercept-agent:v1",
+  "subject": "user-abc123",
+  "email": "alice@corp.example",
+  "groups": ["eng", "on-call"],
+  "claims": { "...": "the full decoded id_token claim set" }
+}
+```
+
+These fields are added only when populated, so the direct path's input — and
+any existing `intercept` policy written before brokered mode existed — is
+unchanged. This mirrors exactly what the [`identity`
+policy](./sso-login.md#the-identity-policy) already sees at login, so a
+policy author works from one familiar claim surface.
+
+The claims are **server-side and transient**: they live only in honey web's
+memory for the duration of the `authorize` request. Nothing claim-bearing is
+persisted to disk or handed to the deployed agent or target pod — the agent
+receives only an opaque per-session token. This is a deliberate contrast with
+the [k8s access proxy](./k8s-proxy.md), whose mTLS client certificate encodes
+your groups in `O=` and is written to disk in your kubeconfig; that cert path
+is unrelated to (and not used by) brokered intercept.
+
+### Config
+
+Brokered mode activates automatically — no separate flag — when three things
+are all present in the config `honey web` loads: an [`oidc:`
+block](./sso-login.md#server-configuration) (SSO login), `intercept.enabled:
+true`, and at least one cluster in the [`k8s_proxy.clusters`
+registry](./k8s-proxy.md#configuration-reference) (honey needs a
+cluster-side kubeconfig to deploy into). Missing any of the three leaves
+`honey intercept` on the direct path only.
+
+```yaml
+# config.yaml
+oidc:                             # same block the k8s proxy / ssh gateway use
+  issuer: https://your-oidc-provider.example/realms/corp
+  client_id: honey-intercept
+  username_claim: email
+  groups_claim: groups
+
+intercept:
+  enabled: true
+  agent_image: registry.example.com/honey-intercept-agent:v1
+  default_mode: ["egress", "files"]
+  policy_dir: /etc/honey/intercept-policy   # optional; see below
+  session_ttl: 1h                           # orphan-teardown bound (default 1h)
+
+k8s_proxy:
+  clusters:
+    - name: prod
+      kubeconfig: /etc/honey/prod-honey-sa.kubeconfig   # honey's OWN service-account, granted
+                                                          # per the RBAC split above — NOT your kubeconfig
+```
+
+`intercept.session_ttl` is the one config key that exists only for the
+brokered path (see [Teardown & TTL](#teardown--ttl) below); everything else
+in the `intercept:` block is shared with the direct path and already
+documented [above](#config).
+
+### Endpoints
+
+honey web mounts three routes, only when both `oidc:` and a working intercept
+broker (`intercept.enabled` plus a cluster registry) are configured —
+otherwise they don't exist (`404`), the same pattern as the SSO login
+endpoints:
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /api/v1/intercept/config` | Non-secret: whether brokered intercept is enabled and the configured default modes. The CLI polls this to decide direct vs. brokered. |
+| `POST /api/v1/intercept/authorize` | id_token-authenticated. Verifies the token, resolves identity, evaluates the gate with claims, deploys the agent, and returns the session handle (`session_id`, `token`, `control_port`, `egress_port`, `expires_at`). |
+| `POST /api/v1/intercept/{id}/stop` | id_token-authenticated. Signals the agent to exit and tears down the session — only the actor who opened it may stop it. |
+
+### Policy examples
+
+The brokered path's extra input fields let a policy authorize by SSO group,
+exactly like the direct path's `actor` matching, or by any other claim your
+provider issues — a department, a team tag, anything present in the
+id_token.
+
+Authorize an SSO group into a namespace with `input.groups`:
+
+```rego
+package honey
+import rego.v1
+
+default allow := false
+
+# anyone in the "platform-eng" SSO group may intercept pods in "staging"
+allow if {
+	input.action == "intercept"
+	"platform-eng" in input.groups
+	input.namespace == "staging"
+}
+```
+
+Authorize on an arbitrary claim with `input.claims.<x>` — for example a
+`department` claim your provider includes in the id_token:
+
+```rego
+package honey
+import rego.v1
+
+default allow := false
+
+# only "payments" department members may intercept the payments namespace
+allow if {
+	input.action == "intercept"
+	input.claims.department == "payments"
+	input.namespace == "payments"
+}
+```
+
+Both examples fail closed exactly like the direct-path example above: no
+`allow` for `action == "intercept"` means no ephemeral container is
+deployed and no session starts.
+
+### Teardown & TTL
+
+A brokered session ends the same way a direct one does — when `<command>`
+exits or you interrupt it, the CLI calls `POST
+/api/v1/intercept/{id}/stop`, honey web signals the agent (`SIGTERM`, via
+`exec`, using honey's own cluster service-account), and the agent removes
+its network redirects before exiting.
+
+If the CLI never gets to call `stop` — it crashes, the machine loses power,
+the process is killed — the session would otherwise be orphaned with its
+redirects (in particular an `incoming`-mode session's) still active in the
+pod. honey web guards against this with a server-side TTL janitor: every
+brokered session is bounded by `intercept.session_ttl` (default **1h**) from
+the moment it's created, and a background janitor stops any session past its
+`expires_at` whether or not the CLI ever calls `stop`.
+
 ## Prerequisites & limits
 
 - **Ephemeral containers** must be available on the target cluster (GA since
@@ -204,7 +422,12 @@ root in the same session.
   restricted PSPs/PSAs, or an admission webhook) block `NET_ADMIN` or
   ephemeral containers outright — check your cluster's pod security policy
   before relying on this.
-- **RBAC.** The identity honey uses to reach the cluster needs, at minimum:
+- **RBAC.** On the **direct** path, the identity honey uses to reach the
+  cluster (your own kubeconfig) needs, at minimum, every verb below in one
+  role, since your own process does the deploy, the token delivery, and the
+  port-forward. On the **brokered** path this single role is deliberately
+  split across two identities instead — see [The RBAC
+  split](#the-rbac-split) above.
 
   ```yaml
   apiVersion: rbac.authorization.k8s.io/v1
