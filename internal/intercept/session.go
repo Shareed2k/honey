@@ -365,17 +365,23 @@ func (s *Session) stopEvent(d time.Duration, reason string) Event {
 // modeStrings renders the active modes as the string slice the gate and audit
 // payloads carry.
 func (s *Session) modeStrings() []string {
-	var m []string
-	if s.opts.Modes.Egress {
-		m = append(m, "egress")
+	return modeStrings(s.opts.Modes)
+}
+
+// modeStrings renders m as the string slice the gate and audit payloads
+// carry.
+func modeStrings(m local.Modes) []string {
+	var out []string
+	if m.Egress {
+		out = append(out, "egress")
 	}
-	if s.opts.Modes.Incoming {
-		m = append(m, "incoming")
+	if m.Incoming {
+		out = append(out, "incoming")
 	}
-	if s.opts.Modes.Files {
-		m = append(m, "files")
+	if m.Files {
+		out = append(out, "files")
 	}
-	return m
+	return out
 }
 
 // fileRoot returns the filesystem root offered to remote file operations: the
