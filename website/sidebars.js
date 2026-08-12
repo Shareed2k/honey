@@ -18,6 +18,7 @@ const sidebars = {
     'jit-access',
     'k8s-proxy',
     'sso-login',
+    'intercept',
     'authorization',
     'command-risk',
     'cue-recipes',
