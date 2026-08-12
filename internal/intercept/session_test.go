@@ -321,9 +321,9 @@ func TestSession_happyPathLifecycleAndTeardown(t *testing.T) {
 	assert.Equal(t, "127.0.0.1:9000", cfg.Target)
 	assert.True(t, cfg.UDP)
 	assert.Equal(t, local.Modes{Egress: true, Incoming: true, Files: true}, cfg.Modes)
-	assert.Equal(t, defaultFileRoot, cfg.Root)
+	assert.Equal(t, DefaultFileRoot, cfg.Root)
 	assert.Equal(t, tokenFileName, filepath.Base(cfg.TokenFile))
-	assert.Equal(t, relaySocketName, filepath.Base(cfg.Socket))
+	assert.Equal(t, RelaySocketName, filepath.Base(cfg.Socket))
 	assert.NotEmpty(t, cfg.InjectorLib)
 	assert.Equal(t, h.opts.Command, h.runner.command())
 

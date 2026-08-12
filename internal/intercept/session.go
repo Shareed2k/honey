@@ -60,13 +60,17 @@ const agentNameRandomBytes = 6
 // injector library.
 const sessionDirPattern = "honey-intercept-"
 
-// relaySocketName is the basename of the relay Unix socket inside the session
-// directory. The socket is created mode 0600 by the local session.
-const relaySocketName = "relay.sock"
+// RelaySocketName is the basename of the relay Unix socket inside a session
+// directory. The socket is created mode 0600 by the local session. Exported so
+// the CLI's brokered intercept path (internal/cli/intercept.go), which builds
+// its own session directory instead of going through Session, uses the same
+// name rather than a duplicated literal.
+const RelaySocketName = "relay.sock"
 
-// defaultFileRoot is the filesystem root offered to remote file operations when
-// the Files mode is enabled. An empty root disables file redirection.
-const defaultFileRoot = "/"
+// DefaultFileRoot is the filesystem root offered to remote file operations
+// when the Files mode is enabled. An empty root disables file redirection.
+// Exported for the same reason as RelaySocketName.
+const DefaultFileRoot = "/"
 
 // PortForwarder opens a local TCP port-forward to a remote port on a target pod
 // and returns the local address to dial, a stop function that tears the
@@ -256,7 +260,7 @@ func (s *Session) Run(ctx context.Context) (err error) {
 		EgressAddr:  egressAddr,
 		Target:      s.opts.Target,
 		TokenFile:   tokenFile,
-		Socket:      filepath.Join(dir, relaySocketName),
+		Socket:      filepath.Join(dir, RelaySocketName),
 		InjectorLib: injectorLib,
 		Root:        s.fileRoot(),
 		UDP:         s.opts.UDP,
@@ -388,7 +392,7 @@ func modeStrings(m local.Modes) []string {
 // default root when Files mode is enabled, otherwise empty (redirection off).
 func (s *Session) fileRoot() string {
 	if s.opts.Modes.Files {
-		return defaultFileRoot
+		return DefaultFileRoot
 	}
 	return ""
 }

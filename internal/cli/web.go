@@ -11,9 +11,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/intercept"
 	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -130,6 +133,13 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Server-brokered honey intercept: built (fail-closed) only when
+	// intercept.enabled and a k8s_proxy cluster registry are both configured.
+	interceptBroker, interceptModes, err := buildInterceptBroker(cfg, authCfg.enforcer, auditSink)
+	if err != nil {
+		return err
+	}
+
 	// Non-secret OIDC values the login command echoes back to clients. Kept out
 	// of the webserver package so it needn't import config for these strings.
 	var oidcPublic *webserver.OIDCPublicConfig
@@ -142,43 +152,53 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	}
 
 	srv, err := webserver.NewServer(webserver.Options{
-		ListenAddr:         webListen,
-		Token:              token,
-		DisableAuth:        disableAuth,
-		ConfigPath:         cfgPath,
-		Config:             cfg,
-		ExecRegistry:       buildHostExecRegistry(),
-		SearchRegistry:     GetSearchRegistry(),
-		RecordDir:          recordDir,
-		LocalFilesRoot:     webFilesRoot,
-		AgentBinaryPath:    webAgentBin,
-		AgentBuildCacheDir: webAgentBuildCacheDir,
-		Version:            BuildVersion(),
-		Commit:             BuildCommit(),
-		Date:               BuildDate(),
-		MetricsListenAddr:  strings.TrimSpace(webMetricsListen),
-		Metrics:            prom,
-		NoCache:            flagNoCache,
-		Refresh:            flagRefresh,
-		AllowLogsCommand:   webAllowLogsCommand,
-		OnReady:            onReady,
-		Enforcer:           authCfg.enforcer,
-		Guardrails:         guardrailRules,
-		JWTPubKey:          authCfg.jwtPubKey,
-		TrustedProxyNets:   authCfg.trustedNets,
-		WebAuthn:           authCfg.webauthn,
-		EnableMesh:         meshnet.Enabled(),
-		AuditSink:          auditSink,
-		K8sProxy:           k8sProxyCfg,
-		OIDCVerifier:       authCfg.oidcVerifier,
-		OIDCPublic:         oidcPublic,
-		DeviceCertTTL:      cfg.DeviceCertTTLValue(),
+		ListenAddr:           webListen,
+		Token:                token,
+		DisableAuth:          disableAuth,
+		ConfigPath:           cfgPath,
+		Config:               cfg,
+		ExecRegistry:         buildHostExecRegistry(),
+		SearchRegistry:       GetSearchRegistry(),
+		RecordDir:            recordDir,
+		LocalFilesRoot:       webFilesRoot,
+		AgentBinaryPath:      webAgentBin,
+		AgentBuildCacheDir:   webAgentBuildCacheDir,
+		Version:              BuildVersion(),
+		Commit:               BuildCommit(),
+		Date:                 BuildDate(),
+		MetricsListenAddr:    strings.TrimSpace(webMetricsListen),
+		Metrics:              prom,
+		NoCache:              flagNoCache,
+		Refresh:              flagRefresh,
+		AllowLogsCommand:     webAllowLogsCommand,
+		OnReady:              onReady,
+		Enforcer:             authCfg.enforcer,
+		Guardrails:           guardrailRules,
+		JWTPubKey:            authCfg.jwtPubKey,
+		TrustedProxyNets:     authCfg.trustedNets,
+		WebAuthn:             authCfg.webauthn,
+		EnableMesh:           meshnet.Enabled(),
+		AuditSink:            auditSink,
+		K8sProxy:             k8sProxyCfg,
+		OIDCVerifier:         authCfg.oidcVerifier,
+		OIDCPublic:           oidcPublic,
+		DeviceCertTTL:        cfg.DeviceCertTTLValue(),
+		InterceptBroker:      interceptBroker,
+		InterceptDefaultMode: interceptModes,
 	})
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if interceptBroker != nil {
+		// Reaps any brokered session past its TTL (e.g. a crashed CLI never
+		// called interceptStop) so an interception — especially incoming-mode
+		// network redirects — cannot outlive its session unboundedly. Exits on
+		// ctx cancellation; the returned "done" channel is intentionally
+		// ignored here since nothing needs to wait on it.
+		interceptBroker.StartJanitor(ctx)
+	}
 	return srv.Start(ctx)
 }
 
@@ -222,6 +242,56 @@ func buildK8sProxyServerConfig(cfg *config.File, enforcer *policy.Enforcer, sink
 		Enforcer:        enforcer,
 		AuditSink:       sink,
 	}, nil
+}
+
+// buildInterceptBroker builds the server-side interception Broker from
+// cfg.Intercept. It resolves one *rest.Config per cluster straight from
+// cfg.K8sProxy.Clusters using the same builder (k8sprovider.RestConfigFor
+// Kubeconfig) that buildK8sProxyServerConfig uses for the inbound access
+// proxy — honey's own service-account credentials, the same trust boundary —
+// but it is a separate resolution, not a shared k8sproxy.Registry object: the
+// Broker needs a raw *rest.Config per cluster (to build a kubernetes.Interface
+// and a brokerPodExecer), not the proxy's impersonation-aware registry. It
+// returns (nil, nil, nil) when brokered interception is disabled (no
+// intercept block, intercept.enabled is false, or no k8s_proxy clusters are
+// configured), so honey web's brokered intercept routes stay unregistered and
+// honey intercept remains client-side only. Any cluster whose
+// kubeconfig/context fails to resolve is a hard startup error (fail-closed),
+// consistent with the proxy.
+func buildInterceptBroker(cfg *config.File, enforcer *policy.Enforcer, sink audit.Sink) (*intercept.Broker, []string, error) {
+	if cfg == nil || cfg.Intercept == nil || !cfg.Intercept.Enabled || cfg.K8sProxy == nil || len(cfg.K8sProxy.Clusters) == 0 {
+		return nil, nil, nil
+	}
+
+	restCfgs := make(map[string]*rest.Config, len(cfg.K8sProxy.Clusters))
+	for _, c := range cfg.K8sProxy.Clusters {
+		restCfg, err := k8sprovider.RestConfigForKubeconfig(c.Kubeconfig, c.Context)
+		if err != nil {
+			return nil, nil, fmt.Errorf("intercept: cluster %q: %w", c.Name, err)
+		}
+		restCfgs[c.Name] = restCfg
+	}
+
+	deps := intercept.BrokerDeps{
+		Clientset: func(cluster string) (kubernetes.Interface, error) {
+			restCfg, ok := restCfgs[cluster]
+			if !ok {
+				return nil, fmt.Errorf("intercept: unknown cluster %q", cluster)
+			}
+			return kubernetes.NewForConfig(restCfg)
+		},
+		Execer: func(cluster, ns, pod, container string) (intercept.PodExecer, error) {
+			restCfg, ok := restCfgs[cluster]
+			if !ok {
+				return nil, fmt.Errorf("intercept: unknown cluster %q", cluster)
+			}
+			return &brokerPodExecer{cfg: restCfg, ns: ns, pod: pod, container: container}, nil
+		},
+		Enforcer:   enforcer,
+		Sink:       sink,
+		SessionTTL: cfg.Intercept.SessionTTLValue(),
+	}
+	return intercept.NewBroker(deps), cfg.Intercept.DefaultMode, nil
 }
 
 // stopMeshBestEffort stops the mesh singleton (internal/meshnet) if it was

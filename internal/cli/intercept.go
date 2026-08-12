@@ -9,22 +9,49 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 
+	"github.com/shareed2k/mogate/pkg/local"
+
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/intercept"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 )
+
+// interceptStopGrace bounds the best-effort interceptStop call the brokered
+// path fires on teardown; it uses its own background context (not the
+// session's, which may already be cancelled) so the server still hears about
+// the stop even when the local command exits via a caller signal.
+const interceptStopGrace = 5 * time.Second
+
+// interceptSessionDirPattern is the os.MkdirTemp prefix for the brokered
+// path's local session directory, which holds the token file, the relay
+// socket, and the extracted injector library — mirroring the direct path's
+// own session directory (internal/intercept/session.go).
+const interceptSessionDirPattern = "honey-intercept-"
+
+// interceptBrokeredDrainGrace bounds how long the brokered path waits for
+// local.Run to unwind after a caller signal cancels the session context.
+// Mirrors intercept.Session's own shutdownGrace (internal/intercept/session.go):
+// without a bound, a stuck data-plane session could hang the whole process on
+// SIGINT/SIGTERM, and since the deferred interceptStop only runs once
+// runInterceptBrokered returns, an unbounded hang would also mean the
+// interception's server-side teardown never fires.
+const interceptBrokeredDrainGrace = 5 * time.Second
 
 // interceptFlags holds the parsed flag values for one honey intercept
 // invocation. Bundling them keeps runIntercept's signature stable and lets the
@@ -39,6 +66,7 @@ type interceptFlags struct {
 	actor      string
 	modes      []string
 	udp        bool
+	adminURL   string
 }
 
 func init() {
@@ -78,6 +106,7 @@ Example:
 	flags.StringVar(&f.cluster, "cluster", "", "Target cluster name (resolves kubeconfig/context from k8s_proxy.clusters; default: current kubeconfig context)")
 	flags.StringVar(&f.agentImage, "agent-image", "", "Interception agent container image (default from config)")
 	flags.StringVar(&f.actor, "actor", "", "Actor recorded in the policy gate and audit log (default: $USER)")
+	flags.StringVar(&f.adminURL, "admin-url", defaultKubeAdminURL(), "honey web base URL for server-brokered interception (default $HONEY_WEB_URL)")
 	return cmd
 }
 
@@ -94,6 +123,30 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 	pod, command, err := interceptArgs(cmd, args)
 	if err != nil {
 		return err
+	}
+
+	// Brokered path: when a honey admin URL is configured and reports
+	// server-brokered interception enabled, authenticate via SSO and let honey
+	// web gate + deploy the agent with its own (service-account) credentials;
+	// this process then only signs in, port-forwards with its own more
+	// limited credentials, and runs the local injection session. An unset
+	// admin URL, a disabled config, or a fetch error all fall through to the
+	// direct path below unchanged — a misconfigured or unreachable honey web
+	// must not silently block local interception when the operator already
+	// has direct cluster credentials.
+	//
+	// This dispatch MUST run before the direct path's own mode/target
+	// validation below: that validation uses the LOCAL intercept.default_mode,
+	// but a brokered session validates against the SERVER's default_mode
+	// (runInterceptBrokered does its own, independent validation) — the server
+	// is authoritative for a brokered session. Validating against the local
+	// default first would let a local config with default_mode: [incoming] and
+	// no --target hard-error before brokered dispatch is ever reached, even
+	// though the server's default mode might not require one.
+	if adminURL := strings.TrimRight(strings.TrimSpace(f.adminURL), "/"); adminURL != "" {
+		if enabled, defModes, cerr := fetchInterceptConfig(cmd.Context(), adminURL); cerr == nil && enabled {
+			return runInterceptBrokered(cmd.Context(), cfg, f, adminURL, defModes, pod, command)
+		}
 	}
 
 	modeStrs := f.modes
@@ -169,6 +222,183 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		return err
 	}
 	return nil
+}
+
+// runInterceptBrokered runs one server-brokered interception: honey web (at
+// adminURL) authenticates the caller via SSO, gates the request, deploys the
+// interception agent using its own cluster credentials, and hands back a
+// per-session token and the two in-agent ports. This process never touches
+// the cluster to deploy anything; it signs in, port-forwards to the deployed
+// agent with its own (typically more limited) credentials, and runs the local
+// injection session exactly as the direct path does. defaultMode is honey
+// web's configured default modes (used when --mode is not given), which take
+// precedence over any local intercept.default_mode for this call — the server
+// is authoritative for a brokered session.
+func runInterceptBrokered(ctx context.Context, cfg *config.File, f interceptFlags, adminURL string, defaultMode []string, pod string, command []string) error {
+	modeStrs := f.modes
+	if len(modeStrs) == 0 {
+		modeStrs = defaultMode
+	}
+	modes, err := intercept.ParseModes(modeStrs)
+	if err != nil {
+		return err
+	}
+	target := strings.TrimSpace(f.target)
+	if modes.Incoming && target == "" {
+		return errors.New("intercept: --target is required with --mode incoming")
+	}
+
+	agentImage := strings.TrimSpace(f.agentImage)
+	if agentImage == "" {
+		agentImage = strings.TrimSpace(cfg.Intercept.AgentImage)
+	}
+	if agentImage == "" {
+		return errors.New("intercept: no agent image (set intercept.agent_image or --agent-image)")
+	}
+
+	namespace := strings.TrimSpace(f.namespace)
+	if namespace == "" {
+		return errors.New("intercept: --namespace is required")
+	}
+	cluster := strings.TrimSpace(f.cluster)
+	container := strings.TrimSpace(f.container)
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var scopes []string
+	if cfg.OIDC != nil {
+		scopes = cfg.OIDC.Scopes
+	}
+	idToken, nonce, err := browserAuthCodeFlow(ctx, adminURL, scopes)
+	if err != nil {
+		return fmt.Errorf("intercept: oidc login: %w", err)
+	}
+
+	resp, err := interceptAuthorize(ctx, adminURL, idToken, nonce, brokeredAuthorizeReq{
+		Cluster:    cluster,
+		Namespace:  namespace,
+		Pod:        pod,
+		Container:  container,
+		Mode:       modeStrs,
+		UDP:        f.udp,
+		Target:     target,
+		AgentImage: agentImage,
+	})
+	if err != nil {
+		return fmt.Errorf("intercept: authorize: %w", err)
+	}
+	// Best-effort teardown: ask honey web to signal the agent to exit and
+	// deregister the session on every return path below, including a caller
+	// signal (which cancels ctx, unwinds local.Run, and reaches this defer).
+	// A fresh background context is used because ctx may already be cancelled
+	// by the time we get here. Never logs idToken or resp.Token.
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), interceptStopGrace)
+		defer cancel()
+		_ = interceptStop(stopCtx, adminURL, resp.SessionID, idToken, nonce)
+	}()
+
+	// The operator's OWN (typically more limited) cluster credentials, used
+	// only to port-forward to the agent honey web already deployed — never to
+	// deploy or exec into anything.
+	restCfg, err := interceptRestConfig(cfg, cluster)
+	if err != nil {
+		return err
+	}
+	pf := &interceptPortForwarder{cfg: restCfg}
+
+	controlAddr, stopControl, err := pf.Forward(ctx, cluster, namespace, pod, resp.ControlPort)
+	if err != nil {
+		return fmt.Errorf("intercept: forward control port: %w", err)
+	}
+	defer stopControl()
+
+	egressAddr, stopEgress, err := pf.Forward(ctx, cluster, namespace, pod, resp.EgressPort)
+	if err != nil {
+		return fmt.Errorf("intercept: forward egress port: %w", err)
+	}
+	defer stopEgress()
+
+	dir, err := os.MkdirTemp("", interceptSessionDirPattern)
+	if err != nil {
+		return fmt.Errorf("intercept: create session dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte(resp.Token), 0o600); err != nil {
+		return fmt.Errorf("intercept: write token file: %w", err)
+	}
+
+	injectorLib, err := intercept.ExtractInjector(dir)
+	if err != nil {
+		if errors.Is(err, intercept.ErrNoInjector) {
+			return fmt.Errorf("%w\nno interception injector is bundled for this platform; on macOS, System Integrity Protection may also block local interception", err)
+		}
+		return fmt.Errorf("intercept: resolve injector: %w", err)
+	}
+
+	// The filesystem root offered to remote file operations: only meaningful
+	// when Files mode is enabled (mirrors Session.fileRoot).
+	root := ""
+	if modes.Files {
+		root = intercept.DefaultFileRoot
+	}
+
+	localCfg := local.Config{
+		ControlAddr: controlAddr,
+		EgressAddr:  egressAddr,
+		Target:      target,
+		TokenFile:   tokenFile,
+		Socket:      filepath.Join(dir, intercept.RelaySocketName),
+		InjectorLib: injectorLib,
+		Root:        root,
+		UDP:         f.udp,
+		Modes:       modes,
+	}
+
+	// Bounded drain (mirrors intercept.Session's own drain in session.go): run
+	// local.Run inside an errgroup so a caller signal can force its context
+	// down and bound the wait to interceptBrokeredDrainGrace instead of
+	// blocking forever on a stuck data-plane session. Without this, the
+	// deferred interceptStop above — the server-side teardown — would never
+	// fire on a hung SIGINT/SIGTERM.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	eg, egCtx := errgroup.WithContext(runCtx)
+	eg.Go(func() error {
+		return local.Run(egCtx, localCfg, command)
+	})
+	return interceptDrainLocalRun(ctx, eg, cancelRun)
+}
+
+// interceptDrainLocalRun blocks until eg finishes on its own (the injected
+// command exited or local.Run returned), or until ctx is cancelled. On
+// cancellation it forces the group's context down via cancel and bounds the
+// wait to interceptBrokeredDrainGrace, so the caller (runInterceptBrokered)
+// always returns and its deferred teardown — interceptStop, the port-forward
+// stops, and the session-dir removal — still runs even if the local injection
+// session is stuck. Mirrors intercept.Session's own drain
+// (internal/intercept/session.go); logs nothing sensitive.
+func interceptDrainLocalRun(ctx context.Context, eg *errgroup.Group, cancel context.CancelFunc) error {
+	done := make(chan error, 1)
+	go func() { done <- eg.Wait() }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(interceptBrokeredDrainGrace):
+		zap.L().Warn("intercept: brokered local session did not exit within the shutdown grace; abandoning wait so teardown can proceed")
+		return fmt.Errorf("intercept: shutdown grace exceeded: %w", context.DeadlineExceeded)
+	}
 }
 
 // interceptArgs splits the positional arguments into the target pod and the
@@ -309,14 +539,7 @@ func (e *interceptPodExecer) ExecInPod(ctx context.Context, cmd []string, stdin 
 	if err != nil {
 		return err
 	}
-	client := &k8sprovider.K8sNativeClient{
-		Config:    e.cfg,
-		Clientset: e.clientset,
-		Namespace: e.namespace,
-		PodName:   e.pod,
-		Container: container,
-	}
-	return client.ExecInPod(ctx, cmd, stdin, stdout, stderr, false, nil)
+	return execInPodContainer(ctx, e.cfg, e.namespace, e.pod, container, cmd, stdin, stdout, stderr)
 }
 
 // agentContainer returns the name of the pod's agent container: the most

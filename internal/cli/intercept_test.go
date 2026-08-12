@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -216,6 +220,53 @@ func TestRunIntercept_ConfigDefaultMode(t *testing.T) {
 	err := runIntercept(cmd, []string{"api-0"}, cfg, interceptFlags{namespace: "apps"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--target is required")
+}
+
+// TestRunIntercept_BrokeredDispatchPrecedesLocalValidation guards the ordering
+// fix: the admin-url/fetchInterceptConfig brokered dispatch must run BEFORE
+// the direct path's own mode/target validation. The local config's
+// default_mode is "incoming" (which would require --target), but the
+// server's default_mode is "egress" (no --target needed) — before the fix,
+// the direct path's validation ran first using the LOCAL default and
+// hard-errored on the missing --target before brokered dispatch was ever
+// reached, even though a brokered session would validate against the
+// server's own (non-incoming) default instead.
+func TestRunIntercept_BrokeredDispatchPrecedesLocalValidation(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/intercept/config":
+			_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "default_mode": []string{"egress"}})
+		case "/api/v1/kube/oidc-config":
+			// Empty issuer/client_id: browserAuthCodeFlow fails fast here,
+			// before any real OIDC discovery or loopback listener, so the test
+			// stays fully local and deterministic.
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cmd := newInterceptCmd()
+	// runIntercept's brokered dispatch reads cmd.Context(); an un-Executed
+	// cobra.Command has a nil ctx (only ExecuteContext/SetContext populate
+	// it), which would make fetchInterceptConfig's http.NewRequestWithContext
+	// fail before ever reaching the test server. Production commands always
+	// go through cobra's Execute, which sets this.
+	cmd.SetContext(context.Background())
+	cfg := &config.File{Intercept: &config.InterceptConfig{
+		Enabled:     true,
+		AgentImage:  "registry.example/agent:1",
+		DefaultMode: []string{"incoming"},
+	}}
+	err := runIntercept(cmd, []string{"api-0"}, cfg, interceptFlags{namespace: "apps", adminURL: srv.URL})
+	require.Error(t, err)
+	// Reached the brokered path's oidc step (validated against the server's
+	// "egress" default, which needs no --target) instead of hard-erroring on
+	// the local "incoming" default.
+	assert.Contains(t, err.Error(), "oidc login")
+	assert.NotContains(t, err.Error(), "--target is required")
 }
 
 func TestInterceptRestConfig_UnknownClusterErrors(t *testing.T) {

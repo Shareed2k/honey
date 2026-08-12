@@ -39,6 +39,15 @@ func extractInjector(dir string) (string, error) {
 	return extractInjectorFor(injectorFS, runtime.GOOS, runtime.GOARCH, dir)
 }
 
+// ExtractInjector is the exported form of extractInjector. It exists so the
+// CLI's brokered intercept path (internal/cli/intercept.go) can build its own
+// local.Config and run the local injection session directly — the agent in
+// that flow is deployed server-side by the Broker, so the CLI never
+// constructs a Session and has no other way to reach the embedded injector.
+func ExtractInjector(dir string) (string, error) {
+	return extractInjector(dir)
+}
+
 // extractInjectorFor is the platform-parameterised core of extractInjector: it
 // reads the injector library for goos/goarch from fsys and writes it into dir
 // at mode 0700, returning the written path. Factoring the platform out makes
