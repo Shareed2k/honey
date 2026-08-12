@@ -15,7 +15,7 @@ func TestBuildServerTLSConfig_Good(t *testing.T) {
 	cfg, err := BuildServerTLSConfig(certPEM, keyPEM, ca.certPEM)
 	require.NoError(t, err)
 	require.Equal(t, tls.RequireAndVerifyClientCert, cfg.ClientAuth)
-	require.EqualValues(t, tls.VersionTLS12, cfg.MinVersion)
+	require.EqualValues(t, tls.VersionTLS13, cfg.MinVersion)
 	require.NotNil(t, cfg.ClientCAs)
 	require.Len(t, cfg.Certificates, 1)
 }

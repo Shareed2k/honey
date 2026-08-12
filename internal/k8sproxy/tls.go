@@ -26,7 +26,7 @@ const (
 // BuildServerTLSConfig builds the mTLS serving config: the serving keypair
 // authenticates the proxy to kubectl, and clientCAPEM is the trust anchor for
 // verifying client certificates. Client auth is mandatory
-// (RequireAndVerifyClientCert) and TLS 1.2 is the floor.
+// (RequireAndVerifyClientCert) and TLS 1.3 is the floor.
 func BuildServerTLSConfig(servingCertPEM, servingKeyPEM, clientCAPEM []byte) (*tls.Config, error) {
 	cert, err := tls.X509KeyPair(servingCertPEM, servingKeyPEM)
 	if err != nil {
@@ -40,7 +40,12 @@ func BuildServerTLSConfig(servingCertPEM, servingKeyPEM, clientCAPEM []byte) (*t
 		Certificates: []tls.Certificate{cert},
 		ClientCAs:    pool,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS12,
+		// TLS 1.3 minimum: the client Certificate message is sent encrypted
+		// (after handshake keys are established), so the honey-issued client
+		// cert — including its Subject Organization groups — is not exposed to
+		// on-path observers. kubectl/client-go and honey's own clients all
+		// negotiate 1.3.
+		MinVersion: tls.VersionTLS13,
 	}, nil
 }
 
