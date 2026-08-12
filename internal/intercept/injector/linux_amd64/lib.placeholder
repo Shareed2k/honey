@@ -1,0 +1,3 @@
+Placeholder for the interception agent injector library (linux_amd64).
+The real library is populated by the release build; this file only lets the
+//go:embed directive compile from a source checkout.
