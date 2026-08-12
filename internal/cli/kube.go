@@ -38,7 +38,14 @@ var (
 	kubeLoginInsecure   bool
 	kubeLoginKubeconfig string
 	kubeLoginContext    string
+	kubeLoginStatic     bool
 )
+
+// oidcNoBrowser is set by the --no-browser flag: when true, the SSO flow
+// should print the sign-in URL instead of attempting to open a browser. It is
+// a package var (rather than a local) so the OIDC flow, wherever it ends up
+// reading it, can consume it without threading it through every call site.
+var oidcNoBrowser bool
 
 // browserAuthCodeFlowFn and kubeOIDCLoginFn are test seams over the real
 // browserAuthCodeFlow and kubeOIDCLogin functions: fetchKubeCertViaSSO calls
@@ -69,6 +76,12 @@ Two identity sources are supported:
     verified identity to a Kubernetes user and groups via policy, and returns
     the proxy's serving CA so --proxy-ca is not required.
 
+By default the SSO path writes a kubeconfig authInfo that invokes "honey kube
+login" as a kubectl exec credential plugin, so kubectl transparently
+refreshes the certificate via SSO as it nears expiry (honey must stay on
+PATH). Pass --static to instead embed the certificate and key directly, as
+the --enroll-code path always does (it has no SSO session to refresh from).
+
 Example:
   honey kube login prod --enroll-code abc123 --proxy proxy.example:6443 \
     --proxy-ca proxy-ca.pem
@@ -86,6 +99,8 @@ func init() {
 	kubeLoginCmd.Flags().BoolVar(&kubeLoginInsecure, "insecure-skip-tls-verify", false, "Skip verification of the proxy's serving certificate instead of pinning --proxy-ca (insecure)")
 	kubeLoginCmd.Flags().StringVar(&kubeLoginKubeconfig, "kubeconfig", "", "kubeconfig file to update (default: $KUBECONFIG first entry, else ~/.kube/config)")
 	kubeLoginCmd.Flags().StringVar(&kubeLoginContext, "context", "", "kubectl context name to create (default: honey-<cluster>)")
+	kubeLoginCmd.Flags().BoolVar(&kubeLoginStatic, "static", false, "embed the certificate directly instead of the auto-refreshing exec plugin")
+	kubeLoginCmd.Flags().BoolVar(&oidcNoBrowser, "no-browser", false, "print the sign-in URL instead of opening a browser")
 
 	kubeCmd.AddCommand(kubeLoginCmd)
 	rootCmd.AddCommand(kubeCmd)
@@ -141,11 +156,13 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	var (
-		certPEM []byte
-		keyPEM  []byte
-		caPEM   []byte
-		cn      string
-		err     error
+		certPEM  []byte
+		keyPEM   []byte
+		caPEM    []byte
+		cn       string
+		notAfter time.Time
+		sso      bool
+		err      error
 	)
 	if code != "" {
 		// Enroll-code path: an explicit trust source is required, as before.
@@ -169,8 +186,9 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 		// SSO (OIDC) path: browser sign-in, then exchange the id_token + a freshly
 		// generated CSR for a signed certificate. The server returns the proxy CA
 		// when it knows it.
+		sso = true
 		var serverCA []byte
-		certPEM, keyPEM, serverCA, cn, _, err = fetchKubeCertViaSSO(cmd.Context(), adminURL, cluster, nil)
+		certPEM, keyPEM, serverCA, cn, notAfter, err = fetchKubeCertViaSSO(cmd.Context(), adminURL, cluster, nil)
 		if err != nil {
 			return err
 		}
@@ -183,6 +201,14 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(errOut, "warning: --insecure-skip-tls-verify disables verification of the proxy's serving certificate; prefer --proxy-ca")
 		default:
 			return fmt.Errorf("login response did not include a proxy CA; provide --proxy-ca or --insecure-skip-tls-verify")
+		}
+
+		// Cache the fresh cert so a subsequent kubectl exec-credential
+		// invocation (runKubeCredential) can serve it without a network round
+		// trip. Caching is best-effort: a failure here must not fail the login
+		// that already succeeded, so it is only logged.
+		if err := storeCachedCert(cluster, cachedCert{CertPEM: certPEM, KeyPEM: keyPEM, NotAfter: notAfter}); err != nil {
+			fmt.Fprintf(errOut, "warning: failed to cache certificate for future refresh: %v\n", err)
 		}
 	}
 
@@ -201,7 +227,7 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load kubeconfig %q: %w", kubeconfigPath, err)
 	}
 
-	merged := mergeKubeContext(existing, kubeContextOpts{
+	opts := kubeContextOpts{
 		cluster:               cluster,
 		proxy:                 proxy,
 		cn:                    cn,
@@ -210,7 +236,20 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 		caPEM:                 caPEM,
 		insecureSkipTLSVerify: kubeLoginInsecure && len(caPEM) == 0,
 		contextName:           contextName,
-	})
+	}
+
+	// The enroll-code path has no SSO session to refresh from, so it is always
+	// static regardless of --static. The SSO path defaults to the
+	// auto-refreshing exec plugin; --static opts back into the old
+	// embedded-certificate behavior.
+	useExec := sso && !kubeLoginStatic
+
+	var merged *api.Config
+	if useExec {
+		merged = writeExecKubeContext(existing, opts, adminURL)
+	} else {
+		merged = mergeKubeContext(existing, opts)
+	}
 
 	if err := writeKubeconfig(kubeconfigPath, merged); err != nil {
 		return fmt.Errorf("write kubeconfig %q: %w", kubeconfigPath, err)
@@ -222,6 +261,9 @@ func runKubeLogin(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(out, "  user:    honey-%s\n", cn)
 	fmt.Fprintf(out, "\nNext steps:\n")
 	fmt.Fprintf(out, "  kubectl --context %s get pods\n", contextName)
+	if useExec {
+		fmt.Fprintf(out, "  kubectl will refresh this certificate automatically by re-running honey; keep honey on your PATH\n")
+	}
 	return nil
 }
 
@@ -392,9 +434,29 @@ type kubeContextOpts struct {
 // mergeKubeContext adds (or replaces) the honey-<cluster> cluster, honey-<cn>
 // authInfo, and opts.contextName context in existing, and points
 // CurrentContext at the new context. All other clusters/users/contexts already
-// in existing are left untouched. existing may be nil.
+// in existing are left untouched. existing may be nil. The authInfo embeds the
+// certificate and key directly (a "static" credential); see writeExecKubeContext
+// for the auto-refreshing exec-plugin alternative.
 func mergeKubeContext(existing *api.Config, opts kubeContextOpts) *api.Config {
-	cfg := existing
+	cfg, clusterName, authInfoName := kubeContextSkeleton(existing, opts)
+
+	authInfo := api.NewAuthInfo()
+	authInfo.ClientCertificateData = opts.certPEM
+	authInfo.ClientKeyData = opts.keyPEM
+	cfg.AuthInfos[authInfoName] = authInfo
+
+	finishKubeContext(cfg, opts, clusterName, authInfoName)
+	return cfg
+}
+
+// kubeContextSkeleton prepares cfg (creating it, and its Clusters/AuthInfos/
+// Contexts maps, when existing is nil or missing them) and writes the
+// honey-<cluster> cluster entry shared by mergeKubeContext and
+// writeExecKubeContext: same server URL, same CA/insecure handling. It returns
+// cfg along with the derived cluster and authInfo map keys so callers can fill
+// in their own authInfo.
+func kubeContextSkeleton(existing *api.Config, opts kubeContextOpts) (cfg *api.Config, clusterName, authInfoName string) {
+	cfg = existing
 	if cfg == nil {
 		cfg = api.NewConfig()
 	}
@@ -408,8 +470,8 @@ func mergeKubeContext(existing *api.Config, opts kubeContextOpts) *api.Config {
 		cfg.Contexts = map[string]*api.Context{}
 	}
 
-	clusterName := "honey-" + opts.cluster
-	authInfoName := "honey-" + opts.cn
+	clusterName = "honey-" + opts.cluster
+	authInfoName = "honey-" + opts.cn
 
 	cluster := api.NewCluster()
 	cluster.Server = "https://" + opts.proxy + "/" + opts.cluster
@@ -420,18 +482,20 @@ func mergeKubeContext(existing *api.Config, opts kubeContextOpts) *api.Config {
 	}
 	cfg.Clusters[clusterName] = cluster
 
-	authInfo := api.NewAuthInfo()
-	authInfo.ClientCertificateData = opts.certPEM
-	authInfo.ClientKeyData = opts.keyPEM
-	cfg.AuthInfos[authInfoName] = authInfo
+	return cfg, clusterName, authInfoName
+}
 
+// finishKubeContext writes opts.contextName pointing at clusterName/
+// authInfoName into cfg and makes it the current context. Shared tail of
+// mergeKubeContext and writeExecKubeContext, once each has populated its own
+// authInfo.
+func finishKubeContext(cfg *api.Config, opts kubeContextOpts, clusterName, authInfoName string) {
 	kubeContext := api.NewContext()
 	kubeContext.Cluster = clusterName
 	kubeContext.AuthInfo = authInfoName
 	cfg.Contexts[opts.contextName] = kubeContext
 
 	cfg.CurrentContext = opts.contextName
-	return cfg
 }
 
 // defaultKubeconfigPath resolves the target kubeconfig file when --kubeconfig

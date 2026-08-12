@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientauthenticationv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
+	"k8s.io/client-go/tools/clientcmd/api"
 )
 
 // credSkew is the renewal lead time applied to a cached certificate's expiry
@@ -18,6 +19,12 @@ import (
 // certificate within credSkew of its NotAfter is treated as stale so kubectl
 // is never handed a credential that could expire mid-request.
 const credSkew = time.Minute
+
+// execAPIVersion is the client.authentication.k8s.io API version this plugin
+// speaks, both as the ExecConfig.APIVersion advertised in the kubeconfig
+// (writeExecKubeContext) and as the ExecCredential.APIVersion emitted by
+// emitExecCredential; kubectl requires the two to match.
+const execAPIVersion = "client.authentication.k8s.io/v1"
 
 // inExecCredentialMode reports whether honey is being invoked as a kubectl
 // client-go credential plugin rather than interactively: kubectl sets
@@ -58,7 +65,7 @@ func execInteractiveAllowed() bool {
 func emitExecCredential(w io.Writer, c cachedCert) error {
 	ec := clientauthenticationv1.ExecCredential{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "client.authentication.k8s.io/v1",
+			APIVersion: execAPIVersion,
 			Kind:       "ExecCredential",
 		},
 		Status: &clientauthenticationv1.ExecCredentialStatus{
@@ -100,4 +107,32 @@ func runKubeCredential(cmd *cobra.Command, cluster, adminURL string) error {
 		return fmt.Errorf("store refreshed certificate: %w", err)
 	}
 	return emitExecCredential(cmd.OutOrStdout(), c)
+}
+
+// writeExecKubeContext adds (or replaces) the honey-<cluster> cluster,
+// honey-<cn> authInfo, and opts.contextName context in existing, like
+// mergeKubeContext, but the authInfo is a kubectl exec credential plugin
+// (invoking "honey kube login <cluster> --admin-url <adminURL>" — cluster is
+// a positional argument on kubeLoginCmd, not a flag) rather than an embedded
+// certificate/key: kubectl re-runs honey on every API call, and honey serves
+// a cached certificate or transparently refreshes it via SSO (see
+// runKubeCredential). The resulting authInfo carries no secret material at
+// all — the certificate/key never touch the kubeconfig file, only honey's
+// local cache (storeCachedCert). existing may be nil.
+func writeExecKubeContext(existing *api.Config, opts kubeContextOpts, adminURL string) *api.Config {
+	cfg, clusterName, authInfoName := kubeContextSkeleton(existing, opts)
+
+	authInfo := api.NewAuthInfo()
+	authInfo.Exec = &api.ExecConfig{
+		APIVersion:         execAPIVersion,
+		Command:            "honey",
+		Args:               []string{"kube", "login", opts.cluster, "--admin-url", adminURL},
+		InstallHint:        "honey must be on your PATH; install it and re-run kubectl",
+		InteractiveMode:    api.IfAvailableExecInteractiveMode,
+		ProvideClusterInfo: false,
+	}
+	cfg.AuthInfos[authInfoName] = authInfo
+
+	finishKubeContext(cfg, opts, clusterName, authInfoName)
+	return cfg
 }
