@@ -181,6 +181,7 @@ type InterceptConfig struct {
 	AgentImage  string   `yaml:"agent_image,omitempty" json:"agent_image,omitempty" honey:"label=Interception agent container image" mod:"trim"`
 	DefaultMode []string `yaml:"default_mode,omitempty" json:"default_mode,omitempty" honey:"label=Default intercept modes (egress|incoming|files)"`
 	PolicyDir   string   `yaml:"policy_dir,omitempty" json:"policy_dir,omitempty" honey:"label=OPA policy directory for the intercept gate" mod:"trim"`
+	SessionTTL  string   `yaml:"session_ttl,omitempty" json:"session_ttl,omitempty" honey:"label=Brokered intercept session TTL (e.g. 1h)" mod:"trim"`
 }
 
 // DefaultDeviceCertTTL is the fallback validity for SSO/enroll-issued device
@@ -201,6 +202,26 @@ func (f *File) DeviceCertTTLValue() time.Duration {
 	d, err := time.ParseDuration(s)
 	if err != nil || d <= 0 {
 		return DefaultDeviceCertTTL
+	}
+	return d
+}
+
+// defaultInterceptSessionTTL bounds a server-brokered interception session when
+// session_ttl is unset or unparseable. The janitor tears down any session past
+// it, so an abandoned session (a crashed CLI) cannot leave an interception —
+// especially incoming-mode network redirects — running indefinitely.
+const defaultInterceptSessionTTL = time.Hour
+
+// SessionTTLValue returns the configured brokered-session TTL, or
+// defaultInterceptSessionTTL (1h) when unset, unparseable, or non-positive.
+// Nil-safe.
+func (c *InterceptConfig) SessionTTLValue() time.Duration {
+	if c == nil {
+		return defaultInterceptSessionTTL
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(c.SessionTTL))
+	if err != nil || d <= 0 {
+		return defaultInterceptSessionTTL
 	}
 	return d
 }
