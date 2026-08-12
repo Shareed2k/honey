@@ -260,7 +260,10 @@ func TestRunIntercept_BrokeredDispatchPrecedesLocalValidation(t *testing.T) {
 		AgentImage:  "registry.example/agent:1",
 		DefaultMode: []string{"incoming"},
 	}}
-	err := runIntercept(cmd, []string{"api-0"}, cfg, interceptFlags{namespace: "apps", adminURL: srv.URL})
+	// --cluster is supplied so the brokered path clears its up-front cluster
+	// check and reaches the oidc step; this test is about the incoming/--target
+	// validation ordering, which is orthogonal to the cluster requirement.
+	err := runIntercept(cmd, []string{"api-0"}, cfg, interceptFlags{namespace: "apps", cluster: "prod", adminURL: srv.URL})
 	require.Error(t, err)
 	// Reached the brokered path's oidc step (validated against the server's
 	// "egress" default, which needs no --target) instead of hard-erroring on
