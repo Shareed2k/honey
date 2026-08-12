@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -18,6 +19,11 @@ import (
 
 	"github.com/shareed2k/mogate/pkg/local"
 )
+
+// agentStopGrace bounds the best-effort signal that tells the in-pod agent to
+// terminate on teardown so it removes its network redirects. It uses its own
+// context (not the session's) so it runs even after the session is cancelled.
+const agentStopGrace = 5 * time.Second
 
 // shutdownGrace bounds how long teardown waits for the local injection session
 // to unwind after the group context is cancelled. Once it elapses teardown
@@ -134,7 +140,7 @@ type Options struct {
 	InjectorLib string
 
 	// agentPrivileged runs the interception agent's ephemeral container with a
-	// privileged security context (privileged, uid 0, gid capNetAdminGID) instead
+	// privileged security context (privileged, uid 0, gid agentBypassGID) instead
 	// of the default NET_ADMIN-only context. It exists only for the end-to-end
 	// test running against a nested k3s (Docker-in-Docker), where NET_ADMIN is not
 	// reliably propagated to the agent so it cannot program the network namespace.
@@ -214,6 +220,18 @@ func (s *Session) Run(ctx context.Context) (err error) {
 	if err = applyEphemeral(ctx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod, ec); err != nil {
 		return err
 	}
+	// Best-effort: on teardown, signal the agent (PID 1 of its container) to
+	// terminate so it runs its graceful shutdown and removes its network
+	// redirects — Kubernetes cannot delete the ephemeral container, so without
+	// this the target pod's traffic could stay redirected after an incoming
+	// session. Uses a fresh bounded context (the session context may already be
+	// cancelled) and ExecInPod, which is independent of the port-forwards that
+	// teardown closes. The agent image must exec the agent as PID 1 to receive it.
+	cleanups = append(cleanups, func() {
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), agentStopGrace)
+		defer cancelStop()
+		_ = s.deps.PodExecer.ExecInPod(stopCtx, []string{"sh", "-c", "kill -TERM 1 2>/dev/null || true"}, nil, io.Discard, io.Discard)
+	})
 	if err = waitEphemeralRunning(ctx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod, agentName, ephemeralReadyTimeout); err != nil {
 		return err
 	}

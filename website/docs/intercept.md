@@ -227,11 +227,18 @@ root in the same session.
   ```
 
 - **The ephemeral container cannot be removed.** Kubernetes has no API to
-  delete an ephemeral container once added — it is a permanent (if inert)
-  entry in the pod spec after the session ends. The agent **self-terminates**
-  at the end of a session; it does not keep running or keep `NET_ADMIN`
-  redirects installed, but its container entry remains visible in
-  `kubectl describe pod`.
+  delete an ephemeral container once added — it stays a (inert) entry in the
+  pod spec, visible in `kubectl describe pod`, after the session ends. On
+  teardown honey sends the agent a best-effort `SIGTERM` (via `exec`, over the
+  API server — independent of the port-forwards) so it runs its graceful
+  shutdown and **removes its network redirects**; without this an incoming
+  session's redirects could keep hijacking the pod's traffic. For this to work
+  the **agent image must `exec` the agent as PID 1** so it receives the signal.
+- **One interception per pod at a time.** The agent uses fixed in-pod ports and
+  honey resolves the session's agent as the pod's most-recently-added ephemeral
+  container, so two concurrent interceptions on the *same* pod are unsupported
+  (they would collide / mis-route). Intercept different pods concurrently
+  freely.
 - **macOS injection is limited by System Integrity Protection (SIP).** SIP
   blocks the local injection mechanism from attaching to Apple-signed system
   binaries; injecting into your own build or a non-system binary is
