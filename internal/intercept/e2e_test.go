@@ -8,13 +8,13 @@
 // audit sink.
 //
 // The data plane (agent image + injector) is built from a fresh checkout of the
-// public mogate module (tag v0.1.0) during setup: the host injector library via
+// public mogate module during setup: the host injector library via
 // `go generate ./internal/protocol` + `make build`, and a linux agent image via
-// `docker build`. The agent image entrypoint is a small wrapper that waits for
-// honey's out-of-band session token (delivered post-start via exec, honey's
-// real delivery path) before handing off to the genuine mogate `kube-agent`;
-// this cooperates with honey's "operator-configured agent image" contract
-// without changing any honey code.
+// `docker build`. honey deploys the genuine mogate `kube-agent`, which waits for
+// its --token-file natively while honey delivers the token out of band (via
+// exec) just after the container starts — its real delivery path, no wrapper.
+// The test layers only a thin entrypoint to inject test-timing flags (see
+// buildImages); it never waits for or touches the token.
 //
 // Excluded from the normal `go test` run (and CI) by the k8s_e2e build tag.
 // Requires a reachable Docker daemon. The ONLY skips are the environment gates
@@ -71,11 +71,15 @@ const (
 	// e2eK3sImage pins the same k3s image the k8s-proxy matrix uses.
 	e2eK3sImage = "rancher/k3s:v1.31.5-k3s1"
 	// mogateRepo and mogateTag identify the public data-plane module built here.
+	// mogateTag tracks the branch that makes kube-agent wait for its token file
+	// (so the stock image works as the deployed agent, no token-wait wrapper);
+	// switch to the release tag once that change is tagged.
 	mogateRepo = "https://github.com/shareed2k/mogate"
-	mogateTag  = "v0.1.1"
+	mogateTag  = "feat/token-file-wait"
 	// agentBaseImage is the genuine mogate agent image, built from the module's
-	// own (unmodified) Dockerfile. The honey agent images layer a token-wait
-	// entrypoint on top of it.
+	// own (unmodified) Dockerfile. The honey agent images layer only a thin
+	// timing-flag entrypoint on top of it (no token wait — kube-agent waits
+	// for its --token-file itself).
 	agentBaseImage = "mogate-agent-base:e2e"
 	// agentImageSteal and agentImageMirror are the two locally-built agent images
 	// (steal is the mogate default; mirror sets --mode=mirror + a larger
@@ -937,23 +941,24 @@ func buildHostInjector(t *testing.T, mogateDir string) string {
 }
 
 // buildImages builds the target echo image and the steal/mirror agent images.
-// The agent images layer a token-wait entrypoint on top of the GENUINE mogate
-// agent image (built from the module's own unmodified Dockerfile); mirror
-// additionally sets --mode=mirror and a larger --mirror-claim-window. All are
-// single-platform so they save and import into the k3s node cleanly.
+// The agent images layer a thin entrypoint on top of the GENUINE mogate agent
+// image (built from the module's own unmodified Dockerfile) only to inject
+// test-timing flags; mirror additionally sets --mode=mirror and a larger
+// --mirror-claim-window. All are single-platform so they save and import into
+// the k3s node cleanly.
 func buildImages(t *testing.T, mogateDir string) {
 	t.Helper()
 	// The genuine agent image, straight from the module's own Dockerfile.
 	dockerBuild(t, mogateDir, "Dockerfile", agentBaseImage)
 
-	// A wrapper entrypoint layered on the genuine image: honey delivers the
-	// per-session token out of band (via exec) AFTER this container starts, so
-	// wait for it before handing off to the real kube-agent. Extra flags (the
-	// capture mode and its claim window) come from HONEY_AGENT_EXTRA. The larger
-	// --claim-timeout absorbs the latency of claiming a stolen stream over a
-	// doubly-nested (colima) port-forward; production clusters use the defaults.
+	// A thin entrypoint layered on the genuine image. honey delivers the token
+	// out of band (via exec) AFTER this container starts; kube-agent waits for
+	// its --token-file natively, so this wrapper does NOT wait — it only injects
+	// test-timing flags (the capture mode and its claim window come from
+	// HONEY_AGENT_EXTRA; the larger --claim-timeout absorbs the latency of
+	// claiming a stolen stream over a doubly-nested (colima) port-forward;
+	// production clusters use the defaults and need no wrapper at all).
 	entrypoint := `#!/bin/sh
-until [ -s /var/run/mogate/token ]; do sleep 0.2; done
 sub="$1"; shift
 exec /usr/local/bin/mogate "$sub" --claim-timeout=15s ${HONEY_AGENT_EXTRA:-} "$@"
 `
@@ -1076,6 +1081,11 @@ func podDiagnostics(env *e2eEnv, ns, pod string) string {
 		return "diagnostics: " + err.Error()
 	}
 	fmt.Fprintf(&b, "pod phase=%s\n", p.Status.Phase)
+	for _, cs := range p.Status.EphemeralContainerStatuses {
+		if cs.State.Waiting != nil {
+			fmt.Fprintf(&b, "--- %s waiting: %s: %s\n", cs.Name, cs.State.Waiting.Reason, cs.State.Waiting.Message)
+		}
+	}
 	for _, ec := range p.Spec.EphemeralContainers {
 		b.WriteString(containerLog(env, ns, pod, ec.Name))
 	}
