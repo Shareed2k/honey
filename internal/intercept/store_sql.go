@@ -103,6 +103,12 @@ func restrictSQLiteFilePerm(dsn string) error {
 	if path == "" {
 		return nil
 	}
+	// Only the main DB file is chmod'd here. sqlite's transient sidecars (the
+	// per-transaction rollback journal, or -wal/-shm in WAL mode) are created
+	// and removed on demand during writes with the process umask, so they can't
+	// be reliably secured from here; the complete protection for those is to
+	// keep the store's parent directory owner-only (0700), which is documented
+	// for the operator. The main file, which persists, is kept 0600.
 	if err := os.Chmod(path, sqliteFilePerm); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil

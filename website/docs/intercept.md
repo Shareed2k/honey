@@ -457,8 +457,15 @@ restarted process's janitor picks up right where the old one left off — see
 - **`memory`** (default) — an in-process registry. Zero configuration, but
   sessions do not survive a honey web restart (see the note above).
 - **`sqlite`** — a local database file, given by `session_store_dsn` as a
-  filesystem path. honey creates the file (and its table) on first use, mode
-  `0600` (owner read/write only).
+  filesystem path. honey creates the file (and its table) on first use and
+  keeps that file mode `0600` (owner read/write only). sqlite also writes
+  transient sidecar files next to it during writes (a per-transaction journal,
+  or `-wal`/`-shm`) that briefly hold the same rows and are created with the
+  process umask; honey can't reliably secure those, so for complete at-rest
+  protection put the database in a directory only the honey user can read
+  (mode `0700`). The stored rows are session metadata (actor, cluster,
+  namespace, pod, container) plus a **hash** of the session token — never a
+  certificate, key, or id_token.
 - **`postgres`** — a shared database, given by `session_store_dsn` as a
   postgres connection string. Use this when more than one honey web replica
   fronts the same clusters, so every replica's janitor sees every session
