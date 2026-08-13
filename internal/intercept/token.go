@@ -61,12 +61,16 @@ func writeTokenFile(dir, token string) (string, error) {
 }
 
 // deliverToken writes token into the interception agent at its token path by
-// executing a shell command that reads the token from stdin. The token is never
-// passed as a command-line argument or environment variable, and is never
-// included in the returned error.
+// executing a shell command that reads the token from stdin. It writes to a
+// temporary file and renames it into place so a reader that polls for the token
+// (the agent waits for this file at startup) never observes a partially written
+// value — the rename is atomic within the directory. The token is never passed
+// as a command-line argument or environment variable, and is never included in
+// the returned error.
 func deliverToken(ctx context.Context, exec PodExecer, token string) error {
 	dst := agentRunDir + "/" + tokenFileName
-	cmd := []string{"sh", "-c", "umask 077; mkdir -p " + agentRunDir + " && cat > " + dst}
+	tmp := dst + ".tmp"
+	cmd := []string{"sh", "-c", "umask 077; mkdir -p " + agentRunDir + " && cat > " + tmp + " && mv " + tmp + " " + dst}
 	var stderr bytes.Buffer
 	if err := exec.ExecInPod(ctx, cmd, strings.NewReader(token), io.Discard, &stderr); err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
