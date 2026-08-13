@@ -2,10 +2,11 @@ package intercept
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/shareed2k/mogate/pkg/local"
@@ -27,7 +28,9 @@ const defaultSessionTTL = time.Hour
 type BrokerDeps struct {
 	// Clientset returns honey's Kubernetes client for a cluster.
 	Clientset func(cluster string) (kubernetes.Interface, error)
-	// Execer returns a PodExecer bound to a specific ephemeral container.
+	// Execer returns a PodExecer bound to a specific ephemeral container. It is
+	// called fresh whenever a session is torn down (Stop, StopByToken, or the
+	// janitor's reap), since a PodExecer is never persisted.
 	Execer func(cluster, namespace, pod, container string) (PodExecer, error)
 	// Enforcer authorizes each interception; a nil enforcer fails closed.
 	Enforcer *policy.Enforcer
@@ -36,6 +39,11 @@ type BrokerDeps struct {
 	// SessionTTL bounds an authorized session's lifetime; the janitor tears down
 	// any session past it. Non-positive ⇒ defaultSessionTTL.
 	SessionTTL time.Duration
+	// Store persists sessions so they survive a honey web restart: the janitor
+	// can reap a session authorized by a prior process, and Stop/StopByToken can
+	// find one. Nil ⇒ an in-memory store (today's behavior: sessions do not
+	// survive a restart).
+	Store SessionStore
 	// now is the clock (injectable for tests); nil ⇒ time.Now.
 	now func() time.Time
 }
@@ -89,33 +97,18 @@ type BrokeredSession struct {
 	ExpiresAt time.Time
 }
 
-// activeSession is the Broker's internal record for a live interception.
-type activeSession struct {
-	id        string
-	actor     string
-	cluster   string
-	namespace string
-	pod       string
-	container string // the ephemeral agent container name
-	modes     []string
-	image     string
-	execer    PodExecer
-	startedAt time.Time
-	expiresAt time.Time
-}
-
 // Broker deploys and tears down interception agents for authenticated,
-// authorized callers. One honey web process owns one Broker.
+// authorized callers. One honey web process owns one Broker. All session
+// state lives in deps.Store, so the Broker itself holds no mutable state and
+// needs no lock: concurrency safety is the store's responsibility.
 type Broker struct {
 	deps BrokerDeps
 	ttl  time.Duration
 	now  func() time.Time
-
-	mu       sync.Mutex
-	sessions map[string]*activeSession
 }
 
-// NewBroker constructs a Broker from its dependencies.
+// NewBroker constructs a Broker from its dependencies. A nil deps.Store gets
+// an in-memory store.
 func NewBroker(deps BrokerDeps) *Broker {
 	ttl := deps.SessionTTL
 	if ttl <= 0 {
@@ -125,14 +118,18 @@ func NewBroker(deps BrokerDeps) *Broker {
 	if now == nil {
 		now = time.Now
 	}
-	return &Broker{deps: deps, ttl: ttl, now: now, sessions: make(map[string]*activeSession)}
+	if deps.Store == nil {
+		deps.Store = newMemStore()
+	}
+	return &Broker{deps: deps, ttl: ttl, now: now}
 }
 
 // Authorize gates the request (with the caller's full claims), deploys the
 // agent as an ephemeral container using honey's cluster credentials, delivers a
-// per-session token to the agent, registers the session, and audits the start.
-// Fail-closed: a gate denial short-circuits before any deploy and is not
-// audited. It never logs the token or any claim material.
+// per-session token to the agent, persists the session (keyed by the sha256 of
+// the token, never the plaintext), and audits the start. Fail-closed: a gate
+// denial short-circuits before any deploy and is not audited. It never logs
+// the token or any claim material.
 func (b *Broker) Authorize(ctx context.Context, req AuthorizeRequest) (*BrokeredSession, error) {
 	if gerr := gate(ctx, b.deps.Enforcer, GateInput{
 		Actor: req.Actor, Cluster: req.Cluster, Namespace: req.Namespace,
@@ -170,10 +167,10 @@ func (b *Broker) Authorize(ctx context.Context, req AuthorizeRequest) (*Brokered
 	}
 	// From here the agent exists and Kubernetes cannot remove it (an ephemeral
 	// container cannot be deleted). If any later step fails before the session
-	// is registered, this best-effort SIGTERM signals the agent (PID 1 of its
+	// is persisted, this best-effort SIGTERM signals the agent (PID 1 of its
 	// container) to exit so it removes its network redirects — otherwise it
 	// would be orphaned forever: neither Stop nor reapExpired can find a session
-	// that never made it into the registry.
+	// that never made it into the store.
 	registered := false
 	defer func() {
 		if registered {
@@ -191,83 +188,117 @@ func (b *Broker) Authorize(ctx context.Context, req AuthorizeRequest) (*Brokered
 	}
 
 	nowT := b.now()
-	sess := &activeSession{
-		id: id, actor: req.Actor, cluster: req.Cluster,
-		namespace: req.Namespace, pod: req.Pod, container: agentName,
-		modes: modeStrings(req.Modes), image: req.AgentImage,
-		execer: execer, startedAt: nowT, expiresAt: nowT.Add(b.ttl),
+	sum := sha256.Sum256([]byte(token))
+	ps := PersistedSession{
+		ID: id, Actor: req.Actor, Cluster: req.Cluster,
+		Namespace: req.Namespace, Pod: req.Pod, Container: agentName,
+		Modes: modeStrings(req.Modes), AgentImage: req.AgentImage,
+		TokenHash: sum[:], StartedAt: nowT, ExpiresAt: nowT.Add(b.ttl),
 	}
-	b.mu.Lock()
-	b.sessions[sess.id] = sess
-	b.mu.Unlock()
+	if err := b.deps.Store.Save(ctx, ps); err != nil {
+		// The defer above SIGTERMs the just-deployed agent: the session never
+		// made it into the store, so nothing else will ever find it.
+		return nil, fmt.Errorf("intercept: save session: %w", err)
+	}
 	registered = true
 
 	auditStart(ctx, b.deps.Sink, Event{
-		Actor: sess.actor, Cluster: sess.cluster, Namespace: sess.namespace,
-		Pod: sess.pod, Container: sess.container, Mode: sess.modes, AgentImage: sess.image,
+		Actor: ps.Actor, Cluster: ps.Cluster, Namespace: ps.Namespace,
+		Pod: ps.Pod, Container: ps.Container, Mode: ps.Modes, AgentImage: ps.AgentImage,
 	})
 
 	return &BrokeredSession{
-		ID: sess.id, Token: token,
+		ID: ps.ID, Token: token,
 		ControlPort: agentControlRemotePort, EgressPort: agentEgressRemotePort,
-		ExpiresAt: sess.expiresAt,
+		ExpiresAt: ps.ExpiresAt,
 	}, nil
 }
 
 // Stop signals the agent to exit (best-effort SIGTERM via exec, so it removes
-// its network redirects), audits the stop, and deregisters the session. actor
+// its network redirects), deregisters the session, and audits the stop. actor
 // must own the session. An unknown id is an error.
 func (b *Broker) Stop(ctx context.Context, id, actor, reason string) error {
-	b.mu.Lock()
-	sess, ok := b.sessions[id]
-	if ok && sess.actor == actor {
-		delete(b.sessions, id)
+	sess, ok, err := b.deps.Store.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("intercept: get session: %w", err)
 	}
-	b.mu.Unlock()
 	if !ok {
 		return errors.New("intercept: unknown session")
 	}
-	if sess.actor != actor {
+	if sess.Actor != actor {
 		return errors.New("intercept: session not owned by actor")
+	}
+	return b.teardown(ctx, sess, reason)
+}
+
+// StopByToken signals the agent to exit and deregisters the session,
+// authenticating the caller by the per-session agent token instead of an
+// actor identity. This lets a local session tear itself down even after the
+// SSO id_token that originally authorized it has expired. The comparison
+// against the stored hash is constant-time; the token itself is never logged
+// and the error is deliberately generic so it leaks nothing about why a
+// token was rejected.
+func (b *Broker) StopByToken(ctx context.Context, id, token, reason string) error {
+	sess, ok, err := b.deps.Store.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("intercept: get session: %w", err)
+	}
+	if !ok {
+		return errors.New("intercept: unknown session")
+	}
+	sum := sha256.Sum256([]byte(token))
+	if subtle.ConstantTimeCompare(sum[:], sess.TokenHash) != 1 {
+		return errors.New("intercept: invalid session token")
+	}
+	return b.teardown(ctx, sess, reason)
+}
+
+// teardown signals sess's agent to exit, removes sess from the store, and
+// audits the stop. The execer is rebuilt on demand from the session's
+// cluster/namespace/pod/container: a PodExecer is never persisted.
+func (b *Broker) teardown(ctx context.Context, sess PersistedSession, reason string) error {
+	execer, err := b.deps.Execer(sess.Cluster, sess.Namespace, sess.Pod, sess.Container)
+	if err != nil {
+		return fmt.Errorf("intercept: build execer: %w", err)
 	}
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), agentStopGrace)
-	defer cancel()
-	_ = sess.execer.ExecInPod(stopCtx, []string{"sh", "-c", "kill -TERM 1 2>/dev/null || true"}, nil, io.Discard, io.Discard)
+	_ = execer.ExecInPod(stopCtx, []string{"sh", "-c", "kill -TERM 1 2>/dev/null || true"}, nil, io.Discard, io.Discard)
+	cancel()
+
+	if err := b.deps.Store.Delete(ctx, sess.ID); err != nil {
+		return fmt.Errorf("intercept: delete session: %w", err)
+	}
 
 	auditStop(ctx, b.deps.Sink, Event{
-		Actor: sess.actor, Cluster: sess.cluster, Namespace: sess.namespace,
-		Pod: sess.pod, Container: sess.container, Mode: sess.modes, AgentImage: sess.image,
-		Reason: reason, Duration: b.now().Sub(sess.startedAt),
+		Actor: sess.Actor, Cluster: sess.Cluster, Namespace: sess.Namespace,
+		Pod: sess.Pod, Container: sess.Container, Mode: sess.Modes, AgentImage: sess.AgentImage,
+		Reason: reason, Duration: b.now().Sub(sess.StartedAt),
 	})
 	return nil
 }
 
 // reapExpired stops every session past its expiry and returns how many it
 // reaped. It is the janitor's unit of work, exposed to the package for a
-// deterministic test.
+// deterministic test. A session whose teardown fails (e.g. a transient store
+// or cluster error) is left in place for the next tick to retry.
 func (b *Broker) reapExpired(ctx context.Context) int {
 	now := b.now()
-	b.mu.Lock()
-	var expired []*activeSession
-	for id, s := range b.sessions {
-		if now.After(s.expiresAt) {
-			expired = append(expired, s)
-			delete(b.sessions, id)
+	list, err := b.deps.Store.List(ctx)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, sess := range list {
+		if !now.After(sess.ExpiresAt) {
+			continue
 		}
+		if err := b.teardown(ctx, sess, "expired"); err != nil {
+			continue
+		}
+		count++
 	}
-	b.mu.Unlock()
-	for _, s := range expired {
-		stopCtx, cancel := context.WithTimeout(context.Background(), agentStopGrace)
-		_ = s.execer.ExecInPod(stopCtx, []string{"sh", "-c", "kill -TERM 1 2>/dev/null || true"}, nil, io.Discard, io.Discard)
-		cancel()
-		auditStop(ctx, b.deps.Sink, Event{
-			Actor: s.actor, Cluster: s.cluster, Namespace: s.namespace,
-			Pod: s.pod, Container: s.container, Mode: s.modes, AgentImage: s.image,
-			Reason: "expired", Duration: now.Sub(s.startedAt),
-		})
-	}
-	return len(expired)
+	return count
 }
 
 // StartJanitor runs reapExpired on a ticker until ctx is cancelled. It is a
