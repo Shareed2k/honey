@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/shareed2k/mogate/pkg/local"
+	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/shareed2k/honey/internal/audit"
@@ -234,10 +235,12 @@ func (b *Broker) Stop(ctx context.Context, id, actor, reason string) error {
 // StopByToken signals the agent to exit and deregisters the session,
 // authenticating the caller by the per-session agent token instead of an
 // actor identity. This lets a local session tear itself down even after the
-// SSO id_token that originally authorized it has expired. The comparison
-// against the stored hash is constant-time; the token itself is never logged
-// and the error is deliberately generic so it leaks nothing about why a
-// token was rejected.
+// SSO id_token that originally authorized it has expired. The token itself
+// is never logged, and the hash comparison is constant-time so it leaks
+// nothing about a near-miss token; the "unknown session" vs. "invalid
+// session token" errors do remain distinguishable, but that's acceptable
+// since session ids are unguessable CSPRNG values (mintToken), the same
+// split Stop makes between an unknown id and a wrong actor.
 func (b *Broker) StopByToken(ctx context.Context, id, token, reason string) error {
 	sess, ok, err := b.deps.Store.Get(ctx, id)
 	if err != nil {
@@ -253,22 +256,41 @@ func (b *Broker) StopByToken(ctx context.Context, id, token, reason string) erro
 	return b.teardown(ctx, sess, reason)
 }
 
-// teardown signals sess's agent to exit, removes sess from the store, and
-// audits the stop. The execer is rebuilt on demand from the session's
-// cluster/namespace/pod/container: a PodExecer is never persisted.
+// teardown removes sess from the store, then — only if this call is the one
+// that actually removed it — signals its agent to exit and audits the stop.
+// Deleting first and gating the side effects on owning the delete makes
+// teardown single-delivery: Stop, StopByToken, and reapExpired can all race
+// to tear down the same session (a Stop racing the janitor's reap of the
+// same just-expired session, or two StopByToken callers racing each other),
+// each first passing its own existence/ownership check, but the store's
+// compare-and-delete ensures only one of them SIGTERMs the agent and audits
+// exactly one intercept_stop event. The execer is rebuilt on demand from the
+// session's cluster/namespace/pod/container: a PodExecer is never persisted.
 func (b *Broker) teardown(ctx context.Context, sess PersistedSession, reason string) error {
+	deleted, err := b.deps.Store.Delete(ctx, sess.ID)
+	if err != nil {
+		return fmt.Errorf("intercept: delete session: %w", err)
+	}
+	if !deleted {
+		// Another concurrent caller already deleted this session and owns its
+		// SIGTERM/audit; there is nothing left for this call to do.
+		return nil
+	}
+
 	execer, err := b.deps.Execer(sess.Cluster, sess.Namespace, sess.Pod, sess.Container)
 	if err != nil {
+		// The session is already gone from the store, so nothing will ever
+		// retry this teardown: a failure here is the one way this method can
+		// leave the agent's network redirects orphaned. Surface it loudly.
+		zap.L().Warn("intercept: rebuild execer for teardown failed after delete; agent may be orphaned",
+			zap.String("session_id", sess.ID), zap.String("cluster", sess.Cluster),
+			zap.String("namespace", sess.Namespace), zap.String("pod", sess.Pod), zap.Error(err))
 		return fmt.Errorf("intercept: build execer: %w", err)
 	}
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), agentStopGrace)
 	_ = execer.ExecInPod(stopCtx, []string{"sh", "-c", "kill -TERM 1 2>/dev/null || true"}, nil, io.Discard, io.Discard)
 	cancel()
-
-	if err := b.deps.Store.Delete(ctx, sess.ID); err != nil {
-		return fmt.Errorf("intercept: delete session: %w", err)
-	}
 
 	auditStop(ctx, b.deps.Sink, Event{
 		Actor: sess.Actor, Cluster: sess.Cluster, Namespace: sess.Namespace,
@@ -280,12 +302,19 @@ func (b *Broker) teardown(ctx context.Context, sess PersistedSession, reason str
 
 // reapExpired stops every session past its expiry and returns how many it
 // reaped. It is the janitor's unit of work, exposed to the package for a
-// deterministic test. A session whose teardown fails (e.g. a transient store
-// or cluster error) is left in place for the next tick to retry.
+// deterministic test. A session whose store.Delete itself fails (e.g. a
+// transient store error) is left in place for the next tick to retry; one
+// that's deleted but whose post-delete step (rebuilding the execer to
+// signal the agent) fails is already gone from the store, so nothing will
+// retry it — that failure, and any List failure, is logged instead, since
+// with a real store or cluster these are the one way this loop can silently
+// stop reaping altogether, leaving privileged agents running forever with no
+// operator-visible signal.
 func (b *Broker) reapExpired(ctx context.Context) int {
 	now := b.now()
 	list, err := b.deps.Store.List(ctx)
 	if err != nil {
+		zap.L().Warn("intercept: janitor failed to list sessions; skipping this reap cycle", zap.Error(err))
 		return 0
 	}
 	count := 0
@@ -294,6 +323,9 @@ func (b *Broker) reapExpired(ctx context.Context) int {
 			continue
 		}
 		if err := b.teardown(ctx, sess, "expired"); err != nil {
+			zap.L().Warn("intercept: janitor failed to reap expired session; will retry next cycle",
+				zap.String("session_id", sess.ID), zap.String("cluster", sess.Cluster),
+				zap.String("namespace", sess.Namespace), zap.String("pod", sess.Pod), zap.Error(err))
 			continue
 		}
 		count++

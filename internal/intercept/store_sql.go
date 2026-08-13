@@ -167,14 +167,21 @@ FROM intercept_sessions WHERE id = ?`)
 	return ps, true, nil
 }
 
-// Delete removes the session with the given id. Deleting a missing id is
-// not an error.
-func (s *SQLStore) Delete(ctx context.Context, id string) error {
+// Delete removes the session with the given id and reports whether it
+// actually removed a row (existed == true), using the driver's affected-row
+// count as a compare-and-delete. Deleting a missing id is not an error; it
+// returns (false, nil).
+func (s *SQLStore) Delete(ctx context.Context, id string) (bool, error) {
 	query := s.rebind(`DELETE FROM intercept_sessions WHERE id = ?`)
-	if _, err := s.db.ExecContext(ctx, query, id); err != nil {
-		return fmt.Errorf("delete session: %w", err)
+	res, err := s.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return false, fmt.Errorf("delete session: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete session: rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // List returns every persisted session.

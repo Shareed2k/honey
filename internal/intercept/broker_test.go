@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/policy"
 )
 
@@ -95,6 +96,32 @@ type failingExecer struct{ recordingExecer }
 func (e *failingExecer) ExecInPod(ctx context.Context, cmd []string, in io.Reader, out, errw io.Writer) error {
 	_ = e.recordingExecer.ExecInPod(ctx, cmd, in, out, errw)
 	return errors.New("boom: exec failed")
+}
+
+// countingSink counts intercept_stop audit events. It is safe for concurrent
+// use (unlike recordingSink in audit_test.go), which the single-delivery
+// teardown race test needs: many goroutines race to tear down one session.
+type countingSink struct {
+	mu    sync.Mutex
+	stops int
+}
+
+func (s *countingSink) Log(_ context.Context, e audit.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e.Action == actionInterceptStop {
+		s.stops++
+	}
+	return nil
+}
+
+func (s *countingSink) Close() error { return nil }
+
+// count returns how many intercept_stop events this sink has recorded.
+func (s *countingSink) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stops
 }
 
 func newBrokerWith(t *testing.T, enf *policy.Enforcer, exec *recordingExecer, ttl time.Duration, clock func() time.Time, store SessionStore) *Broker {
@@ -410,6 +437,63 @@ func TestBroker_ReapAcrossRestart(t *testing.T) {
 	require.Len(t, execA.calls, 1) // only the original token delivery; brokerA was never touched by the reap
 
 	_, ok, err := store.Get(ctx, sess.ID)
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+// TestBroker_ConcurrentTeardownSingleDelivery proves teardown is
+// single-delivery under a race: half the goroutines call StopByToken with
+// the correct token, the other half run the janitor's reapExpired against an
+// already-expired session, all racing to tear down the SAME session. Every
+// caller passes its own existence/ownership check (Get finds the session, or
+// List includes it as expired), but the store's compare-and-delete must let
+// only one of them win, so exactly one SIGTERM is sent and exactly one
+// intercept_stop audit event is recorded — never a duplicate.
+func TestBroker_ConcurrentTeardownSingleDelivery(t *testing.T) {
+	exec := &recordingExecer{}
+	sink := &countingSink{}
+	now := time.Unix(1_000_000, 0)
+	clock := func() time.Time { return now }
+	cs := runningPodClient()
+	b := NewBroker(BrokerDeps{
+		Clientset:  func(string) (kubernetes.Interface, error) { return cs, nil },
+		Execer:     func(_, _, _, _ string) (PodExecer, error) { return exec, nil },
+		Enforcer:   newAllowPolicy(t),
+		Sink:       sink,
+		SessionTTL: time.Minute,
+		now:        clock,
+		Store:      newMemStore(),
+	})
+	sess, err := b.Authorize(context.Background(), AuthorizeRequest{
+		Actor: "alice", Cluster: "prod", Namespace: "prod-ns", Pod: "api-7d9f",
+		Container: "web", Modes: local.Modes{Egress: true}, AgentImage: "img:v1",
+	})
+	require.NoError(t, err)
+	now = now.Add(2 * time.Minute) // past ExpiresAt, so reapExpired also targets it
+
+	const n = 10
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				_ = b.StopByToken(context.Background(), sess.ID, sess.Token, "completed")
+			} else {
+				b.reapExpired(context.Background())
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// exec.calls[0] is the token delivery from Authorize (before the race
+	// started); exactly one more call — the single winning teardown's
+	// SIGTERM — must have been recorded.
+	require.Len(t, exec.calls, 2)
+	require.Contains(t, exec.calls[1], "kill -TERM 1 2>/dev/null || true")
+	require.Equal(t, 1, sink.count())
+
+	_, ok, err := b.deps.Store.Get(context.Background(), sess.ID)
 	require.NoError(t, err)
 	require.False(t, ok)
 }

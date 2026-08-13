@@ -43,10 +43,15 @@ func runStoreConformance(t *testing.T, newStore func(t *testing.T) SessionStore)
 	require.NoError(t, err)
 	require.Len(t, all, 1)
 
-	require.NoError(t, s.Delete(ctx, "s1"))
+	existed, err := s.Delete(ctx, "s1")
+	require.NoError(t, err)
+	require.True(t, existed) // Delete reports it actually removed a row
 	_, ok, _ = s.Get(ctx, "s1")
 	require.False(t, ok)
-	require.NoError(t, s.Delete(ctx, "s1")) // delete-missing is not an error
+
+	existed, err = s.Delete(ctx, "s1") // delete-missing is not an error
+	require.NoError(t, err)
+	require.False(t, existed)
 }
 
 // TestMemStore_Conformance runs the shared conformance suite against memStore.

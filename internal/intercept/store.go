@@ -48,9 +48,14 @@ type SessionStore interface {
 	// Get returns the session with the given id. A missing id is not an
 	// error: it returns a zero PersistedSession and ok == false.
 	Get(ctx context.Context, id string) (PersistedSession, bool, error)
-	// Delete removes the session with the given id. Deleting a missing id is
-	// not an error.
-	Delete(ctx context.Context, id string) error
+	// Delete removes the session with the given id and reports whether it
+	// actually removed a row (existed == true). Deleting a missing id is not
+	// an error; it returns (false, nil). This compare-and-delete return value
+	// lets a caller distinguish "I tore this session down" from "someone else
+	// already did", so two concurrent teardowns of the same session (e.g. a
+	// Stop racing the janitor's reap of the same just-expired session) signal
+	// the agent and audit the stop exactly once.
+	Delete(ctx context.Context, id string) (bool, error)
 	// List returns every persisted session.
 	List(ctx context.Context) ([]PersistedSession, error)
 }
@@ -92,13 +97,16 @@ func (m *memStore) Get(_ context.Context, id string) (PersistedSession, bool, er
 	return clonePersistedSession(ps), true, nil
 }
 
-// Delete removes the session with the given id. It is not an error if no
-// such session exists.
-func (m *memStore) Delete(_ context.Context, id string) error {
+// Delete removes the session with the given id and reports whether it
+// existed. It is not an error if no such session exists.
+func (m *memStore) Delete(_ context.Context, id string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.sessions[id]; !ok {
+		return false, nil
+	}
 	delete(m.sessions, id)
-	return nil
+	return true, nil
 }
 
 // List returns a deep copy of every stored session.
