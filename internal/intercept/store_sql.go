@@ -15,35 +15,35 @@ import (
 )
 
 // defaultSQLMaxOpenConns bounds the connection pool for the postgres driver.
-// sqlite is forced to a single connection (see newSQLStore) since it
+// sqlite is forced to a single connection (see NewSQLStore) since it
 // serializes writes at the file level and a shared-cache in-memory database
 // only stays alive while at least one connection is open.
 const defaultSQLMaxOpenConns = 10
 
 // sqlite3Driver and pgxDriver are the only two database/sql driver names
-// newSQLStore accepts.
+// NewSQLStore accepts.
 const (
 	sqlite3Driver = "sqlite3"
 	pgxDriver     = "pgx"
 )
 
-// sqlStore is a database/sql-backed SessionStore that works against either
+// SQLStore is a database/sql-backed SessionStore that works against either
 // sqlite (driver "sqlite3") or postgres (driver "pgx"). The two backends
 // share every query; only the schema's column types, the timestamp
 // representation, and the placeholder syntax differ, and those differences
 // are isolated behind isPostgres, encodeTime/scanSession, and rebind.
-type sqlStore struct {
+type SQLStore struct {
 	db         *sql.DB
 	isPostgres bool
 }
 
-var _ SessionStore = (*sqlStore)(nil)
+var _ SessionStore = (*SQLStore)(nil)
 
-// newSQLStore opens a database/sql connection for driver ("sqlite3" or
+// NewSQLStore opens a database/sql connection for driver ("sqlite3" or
 // "pgx") and dsn, verifies it's reachable, and ensures the
 // intercept_sessions table exists. dsn is never logged: it may contain
 // credentials.
-func newSQLStore(ctx context.Context, driver, dsn string) (*sqlStore, error) {
+func NewSQLStore(ctx context.Context, driver, dsn string) (*SQLStore, error) {
 	switch driver {
 	case sqlite3Driver, pgxDriver:
 	default:
@@ -69,7 +69,7 @@ func newSQLStore(ctx context.Context, driver, dsn string) (*sqlStore, error) {
 		return nil, fmt.Errorf("ping session store: %w", err)
 	}
 
-	s := &sqlStore{db: db, isPostgres: driver == pgxDriver}
+	s := &SQLStore{db: db, isPostgres: driver == pgxDriver}
 	if err := s.ensureSchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ensure session store schema: %w", err)
@@ -80,7 +80,7 @@ func newSQLStore(ctx context.Context, driver, dsn string) (*sqlStore, error) {
 // ensureSchema creates the intercept_sessions table if it doesn't already
 // exist. The column types differ by backend: sqlite uses TEXT/BLOB,
 // postgres uses TEXT/BYTEA/TIMESTAMPTZ.
-func (s *sqlStore) ensureSchema(ctx context.Context) error {
+func (s *SQLStore) ensureSchema(ctx context.Context) error {
 	ddl := `CREATE TABLE IF NOT EXISTS intercept_sessions (
 	id TEXT PRIMARY KEY,
 	actor TEXT NOT NULL,
@@ -117,7 +117,7 @@ func (s *sqlStore) ensureSchema(ctx context.Context) error {
 
 // Save upserts ps: a session with the same ID is replaced. All values are
 // bound as query parameters (never string-concatenated).
-func (s *sqlStore) Save(ctx context.Context, ps PersistedSession) error {
+func (s *SQLStore) Save(ctx context.Context, ps PersistedSession) error {
 	modes, err := json.Marshal(ps.Modes)
 	if err != nil {
 		return fmt.Errorf("marshal session modes: %w", err)
@@ -152,7 +152,7 @@ ON CONFLICT(id) DO UPDATE SET
 
 // Get returns the session with the given id. A missing id is not an error:
 // it returns a zero PersistedSession and ok == false.
-func (s *sqlStore) Get(ctx context.Context, id string) (PersistedSession, bool, error) {
+func (s *SQLStore) Get(ctx context.Context, id string) (PersistedSession, bool, error) {
 	query := s.rebind(`
 SELECT id, actor, cluster, namespace, pod, container, modes, agent_image, token_hash, started_at, expires_at
 FROM intercept_sessions WHERE id = ?`)
@@ -169,7 +169,7 @@ FROM intercept_sessions WHERE id = ?`)
 
 // Delete removes the session with the given id. Deleting a missing id is
 // not an error.
-func (s *sqlStore) Delete(ctx context.Context, id string) error {
+func (s *SQLStore) Delete(ctx context.Context, id string) error {
 	query := s.rebind(`DELETE FROM intercept_sessions WHERE id = ?`)
 	if _, err := s.db.ExecContext(ctx, query, id); err != nil {
 		return fmt.Errorf("delete session: %w", err)
@@ -178,7 +178,7 @@ func (s *sqlStore) Delete(ctx context.Context, id string) error {
 }
 
 // List returns every persisted session.
-func (s *sqlStore) List(ctx context.Context) ([]PersistedSession, error) {
+func (s *SQLStore) List(ctx context.Context) ([]PersistedSession, error) {
 	query := `
 SELECT id, actor, cluster, namespace, pod, container, modes, agent_image, token_hash, started_at, expires_at
 FROM intercept_sessions`
@@ -204,7 +204,7 @@ FROM intercept_sessions`
 }
 
 // Close releases the underlying database/sql connection pool.
-func (s *sqlStore) Close() error {
+func (s *SQLStore) Close() error {
 	return s.db.Close()
 }
 
@@ -218,7 +218,7 @@ type rowScanner interface {
 // used by the Get/List queries, into a PersistedSession: modes is
 // JSON-decoded and the timestamp columns are parsed/normalized to UTC so
 // they round-trip exactly what Save stored.
-func (s *sqlStore) scanSession(row rowScanner) (PersistedSession, error) {
+func (s *SQLStore) scanSession(row rowScanner) (PersistedSession, error) {
 	var (
 		ps        PersistedSession
 		modesJSON string
@@ -265,7 +265,7 @@ func (s *sqlStore) scanSession(row rowScanner) (PersistedSession, error) {
 // encodeTime returns the value to bind for a timestamp column: a native
 // time.Time for postgres's TIMESTAMPTZ, or an RFC3339Nano UTC string for
 // sqlite's TEXT.
-func (s *sqlStore) encodeTime(t time.Time) any {
+func (s *SQLStore) encodeTime(t time.Time) any {
 	if s.isPostgres {
 		return t.UTC()
 	}
@@ -275,7 +275,7 @@ func (s *sqlStore) encodeTime(t time.Time) any {
 // rebind rewrites a query written with "?" placeholders into the syntax the
 // driver expects: postgres (pgx) requires "$1", "$2", ...; sqlite keeps "?"
 // unchanged.
-func (s *sqlStore) rebind(query string) string {
+func (s *SQLStore) rebind(query string) string {
 	if !s.isPostgres {
 		return query
 	}

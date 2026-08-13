@@ -125,7 +125,7 @@ func sessionStoreVariants() []sessionStoreVariant {
 		{name: "mem", new: func(*testing.T) SessionStore { return newMemStore() }},
 		{name: "sqlite", new: func(t *testing.T) SessionStore {
 			t.Helper()
-			s, err := newSQLStore(context.Background(), "sqlite3", "file::memory:?cache=shared")
+			s, err := NewSQLStore(context.Background(), "sqlite3", "file::memory:?cache=shared")
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = s.Close() })
 			return s
@@ -368,7 +368,7 @@ func TestBroker_StopByToken_Ownership(t *testing.T) {
 // authorized the session.
 func TestBroker_ReapAcrossRestart(t *testing.T) {
 	ctx := context.Background()
-	store, err := newSQLStore(ctx, "sqlite3", "file::memory:?cache=shared")
+	store, err := NewSQLStore(ctx, "sqlite3", "file::memory:?cache=shared")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 

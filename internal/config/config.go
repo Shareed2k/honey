@@ -182,6 +182,13 @@ type InterceptConfig struct {
 	DefaultMode []string `yaml:"default_mode,omitempty" json:"default_mode,omitempty" honey:"label=Default intercept modes (egress|incoming|files)"`
 	PolicyDir   string   `yaml:"policy_dir,omitempty" json:"policy_dir,omitempty" honey:"label=OPA policy directory for the intercept gate" mod:"trim"`
 	SessionTTL  string   `yaml:"session_ttl,omitempty" json:"session_ttl,omitempty" honey:"label=Brokered intercept session TTL (e.g. 1h)" mod:"trim"`
+	// SessionStore selects the backing store for brokered intercept sessions:
+	// "memory" (default), "sqlite", or "postgres". sqlite/postgres persist
+	// sessions so they survive a honey web restart; see SessionStoreValue.
+	SessionStore string `yaml:"session_store,omitempty" json:"session_store,omitempty" honey:"label=Intercept session store (memory|sqlite|postgres)" mod:"trim"`
+	// SessionStoreDSN is the sqlite file path or postgres DSN for SessionStore
+	// "sqlite"/"postgres". Never logged: it may contain credentials.
+	SessionStoreDSN string `yaml:"session_store_dsn,omitempty" json:"session_store_dsn,omitempty" honey:"label=Intercept session store DSN (sqlite path or postgres DSN)" mod:"trim"`
 }
 
 // DefaultDeviceCertTTL is the fallback validity for SSO/enroll-issued device
@@ -224,6 +231,27 @@ func (c *InterceptConfig) SessionTTLValue() time.Duration {
 		return defaultInterceptSessionTTL
 	}
 	return d
+}
+
+// defaultInterceptSessionStore is the SessionStoreValue used when
+// session_store is unset: today's in-memory behavior (sessions do not survive
+// a honey web restart).
+const defaultInterceptSessionStore = "memory"
+
+// SessionStoreValue returns the configured brokered-session store
+// ("memory", "sqlite", or "postgres"), lowercased and trimmed, defaulting to
+// defaultInterceptSessionStore ("memory") when unset. Nil-safe. It does not
+// validate the value against the known set — buildInterceptBroker rejects an
+// unknown store fail-closed.
+func (c *InterceptConfig) SessionStoreValue() string {
+	if c == nil {
+		return defaultInterceptSessionStore
+	}
+	s := strings.ToLower(strings.TrimSpace(c.SessionStore))
+	if s == "" {
+		return defaultInterceptSessionStore
+	}
+	return s
 }
 
 // MeshConfig configures this process's own libp2p mesh identity, used to

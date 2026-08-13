@@ -257,10 +257,21 @@ func buildK8sProxyServerConfig(cfg *config.File, enforcer *policy.Enforcer, sink
 // configured), so honey web's brokered intercept routes stay unregistered and
 // honey intercept remains client-side only. Any cluster whose
 // kubeconfig/context fails to resolve is a hard startup error (fail-closed),
-// consistent with the proxy.
+// consistent with the proxy. It also selects (and, for sqlite/postgres,
+// opens) the session store per cfg.Intercept.SessionStoreValue — see
+// buildInterceptSessionStore — before the Broker is constructed, so a
+// misconfigured or unreachable store fails honey web startup rather than
+// silently falling back to an in-memory store.
 func buildInterceptBroker(cfg *config.File, enforcer *policy.Enforcer, sink audit.Sink) (*intercept.Broker, []string, error) {
 	if cfg == nil || cfg.Intercept == nil || !cfg.Intercept.Enabled || cfg.K8sProxy == nil || len(cfg.K8sProxy.Clusters) == 0 {
 		return nil, nil, nil
+	}
+
+	// The store outlives this call (the Broker holds it for the life of the
+	// process), so it is not bound to any request/command context.
+	store, err := buildInterceptSessionStore(context.Background(), cfg.Intercept)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	restCfgs := make(map[string]*rest.Config, len(cfg.K8sProxy.Clusters))
@@ -290,8 +301,41 @@ func buildInterceptBroker(cfg *config.File, enforcer *policy.Enforcer, sink audi
 		Enforcer:   enforcer,
 		Sink:       sink,
 		SessionTTL: cfg.Intercept.SessionTTLValue(),
+		Store:      store,
 	}
 	return intercept.NewBroker(deps), cfg.Intercept.DefaultMode, nil
+}
+
+// buildInterceptSessionStore selects the backing store for brokered intercept
+// sessions per ic.SessionStoreValue(): "memory" (the default) returns
+// (nil, nil) since intercept.NewBroker already treats a nil Store as an
+// in-memory one; "sqlite" and "postgres" open a persistent database/sql store
+// (intercept.NewSQLStore) against ic.SessionStoreDSN. It fails closed rather
+// than falling back to memory: an unknown store value, an empty DSN for
+// sqlite/postgres, or a NewSQLStore open error are all returned as errors, so
+// a misconfigured store stops honey web from starting instead of silently
+// running without persistence. The DSN is never logged.
+func buildInterceptSessionStore(ctx context.Context, ic *config.InterceptConfig) (intercept.SessionStore, error) {
+	switch store := ic.SessionStoreValue(); store {
+	case "memory":
+		return nil, nil
+	case "sqlite", "postgres":
+		dsn := strings.TrimSpace(ic.SessionStoreDSN)
+		if dsn == "" {
+			return nil, fmt.Errorf("intercept: session_store %q requires session_store_dsn", store)
+		}
+		driver := "sqlite3"
+		if store == "postgres" {
+			driver = "pgx"
+		}
+		s, err := intercept.NewSQLStore(ctx, driver, dsn)
+		if err != nil {
+			return nil, fmt.Errorf("intercept: open session store: %w", err)
+		}
+		return s, nil
+	default:
+		return nil, fmt.Errorf("intercept: unknown session_store %q", store)
+	}
 }
 
 // stopMeshBestEffort stops the mesh singleton (internal/meshnet) if it was

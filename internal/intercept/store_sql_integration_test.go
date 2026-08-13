@@ -44,7 +44,7 @@ func TestSQLStore_Postgres_Conformance(t *testing.T) {
 	require.NoError(t, err)
 
 	runStoreConformance(t, func(t *testing.T) SessionStore {
-		s, err := newSQLStore(context.Background(), "pgx", dsn)
+		s, err := NewSQLStore(context.Background(), "pgx", dsn)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = s.Close() })
 		return s

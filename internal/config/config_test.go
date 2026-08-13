@@ -1110,3 +1110,11 @@ func TestInterceptSessionTTLValue(t *testing.T) {
 	require.Equal(t, time.Hour, (&InterceptConfig{SessionTTL: "garbage"}).SessionTTLValue())
 	require.Equal(t, time.Hour, (&InterceptConfig{SessionTTL: "-5m"}).SessionTTLValue())
 }
+
+func TestInterceptSessionStoreValue(t *testing.T) {
+	require.Equal(t, "memory", (*InterceptConfig)(nil).SessionStoreValue())
+	require.Equal(t, "memory", (&InterceptConfig{}).SessionStoreValue())
+	require.Equal(t, "sqlite", (&InterceptConfig{SessionStore: "SQLite"}).SessionStoreValue())
+	require.Equal(t, "postgres", (&InterceptConfig{SessionStore: "postgres"}).SessionStoreValue())
+	require.Equal(t, "sqlite", (&InterceptConfig{SessionStore: "  sqlite  "}).SessionStoreValue())
+}
