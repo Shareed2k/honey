@@ -71,11 +71,10 @@ const (
 	// e2eK3sImage pins the same k3s image the k8s-proxy matrix uses.
 	e2eK3sImage = "rancher/k3s:v1.31.5-k3s1"
 	// mogateRepo and mogateTag identify the public data-plane module built here.
-	// mogateTag tracks the branch that makes kube-agent wait for its token file
-	// (so the stock image works as the deployed agent, no token-wait wrapper);
-	// switch to the release tag once that change is tagged.
+	// mogateTag is the release whose kube-agent waits for its token file, so the
+	// stock image works as the deployed agent with no token-wait wrapper.
 	mogateRepo = "https://github.com/shareed2k/mogate"
-	mogateTag  = "feat/token-file-wait"
+	mogateTag  = "v0.1.2"
 	// agentBaseImage is the genuine mogate agent image, built from the module's
 	// own (unmodified) Dockerfile. The honey agent images layer only a thin
 	// timing-flag entrypoint on top of it (no token wait — kube-agent waits
