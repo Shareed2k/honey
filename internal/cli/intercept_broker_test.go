@@ -68,19 +68,20 @@ func TestFetchInterceptConfig_Disabled(t *testing.T) {
 }
 
 func TestInterceptStop_NoContent(t *testing.T) {
-	var gotPath, gotIDToken string
+	var gotPath string
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		var body map[string]any
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		gotIDToken, _ = body["id_token"].(string)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	err := interceptStop(context.Background(), srv.URL, "sess-1", "idtok", "n")
+	err := interceptStop(context.Background(), srv.URL, "sess-1", "sess-tok")
 	require.NoError(t, err)
 	require.Equal(t, "/api/v1/intercept/sess-1/stop", gotPath)
-	require.Equal(t, "idtok", gotIDToken)
+	require.Equal(t, "sess-tok", gotBody["token"], "interceptStop must post the session token")
+	_, hasIDToken := gotBody["id_token"]
+	require.False(t, hasIDToken, "interceptStop must not post id_token")
 }
 
 func TestInterceptStop_ErrorStatus(t *testing.T) {
@@ -88,6 +89,6 @@ func TestInterceptStop_ErrorStatus(t *testing.T) {
 		http.Error(w, `{"error":"unknown session"}`, http.StatusNotFound)
 	}))
 	defer srv.Close()
-	err := interceptStop(context.Background(), srv.URL, "sess-1", "idtok", "n")
+	err := interceptStop(context.Background(), srv.URL, "sess-1", "sess-tok")
 	require.Error(t, err)
 }

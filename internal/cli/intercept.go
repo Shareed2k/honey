@@ -300,11 +300,14 @@ func runInterceptBrokered(ctx context.Context, cfg *config.File, f interceptFlag
 	// deregister the session on every return path below, including a caller
 	// signal (which cancels ctx, unwinds local.Run, and reaches this defer).
 	// A fresh background context is used because ctx may already be cancelled
-	// by the time we get here. Never logs idToken or resp.Token.
+	// by the time we get here. Authenticated by resp.Token (the per-session
+	// capability), not idToken: the id_token can expire before a long session
+	// ends, but the session token remains valid for exactly this session's
+	// lifetime. Never logs idToken or resp.Token.
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), interceptStopGrace)
 		defer cancel()
-		_ = interceptStop(stopCtx, adminURL, resp.SessionID, idToken, nonce)
+		_ = interceptStop(stopCtx, adminURL, resp.SessionID, resp.Token)
 	}()
 
 	// The operator's OWN (typically more limited) cluster credentials, used

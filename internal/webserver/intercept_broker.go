@@ -17,6 +17,12 @@ import (
 type interceptBroker interface {
 	Authorize(ctx context.Context, req intercept.AuthorizeRequest) (*intercept.BrokeredSession, error)
 	Stop(ctx context.Context, id, actor, reason string) error
+	// StopByToken tears down the session identified by id, authenticating the
+	// caller with the per-session agent token (the capability the CLI already
+	// holds from the authorize response) instead of an actor identity. This
+	// keeps graceful teardown working for cluster-scoped identity policies and
+	// for sessions that outlive the id_token that originally authorized them.
+	StopByToken(ctx context.Context, id, token, reason string) error
 }
 
 // handleInterceptConfig reports whether brokered interception is enabled and
@@ -101,18 +107,43 @@ func (s *Server) handleInterceptAuthorize(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleInterceptStop verifies the id_token, resolves the actor, and asks the
-// broker to stop the session — only if the actor owns it. An unknown or
-// not-owned session yields 404. Never logs id_token or token material.
+// handleInterceptStop tears down the session named by the id URL param.
+//
+// Preferred path: the request carries the per-session agent token (the
+// capability the CLI already holds from the authorize response). The token
+// alone authenticates the stop — StopByToken hashes it and constant-time
+// compares against the stored hash — so no id_token verification or identity
+// resolution happens on this path. This is what lets a session be torn down
+// gracefully even under a cluster-scoped identity policy or after the id_token
+// that originally authorized it has expired.
+//
+// Fallback path (documented, kept for compatibility): when token is absent,
+// the request is authenticated the old way — verify the id_token, resolve the
+// actor via the identity policy, and stop only if that actor owns the
+// session.
+//
+// Either path maps a broker error (unknown session, invalid token, or
+// not-owned) to a generic 404 so as not to reveal which case applied. Never
+// logs id_token or token material.
 func (s *Server) handleInterceptStop(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var body struct {
+		Token   string `json:"token"`
 		IDToken string `json:"id_token"`
 		Nonce   string `json:"nonce"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxEnrollBody)).Decode(&body); err != nil {
 		httpError(w, fmt.Errorf("decode request: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	if body.Token != "" {
+		if err := s.interceptBroker.StopByToken(r.Context(), id, body.Token, "completed"); err != nil {
+			http.Error(w, `{"error":"unknown session"}`, http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

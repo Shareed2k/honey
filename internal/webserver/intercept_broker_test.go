@@ -7,11 +7,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/intercept"
@@ -24,13 +28,19 @@ import (
 // received and returning canned results/errors so the brokered endpoints can
 // be exercised without a real intercept.Broker (no cluster, no exec).
 type stubBroker struct {
-	authErr error
-	stopErr error
-	lastReq intercept.AuthorizeRequest
+	authErr        error
+	stopErr        error
+	stopByTokenErr error
+	lastReq        intercept.AuthorizeRequest
 	// lastStopActor records the actor argument the handler passed to Stop, so
 	// tests can prove it is the resolved identity (not a client-supplied value
 	// or an unconditional email fallback).
 	lastStopActor string
+	// lastStopByTokenID/lastStopByTokenToken record the arguments the handler
+	// passed to StopByToken, so tests can prove the handler forwards the
+	// client-supplied token verbatim rather than falling back to id_token.
+	lastStopByTokenID    string
+	lastStopByTokenToken string
 }
 
 func (s *stubBroker) Authorize(_ context.Context, req intercept.AuthorizeRequest) (*intercept.BrokeredSession, error) {
@@ -44,6 +54,12 @@ func (s *stubBroker) Authorize(_ context.Context, req intercept.AuthorizeRequest
 func (s *stubBroker) Stop(_ context.Context, _, actor, _ string) error {
 	s.lastStopActor = actor
 	return s.stopErr
+}
+
+func (s *stubBroker) StopByToken(_ context.Context, id, token, _ string) error {
+	s.lastStopByTokenID = id
+	s.lastStopByTokenToken = token
+	return s.stopByTokenErr
 }
 
 // newBrokerTestServer builds a Server with the given identity enforcer, a stub
@@ -65,11 +81,12 @@ func newBrokerTestServer(t *testing.T, enf *policy.Enforcer, v idTokenVerifier, 
 	}
 }
 
-// withURLParam injects a chi route context carrying the given URL param, so a
-// handler that reads it via chi.URLParam can be invoked directly (no router).
-func withURLParam(r *http.Request, key, value string) *http.Request {
+// withURLParam injects a chi route context carrying the "id" URL param (the
+// only one any handler in this file reads), so a handler that reads it via
+// chi.URLParam can be invoked directly (no router).
+func withURLParam(r *http.Request, value string) *http.Request {
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add(key, value)
+	rctx.URLParams.Add("id", value)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
@@ -151,7 +168,7 @@ func TestInterceptStop_Success204(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"id_token": "x"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/intercept/sess-1/stop", bytes.NewReader(body))
-	req = withURLParam(req, "id", "sess-1")
+	req = withURLParam(req, "sess-1")
 	rec := httptest.NewRecorder()
 	s.handleInterceptStop(rec, req)
 
@@ -176,7 +193,7 @@ func TestInterceptStop_UsesResolvedIdentityActor(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"id_token": "x"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/intercept/sess-1/stop", bytes.NewReader(body))
-	req = withURLParam(req, "id", "sess-1")
+	req = withURLParam(req, "sess-1")
 	rec := httptest.NewRecorder()
 	s.handleInterceptStop(rec, req)
 
@@ -190,11 +207,79 @@ func TestInterceptStop_UnknownSession404(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"id_token": "x"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/intercept/no-such-session/stop", bytes.NewReader(body))
-	req = withURLParam(req, "id", "no-such-session")
+	req = withURLParam(req, "no-such-session")
 	rec := httptest.NewRecorder()
 	s.handleInterceptStop(rec, req)
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// TestInterceptStop_ByToken204 proves that a stop request carrying the
+// per-session token takes the StopByToken path: no id_token/nonce is
+// required, and the handler forwards the id and token verbatim rather than
+// resolving an actor.
+func TestInterceptStop_ByToken204(t *testing.T) {
+	br := &stubBroker{}
+	// The verifier is a distraction here: presence of "token" in the request
+	// body must short-circuit straight to StopByToken without ever calling
+	// Verify. If the handler mistakenly fell through to the id_token/actor
+	// path instead, br.Stop (not StopByToken) would be invoked and the
+	// lastStopByToken* assertions below would fail.
+	s := newBrokerTestServer(t, nil, stubVerifier{}, br, &captureSink{})
+
+	body, _ := json.Marshal(map[string]any{"token": "sess-1-token"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/intercept/sess-1/stop", bytes.NewReader(body))
+	req = withURLParam(req, "sess-1")
+	rec := httptest.NewRecorder()
+	s.handleInterceptStop(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.Equal(t, "sess-1", br.lastStopByTokenID)
+	require.Equal(t, "sess-1-token", br.lastStopByTokenToken)
+}
+
+// TestInterceptStop_ByTokenInvalid404 proves that a StopByToken failure
+// (unknown session or invalid token) maps to a generic 404, mirroring the
+// id_token/actor fallback's error handling.
+func TestInterceptStop_ByTokenInvalid404(t *testing.T) {
+	br := &stubBroker{stopByTokenErr: errors.New("intercept: invalid session token")}
+	s := newBrokerTestServer(t, nil, stubVerifier{}, br, &captureSink{})
+
+	body, _ := json.Marshal(map[string]any{"token": "wrong-token"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/intercept/sess-1/stop", bytes.NewReader(body))
+	req = withURLParam(req, "sess-1")
+	rec := httptest.NewRecorder()
+	s.handleInterceptStop(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// TestInterceptStop_TokenNeverLogged proves that a stop request carrying the
+// per-session token never appears in the log output, whether the request
+// succeeds or the broker rejects it.
+func TestInterceptStop_TokenNeverLogged(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	restore := zap.ReplaceGlobals(zap.New(core))
+	defer restore()
+
+	const secretToken = "sess-1-super-secret-token"
+	br := &stubBroker{stopByTokenErr: errors.New("intercept: invalid session token")}
+	s := newBrokerTestServer(t, nil, stubVerifier{}, br, &captureSink{})
+
+	body, _ := json.Marshal(map[string]any{"token": secretToken})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/intercept/sess-1/stop", bytes.NewReader(body))
+	req = withURLParam(req, "sess-1")
+	rec := httptest.NewRecorder()
+	s.handleInterceptStop(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	for _, entry := range logs.All() {
+		require.NotContains(t, entry.Message, secretToken)
+		for _, f := range entry.Context {
+			require.NotContains(t, f.String, secretToken)
+		}
+	}
+	require.False(t, strings.Contains(rec.Body.String(), secretToken), "response body must not echo the token back")
 }
 
 func TestInterceptConfig_ReportsEnabledAndDefaultMode(t *testing.T) {

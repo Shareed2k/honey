@@ -112,13 +112,14 @@ func interceptAuthorize(ctx context.Context, adminURL, idToken, nonce string, re
 	return out, nil
 }
 
-// interceptStop POSTs a stop request for sessionID. Any 2xx response
-// (honey web returns 204) is success.
-func interceptStop(ctx context.Context, adminURL, sessionID, idToken, nonce string) error {
+// interceptStop POSTs a stop request for sessionID, authenticated by the
+// per-session agent token (the capability returned from interceptAuthorize) —
+// not the id_token, which may have expired by the time the session ends. Any
+// 2xx response (honey web returns 204) is success. token is never logged.
+func interceptStop(ctx context.Context, adminURL, sessionID, token string) error {
 	payload := struct {
-		IDToken string `json:"id_token"`
-		Nonce   string `json:"nonce"`
-	}{IDToken: idToken, Nonce: nonce}
+		Token string `json:"token"`
+	}{Token: token}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
