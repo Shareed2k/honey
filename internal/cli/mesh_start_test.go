@@ -3,12 +3,16 @@ package cli
 import (
 	"context"
 	"crypto/rand"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/meshnet"
@@ -136,4 +140,36 @@ func TestStartMeshIfConfigured_NilOrDisabledConfigIsNoOp(t *testing.T) {
 	if meshnet.Enabled() {
 		t.Fatal("expected Enabled() to be false after startMeshIfConfigured with Mesh.Enabled=false")
 	}
+}
+
+// TestPersistentPreRunE_SkipsMeshInExecCredentialMode proves the credential
+// hot-path guard: when honey runs as a kubectl exec credential plugin
+// (KUBERNETES_EXEC_INFO set), PersistentPreRunE must NOT boot the mesh even
+// though the resolved config enables it — otherwise every kubectl call would
+// pay a libp2p host + relay dial, and a child plugin process would collide with
+// a parent honey process on the same mesh identity.
+func TestPersistentPreRunE_SkipsMeshInExecCredentialMode(t *testing.T) {
+	_ = meshnet.Stop(context.Background())
+	t.Cleanup(func() { _ = meshnet.Stop(context.Background()) })
+
+	// A config that WOULD start the mesh in a normal invocation.
+	cfg := &config.File{Mesh: config.MeshConfig{
+		Enabled:    true,
+		PrivateKey: newMeshTestIdentity(t),
+		RelayAddrs: []string{newMeshTestRelayAddr(t)},
+	}}
+	data, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, data, 0o600))
+
+	origCfg := flagConfig
+	t.Cleanup(func() { flagConfig = origCfg })
+	flagConfig = cfgPath
+
+	// Simulate kubectl invoking the exec credential plugin.
+	t.Setenv("KUBERNETES_EXEC_INFO", `{"apiVersion":"client.authentication.k8s.io/v1","kind":"ExecCredential","spec":{"interactive":false}}`)
+
+	require.NoError(t, rootCmd.PersistentPreRunE(kubeLoginCmd, nil))
+	require.False(t, meshnet.Enabled(), "mesh must not start in exec-credential mode")
 }
