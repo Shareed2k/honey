@@ -104,7 +104,11 @@ func runKubeCredential(cmd *cobra.Command, cluster, adminURL string) error {
 
 	c := cachedCert{CertPEM: certPEM, KeyPEM: keyPEM, NotAfter: notAfter}
 	if err := storeCachedCert(cluster, c); err != nil {
-		return fmt.Errorf("store refreshed certificate: %w", err)
+		// The freshly issued certificate is valid; a transient cache-write
+		// failure must not force kubectl through another interactive sign-in.
+		// Warn to stderr (stdout is reserved for the ExecCredential JSON) and
+		// still emit the credential.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not cache the refreshed certificate: %v\n", err)
 	}
 	return emitExecCredential(cmd.OutOrStdout(), c)
 }

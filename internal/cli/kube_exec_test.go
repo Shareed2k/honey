@@ -69,6 +69,34 @@ func TestRunKubeCredential_FreshCacheEmitsWithoutNetwork(t *testing.T) {
 	require.Equal(t, string(key), ec.Status.ClientKeyData)
 }
 
+// TestRunKubeCredential_EmitsEvenIfCacheWriteFails proves a transient cache
+// failure after a successful refresh does not force another interactive
+// sign-in: the freshly issued credential is still emitted to kubectl.
+func TestRunKubeCredential_EmitsEvenIfCacheWriteFails(t *testing.T) {
+	// HONEY_HOME points at a regular file, so MkdirAll of the cache dir under it
+	// fails and storeCachedCert errors.
+	badHome := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(badHome, []byte("x"), 0o600))
+	t.Setenv("HONEY_HOME", badHome)
+	t.Setenv("KUBERNETES_EXEC_INFO", `{"apiVersion":"client.authentication.k8s.io/v1","kind":"ExecCredential","spec":{"interactive":true}}`)
+
+	certPEM, _ := selfSignedForTest(t, time.Now().Add(time.Hour))
+	origFlow, origLogin := browserAuthCodeFlowFn, kubeOIDCLoginFn
+	t.Cleanup(func() { browserAuthCodeFlowFn, kubeOIDCLoginFn = origFlow, origLogin })
+	browserAuthCodeFlowFn = func(context.Context, string, []string) (string, string, error) { return "idtok", "n", nil }
+	kubeOIDCLoginFn = func(context.Context, string, string, string, string, []byte) ([]byte, []byte, string, []string, error) {
+		return certPEM, []byte("ca"), "alice", nil, nil
+	}
+
+	cmd, out := newKubeCredCmd(t)
+	require.NoError(t, runKubeCredential(cmd, "prod", "http://admin")) // cache failed, but no error
+
+	var ec clientauthenticationv1.ExecCredential
+	require.NoError(t, json.Unmarshal(out.Bytes(), &ec))
+	require.NotNil(t, ec.Status)
+	require.Equal(t, string(certPEM), ec.Status.ClientCertificateData) // still emitted the fetched cert
+}
+
 func TestRunKubeCredential_StaleNonInteractiveErrors(t *testing.T) {
 	t.Setenv("HONEY_HOME", t.TempDir())
 	t.Setenv("KUBERNETES_EXEC_INFO", `{"apiVersion":"client.authentication.k8s.io/v1","kind":"ExecCredential","spec":{"interactive":false}}`)

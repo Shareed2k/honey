@@ -37,13 +37,6 @@ func honeyHome() (string, error) {
 	return filepath.Join(h, ".honey"), nil
 }
 
-// kubeCredsDirMode is the owner-only permission the per-cluster cache dir is
-// (re-)tightened to on every access. A directory needs the execute bit to be
-// traversable, so it is 0700 (not 0600); the cert/key files inside are
-// separately written at 0600. Named once here so the intent is stated in one
-// place and both the mkdir and the re-chmod share it.
-var kubeCredsDirMode = os.FileMode(0o700)
-
 // kubeCredsDir returns (creating, mode 0700) the per-cluster credential cache dir.
 // The cluster name is reduced to a single safe, collision-free path segment
 // (see cacheSegment). The mode is re-asserted on every call (not just at
@@ -55,11 +48,13 @@ func kubeCredsDir(cluster string) (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(base, "kube", cacheSegment(cluster))
-	if err := os.MkdirAll(dir, kubeCredsDirMode); err != nil {
+	// 0700 (owner-only): MkdirAll creates the directory with this mode on first
+	// use. The cert/key files inside are written 0600 by safepath.WriteFile
+	// regardless of the directory's mode, so the private key stays owner-only
+	// even if the directory was pre-created more permissively — which is why no
+	// separate re-chmod of the directory is needed here.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create kube creds dir: %w", err)
-	}
-	if err := os.Chmod(dir, kubeCredsDirMode); err != nil {
-		return "", fmt.Errorf("chmod kube creds dir: %w", err)
 	}
 	return dir, nil
 }
