@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +21,11 @@ import (
 // serializes writes at the file level and a shared-cache in-memory database
 // only stays alive while at least one connection is open.
 const defaultSQLMaxOpenConns = 10
+
+// sqliteFilePerm is the file mode enforced on an on-disk sqlite session-store
+// database: it holds session metadata (actor/cluster/namespace/pod/container)
+// and a token hash, so it must be readable only by its owner.
+const sqliteFilePerm fs.FileMode = 0o600
 
 // sqlite3Driver and pgxDriver are the only two database/sql driver names
 // NewSQLStore accepts.
@@ -74,7 +81,52 @@ func NewSQLStore(ctx context.Context, driver, dsn string) (*SQLStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ensure session store schema: %w", err)
 	}
+	if driver == sqlite3Driver {
+		if err := restrictSQLiteFilePerm(dsn); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("restrict session store file permissions: %w", err)
+		}
+	}
 	return s, nil
+}
+
+// restrictSQLiteFilePerm chmods the on-disk file behind a sqlite dsn to
+// sqliteFilePerm (0600), after ensureSchema has guaranteed the file exists.
+// dsn may be a plain file path or a sqlite "file:" URI; sqliteFilePath
+// extracts the underlying path from either form. An in-memory dsn (":memory:"
+// or "file::memory:...") never backs a real file, so sqliteFilePath returns
+// "" and this is a no-op; a real path that still doesn't exist is likewise
+// tolerated (fs.ErrNotExist), since that can only mean an in-memory-like mode
+// this function doesn't recognize, not a real file we failed to secure.
+func restrictSQLiteFilePerm(dsn string) error {
+	path := sqliteFilePath(dsn)
+	if path == "" {
+		return nil
+	}
+	if err := os.Chmod(path, sqliteFilePerm); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// sqliteFilePath extracts the filesystem path from a sqlite dsn: a "file:"
+// URI prefix is stripped and any "?query" suffix is dropped, matching the
+// subset of sqlite's DSN syntax this codebase accepts (see
+// config.InterceptConfig.SessionStoreDSN, documented as "the sqlite file
+// path"). Returns "" for the special in-memory forms (":memory:",
+// "file::memory:...") that never create a real file.
+func sqliteFilePath(dsn string) string {
+	path := strings.TrimPrefix(dsn, "file:")
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	if path == "" || path == ":memory:" {
+		return ""
+	}
+	return path
 }
 
 // ensureSchema creates the intercept_sessions table if it doesn't already

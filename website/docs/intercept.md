@@ -344,6 +344,8 @@ intercept:
   default_mode: ["egress", "files"]
   policy_dir: /etc/honey/intercept-policy   # optional; see below
   session_ttl: 1h                           # orphan-teardown bound (default 1h)
+  session_store: sqlite                     # memory (default) | sqlite | postgres
+  session_store_dsn: /var/lib/honey/intercept-sessions.db  # sqlite file path or postgres DSN
 
 k8s_proxy:
   clusters:
@@ -352,10 +354,11 @@ k8s_proxy:
                                                           # per the RBAC split above — NOT your kubeconfig
 ```
 
-`intercept.session_ttl` is the one config key that exists only for the
-brokered path (see [Teardown & TTL](#teardown--ttl) below); everything else
-in the `intercept:` block is shared with the direct path and already
-documented [above](#config).
+`intercept.session_ttl`, `session_store`, and `session_store_dsn` are the
+config keys that exist only for the brokered path (see [Teardown &
+TTL](#teardown--ttl) and [Session store](#session-store--restart-durability)
+below); everything else in the `intercept:` block is shared with the direct
+path and already documented [above](#config).
 
 ### Endpoints
 
@@ -368,7 +371,7 @@ endpoints:
 | --- | --- |
 | `GET /api/v1/intercept/config` | Non-secret: whether brokered intercept is enabled and the configured default modes. The CLI polls this to decide direct vs. brokered. |
 | `POST /api/v1/intercept/authorize` | id_token-authenticated. Verifies the token, resolves identity, evaluates the gate with claims, deploys the agent, and returns the session handle (`session_id`, `token`, `control_port`, `egress_port`, `expires_at`). |
-| `POST /api/v1/intercept/{id}/stop` | id_token-authenticated. Signals the agent to exit and tears down the session — only the actor who opened it may stop it. |
+| `POST /api/v1/intercept/{id}/stop` | **Token-authenticated** (preferred): the request carries the per-session `token` from the authorize response; honey web hashes it and compares against the stored hash, so no id_token verification or identity resolution is needed — this is what lets teardown keep working under a cluster-scoped identity policy or after the id_token that opened the session has expired. Falls back to id_token authentication (verify the token, resolve the actor, require the actor own the session) when `token` is absent, for compatibility. Either path signals the agent to exit and tears down the session. |
 
 ### Policy examples
 
@@ -430,17 +433,66 @@ brokered session is bounded by `intercept.session_ttl` (default **1h**) from
 the moment it's created, and a background janitor stops any session past its
 `expires_at` whether or not the CLI ever calls `stop`.
 
-:::note Known limitation — honey web restart
-The session registry and its TTL janitor are **in-memory**. If honey web
-itself restarts (a deploy, an OOM kill, a crash) while brokered sessions are
-live, it loses track of them: the janitor can only reap sessions it still
-holds, and — by the [RBAC split](#the-rbac-split) — only honey's own service
-account can `exec` into the agent to signal it, so no operator can tear it
-down either. Such an agent (notably an `incoming`-mode one) keeps its
-redirects until the pod is deleted. Keep `session_ttl` modest, and prefer
-draining brokered sessions before restarting honey web. Reconciling live
-agents on startup is a planned improvement.
+:::note Known limitation — honey web restart, default `memory` store only
+With the default `session_store: memory`, the session registry and its TTL
+janitor are **in-memory**. If honey web itself restarts (a deploy, an OOM
+kill, a crash) while brokered sessions are live, it loses track of them: the
+janitor can only reap sessions it still holds, and — by the [RBAC
+split](#the-rbac-split) — only honey's own service account can `exec` into
+the agent to signal it, so no operator can tear it down either. Such an
+agent (notably an `incoming`-mode one) keeps its redirects until the pod is
+deleted. Keep `session_ttl` modest, and prefer draining brokered sessions
+before restarting honey web.
+
+Configuring a **`sqlite` or `postgres`** `session_store` removes this
+limitation: brokered sessions survive a honey web restart, since the
+restarted process's janitor picks up right where the old one left off — see
+[Session store](#session-store--restart-durability) below.
 :::
+
+### Session store & restart durability
+
+`intercept.session_store` selects where brokered session state lives:
+
+- **`memory`** (default) — an in-process registry. Zero configuration, but
+  sessions do not survive a honey web restart (see the note above).
+- **`sqlite`** — a local database file, given by `session_store_dsn` as a
+  filesystem path. honey creates the file (and its table) on first use, mode
+  `0600` (owner read/write only).
+- **`postgres`** — a shared database, given by `session_store_dsn` as a
+  postgres connection string. Use this when more than one honey web replica
+  fronts the same clusters, so every replica's janitor sees every session
+  regardless of which replica authorized it.
+
+Either persistent option makes the same guarantee: a session authorized by
+one honey web process is torn down — by the TTL janitor, or by `/stop` — by
+whichever process is running when it needs to be, including one that started
+after the process that authorized it exited. The [RBAC
+split](#the-rbac-split) is unaffected: only honey's own cluster
+service-account ever execs into an agent, whichever process happens to be
+running it.
+
+What's persisted is exactly what teardown needs to rebuild an `exec` into
+the agent and audit the stop — actor, cluster, namespace, pod, container,
+mode, agent image, timestamps — plus a **sha256 hash** of the per-session
+token, compared with a constant-time comparison on `/stop`. The plaintext
+token, the id_token, and the mTLS device certificate/key are never written
+to the store; the plaintext token exists only in the authorize response and
+the CLI's own memory. A store DSN (which for postgres may carry credentials)
+is never logged.
+
+```yaml
+intercept:
+  enabled: true
+  session_ttl: 1h
+  session_store: sqlite
+  session_store_dsn: /var/lib/honey/intercept-sessions.db
+```
+
+An invalid configuration — an unknown `session_store` value, a `sqlite`/
+`postgres` store with no `session_store_dsn`, or a store that fails to
+open — fails `honey web` startup outright rather than silently falling back
+to the in-memory store.
 
 ## Prerequisites & limits
 
