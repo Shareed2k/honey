@@ -30,9 +30,14 @@ reports "not configured" and nothing else changes.
 # config.yaml
 intercept:
   enabled: true
-  agent_image: registry.example.com/honey-intercept-agent:latest
+  agent_image: ghcr.io/shareed2k/mogate:v0.1.2   # stock agent image (v0.1.2+ waits for its token file)
   default_mode: ["egress", "files"]
 ```
+
+honey deploys the **stock** agent image as-is and delivers the per-session
+token to it after the container starts; the agent waits for that token
+(`v0.1.2+`), so there is no wrapper to build and nothing to pre-install in the
+pod.
 
 ```bash
 # Run `curl` locally as if it were the "web" container of pod "api-7d9f":
@@ -49,7 +54,7 @@ defaults:
 ```yaml
 intercept:
   enabled: true                                              # required to enable `honey intercept`
-  agent_image: registry.example.com/honey-intercept-agent:v1  # the data-plane agent image deployed as an ephemeral container
+  agent_image: ghcr.io/shareed2k/mogate:v0.1.2               # the stock data-plane agent image (waits for its token file)
   default_mode: ["egress", "files"]                          # modes used when --mode is omitted (egress|incoming|files)
   policy_dir: /etc/honey/intercept-policy                    # OPA policy directory for the intercept gate (optional)
 ```
@@ -57,8 +62,12 @@ intercept:
 - **`enabled`** — must be `true` for `honey intercept` to run at all. Absent
   or `false` ⇒ the command reports "not configured".
 - **`agent_image`** — the container image for the data-plane agent honey adds
-  to the target pod as an ephemeral container. This is an operator-configured
-  value; honey does not ship or pin a specific image.
+  to the target pod as an ephemeral container. The **stock** `mogate` image
+  works as-is: honey delivers the session token by writing it into the running
+  container (over the API server, out of argv and the environment), and the
+  agent waits for that token file at startup — so the image needs no wrapper
+  and nothing pre-installed. Any image whose agent waits for `--token-file`
+  works; pin an immutable tag for production.
 - **`default_mode`** — the modes (`egress`, `incoming`, `files`) used when
   `--mode` is not passed on the command line.
 - **`policy_dir`** — an OPA policy directory dedicated to the `intercept`
@@ -340,7 +349,7 @@ oidc:                             # same block the k8s proxy / ssh gateway use
 
 intercept:
   enabled: true
-  agent_image: registry.example.com/honey-intercept-agent:v1
+  agent_image: ghcr.io/shareed2k/mogate:v0.1.2
   default_mode: ["egress", "files"]
   policy_dir: /etc/honey/intercept-policy   # optional; see below
   session_ttl: 1h                           # orphan-teardown bound (default 1h)
