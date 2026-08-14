@@ -142,7 +142,7 @@ honey intercept <pod> [flags] [-- <command> [args...]]
 
 | Flag | Description |
 | --- | --- |
-| `--namespace`, `-n` | Namespace of the target pod. |
+| `--namespace`, `-n` | Namespace of the target pod. Defaults to the kubeconfig context's namespace (falling back to `default`), exactly like `kubectl`. |
 | `--container` | Target container the agent shares namespaces with. |
 | `--mode` | Interception mode; repeatable: `egress`, `incoming`, `files`. Defaults to `intercept.default_mode`. |
 | `--target` | Local address that incoming traffic is delivered to. Required when `--mode incoming` is set. |

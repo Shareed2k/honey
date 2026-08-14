@@ -98,7 +98,7 @@ Example:
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVarP(&f.namespace, "namespace", "n", "", "Target pod namespace")
+	flags.StringVarP(&f.namespace, "namespace", "n", "", "Target pod namespace (default: the kubeconfig context's namespace, like kubectl)")
 	flags.StringVar(&f.container, "container", "", "Target container the agent shares namespaces with (default: the pod's first container)")
 	flags.StringSliceVar(&f.modes, "mode", nil, "Interception modes to enable: egress|incoming|files (repeatable; default from config)")
 	flags.StringVar(&f.target, "target", "", "Local application address incoming traffic is forwarded to (host:port; required with --mode incoming)")
@@ -169,9 +169,9 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		return errors.New("intercept: no agent image (set intercept.agent_image or --agent-image)")
 	}
 
-	namespace := strings.TrimSpace(f.namespace)
-	if namespace == "" {
-		return errors.New("intercept: --namespace is required")
+	namespace, err := interceptNamespace(cfg, f.cluster, f.namespace)
+	if err != nil {
+		return err
 	}
 
 	restCfg, err := interceptRestConfig(cfg, f.cluster)
@@ -451,33 +451,56 @@ func interceptActor(flag string) string {
 // reused; otherwise the default kubeconfig loading rules apply (KUBECONFIG /
 // ~/.kube/config, current context). Reusing k8s_proxy.clusters avoids adding a
 // second cluster→kubeconfig mapping to the config.
-func interceptRestConfig(cfg *config.File, cluster string) (*rest.Config, error) {
+// interceptClusterKubeconfig resolves the kubeconfig path and context for the
+// direct path. A named --cluster MUST resolve to a k8s_proxy.clusters entry:
+// silently falling back to the current context would deploy the agent to a
+// different cluster than the one the OPA gate authorized and the audit records
+// — a gate/audit-integrity gap. An empty cluster means the standard current
+// kubeconfig context (empty path/context).
+func interceptClusterKubeconfig(cfg *config.File, cluster string) (kubeconfig, kubeContext string, err error) {
 	cluster = strings.TrimSpace(cluster)
-	kubeconfig, kubeContext := "", ""
-	if cluster != "" {
-		// A named cluster MUST resolve to a configured kubeconfig. Silently
-		// falling back to the current context would deploy the agent to a
-		// different cluster than the one the OPA gate authorized and the audit
-		// records — a gate/audit-integrity gap. Error instead.
-		found := false
-		if cfg.K8sProxy != nil {
-			for _, c := range cfg.K8sProxy.Clusters {
-				if c.Name == cluster {
-					kubeconfig, kubeContext = c.Kubeconfig, c.Context
-					found = true
-					break
-				}
+	if cluster == "" {
+		return "", "", nil
+	}
+	if cfg.K8sProxy != nil {
+		for _, c := range cfg.K8sProxy.Clusters {
+			if c.Name == cluster {
+				return c.Kubeconfig, c.Context, nil
 			}
 		}
-		if !found {
-			return nil, fmt.Errorf("intercept: cluster %q is not defined in k8s_proxy.clusters", cluster)
-		}
+	}
+	return "", "", fmt.Errorf("intercept: cluster %q is not defined in k8s_proxy.clusters", cluster)
+}
+
+func interceptRestConfig(cfg *config.File, cluster string) (*rest.Config, error) {
+	kubeconfig, kubeContext, err := interceptClusterKubeconfig(cfg, cluster)
+	if err != nil {
+		return nil, err
 	}
 	restCfg, err := k8sprovider.RestConfigForKubeconfig(kubeconfig, kubeContext)
 	if err != nil {
-		return nil, fmt.Errorf("intercept: resolve cluster %q kubeconfig: %w", cluster, err)
+		return nil, fmt.Errorf("intercept: resolve cluster %q kubeconfig: %w", strings.TrimSpace(cluster), err)
 	}
 	return restCfg, nil
+}
+
+// interceptNamespace resolves the target namespace like kubectl: an explicit
+// --namespace wins; otherwise it defaults to the namespace of the resolved
+// kubeconfig context (which itself falls back to "default"), so the operator
+// need not pass -n when their context already selects the namespace.
+func interceptNamespace(cfg *config.File, cluster, flagNS string) (string, error) {
+	if ns := strings.TrimSpace(flagNS); ns != "" {
+		return ns, nil
+	}
+	kubeconfig, kubeContext, err := interceptClusterKubeconfig(cfg, cluster)
+	if err != nil {
+		return "", err
+	}
+	ns, err := k8sprovider.NamespaceForKubeconfig(kubeconfig, kubeContext)
+	if err != nil {
+		return "", fmt.Errorf("intercept: resolve namespace from kubeconfig: %w", err)
+	}
+	return ns, nil
 }
 
 // brokeredOperatorRestConfig resolves the LOCAL credentials the operator uses to

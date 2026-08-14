@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -189,14 +191,6 @@ func TestRunIntercept_ValidationErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "--target is required")
 	})
 
-	t.Run("missing namespace", func(t *testing.T) {
-		t.Parallel()
-		cmd := newInterceptCmd()
-		err := runIntercept(cmd, []string{"api-0"}, enabled, interceptFlags{modes: []string{"egress"}})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "--namespace is required")
-	})
-
 	t.Run("missing agent image", func(t *testing.T) {
 		t.Parallel()
 		cmd := newInterceptCmd()
@@ -283,4 +277,63 @@ func TestInterceptRestConfig_UnknownClusterErrors(t *testing.T) {
 	// Nil k8s_proxy with a named cluster also errors.
 	_, err = interceptRestConfig(&config.File{}, "prod")
 	require.Error(t, err)
+}
+
+// writeNSKubeconfig writes a kubeconfig whose current context selects namespace
+// "team-a" and whose "ctx-none" context selects no namespace.
+func writeNSKubeconfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kubeconfig")
+	data := `
+apiVersion: v1
+kind: Config
+clusters:
+- name: c
+  cluster:
+    server: https://c.example.com
+contexts:
+- name: ctx-ns
+  context:
+    cluster: c
+    namespace: team-a
+- name: ctx-none
+  context:
+    cluster: c
+current-context: ctx-ns
+users: []
+`
+	require.NoError(t, os.WriteFile(path, []byte(data), 0o600))
+	return path
+}
+
+func TestInterceptNamespace(t *testing.T) {
+	t.Run("explicit --namespace wins", func(t *testing.T) {
+		ns, err := interceptNamespace(&config.File{}, "", "  payments  ")
+		require.NoError(t, err)
+		assert.Equal(t, "payments", ns)
+	})
+
+	t.Run("unknown --cluster errors", func(t *testing.T) {
+		_, err := interceptNamespace(&config.File{}, "nope", "")
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "not defined in k8s_proxy.clusters")
+	})
+
+	t.Run("named cluster falls back to its context namespace", func(t *testing.T) {
+		kubeconfig := writeNSKubeconfig(t)
+		cfg := &config.File{K8sProxy: &config.K8sProxyConfig{
+			Clusters: []config.K8sProxyCluster{{Name: "stg", Kubeconfig: kubeconfig, Context: "ctx-ns"}},
+		}}
+		ns, err := interceptNamespace(cfg, "stg", "")
+		require.NoError(t, err)
+		assert.Equal(t, "team-a", ns)
+	})
+
+	t.Run("no cluster falls back to current-context namespace (like kubectl)", func(t *testing.T) {
+		t.Setenv("KUBECONFIG", writeNSKubeconfig(t))
+		ns, err := interceptNamespace(&config.File{}, "", "")
+		require.NoError(t, err)
+		assert.Equal(t, "team-a", ns)
+	})
 }
