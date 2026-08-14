@@ -24,17 +24,29 @@ const agentBypassGID int64 = 65533
 const ephemeralPollInterval = 200 * time.Millisecond
 
 // ephemeralContainer builds the EphemeralContainer spec for the interception
-// agent: it runs image with args, is granted the NET_ADMIN capability, and
-// targets targetContainer so it shares that container's namespaces.
+// agent, matching the data-plane agent's own recommended non-root security
+// context: it runs image with args, keeps ONLY the NET_ADMIN capability (drops
+// all others), never runs as root, and runs under the agent's bypass group so
+// the agent's own egress skips the redirect it installs. It targets
+// targetContainer to share that container's namespaces. Running non-root is why
+// the token is delivered under /tmp (agentRunDir), which that user can write —
+// unlike root-owned /var/run.
 func ephemeralContainer(name, image, targetContainer string, args []string) corev1.EphemeralContainer {
+	runAsGroup := agentBypassGID
+	runAsNonRoot := true
+	allowPrivilegeEscalation := false
 	return corev1.EphemeralContainer{
 		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
 			Name:  name,
 			Image: image,
 			Args:  args,
 			SecurityContext: &corev1.SecurityContext{
+				RunAsGroup:               &runAsGroup,
+				RunAsNonRoot:             &runAsNonRoot,
+				AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 				Capabilities: &corev1.Capabilities{
-					Add: []corev1.Capability{capNetAdmin},
+					Drop: []corev1.Capability{"ALL"},
+					Add:  []corev1.Capability{capNetAdmin},
 				},
 			},
 		},

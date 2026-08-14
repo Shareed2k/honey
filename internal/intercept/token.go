@@ -26,9 +26,13 @@ const tokenBytes = 32
 const tokenFileName = "token"
 
 // agentRunDir is the in-agent directory the interception agent reads its
-// per-session token file from. It is a fixed on-disk contract of the data-plane
-// agent. The token basename is appended at delivery time.
-const agentRunDir = "/var/run/mogate"
+// per-session token file from. It lives under /tmp, not /var/run, because the
+// agent runs as a non-root user (the agent image's default, e.g. mogate's
+// 65532): that user cannot create a directory under root-owned /var/run, but
+// /tmp is world-writable, so honey's exec delivery (`mkdir -p` + write) and the
+// agent's read both succeed without running the agent as root. The token
+// basename is appended at delivery time.
+const agentRunDir = "/tmp/mogate"
 
 // PodExecer runs a command inside a target pod, streaming stdin to the process
 // and its stdout and stderr to the given writers. honey's Kubernetes provider

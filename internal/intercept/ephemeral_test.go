@@ -31,9 +31,23 @@ func TestEphemeralContainer(t *testing.T) {
 	assert.Equal(t, "app", ec.TargetContainerName)
 	assert.Equal(t, []string{"--mode", "egress"}, ec.Args)
 
-	require.NotNil(t, ec.SecurityContext)
-	require.NotNil(t, ec.SecurityContext.Capabilities)
-	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, ec.SecurityContext.Capabilities.Add)
+	// The production (non-elevated) context must be non-root, keep only
+	// NET_ADMIN, and run under the agent's bypass group so the agent's own
+	// egress skips its redirect. Regressions here silently break real clusters
+	// (the e2e always elevates to root, so it cannot catch this).
+	sc := ec.SecurityContext
+	require.NotNil(t, sc)
+	require.NotNil(t, sc.Capabilities)
+	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, sc.Capabilities.Add)
+	assert.Equal(t, []corev1.Capability{"ALL"}, sc.Capabilities.Drop)
+	require.NotNil(t, sc.RunAsNonRoot)
+	assert.True(t, *sc.RunAsNonRoot, "agent must not run as root in production")
+	require.NotNil(t, sc.RunAsGroup)
+	assert.Equal(t, agentBypassGID, *sc.RunAsGroup, "agent must run under the bypass GID for its own-egress bypass")
+	require.NotNil(t, sc.AllowPrivilegeEscalation)
+	assert.False(t, *sc.AllowPrivilegeEscalation)
+	// The token dir must be writable by that non-root user (i.e. under /tmp).
+	assert.Equal(t, "/tmp/mogate", agentRunDir)
 }
 
 func TestApplyEphemeral(t *testing.T) {
