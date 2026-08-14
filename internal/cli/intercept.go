@@ -214,9 +214,27 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 	sink := gatewayAuditSink(cfg)
 	defer func() { _ = sink.Close() }()
 
+	// honey must know the agent pod's name before building Deps, since the
+	// execer and port-forwarder bind to it. Targeted mode targets the
+	// pre-existing pod named by the positional argument; targetless generates
+	// a fresh standalone pod name here, symmetric with the targeted path — so
+	// Options.Pod always names "the agent pod", pre-existing or honey-created.
+	agentPod := pod
+	execContainer := ""
+	if targetless {
+		agentPod, err = intercept.NewAgentPodName()
+		if err != nil {
+			return fmt.Errorf("intercept: generate agent pod name: %w", err)
+		}
+		// The standalone pod's single container has a known, fixed name (unlike
+		// the targeted path's ephemeral container, whose name the session picks
+		// at run time), so the execer can target it directly.
+		execContainer = intercept.AgentContainerName
+	}
+
 	deps := intercept.Deps{
 		PortForwarder: &interceptPortForwarder{cfg: restCfg},
-		PodExecer:     &interceptPodExecer{cfg: restCfg, clientset: clientset, namespace: namespace, pod: pod},
+		PodExecer:     &interceptPodExecer{cfg: restCfg, clientset: clientset, namespace: namespace, pod: agentPod, container: execContainer},
 		K8sClient:     clientset,
 		Enforcer:      enforcer,
 		Sink:          sink,
@@ -224,7 +242,7 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 	}
 	opts := intercept.Options{
 		Namespace:  namespace,
-		Pod:        pod,
+		Pod:        agentPod,
 		Container:  strings.TrimSpace(f.container),
 		Cluster:    strings.TrimSpace(f.cluster),
 		AgentImage: agentImage,
@@ -661,17 +679,28 @@ type interceptPodExecer struct {
 	clientset kubernetes.Interface
 	namespace string
 	pod       string
+	// container names the agent container directly, skipping the
+	// ephemeral-container lookup. Set by the targetless path, where the
+	// standalone pod's single container has a known, fixed name
+	// (intercept.AgentContainerName). Left empty for the targeted path, which
+	// falls back to resolving the most recently added ephemeral container.
+	container string
 }
 
-// ExecInPod runs cmd in the pod's agent (ephemeral) container, wiring the
-// provided streams. The agent container is resolved at exec time because the
-// session generates its name at run time and delivers the token without
-// threading that name through; the most recently added ephemeral container is
-// the session's own agent.
+// ExecInPod runs cmd in the pod's agent container, wiring the provided
+// streams. When container is set (the targetless path), it is used directly.
+// Otherwise the agent container is resolved at exec time because the
+// session generates its ephemeral container's name at run time and delivers
+// the token without threading that name through; the most recently added
+// ephemeral container is the session's own agent.
 func (e *interceptPodExecer) ExecInPod(ctx context.Context, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	container, err := e.agentContainer(ctx)
-	if err != nil {
-		return err
+	container := e.container
+	if container == "" {
+		var err error
+		container, err = e.agentContainer(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	return execInPodContainer(ctx, e.cfg, e.namespace, e.pod, container, cmd, stdin, stdout, stderr)
 }

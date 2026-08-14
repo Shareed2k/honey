@@ -185,7 +185,10 @@ func (s *Session) Run(ctx context.Context) (err error) {
 	start := time.Now()
 	auditStart(ctx, s.deps.Sink, s.startEvent())
 
-	var cleanups []func()
+	// Capacity 4 covers the targeted path's worst case: the session dir, the
+	// in-agent SIGTERM cleanup, and the two port-forward stops. The targetless
+	// path uses fewer (dir, pod deletion, one port-forward).
+	cleanups := make([]func(), 0, 4)
 	defer func() {
 		// Teardown runs in reverse acquisition order: stop the port-forwards,
 		// then remove the session directory, then record the stop event. The
@@ -216,47 +219,15 @@ func (s *Session) Run(ctx context.Context) (err error) {
 		return err
 	}
 
-	agentName, err := agentContainerName()
+	var controlAddr, egressAddr string
+	if s.opts.Targetless {
+		egressAddr, err = s.provisionTargetless(ctx, token, &cleanups)
+	} else {
+		controlAddr, egressAddr, err = s.provisionTargeted(ctx, token, &cleanups)
+	}
 	if err != nil {
 		return err
 	}
-	ec := ephemeralContainer(agentName, s.opts.AgentImage, s.opts.Container, agentArgs(s.opts.UDP))
-	if s.opts.agentPrivileged {
-		elevateEphemeralPrivilege(&ec)
-	}
-	if err = applyEphemeral(ctx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod, ec); err != nil {
-		return err
-	}
-	// Best-effort: on teardown, signal the agent (PID 1 of its container) to
-	// terminate so it runs its graceful shutdown and removes its network
-	// redirects — Kubernetes cannot delete the ephemeral container, so without
-	// this the target pod's traffic could stay redirected after an incoming
-	// session. Uses a fresh bounded context (the session context may already be
-	// cancelled) and ExecInPod, which is independent of the port-forwards that
-	// teardown closes. The agent image must exec the agent as PID 1 to receive it.
-	cleanups = append(cleanups, func() {
-		stopCtx, cancelStop := context.WithTimeout(context.Background(), agentStopGrace)
-		defer cancelStop()
-		_ = s.deps.PodExecer.ExecInPod(stopCtx, []string{"sh", "-c", "kill -TERM 1 2>/dev/null || true"}, nil, io.Discard, io.Discard)
-	})
-	if err = waitEphemeralRunning(ctx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod, agentName, ephemeralReadyTimeout); err != nil {
-		return err
-	}
-	if err = deliverToken(ctx, s.deps.PodExecer, token); err != nil {
-		return err
-	}
-
-	controlAddr, stopControl, err := s.deps.PortForwarder.Forward(ctx, s.opts.Cluster, s.opts.Namespace, s.opts.Pod, agentControlRemotePort)
-	if err != nil {
-		return fmt.Errorf("intercept: forward control port: %w", err)
-	}
-	cleanups = append(cleanups, stopControl)
-
-	egressAddr, stopEgress, err := s.deps.PortForwarder.Forward(ctx, s.opts.Cluster, s.opts.Namespace, s.opts.Pod, agentEgressRemotePort)
-	if err != nil {
-		return fmt.Errorf("intercept: forward egress port: %w", err)
-	}
-	cleanups = append(cleanups, stopEgress)
 
 	cfg := local.Config{
 		ControlAddr: controlAddr,
@@ -279,6 +250,99 @@ func (s *Session) Run(ctx context.Context) (err error) {
 
 	err = drain(ctx, eg, cancel)
 	return err
+}
+
+// provisionTargeted deploys the interception agent as an ephemeral container
+// in the pre-existing target pod (s.opts.Pod), waits for it to reach the
+// running state, delivers the session token, and opens both the control and
+// egress port-forwards. It appends its cleanups — the best-effort in-agent
+// SIGTERM and the two port-forward stops — to *cleanups in acquisition order,
+// so Run's teardown unwinds them in reverse regardless of where in this
+// sequence a later step fails.
+func (s *Session) provisionTargeted(ctx context.Context, token string, cleanups *[]func()) (controlAddr, egressAddr string, err error) {
+	agentName, err := agentContainerName()
+	if err != nil {
+		return "", "", err
+	}
+	ec := ephemeralContainer(agentName, s.opts.AgentImage, s.opts.Container, agentArgs(s.opts.UDP))
+	if s.opts.agentPrivileged {
+		elevateEphemeralPrivilege(&ec)
+	}
+	if err := applyEphemeral(ctx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod, ec); err != nil {
+		return "", "", err
+	}
+	// Best-effort: on teardown, signal the agent (PID 1 of its container) to
+	// terminate so it runs its graceful shutdown and removes its network
+	// redirects — Kubernetes cannot delete the ephemeral container, so without
+	// this the target pod's traffic could stay redirected after an incoming
+	// session. Uses a fresh bounded context (the session context may already be
+	// cancelled) and ExecInPod, which is independent of the port-forwards that
+	// teardown closes. The agent image must exec the agent as PID 1 to receive it.
+	*cleanups = append(*cleanups, func() {
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), agentStopGrace)
+		defer cancelStop()
+		_ = s.deps.PodExecer.ExecInPod(stopCtx, []string{"sh", "-c", "kill -TERM 1 2>/dev/null || true"}, nil, io.Discard, io.Discard)
+	})
+	if err := waitEphemeralRunning(ctx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod, agentName, ephemeralReadyTimeout); err != nil {
+		return "", "", err
+	}
+	if err := deliverToken(ctx, s.deps.PodExecer, token); err != nil {
+		return "", "", err
+	}
+
+	controlAddr, stopControl, err := s.deps.PortForwarder.Forward(ctx, s.opts.Cluster, s.opts.Namespace, s.opts.Pod, agentControlRemotePort)
+	if err != nil {
+		return "", "", fmt.Errorf("intercept: forward control port: %w", err)
+	}
+	*cleanups = append(*cleanups, stopControl)
+
+	egressAddr, stopEgress, err := s.deps.PortForwarder.Forward(ctx, s.opts.Cluster, s.opts.Namespace, s.opts.Pod, agentEgressRemotePort)
+	if err != nil {
+		return "", "", fmt.Errorf("intercept: forward egress port: %w", err)
+	}
+	*cleanups = append(*cleanups, stopEgress)
+
+	return controlAddr, egressAddr, nil
+}
+
+// provisionTargetless deploys the interception agent as a standalone,
+// unprivileged Pod named s.opts.Pod (a name the CLI generated before Deps was
+// built, symmetric with the targeted path where the pod pre-exists), waits
+// for it to reach the running state, delivers the session token, and opens
+// the egress-only port-forward. There is no control port-forward in
+// targetless mode: the standalone Pod has no target namespace to steal
+// incoming traffic from, so ControlAddr is left empty in the caller's
+// local.Config. On success it appends the standalone Pod's deletion to
+// *cleanups (best-effort, bounded by its own fresh context since the session
+// context may already be cancelled by the time teardown runs) and the egress
+// port-forward's stop, in acquisition order.
+func (s *Session) provisionTargetless(ctx context.Context, token string, cleanups *[]func()) (egressAddr string, err error) {
+	pod := standaloneAgentPod(s.opts.Pod, s.opts.Namespace, s.opts.AgentImage, standaloneAgentArgs(s.opts.UDP))
+	if err := createAgentPod(ctx, s.deps.K8sClient, s.opts.Namespace, pod); err != nil {
+		return "", err
+	}
+	// Best-effort: unlike the targeted path's ephemeral container (which
+	// Kubernetes cannot delete), the standalone Pod is entirely honey's own —
+	// tearing it down means deleting it outright rather than asking it to exit.
+	*cleanups = append(*cleanups, func() {
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), agentStopGrace)
+		defer cancelStop()
+		_ = deleteAgentPod(stopCtx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod)
+	})
+	if err := waitPodRunning(ctx, s.deps.K8sClient, s.opts.Namespace, s.opts.Pod, ephemeralReadyTimeout); err != nil {
+		return "", err
+	}
+	if err := deliverToken(ctx, s.deps.PodExecer, token); err != nil {
+		return "", err
+	}
+
+	egressAddr, stopEgress, err := s.deps.PortForwarder.Forward(ctx, s.opts.Cluster, s.opts.Namespace, s.opts.Pod, agentEgressRemotePort)
+	if err != nil {
+		return "", fmt.Errorf("intercept: forward egress port: %w", err)
+	}
+	*cleanups = append(*cleanups, stopEgress)
+
+	return egressAddr, nil
 }
 
 // drain blocks until the group finishes on its own (the command exited or the
