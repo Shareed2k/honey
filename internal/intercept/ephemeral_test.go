@@ -31,22 +31,24 @@ func TestEphemeralContainer(t *testing.T) {
 	assert.Equal(t, "app", ec.TargetContainerName)
 	assert.Equal(t, []string{"--mode", "egress"}, ec.Args)
 
-	// The production (non-elevated) context must be non-root, keep only
-	// NET_ADMIN, and run under the agent's bypass group so the agent's own
-	// egress skips its redirect. Regressions here silently break real clusters
-	// (the e2e always elevates to root, so it cannot catch this).
+	// The agent installs nftables via netlink, which needs an EFFECTIVE
+	// CAP_NET_ADMIN — only root gets that from capabilities.add (a non-root user
+	// would have it merely permitted, and the stock image ships no file caps),
+	// so the production context runs as uid 0 with only NET_ADMIN, under the
+	// bypass GID so the agent's own egress skips its redirect. A regression to
+	// non-root fails the nftables install with "operation not permitted" on real
+	// clusters (the e2e always elevates, so it cannot catch this).
 	sc := ec.SecurityContext
 	require.NotNil(t, sc)
 	require.NotNil(t, sc.Capabilities)
 	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, sc.Capabilities.Add)
 	assert.Equal(t, []corev1.Capability{"ALL"}, sc.Capabilities.Drop)
-	require.NotNil(t, sc.RunAsNonRoot)
-	assert.True(t, *sc.RunAsNonRoot, "agent must not run as root in production")
+	require.NotNil(t, sc.RunAsUser)
+	assert.Equal(t, int64(0), *sc.RunAsUser, "agent needs root for an effective NET_ADMIN (nftables via netlink)")
 	require.NotNil(t, sc.RunAsGroup)
 	assert.Equal(t, agentBypassGID, *sc.RunAsGroup, "agent must run under the bypass GID for its own-egress bypass")
-	require.NotNil(t, sc.AllowPrivilegeEscalation)
-	assert.False(t, *sc.AllowPrivilegeEscalation)
-	// The token dir must be writable by that non-root user (i.e. under /tmp).
+	assert.Nil(t, sc.RunAsNonRoot, "must not assert non-root while running as uid 0")
+	// The token dir is under /tmp, written by honey's exec delivery.
 	assert.Equal(t, "/tmp/mogate", agentRunDir)
 }
 

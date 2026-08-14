@@ -515,13 +515,17 @@ to the in-memory store.
 - **Ephemeral containers** must be available on the target cluster (GA since
   Kubernetes 1.25). Older clusters, or clusters that disable the feature,
   cannot run `honey intercept`.
-- **`NET_ADMIN` + the pod's network namespace.** The deployed agent runs with
-  the `NET_ADMIN` capability and targets the chosen container's namespaces
-  (`TargetContainerName`) so it can install the redirects and tunnels
-  interception needs. Some hardened clusters (Pod Security admission,
-  restricted PSPs/PSAs, or an admission webhook) block `NET_ADMIN` or
-  ephemeral containers outright — check your cluster's pod security policy
-  before relying on this.
+- **`NET_ADMIN` (as root) + the pod's network namespace.** The deployed agent
+  runs as **root** (uid 0) with only the `NET_ADMIN` capability (all others
+  dropped) and targets the chosen container's namespaces (`TargetContainerName`)
+  so it can install the redirects and tunnels interception needs. Root is
+  required: the agent programs nftables via netlink, which needs an *effective*
+  `CAP_NET_ADMIN` — a capability added to a non-root container is only
+  *permitted*, not effective, unless the image ships file capabilities, so a
+  non-root agent fails with `operation not permitted`. Some hardened clusters
+  (Pod Security admission, restricted PSPs/PSAs, or an admission webhook) block
+  `NET_ADMIN`, root, or ephemeral containers outright — the target namespace
+  must permit them (the `privileged` or `baseline`+exception PSA level).
 - **RBAC.** On the **direct** path, the identity honey uses to reach the
   cluster (your own kubeconfig) needs, at minimum, every verb below in one
   role, since your own process does the deploy, the token delivery, and the
