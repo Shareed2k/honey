@@ -140,6 +140,10 @@ is no session to record.
 honey intercept <pod> [flags] [-- <command> [args...]]
 ```
 
+`<pod>` is optional: omitting it entirely runs a [targetless](#targetless-no-target-pod)
+(egress-only) session against honey's own standalone agent Pod instead of an
+existing workload's pod.
+
 | Flag | Description |
 | --- | --- |
 | `--namespace`, `-n` | Namespace of the target pod. Defaults to the kubeconfig context's namespace (falling back to `default`), exactly like `kubectl`. |
@@ -200,6 +204,67 @@ honey intercept api-7d9f -n prod --container web --mode files -- \
 Modes combine freely — `--mode egress,files` runs a command whose network
 egress leaves from the pod and whose file reads resolve against the pod's
 root in the same session.
+
+## Targetless (no target pod)
+
+`honey intercept` also runs with **no `<pod>` argument at all**:
+
+```bash
+honey intercept -n apps -- curl http://payments.apps.svc.cluster.local:8080/healthz
+```
+
+Omitting `<pod>` puts the session in **targetless** mode. Instead of adding an
+ephemeral container to an existing workload's pod (everything documented
+above), honey deploys **its own standalone agent Pod** into the resolved
+namespace and gives the local `<command>` **egress and DNS through the
+cluster** — the same wire behavior as `--mode egress` in the targeted path.
+There is no incoming steal/mirror and no file redirection in targetless mode
+(it is egress-only), and `--container`/`--target` have no meaning without a
+target pod — naming a pod is required for those.
+
+**Why targetless exists**: the targeted (ephemeral-container) path shares the
+network namespace of a real workload pod, so the session dies the instant
+that pod does — a rollout, a redeploy, anything that replaces the pod out
+from under it. The standalone agent Pod is not tied to any workload's
+lifecycle, so a long-running local task (a batch job, a soak test) keeps its
+egress path alive even while the target application is redeployed
+underneath it.
+
+**Minimal privilege**: the standalone agent Pod runs **non-root**, with
+`NET_ADMIN` — and every other Linux capability — dropped. Because targetless
+has no target namespace to redirect, egress and DNS are handled entirely in
+userspace, so the agent needs no elevated privilege to do its job. This is
+the opposite of the targeted path's ephemeral container, which must run as
+root with `NET_ADMIN` to program the target's nftables (see [Prerequisites &
+limits](#prerequisites--limits)) — and it means targetless mode also works in
+`restricted`-PSA namespaces where the targeted agent's root+NET_ADMIN
+requirement is refused outright.
+
+**`agent_image` requirement**: the configured `intercept.agent_image` (or
+`--agent-image`) must be a mogate build whose agent supports `--no-redirect`
+— the egress-only flag honey passes when it runs the standalone Pod. This is
+a newer capability than the plain token-file-wait support the targeted path
+needs (see [Config](#config)); an agent image built before `--no-redirect`
+existed will fail to start under targetless mode.
+
+**Lifecycle**: the standalone Pod is created in the resolved namespace
+(`--namespace`/`-n`, or the kubeconfig context's default namespace — the same
+resolution the targeted path uses) under a fresh, unique name. It is labeled
+`app.kubernetes.io/managed-by=honey-intercept` so an operator, or a cleanup
+job, can find and remove any Pod left behind if honey itself crashes before
+teardown runs. On a normal exit honey deletes the Pod outright — unlike the
+targeted path's ephemeral container, which Kubernetes has no API to remove at
+all (see [Prerequisites & limits](#prerequisites--limits)), the standalone
+Pod is entirely honey's own to create and destroy.
+
+| | Targeted (`honey intercept <pod>`) | Targetless (`honey intercept`) |
+| --- | --- | --- |
+| Agent runs as | an ephemeral container in the target pod | its own standalone Pod |
+| Privilege | root + `NET_ADMIN` (installs nftables) | non-root, every capability dropped |
+| Modes | egress, incoming, files | egress only |
+| Lifecycle | shares the target pod's — dies with it; the ephemeral container can never be removed afterward | independent of any workload; honey deletes the Pod on teardown |
+| Works in `restricted`-PSA namespaces | no (needs root + `NET_ADMIN`) | yes |
+| Survives the target workload being redeployed | no | yes |
 
 ## Server-brokered (SSO) interception
 
