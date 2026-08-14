@@ -30,7 +30,7 @@ reports "not configured" and nothing else changes.
 # config.yaml
 intercept:
   enabled: true
-  agent_image: ghcr.io/shareed2k/mogate:v0.1.2   # stock agent image (v0.1.2+ waits for its token file)
+  agent_image: ghcr.io/shareed2k/mogate:0.1.3   # stock agent image (0.1.3+ waits for its token file)
   default_mode: ["egress", "files"]
 ```
 
@@ -54,7 +54,7 @@ defaults:
 ```yaml
 intercept:
   enabled: true                                              # required to enable `honey intercept`
-  agent_image: ghcr.io/shareed2k/mogate:v0.1.2               # the stock data-plane agent image (waits for its token file)
+  agent_image: ghcr.io/shareed2k/mogate:0.1.3               # the stock data-plane agent image (waits for its token file)
   default_mode: ["egress", "files"]                          # modes used when --mode is omitted (egress|incoming|files)
   policy_dir: /etc/honey/intercept-policy                    # OPA policy directory for the intercept gate (optional)
 ```
@@ -414,7 +414,7 @@ oidc:                             # same block the k8s proxy / ssh gateway use
 
 intercept:
   enabled: true
-  agent_image: ghcr.io/shareed2k/mogate:v0.1.2
+  agent_image: ghcr.io/shareed2k/mogate:0.1.3
   default_mode: ["egress", "files"]
   policy_dir: /etc/honey/intercept-policy   # optional; see below
   session_ttl: 1h                           # orphan-teardown bound (default 1h)
