@@ -94,14 +94,16 @@ func TestInterceptCmd_FlagParsing(t *testing.T) {
 }
 
 // runInterceptArgs drives cobra's own flag/`--` parsing so ArgsLenAtDash is set
-// exactly as it is in production, then returns interceptArgs' result.
-func runInterceptArgs(t *testing.T, argv []string) (pod string, command []string, err error) {
+// exactly as it is in production, then returns interceptArgs' result. Its Args
+// validator mirrors newInterceptCmd's own (permissive: 0 or more positional
+// arguments), since interceptArgs — not cobra — enforces the pod-count rule.
+func runInterceptArgs(t *testing.T, argv []string) (pod string, targetless bool, command []string, err error) {
 	t.Helper()
 	cmd := &cobra.Command{
 		Use:  "intercept",
-		Args: cobra.MinimumNArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(c *cobra.Command, args []string) error {
-			pod, command, err = interceptArgs(c, args)
+			pod, targetless, command, err = interceptArgs(c, args)
 			return nil
 		},
 		SilenceUsage:  true,
@@ -109,7 +111,7 @@ func runInterceptArgs(t *testing.T, argv []string) (pod string, command []string
 	}
 	cmd.SetArgs(argv)
 	require.NoError(t, cmd.Execute())
-	return pod, command, err
+	return pod, targetless, command, err
 }
 
 func TestInterceptArgs_CommandPassthrough(t *testing.T) {
@@ -117,30 +119,52 @@ func TestInterceptArgs_CommandPassthrough(t *testing.T) {
 
 	t.Run("command after dash", func(t *testing.T) {
 		t.Parallel()
-		pod, command, err := runInterceptArgs(t, []string{"api-0", "--", "curl", "-s", "http://svc"})
+		pod, targetless, command, err := runInterceptArgs(t, []string{"api-0", "--", "curl", "-s", "http://svc"})
 		require.NoError(t, err)
 		assert.Equal(t, "api-0", pod)
+		assert.False(t, targetless)
 		assert.Equal(t, []string{"curl", "-s", "http://svc"}, command)
 	})
 
 	t.Run("pod only, no command", func(t *testing.T) {
 		t.Parallel()
-		pod, command, err := runInterceptArgs(t, []string{"api-0"})
+		pod, targetless, command, err := runInterceptArgs(t, []string{"api-0"})
 		require.NoError(t, err)
 		assert.Equal(t, "api-0", pod)
+		assert.False(t, targetless)
 		assert.Empty(t, command)
 	})
 
-	t.Run("empty pod before dash errors", func(t *testing.T) {
+	t.Run("no positional and no command is targetless", func(t *testing.T) {
 		t.Parallel()
-		_, _, err := runInterceptArgs(t, []string{"--", "curl"})
+		pod, targetless, command, err := runInterceptArgs(t, nil)
+		require.NoError(t, err)
+		assert.Empty(t, pod)
+		assert.True(t, targetless)
+		assert.Empty(t, command)
+	})
+
+	t.Run("no positional before dash is targetless", func(t *testing.T) {
+		t.Parallel()
+		pod, targetless, command, err := runInterceptArgs(t, []string{"--", "curl", "x"})
+		require.NoError(t, err)
+		assert.Empty(t, pod)
+		assert.True(t, targetless)
+		assert.Equal(t, []string{"curl", "x"}, command)
+	})
+
+	t.Run("literal empty-string positional errors", func(t *testing.T) {
+		t.Parallel()
+		_, _, _, err := runInterceptArgs(t, []string{"", "--", "curl"})
 		require.Error(t, err)
+		assert.Contains(t, err.Error(), "target pod name is empty")
 	})
 
 	t.Run("extra positional args without dash error", func(t *testing.T) {
 		t.Parallel()
-		_, _, err := runInterceptArgs(t, []string{"api-0", "extra"})
+		_, _, _, err := runInterceptArgs(t, []string{"api-0", "extra"})
 		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expects at most one target pod")
 	})
 }
 
@@ -214,6 +238,92 @@ func TestRunIntercept_ConfigDefaultMode(t *testing.T) {
 	err := runIntercept(cmd, []string{"api-0"}, cfg, interceptFlags{namespace: "apps"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--target is required")
+}
+
+// TestRunIntercept_Targetless covers the no-pod invocation: zero positional
+// args (interceptArgs reports targetless=true), which must reject
+// incoming/files modes and otherwise proceed past the targetless/mode
+// validation exactly like a targeted invocation.
+func TestRunIntercept_Targetless(t *testing.T) {
+	t.Parallel()
+	enabled := &config.File{Intercept: &config.InterceptConfig{Enabled: true, AgentImage: "registry.example/agent:1"}}
+	const targetlessMsg = "targetless mode supports only egress"
+
+	t.Run("incoming mode rejected", func(t *testing.T) {
+		t.Parallel()
+		cmd := newInterceptCmd()
+		err := runIntercept(cmd, nil, enabled, interceptFlags{namespace: "apps", modes: []string{"incoming"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), targetlessMsg)
+	})
+
+	t.Run("files mode rejected", func(t *testing.T) {
+		t.Parallel()
+		cmd := newInterceptCmd()
+		err := runIntercept(cmd, nil, enabled, interceptFlags{namespace: "apps", modes: []string{"files"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), targetlessMsg)
+	})
+
+	t.Run("configured default_mode incoming is still rejected", func(t *testing.T) {
+		t.Parallel()
+		cmd := newInterceptCmd()
+		cfg := &config.File{Intercept: &config.InterceptConfig{
+			Enabled:     true,
+			AgentImage:  "registry.example/agent:1",
+			DefaultMode: []string{"incoming"},
+		}}
+		err := runIntercept(cmd, nil, cfg, interceptFlags{namespace: "apps"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), targetlessMsg)
+	})
+
+	t.Run("egress mode passes the targetless check", func(t *testing.T) {
+		t.Parallel()
+		cmd := newInterceptCmd()
+		// A cluster name absent from k8s_proxy.clusters forces a fast,
+		// deterministic failure past the targetless/mode validation (inside
+		// interceptRestConfig, before any real cluster or policy work), so this
+		// assertion doesn't depend on the host's kubeconfig or network.
+		err := runIntercept(cmd, nil, enabled, interceptFlags{namespace: "apps", cluster: "does-not-exist", modes: []string{"egress"}})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), targetlessMsg)
+	})
+
+	t.Run("no mode flag defaults to egress and passes the targetless check", func(t *testing.T) {
+		t.Parallel()
+		cmd := newInterceptCmd()
+		err := runIntercept(cmd, nil, enabled, interceptFlags{namespace: "apps", cluster: "does-not-exist"})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), targetlessMsg)
+		assert.NotContains(t, err.Error(), "at least one mode")
+	})
+}
+
+// TestRunIntercept_TargetlessSkipsBrokeredDispatch guards item 3 of the
+// targetless design: server-brokered deploy of a standalone (podless) agent
+// is out of scope, so a targetless invocation must never dispatch to the
+// brokered path even when an admin URL is configured — it always takes the
+// direct path.
+func TestRunIntercept_TargetlessSkipsBrokeredDispatch(t *testing.T) {
+	t.Parallel()
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "default_mode": []string{"egress"}})
+	}))
+	defer srv.Close()
+
+	cmd := newInterceptCmd()
+	cmd.SetContext(context.Background())
+	cfg := &config.File{Intercept: &config.InterceptConfig{Enabled: true, AgentImage: "registry.example/agent:1"}}
+	// A cluster name absent from k8s_proxy.clusters gives the direct path a
+	// fast, deterministic failure, so a passing test proves brokered dispatch
+	// was skipped rather than merely failing for an unrelated reason.
+	err := runIntercept(cmd, nil, cfg, interceptFlags{namespace: "apps", cluster: "does-not-exist", modes: []string{"egress"}, adminURL: srv.URL})
+	require.Error(t, err)
+	assert.False(t, called, "brokered dispatch must be skipped for a targetless invocation")
+	assert.Contains(t, err.Error(), "not defined in k8s_proxy.clusters")
 }
 
 // TestRunIntercept_BrokeredDispatchPrecedesLocalValidation guards the ordering

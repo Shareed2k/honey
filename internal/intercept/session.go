@@ -142,6 +142,9 @@ type Options struct {
 	// extracting the embedded library — for operators who ship a prebuilt
 	// injector out of band, and for tests that inject a freshly built library.
 	InjectorLib string
+	// Targetless deploys a standalone agent Pod instead of an ephemeral
+	// container in a target pod; egress+DNS only, no Pod.
+	Targetless bool
 
 	// agentPrivileged runs the interception agent's ephemeral container with a
 	// privileged security context (privileged, uid 0, gid agentBypassGID) instead

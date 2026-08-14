@@ -79,18 +79,23 @@ func init() {
 func newInterceptCmd() *cobra.Command {
 	var f interceptFlags
 	cmd := &cobra.Command{
-		Use:   "intercept <pod> [-- <command>]",
+		Use:   "intercept [<pod>] [-- <command>]",
 		Short: "Run a local command whose network and files traverse a target Kubernetes pod",
-		Long: `Deploy an OPA-gated, audited interception agent into a target pod and run a
-local command whose egress, DNS, incoming traffic, and files traverse that pod.
+		Long: `Deploy an OPA-gated, audited interception agent and run a local command whose
+egress, DNS, incoming traffic, and files traverse it.
 
 The command after -- runs locally under the injector; everything before -- is
-parsed as flags and the target pod name.
+parsed as flags and, optionally, the target pod name.
+
+When <pod> is omitted, the session is targetless: a standalone agent (not
+attached to any pod) that supports egress and DNS only — no incoming traffic
+and no files — and survives target workload redeploys.
 
 Example:
   honey intercept api-0 -n apps --mode egress -- curl http://internal.svc
-  honey intercept api-0 -n apps --mode incoming --target 127.0.0.1:8080 -- ./my-server`,
-		Args:          cobra.MinimumNArgs(1),
+  honey intercept api-0 -n apps --mode incoming --target 127.0.0.1:8080 -- ./my-server
+  honey intercept -n apps -- curl http://internal.svc`,
+		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -120,7 +125,7 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 	}
 	ic := cfg.Intercept
 
-	pod, command, err := interceptArgs(cmd, args)
+	pod, targetless, command, err := interceptArgs(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -143,9 +148,16 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 	// default first would let a local config with default_mode: [incoming] and
 	// no --target hard-error before brokered dispatch is ever reached, even
 	// though the server's default mode might not require one.
-	if adminURL := strings.TrimRight(strings.TrimSpace(f.adminURL), "/"); adminURL != "" {
-		if enabled, defModes, cerr := fetchInterceptConfig(cmd.Context(), adminURL); cerr == nil && enabled {
-			return runInterceptBrokered(cmd.Context(), cfg, f, adminURL, defModes, pod, command)
+	//
+	// Targetless sessions skip brokered dispatch entirely: server-brokered
+	// deploy of a standalone (podless) agent is out of scope for now, so a
+	// targetless invocation always takes the direct path below, regardless of
+	// whether an admin URL is configured.
+	if !targetless {
+		if adminURL := strings.TrimRight(strings.TrimSpace(f.adminURL), "/"); adminURL != "" {
+			if enabled, defModes, cerr := fetchInterceptConfig(cmd.Context(), adminURL); cerr == nil && enabled {
+				return runInterceptBrokered(cmd.Context(), cfg, f, adminURL, defModes, pod, command)
+			}
 		}
 	}
 
@@ -153,11 +165,22 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 	if len(modeStrs) == 0 {
 		modeStrs = ic.DefaultMode
 	}
+	if targetless && len(modeStrs) == 0 {
+		// A bare `honey intercept -- <command>` (no --mode, no configured
+		// default) defaults to egress: targetless supports only egress+DNS, so
+		// there is exactly one sensible default, unlike the pod-targeted path
+		// where an empty mode set is ambiguous and left as an error.
+		modeStrs = []string{"egress"}
+	}
 	modes, err := intercept.ParseModes(modeStrs)
 	if err != nil {
 		return err
 	}
-	if modes.Incoming && strings.TrimSpace(f.target) == "" {
+	if targetless {
+		if modes.Incoming || modes.Files {
+			return errors.New("intercept: targetless mode supports only egress; drop --mode incoming/files or name a target pod")
+		}
+	} else if modes.Incoming && strings.TrimSpace(f.target) == "" {
 		return errors.New("intercept: --target is required with --mode incoming")
 	}
 
@@ -210,6 +233,7 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		UDP:        f.udp,
 		Command:    command,
 		Actor:      interceptActor(f.actor),
+		Targetless: targetless,
 	}
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -414,24 +438,34 @@ func interceptDrainLocalRun(ctx context.Context, eg *errgroup.Group, cancel cont
 	}
 }
 
-// interceptArgs splits the positional arguments into the target pod and the
-// optional local command. The command is only the arguments after --; cobra
-// reports the -- position via ArgsLenAtDash.
-func interceptArgs(cmd *cobra.Command, args []string) (pod string, command []string, err error) {
+// interceptArgs splits the positional arguments into the optional target pod
+// and the optional local command. The command is only the arguments after
+// --; cobra reports the -- position via ArgsLenAtDash.
+//
+// Zero positional arguments before -- select targetless mode (targetless=true,
+// pod=""): a standalone interception session with no target pod. One
+// positional argument is the target pod, exactly as before. A literal
+// empty-string positional (e.g. `intercept "" -- cmd`) is still an error: the
+// caller wrote an explicit (blank) pod argument rather than omitting it.
+func interceptArgs(cmd *cobra.Command, args []string) (pod string, targetless bool, command []string, err error) {
 	dash := cmd.ArgsLenAtDash()
 	positional := args
 	if dash >= 0 {
 		positional = args[:dash]
 		command = args[dash:]
 	}
-	if len(positional) != 1 {
-		return "", nil, errors.New("intercept: exactly one target pod argument is required (put the command after --)")
+	switch len(positional) {
+	case 0:
+		return "", true, command, nil
+	case 1:
+		pod = strings.TrimSpace(positional[0])
+		if pod == "" {
+			return "", false, nil, errors.New("intercept: target pod name is empty")
+		}
+		return pod, false, command, nil
+	default:
+		return "", false, nil, errors.New("intercept: expects at most one target pod argument (put the command after --)")
 	}
-	pod = strings.TrimSpace(positional[0])
-	if pod == "" {
-		return "", nil, errors.New("intercept: target pod name is empty")
-	}
-	return pod, command, nil
 }
 
 // interceptActor resolves the actor recorded in the gate and audit log: the
