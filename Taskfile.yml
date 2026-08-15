@@ -64,6 +64,7 @@ tasks:
     dir: cmd/honey
     cmds:
       - task: webui
+      - task: build-intercept-injector
       - go build -ldflags "-X main.version=$(date -u +%Y.%m.%d) -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%d) -s -w" -o /tmp/honey .
 
   openapi:

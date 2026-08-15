@@ -631,10 +631,21 @@ to the in-memory store.
   container, so two concurrent interceptions on the *same* pod are unsupported
   (they would collide / mis-route). Intercept different pods concurrently
   freely.
-- **macOS injection is limited by System Integrity Protection (SIP).** SIP
-  blocks the local injection mechanism from attaching to Apple-signed system
-  binaries; injecting into your own build or a non-system binary is
-  unaffected.
+- **macOS SIP-restricted binaries are supported (via a re-signed copy).** macOS
+  System Integrity Protection makes `dyld` ignore the injector for restricted
+  binaries — Apple-signed system binaries such as `/usr/bin/curl` and `/bin/bash`,
+  their restricted children (e.g. `bash -c 'curl …'`), and `#!` scripts whose
+  interpreter is restricted. honey handles these by running an **ad-hoc-re-signed
+  copy** of the binary (never the original): the copy is thinned to its `x86_64`
+  slice and run under **Rosetta 2** with an `x86_64` build of the injector, which
+  restores injection. Copies live under `~/Library/Caches/mogate/sip/` and
+  re-signing *strips* entitlements, so the copy is strictly less privileged than
+  the original. Requirements on Apple Silicon: **Rosetta 2 installed**
+  (`softwareupdate --install-rosetta`) and a honey build that bundled the
+  `x86_64` injector (the release build and `task build` do; a bare `go build`
+  does not). If a restricted binary cannot be patched — for example an
+  `arm64e`-only binary with no `x86_64` slice, or missing Rosetta — the command
+  **fails loud** and is never run un-intercepted.
 - **Sessions are short-lived and always gated.** Every session re-runs the
   [`intercept` gate](#the-intercept-opa-gate) and is fully torn down (agent
   signaled to exit, port-forwards closed, the local session token and

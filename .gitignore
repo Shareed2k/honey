@@ -43,3 +43,6 @@ examples/plugins/audio_transcribe/__pycache__
 examples/mesh/relay/relay
 .DS_Store
 dist-deb/
+
+# Built interception injector libraries (real artifacts; committed as *.placeholder)
+internal/intercept/injector/*/injector.*

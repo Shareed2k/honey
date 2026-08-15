@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -394,6 +395,22 @@ func runInterceptBrokered(ctx context.Context, cfg *config.File, f interceptFlag
 		return fmt.Errorf("intercept: resolve injector: %w", err)
 	}
 
+	// On Apple Silicon a SIP-restricted binary is thinned to its x86_64 slice
+	// and run under Rosetta, which loads the x86_64 injector rather than the
+	// native arm64 one. Extract it when bundled; a missing x86_64 injector
+	// leaves InjectorLibRosetta empty so the data plane fails loud only if a
+	// binary actually needs that path — never here.
+	var rosettaLib string
+	if runtime.GOOS == "darwin" {
+		rosettaLib, err = intercept.ExtractRosettaInjector(dir)
+		if err != nil {
+			if !errors.Is(err, intercept.ErrNoInjector) {
+				return fmt.Errorf("intercept: resolve x86_64 injector: %w", err)
+			}
+			rosettaLib = ""
+		}
+	}
+
 	// The filesystem root offered to remote file operations: only meaningful
 	// when Files mode is enabled (mirrors Session.fileRoot).
 	root := ""
@@ -402,15 +419,16 @@ func runInterceptBrokered(ctx context.Context, cfg *config.File, f interceptFlag
 	}
 
 	localCfg := local.Config{
-		ControlAddr: controlAddr,
-		EgressAddr:  egressAddr,
-		Target:      target,
-		TokenFile:   tokenFile,
-		Socket:      filepath.Join(dir, intercept.RelaySocketName),
-		InjectorLib: injectorLib,
-		Root:        root,
-		UDP:         f.udp,
-		Modes:       modes,
+		ControlAddr:        controlAddr,
+		EgressAddr:         egressAddr,
+		Target:             target,
+		TokenFile:          tokenFile,
+		Socket:             filepath.Join(dir, intercept.RelaySocketName),
+		InjectorLib:        injectorLib,
+		InjectorLibRosetta: rosettaLib,
+		Root:               root,
+		UDP:                f.udp,
+		Modes:              modes,
 	}
 
 	// Bounded drain (mirrors intercept.Session's own drain in session.go): run

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -142,6 +143,12 @@ type Options struct {
 	// extracting the embedded library — for operators who ship a prebuilt
 	// injector out of band, and for tests that inject a freshly built library.
 	InjectorLib string
+	// InjectorLibRosetta optionally overrides the x86_64 injector library used
+	// for SIP-patched binaries thinned to their x86_64 slice (run under Rosetta
+	// on Apple Silicon). When empty on darwin, Run extracts the bundled x86_64
+	// library if one is present; when no x86_64 injector is available the SIP
+	// x86_64 path fails loud at use. It is ignored off darwin.
+	InjectorLibRosetta string
 	// Targetless deploys a standalone agent Pod instead of an ephemeral
 	// container in a target pod; egress+DNS only, no Pod.
 	Targetless bool
@@ -209,6 +216,10 @@ func (s *Session) Run(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("intercept: resolve injector: %w", err)
 	}
+	rosettaLib, err := s.resolveRosettaInjector(dir)
+	if err != nil {
+		return fmt.Errorf("intercept: resolve x86_64 injector: %w", err)
+	}
 
 	token, err := mintToken()
 	if err != nil {
@@ -230,15 +241,16 @@ func (s *Session) Run(ctx context.Context) (err error) {
 	}
 
 	cfg := local.Config{
-		ControlAddr: controlAddr,
-		EgressAddr:  egressAddr,
-		Target:      s.opts.Target,
-		TokenFile:   tokenFile,
-		Socket:      filepath.Join(dir, RelaySocketName),
-		InjectorLib: injectorLib,
-		Root:        s.fileRoot(),
-		UDP:         s.opts.UDP,
-		Modes:       s.opts.Modes,
+		ControlAddr:        controlAddr,
+		EgressAddr:         egressAddr,
+		Target:             s.opts.Target,
+		TokenFile:          tokenFile,
+		Socket:             filepath.Join(dir, RelaySocketName),
+		InjectorLib:        injectorLib,
+		InjectorLibRosetta: rosettaLib,
+		Root:               s.fileRoot(),
+		UDP:                s.opts.UDP,
+		Modes:              s.opts.Modes,
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -396,6 +408,34 @@ func (s *Session) resolveInjector(dir string) (string, error) {
 		return s.opts.InjectorLib, nil
 	}
 	return extractInjector(dir)
+}
+
+// resolveRosettaInjector returns the x86_64 injector path for this session, or
+// "" when none is needed or available. SIP-patching a restricted system binary
+// on Apple Silicon thins it to its x86_64 slice and runs it under Rosetta, which
+// must load the x86_64 injector rather than the native arm64 one. Off darwin
+// there is no SIP/Rosetta path, so it returns "". An operator/test override
+// takes precedence; otherwise the bundled x86_64 library is extracted, and a
+// missing one (ErrNoInjector) yields "" so the data plane fails loud only if a
+// binary actually needs the x86_64 path — never here.
+func (s *Session) resolveRosettaInjector(dir string) (string, error) {
+	if s.opts.InjectorLibRosetta != "" {
+		if _, err := os.Stat(s.opts.InjectorLibRosetta); err != nil {
+			return "", fmt.Errorf("x86_64 injector library %q: %w", s.opts.InjectorLibRosetta, err)
+		}
+		return s.opts.InjectorLibRosetta, nil
+	}
+	if runtime.GOOS != "darwin" {
+		return "", nil
+	}
+	lib, err := ExtractRosettaInjector(dir)
+	if err != nil {
+		if errors.Is(err, ErrNoInjector) {
+			return "", nil
+		}
+		return "", err
+	}
+	return lib, nil
 }
 
 // gateInput builds the OPA authorization input for this session.
