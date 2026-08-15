@@ -9,7 +9,6 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
 
 // injectorFS embeds the per-platform interception injector libraries, one
@@ -116,14 +115,6 @@ func injectorEntry(fsys fs.FS, goos, goarch string) (string, error) {
 	}
 	for _, e := range entries {
 		if e.IsDir() {
-			continue
-		}
-		// A committed *.placeholder means no real library was built for this
-		// platform (a plain `go build` without build-intercept-injector, or a
-		// cross target whose toolchain was absent at release time). Treat it as
-		// "not bundled" so the caller gets a clean ErrNoInjector instead of
-		// later failing to dlopen ASCII text as a Mach-O/ELF.
-		if strings.HasSuffix(e.Name(), ".placeholder") {
 			continue
 		}
 		return path.Join(dir, e.Name()), nil
