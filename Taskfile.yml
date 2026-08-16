@@ -9,7 +9,7 @@ vars:
   ANOMALY_OUT_DIR: models
   ANOMALY_TRAIN_CSV: contrib/anomaly/sample_train.csv
   ANOMALY_EVAL_CSV: contrib/anomaly/sample_eval.csv
-  ANOMALY_DOCKER_IMAGE: python:3.11-bullseye
+  ANOMALY_DOCKER_IMAGE: python:3.11-trixie
   ANOMALY_DOCKER_TRAINER_IMAGE: honey-anomaly-trainer:latest
 
 env:
