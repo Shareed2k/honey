@@ -21,7 +21,7 @@
 set -euo pipefail
 
 INJECTOR_REPO="${INJECTOR_REPO:-https://github.com/shareed2k/mogate}"
-INJECTOR_REF="${INJECTOR_REF:-v0.1.5}"
+INJECTOR_REF="${INJECTOR_REF:-v0.1.6}"
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 embed_root="${repo_root}/internal/intercept/injector"
