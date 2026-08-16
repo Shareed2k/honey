@@ -119,13 +119,17 @@ func (sp *SSHPool) DialContext(ctx context.Context, network, addr string) (net.C
 		}
 		c, err := sshDialConn(res.Value().LeafSSH(), network, addr)
 		if err != nil {
-			if _, ok := errors.AsType[*gossh.OpenChannelError](err); ok {
-				res.Destroy()
-				zap.L().Debug("ssh channel open failed, destroying entry and retrying", zap.Error(err))
-				return nil, err
+			if openErr, ok := errors.AsType[*gossh.OpenChannelError](err); ok {
+				res.Release()
+				if openErr.Reason == gossh.ResourceShortage {
+					zap.L().Debug("ssh channel open resource shortage, will retry", zap.String("addr", addr), zap.Error(err))
+					return nil, err
+				}
+				zap.L().Debug("ssh channel open rejected", zap.String("addr", addr), zap.Error(err))
+				return nil, backoff.Permanent(err)
 			}
 			res.Destroy()
-			zap.L().Debug("ssh dial failed, will retry", zap.Error(err))
+			zap.L().Debug("ssh dial failed, destroying entry and retrying", zap.String("addr", addr), zap.Error(err))
 			return nil, err
 		}
 		res.Release()
