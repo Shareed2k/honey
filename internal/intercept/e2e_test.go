@@ -8,13 +8,13 @@
 // audit sink.
 //
 // The data plane (agent image + injector) is built from a fresh checkout of the
-// public mogate module (tag v0.1.0) during setup: the host injector library via
+// public mogate module during setup: the host injector library via
 // `go generate ./internal/protocol` + `make build`, and a linux agent image via
-// `docker build`. The agent image entrypoint is a small wrapper that waits for
-// honey's out-of-band session token (delivered post-start via exec, honey's
-// real delivery path) before handing off to the genuine mogate `kube-agent`;
-// this cooperates with honey's "operator-configured agent image" contract
-// without changing any honey code.
+// `docker build`. honey deploys the genuine mogate `kube-agent`, which waits for
+// its --token-file natively while honey delivers the token out of band (via
+// exec) just after the container starts — its real delivery path, no wrapper.
+// The test layers only a thin entrypoint to inject test-timing flags (see
+// buildImages); it never waits for or touches the token.
 //
 // Excluded from the normal `go test` run (and CI) by the k8s_e2e build tag.
 // Requires a reachable Docker daemon. The ONLY skips are the environment gates
@@ -51,6 +51,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/k3s"
 	"go.uber.org/goleak"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	k8srand "k8s.io/apimachinery/pkg/util/rand"
@@ -71,11 +72,14 @@ const (
 	// e2eK3sImage pins the same k3s image the k8s-proxy matrix uses.
 	e2eK3sImage = "rancher/k3s:v1.31.5-k3s1"
 	// mogateRepo and mogateTag identify the public data-plane module built here.
+	// mogateTag is the release whose agent supports both the targeted (nftables)
+	// and targetless (--no-redirect, egress-only) modes.
 	mogateRepo = "https://github.com/shareed2k/mogate"
-	mogateTag  = "v0.1.1"
+	mogateTag  = "v0.1.3"
 	// agentBaseImage is the genuine mogate agent image, built from the module's
-	// own (unmodified) Dockerfile. The honey agent images layer a token-wait
-	// entrypoint on top of it.
+	// own (unmodified) Dockerfile. The honey agent images layer only a thin
+	// timing-flag entrypoint on top of it (no token wait — kube-agent waits
+	// for its --token-file itself).
 	agentBaseImage = "mogate-agent-base:e2e"
 	// agentImageSteal and agentImageMirror are the two locally-built agent images
 	// (steal is the mogate default; mirror sets --mode=mirror + a larger
@@ -155,6 +159,7 @@ func TestInterceptE2E(t *testing.T) {
 	t.Run("egress_tcp", func(t *testing.T) { testEgressTCP(t, env) })
 	t.Run("egress_dns", func(t *testing.T) { testEgressDNS(t, env) })
 	t.Run("egress_udp", func(t *testing.T) { testEgressUDP(t, env) })
+	t.Run("targetless_egress", func(t *testing.T) { testTargetlessEgress(t, env) })
 	t.Run("incoming_steal_tcp", func(t *testing.T) { testIncomingStealTCP(t, env) })
 	t.Run("incoming_mirror_tcp", func(t *testing.T) { testIncomingMirrorTCP(t, env) })
 	t.Run("incoming_steal_udp", func(t *testing.T) { testIncomingStealUDP(t, env) })
@@ -210,6 +215,72 @@ func testEgressUDP(t *testing.T, env *e2eEnv) {
 	defer cancel()
 	err := New(deps, opts).Run(ctx)
 	requireSessionOK(t, env, ns, pod, err)
+}
+
+// testTargetlessEgress proves the targetless (no target pod) path: honey
+// deploys its OWN standalone, non-root, no-NET_ADMIN agent Pod — not an
+// ephemeral container in a workload pod — and the injected client reaches the
+// shared egress target through it, exactly like testEgressTCP but with no
+// target pod anywhere in the picture. It also proves the standalone Pod is
+// gone once the session tears down.
+//
+// Unlike every ephemeral-container subtest above, this one never calls
+// elevateEphemeralPrivilege (there is no ephemeral container to elevate):
+// targetless installs no nftables (--no-redirect), so the agent needs no
+// privilege at all. That makes this subtest also the proof of the non-root
+// egress path, on a genuinely un-elevated agent Pod.
+func testTargetlessEgress(t *testing.T, env *e2eEnv) {
+	pod, err := NewAgentPodName()
+	require.NoError(t, err)
+	ns := "default"
+
+	sink := &captureSink{}
+	fwd := &recordingForwarder{cfg: env.rest, clientset: env.admin}
+	deps := Deps{
+		PortForwarder: fwd,
+		// The standalone Pod's single container has a known, fixed name
+		// (AgentContainerName) — unlike the targeted path there is no
+		// ephemeral container to resolve at exec time, so the execer is told
+		// the container directly (mirrors interceptPodExecer's targetless
+		// wiring in internal/cli/intercept.go).
+		PodExecer:   &agentExecer{cfg: env.rest, clientset: env.admin, namespace: ns, pod: pod, container: AgentContainerName},
+		K8sClient:   env.admin,
+		Enforcer:    buildAllowEnforcer(t),
+		Sink:        sink,
+		LocalRunner: DefaultLocalRunner(),
+	}
+	opts := Options{
+		Targetless: true,
+		Namespace:  ns,
+		Pod:        pod,
+		Cluster:    "e2e",
+		// The STOCK mogate image straight from the module's own Dockerfile —
+		// not the steal/mirror wrapper. Targetless runs the agent non-root and
+		// egress-only, and the stock image waits for its token natively.
+		AgentImage:  agentBaseImage,
+		Modes:       local.Modes{Egress: true},
+		Command:     []string{env.clientBin, "tcp", host(env.egressAddr), strconv.Itoa(appPort), env.egressResp},
+		Actor:       "e2e",
+		InjectorLib: env.injectorLib,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	// Session.Run deletes the standalone Pod as part of its own teardown
+	// BEFORE Run returns (unlike the targeted path's ephemeral container,
+	// which nothing ever removes) — so there is no window after Run returns to
+	// fetch its logs. Poll diagnostics WHILE the session runs and freeze the
+	// last snapshot to print if the session fails.
+	stopDiag := pollPodDiagnostics(env, ns, pod)
+	err = New(deps, opts).Run(ctx)
+	diag := stopDiag()
+	if err != nil {
+		t.Fatalf("Session.Run failed: %v\n%s", err, diag)
+	}
+
+	_, getErr := env.admin.CoreV1().Pods(ns).Get(context.Background(), pod, metav1.GetOptions{})
+	require.True(t, k8serrors.IsNotFound(getErr), "standalone agent pod must be deleted after teardown")
 }
 
 // testIncomingStealTCP proves traffic to the pod's Service is delivered to the
@@ -801,23 +872,34 @@ type agentExecer struct {
 	clientset kubernetes.Interface
 	namespace string
 	pod       string
+	// container names the agent container directly, skipping the
+	// ephemeral-container lookup below. Set by the targetless subtest, whose
+	// standalone pod's single container has a known, fixed name
+	// (AgentContainerName). Left empty for the targeted subtests, which fall
+	// back to resolving the most recently added ephemeral container — mirrors
+	// interceptPodExecer's container field (internal/cli/intercept.go).
+	container string
 }
 
 func (e *agentExecer) ExecInPod(ctx context.Context, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	p, err := e.clientset.CoreV1().Pods(e.namespace).Get(ctx, e.pod, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("get pod %q: %w", e.pod, err)
-	}
-	ecs := p.Spec.EphemeralContainers
-	if len(ecs) == 0 {
-		return fmt.Errorf("no agent container on pod %q", e.pod)
+	container := e.container
+	if container == "" {
+		p, err := e.clientset.CoreV1().Pods(e.namespace).Get(ctx, e.pod, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get pod %q: %w", e.pod, err)
+		}
+		ecs := p.Spec.EphemeralContainers
+		if len(ecs) == 0 {
+			return fmt.Errorf("no agent container on pod %q", e.pod)
+		}
+		container = ecs[len(ecs)-1].Name
 	}
 	client := &k8sprovider.K8sNativeClient{
 		Config:    e.cfg,
 		Clientset: e.clientset,
 		Namespace: e.namespace,
 		PodName:   e.pod,
-		Container: ecs[len(ecs)-1].Name,
+		Container: container,
 	}
 	return client.ExecInPod(ctx, cmd, stdin, stdout, stderr, false, nil)
 }
@@ -937,23 +1019,24 @@ func buildHostInjector(t *testing.T, mogateDir string) string {
 }
 
 // buildImages builds the target echo image and the steal/mirror agent images.
-// The agent images layer a token-wait entrypoint on top of the GENUINE mogate
-// agent image (built from the module's own unmodified Dockerfile); mirror
-// additionally sets --mode=mirror and a larger --mirror-claim-window. All are
-// single-platform so they save and import into the k3s node cleanly.
+// The agent images layer a thin entrypoint on top of the GENUINE mogate agent
+// image (built from the module's own unmodified Dockerfile) only to inject
+// test-timing flags; mirror additionally sets --mode=mirror and a larger
+// --mirror-claim-window. All are single-platform so they save and import into
+// the k3s node cleanly.
 func buildImages(t *testing.T, mogateDir string) {
 	t.Helper()
 	// The genuine agent image, straight from the module's own Dockerfile.
 	dockerBuild(t, mogateDir, "Dockerfile", agentBaseImage)
 
-	// A wrapper entrypoint layered on the genuine image: honey delivers the
-	// per-session token out of band (via exec) AFTER this container starts, so
-	// wait for it before handing off to the real kube-agent. Extra flags (the
-	// capture mode and its claim window) come from HONEY_AGENT_EXTRA. The larger
-	// --claim-timeout absorbs the latency of claiming a stolen stream over a
-	// doubly-nested (colima) port-forward; production clusters use the defaults.
+	// A thin entrypoint layered on the genuine image. honey delivers the token
+	// out of band (via exec) AFTER this container starts; kube-agent waits for
+	// its --token-file natively, so this wrapper does NOT wait — it only injects
+	// test-timing flags (the capture mode and its claim window come from
+	// HONEY_AGENT_EXTRA; the larger --claim-timeout absorbs the latency of
+	// claiming a stolen stream over a doubly-nested (colima) port-forward;
+	// production clusters use the defaults and need no wrapper at all).
 	entrypoint := `#!/bin/sh
-until [ -s /var/run/mogate/token ]; do sleep 0.2; done
 sub="$1"; shift
 exec /usr/local/bin/mogate "$sub" --claim-timeout=15s ${HONEY_AGENT_EXTRA:-} "$@"
 `
@@ -992,7 +1075,10 @@ func importImages(t *testing.T, container *k3s.K3sContainer) {
 	t.Helper()
 	ctx := context.Background()
 	tar := filepath.Join(t.TempDir(), "images.tar")
-	save := exec.Command("docker", "save", "-o", tar, targetImage, agentImageSteal, agentImageMirror)
+	// agentBaseImage is included alongside the wrapper images because the
+	// targetless subtest deploys it directly (no wrapper) as the standalone
+	// agent Pod's image.
+	save := exec.Command("docker", "save", "-o", tar, targetImage, agentBaseImage, agentImageSteal, agentImageMirror)
 	if out, err := save.CombinedOutput(); err != nil {
 		t.Fatalf("docker save images: %v\n%s", err, out)
 	}
@@ -1076,6 +1162,11 @@ func podDiagnostics(env *e2eEnv, ns, pod string) string {
 		return "diagnostics: " + err.Error()
 	}
 	fmt.Fprintf(&b, "pod phase=%s\n", p.Status.Phase)
+	for _, cs := range p.Status.EphemeralContainerStatuses {
+		if cs.State.Waiting != nil {
+			fmt.Fprintf(&b, "--- %s waiting: %s: %s\n", cs.Name, cs.State.Waiting.Reason, cs.State.Waiting.Message)
+		}
+	}
 	for _, ec := range p.Spec.EphemeralContainers {
 		b.WriteString(containerLog(env, ns, pod, ec.Name))
 	}
@@ -1094,6 +1185,47 @@ func containerLog(env *e2eEnv, ns, pod, container string) string {
 	defer rc.Close()
 	data, _ := io.ReadAll(rc)
 	return fmt.Sprintf("--- %s logs ---\n%s\n", container, data)
+}
+
+// pollPodDiagnostics polls podDiagnostics for ns/pod every 2s in the
+// background and keeps the most recent snapshot. It exists for the
+// targetless subtest: Session.Run deletes the standalone agent pod as part of
+// its own teardown BEFORE Run returns (unlike the targeted path's ephemeral
+// container, which nothing ever removes), so a diagnostics fetch AFTER Run
+// returns would only ever see "not found". Polling while the session runs
+// captures the pod's last live status and logs instead.
+//
+// The returned stop function cancels the poller, waits for it to exit (so no
+// goroutine survives the calling test — TestMain asserts via goleak that none
+// do), and returns the frozen snapshot.
+func pollPodDiagnostics(env *e2eEnv, ns, pod string) (stop func() string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var mu sync.Mutex
+	snapshot := "no diagnostics captured"
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			s := podDiagnostics(env, ns, pod)
+			mu.Lock()
+			snapshot = s
+			mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() string {
+		cancel()
+		<-done
+		mu.Lock()
+		defer mu.Unlock()
+		return snapshot
+	}
 }
 
 // sessionTempDirs lists the honey-intercept-* session directories currently in

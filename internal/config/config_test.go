@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1100,4 +1101,20 @@ func TestLoadNoInterceptBlock(t *testing.T) {
 	if f.Intercept != nil {
 		t.Errorf("expected nil Intercept, got %+v", f.Intercept)
 	}
+}
+
+func TestInterceptSessionTTLValue(t *testing.T) {
+	require.Equal(t, time.Hour, (*InterceptConfig)(nil).SessionTTLValue())
+	require.Equal(t, time.Hour, (&InterceptConfig{}).SessionTTLValue())
+	require.Equal(t, 30*time.Minute, (&InterceptConfig{SessionTTL: "30m"}).SessionTTLValue())
+	require.Equal(t, time.Hour, (&InterceptConfig{SessionTTL: "garbage"}).SessionTTLValue())
+	require.Equal(t, time.Hour, (&InterceptConfig{SessionTTL: "-5m"}).SessionTTLValue())
+}
+
+func TestInterceptSessionStoreValue(t *testing.T) {
+	require.Equal(t, "memory", (*InterceptConfig)(nil).SessionStoreValue())
+	require.Equal(t, "memory", (&InterceptConfig{}).SessionStoreValue())
+	require.Equal(t, "sqlite", (&InterceptConfig{SessionStore: "SQLite"}).SessionStoreValue())
+	require.Equal(t, "postgres", (&InterceptConfig{SessionStore: "postgres"}).SessionStoreValue())
+	require.Equal(t, "sqlite", (&InterceptConfig{SessionStore: "  sqlite  "}).SessionStoreValue())
 }

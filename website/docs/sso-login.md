@@ -215,6 +215,77 @@ kubectl connects to, independent of where the login itself happens.
 kubectl --context honey-prod get pods
 ```
 
+### Auto-refreshing kube login (kubectl exec credential plugin)
+
+The SSO branch of `honey kube login <cluster>` writes a kubeconfig `user`
+entry that is a **kubectl exec credential plugin**, not an embedded
+certificate: instead of storing `client-certificate-data` /
+`client-key-data`, it stores a command (`honey kube login <cluster>
+--admin-url <url>`) that kubectl runs on demand. kubectl calls this command
+before every request that needs credentials, so `honey` transparently
+re-authenticates through your OIDC provider whenever the cached certificate
+has actually expired — the browser opens **only** on that expiry path, never
+on every call, and `kubectl` never surfaces an expired-certificate error. You
+never manually re-run `honey kube login` because it expired; `kubectl` does
+it for you the next time you use the context. During interactive sign-in
+(setup or a triggered refresh) the browser now opens automatically; the
+sign-in URL is still printed to stderr as a fallback for when a browser
+can't be opened.
+
+```bash
+honey kube login prod --proxy honey-host:6443
+kubectl --context honey-prod get pods   # works today...
+
+# ...and still works after the certificate expires: kubectl silently re-runs
+# "honey kube login prod --admin-url ..." behind the scenes, honey notices
+# the cached cert is stale, opens the browser for a fresh sign-in, and
+# hands kubectl a new certificate — no re-login command, no error.
+kubectl --context honey-prod get pods
+```
+
+**Prerequisite: `honey` must be on the `PATH` kubectl uses.** kubectl
+launches the exec plugin as a subprocess by the bare command name (`honey`),
+resolved through its own environment's `PATH` — not necessarily an
+interactive shell's. If `honey` isn't reachable there, every request fails
+with a generic exec-plugin error. Confirm it with `which honey` in the same
+environment kubectl runs in, or use `--static` below instead.
+
+**`--static` opts out.** `honey kube login prod --proxy ... --static` embeds
+the certificate and key directly in the kubeconfig, reproducing the
+pre-auto-refresh behavior: no exec plugin, no re-authentication, and no
+`honey` PATH requirement at kubectl-call time. Use it on hosts where `honey`
+won't be installed alongside kubectl (e.g. a kubeconfig handed to a CI
+runner or another machine). Because there's no cached SSO session to refresh
+from, you re-run `honey kube login` by hand once the certificate expires.
+The `--enroll-code` path is always static, regardless of `--static` — an
+enrollment code has no SSO session to refresh from either.
+
+**`--no-browser`** prints the sign-in URL to stderr instead of attempting to
+open a browser, for headless hosts and SSH sessions — the same flag works
+whether the sign-in is the initial `honey kube login` or a refresh triggered
+by the exec plugin.
+
+**Credential cache.** A successful sign-in caches the issued certificate and
+key under `~/.honey/kube/<cluster>/` (honors `$HONEY_HOME`), with the files
+written `0600`. This cache is what lets the exec plugin serve most requests
+with no network round trip at all — it only re-authenticates when the cached
+certificate is within a minute of `NotAfter`. The exec-plugin kubeconfig
+entry itself carries no certificate or key material — just the command used
+to fetch them — so a leaked kubeconfig alone can't be used as a credential.
+
+**Non-interactive kubectl (CI, `interactiveMode: Never`).** Some kubectl
+invocations tell exec plugins they may not prompt or open a browser. If the
+cached certificate has expired in that context, `honey` fails closed with an
+error instead of hanging on a browser that will never be seen — refresh the
+cache first by running `honey kube login <cluster>` interactively (with a
+real browser or `--no-browser`) from an environment that allows it.
+
+**Composes with brokered intercept.** Brokered `honey intercept --cluster
+<cluster>` (see [Local Interception](./intercept.md)) resolves the same
+`honey-<cluster>` kubeconfig context that `honey kube login` writes, so its
+port-forward inherits this auto-refresh for free — no separate credential
+path to keep alive for intercept.
+
 ### `honey ssh login`
 
 ```bash

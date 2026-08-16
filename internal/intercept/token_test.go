@@ -85,8 +85,9 @@ func TestDeliverToken(t *testing.T) {
 	require.NotEmpty(t, fe.gotCmd)
 	joined := strings.Join(fe.gotCmd, " ")
 	assert.NotContains(t, joined, token, "token must never appear on the command line")
-	assert.Contains(t, joined, "/var/run/mogate/token", "command must write the agent token path")
+	assert.Contains(t, joined, "/tmp/mogate/token", "command must write the agent token path (under /tmp, writable by the non-root agent)")
 	assert.Contains(t, joined, "cat >", "command must read the token from stdin")
+	assert.Contains(t, joined, "mv ", "command must rename into place so a poller never reads a partial token")
 
 	assert.Equal(t, token, fe.gotStdin, "token must be streamed to stdin")
 }

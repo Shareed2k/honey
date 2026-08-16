@@ -231,3 +231,37 @@ func TestLoadOrCreateSSHIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, s1.PublicKey().Marshal(), s2.PublicKey().Marshal())
 }
+
+func TestAuthURLPrinter_OpensBrowserByDefault(t *testing.T) {
+	var capturedURL string
+	origFn := openBrowserFn
+	openBrowserFn = func(url string) error {
+		capturedURL = url
+		return nil
+	}
+	t.Cleanup(func() { openBrowserFn = origFn })
+
+	testURL := "https://idp.example/auth?x=1"
+	authURLPrinter(testURL)
+
+	require.Equal(t, testURL, capturedURL)
+}
+
+func TestAuthURLPrinter_NoBrowserSuppressesOpen(t *testing.T) {
+	orig := oidcNoBrowser
+	oidcNoBrowser = true
+	t.Cleanup(func() { oidcNoBrowser = orig })
+
+	openBrowserCalled := false
+	origFn := openBrowserFn
+	openBrowserFn = func(_ string) error {
+		openBrowserCalled = true
+		t.Fatal("openBrowser should not be called when oidcNoBrowser is true")
+		return nil
+	}
+	t.Cleanup(func() { openBrowserFn = origFn })
+
+	authURLPrinter("https://idp.example/auth?x=1")
+
+	require.False(t, openBrowserCalled)
+}

@@ -28,6 +28,17 @@ type GateInput struct {
 	Mode []string
 	// AgentImage is the operator-configured interception agent image.
 	AgentImage string
+	// Subject is the verified SSO subject (id_token sub claim). Empty on the
+	// direct (client-side) path.
+	Subject string
+	// Email is the verified SSO email/username claim. Empty on the direct path.
+	Email string
+	// Groups are the verified SSO groups claim. Empty on the direct path.
+	Groups []string
+	// Claims is the full set of verified id_token claims, made available to the
+	// policy so operators can authorize against any claim. Populated only on the
+	// server-brokered path; nil on the direct path.
+	Claims map[string]any
 }
 
 // gate evaluates the OPA intercept policy for in and fails closed: a nil
@@ -47,6 +58,22 @@ func gate(ctx context.Context, enf *policy.Enforcer, in GateInput) error {
 		"container":   in.Container,
 		"mode":        in.Mode,
 		"agent_image": in.AgentImage,
+	}
+	// Server-brokered path: expose the verified identity and its full claim set
+	// so operators can write group/email/arbitrary-claim policies. Added only
+	// when present so the direct path's input — and existing policies — are
+	// unchanged.
+	if in.Subject != "" {
+		input["subject"] = in.Subject
+	}
+	if in.Email != "" {
+		input["email"] = in.Email
+	}
+	if len(in.Groups) > 0 {
+		input["groups"] = in.Groups
+	}
+	if len(in.Claims) > 0 {
+		input["claims"] = in.Claims
 	}
 	dec, err := enf.Evaluate(ctx, input)
 	if err != nil || !dec.Allow {

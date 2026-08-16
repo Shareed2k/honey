@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -233,6 +234,76 @@ func startEphemeralFlipper(cs *fake.Clientset, ns, pod string, log *eventLog) fu
 	}
 }
 
+// newTargetlessHarness bundles a fully wired set of fakes for a targetless
+// Session. Unlike newHarness, the fake clientset starts with no pods seeded:
+// the standalone agent pod is created by Run itself (provisionTargetless),
+// mirroring how the CLI generates opts.Pod before Deps is built.
+func newTargetlessHarness(t *testing.T, allow bool, runErr error) *harness {
+	t.Helper()
+	log := &eventLog{}
+	cs := fake.NewSimpleClientset()
+	fwd := &fakeForwarder{log: log}
+	runner := &fakeRunner{log: log, runErr: runErr}
+	sink := &recordingSink{}
+	deps := Deps{
+		PortForwarder: fwd,
+		PodExecer:     &loggingExecer{log: log},
+		K8sClient:     cs,
+		Enforcer:      buildEnforcer(t, allow),
+		Sink:          sink,
+		LocalRunner:   runner,
+	}
+	opts := Options{
+		Namespace:  "apps",
+		Pod:        "mogate-test1234",
+		Cluster:    "prod",
+		AgentImage: "registry.example/agent:1",
+		Modes:      local.Modes{Egress: true},
+		UDP:        false,
+		Command:    []string{"curl", "http://svc"},
+		Actor:      "roman",
+		Targetless: true,
+	}
+	return &harness{deps: deps, opts: opts, cs: cs, fwd: fwd, runner: runner, sink: sink, log: log}
+}
+
+// startPodRunningFlipper mimics the kubelet for a standalone targetless agent
+// pod: once the Session has created it (createAgentPod), it records the
+// observation and flips the pod to Running with its agent container Ready, so
+// waitPodRunning proceeds. The returned stop joins the goroutine so goleak
+// stays clean.
+func startPodRunningFlipper(cs *fake.Clientset, ns, pod string, log *eventLog) func() {
+	stopCh := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(2 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+			}
+			p, err := cs.CoreV1().Pods(ns).Get(context.Background(), pod, metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+			log.record("pod-created")
+			p.Status.Phase = corev1.PodRunning
+			p.Status.ContainerStatuses = []corev1.ContainerStatus{
+				{Name: AgentContainerName, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+			}
+			_, _ = cs.CoreV1().Pods(ns).UpdateStatus(context.Background(), p, metav1.UpdateOptions{})
+			return
+		}
+	}()
+	return func() {
+		close(stopCh)
+		<-done
+	}
+}
+
 func waitForEvent(t *testing.T, log *eventLog, event string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -321,9 +392,9 @@ func TestSession_happyPathLifecycleAndTeardown(t *testing.T) {
 	assert.Equal(t, "127.0.0.1:9000", cfg.Target)
 	assert.True(t, cfg.UDP)
 	assert.Equal(t, local.Modes{Egress: true, Incoming: true, Files: true}, cfg.Modes)
-	assert.Equal(t, defaultFileRoot, cfg.Root)
+	assert.Equal(t, DefaultFileRoot, cfg.Root)
 	assert.Equal(t, tokenFileName, filepath.Base(cfg.TokenFile))
-	assert.Equal(t, relaySocketName, filepath.Base(cfg.Socket))
+	assert.Equal(t, RelaySocketName, filepath.Base(cfg.Socket))
 	assert.NotEmpty(t, cfg.InjectorLib)
 	assert.Equal(t, h.opts.Command, h.runner.command())
 
@@ -422,4 +493,93 @@ func TestSession_ctxCancelDrainsWithinGrace(t *testing.T) {
 	}
 	assert.Lessf(t, time.Since(start), shutdownGrace,
 		"a well-behaved runner must drain well within the %s grace window", shutdownGrace)
+}
+
+// TestSession_targetless_happyPathLifecycleAndTeardown covers the targetless
+// runtime end to end: Run must create a standalone agent Pod named opts.Pod
+// (not add an ephemeral container to any pre-existing pod), wait for it to
+// run, deliver the token, forward the egress port only (no control port, so
+// no incoming capture), and delete the standalone Pod on teardown.
+func TestSession_targetless_happyPathLifecycleAndTeardown(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	h := newTargetlessHarness(t, true, nil)
+	stopFlip := startPodRunningFlipper(h.cs, h.opts.Namespace, h.opts.Pod, h.log)
+	defer stopFlip()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := make(chan error, 1)
+	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
+
+	waitForEvent(t, h.log, "run", 3*time.Second)
+
+	// While the session is live, the standalone pod exists with exactly one
+	// container (the agent) and no ephemeral containers at all — targetless
+	// never touches the ephemeral-container API.
+	p, err := h.cs.CoreV1().Pods(h.opts.Namespace).Get(context.Background(), h.opts.Pod, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, p.Spec.EphemeralContainers, "targetless must not add an ephemeral container")
+	require.Len(t, p.Spec.Containers, 1)
+	assert.Equal(t, AgentContainerName, p.Spec.Containers[0].Name)
+
+	cancel()
+	var runErr error
+	select {
+	case runErr = <-res:
+	case <-time.After(shutdownGrace + 2*time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+	assert.ErrorIs(t, runErr, context.Canceled)
+
+	// Ordered lifecycle: pod create -> token -> egress forward -> run. No
+	// control port is ever forwarded in targetless mode.
+	assertOrder(t, h.log.snapshot(), "pod-created", "token-delivered", fmt.Sprintf("forward:%d", agentEgressRemotePort), "run")
+	assert.NotContains(t, h.fwd.forwarded(), agentControlRemotePort)
+
+	cfg := h.runner.config()
+	assert.Empty(t, cfg.ControlAddr, "targetless has no control port-forward")
+	assert.Equal(t, fmt.Sprintf("127.0.0.1:%d", agentEgressRemotePort), cfg.EgressAddr)
+	assert.Equal(t, local.Modes{Egress: true}, cfg.Modes)
+
+	// Teardown stopped the egress forward (and only it).
+	stopped := h.fwd.stoppedPorts()
+	assert.Contains(t, stopped, agentEgressRemotePort)
+	assert.NotContains(t, stopped, agentControlRemotePort)
+
+	// Teardown deleted the standalone agent pod outright — unlike the targeted
+	// path, there is no pod left behind with a lingering ephemeral container.
+	_, getErr := h.cs.CoreV1().Pods(h.opts.Namespace).Get(context.Background(), h.opts.Pod, metav1.GetOptions{})
+	assert.Truef(t, k8serrors.IsNotFound(getErr), "standalone agent pod must be deleted on teardown")
+
+	require.Len(t, h.sink.events, 2)
+	assert.Equal(t, actionInterceptStart, h.sink.events[0].Action)
+	assert.Equal(t, actionInterceptStop, h.sink.events[1].Action)
+}
+
+// TestSession_targetless_teardownOnRunnerError guards that the standalone
+// agent Pod is deleted even when the local runner fails mid-session, not just
+// on a clean cancellation.
+func TestSession_targetless_teardownOnRunnerError(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	boom := errors.New("runner boom")
+	h := newTargetlessHarness(t, true, boom)
+	stopFlip := startPodRunningFlipper(h.cs, h.opts.Namespace, h.opts.Pod, h.log)
+	defer stopFlip()
+
+	err := New(h.deps, h.opts).Run(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom)
+
+	stopped := h.fwd.stoppedPorts()
+	assert.Contains(t, stopped, agentEgressRemotePort)
+	assert.NotContains(t, stopped, agentControlRemotePort)
+
+	_, getErr := h.cs.CoreV1().Pods(h.opts.Namespace).Get(context.Background(), h.opts.Pod, metav1.GetOptions{})
+	assert.Truef(t, k8serrors.IsNotFound(getErr), "standalone agent pod must be deleted on teardown even after a runner error")
+
+	require.Len(t, h.sink.events, 2)
+	assert.Equal(t, actionInterceptStop, h.sink.events[1].Action)
+	assert.Equal(t, "runner boom", h.sink.events[1].Extra["reason"])
 }

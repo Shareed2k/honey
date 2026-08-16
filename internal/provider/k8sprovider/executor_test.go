@@ -64,6 +64,48 @@ func TestRestConfigForKubeconfig_UnknownContextErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestNamespaceForKubeconfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kubeconfig")
+	data := `
+apiVersion: v1
+kind: Config
+clusters:
+- name: c
+  cluster:
+    server: https://c.example.com
+contexts:
+- name: ctx-ns
+  context:
+    cluster: c
+    namespace: team-a
+- name: ctx-no-ns
+  context:
+    cluster: c
+current-context: ctx-ns
+users: []
+`
+	require.NoError(t, os.WriteFile(path, []byte(data), 0o600))
+
+	t.Run("current context namespace", func(t *testing.T) {
+		ns, err := NamespaceForKubeconfig(path, "")
+		require.NoError(t, err)
+		require.Equal(t, "team-a", ns)
+	})
+
+	t.Run("explicit context namespace", func(t *testing.T) {
+		ns, err := NamespaceForKubeconfig(path, "ctx-ns")
+		require.NoError(t, err)
+		require.Equal(t, "team-a", ns)
+	})
+
+	t.Run("context without namespace falls back to default", func(t *testing.T) {
+		ns, err := NamespaceForKubeconfig(path, "ctx-no-ns")
+		require.NoError(t, err)
+		require.Equal(t, "default", ns)
+	})
+}
+
 func TestK8sClientConfigFromRecord_DelegatesToRestConfigForKubeconfig(t *testing.T) {
 	path := writeTestKubeconfig(t)
 

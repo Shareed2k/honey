@@ -77,7 +77,7 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/common v0.70.1
 	github.com/sashabaranov/go-openai v1.42.0
-	github.com/shareed2k/mogate v0.1.1
+	github.com/shareed2k/mogate v0.1.6
 	github.com/shirou/gopsutil/v4 v4.26.7
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0

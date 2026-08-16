@@ -21,7 +21,7 @@
 set -euo pipefail
 
 INJECTOR_REPO="${INJECTOR_REPO:-https://github.com/shareed2k/mogate}"
-INJECTOR_REF="${INJECTOR_REF:-v0.1.1}"
+INJECTOR_REF="${INJECTOR_REF:-v0.1.6}"
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 embed_root="${repo_root}/internal/intercept/injector"
@@ -61,7 +61,21 @@ build_one() {
     is_host=true
   fi
 
-  if ! command -v "${cc}" >/dev/null 2>&1; then
+  # On a macOS host, both darwin slices build natively with `clang -arch` — no
+  # osxcross required. This is what makes the x86_64 slice available on an
+  # Apple-Silicon dev machine, which the SIP path needs: SIP-restricted system
+  # binaries are thinned to x86_64 and run under Rosetta with the x86_64
+  # injector. Prefer an explicitly provided cross compiler if present; otherwise
+  # use the native clang with the target arch. Non-darwin builders fall through
+  # to the cross-compiler logic below (the release image ships osxcross).
+  if [ "${goos}" = "darwin" ] && [ "${host_goos}" = "darwin" ]; then
+    local mach_arch="${goarch}"
+    if [ "${goarch}" = "amd64" ]; then mach_arch="x86_64"; fi
+    if ! command -v "${cc}" >/dev/null 2>&1; then
+      cc="cc"
+    fi
+    shared_flags=("-arch" "${mach_arch}" "${shared_flags[@]}")
+  elif ! command -v "${cc}" >/dev/null 2>&1; then
     # The host platform can always fall back to the native compiler (this is the
     # dev story: build the running platform's lib locally). Cross targets are
     # skipped when their toolchain is absent, leaving the placeholder.

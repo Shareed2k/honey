@@ -45,7 +45,18 @@ var rootCmd = &cobra.Command{
 			}
 		}
 		applyCommandFlagDefaults(cmd, resolvedCfgPath)
-		startMeshIfConfigured(resolvedCfg)
+		// Skip the mesh bootstrap when honey runs as a kubectl exec credential
+		// plugin (honey kube login under KUBERNETES_EXEC_INFO). kubectl invokes
+		// this on the credential hot path in a fresh process for (potentially)
+		// every API call, so booting a libp2p host and dialing relays here would
+		// add network latency to the credential response — breaking the "a fresh
+		// cached certificate is served with no network" contract — and, under a
+		// parent honey process that already holds the mesh identity (e.g. a
+		// brokered `honey intercept` that exec's this plugin), collide on the
+		// relay reservation for the same key. Credential mode needs no mesh.
+		if !inExecCredentialMode() {
+			startMeshIfConfigured(resolvedCfg)
+		}
 		return nil
 	},
 	PersistentPostRun: func(_ *cobra.Command, _ []string) {

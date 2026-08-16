@@ -25,6 +25,7 @@ import (
 	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/intercept"
 	"github.com/shareed2k/honey/internal/jit"
 	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/meshnet"
@@ -128,6 +129,20 @@ type Options struct {
 	// Zero falls back to the built-in 12h default (short by design: no
 	// certificate revocation exists, so a short lifetime is the mitigation).
 	DeviceCertTTL time.Duration
+
+	// InterceptBroker, when non-nil (and OIDCVerifier set), enables the
+	// server-brokered interception endpoints. nil ⇒ the routes stay
+	// unregistered (404) and honey intercept remains client-side only.
+	//
+	// Deliberately the concrete *intercept.Broker, not the interceptBroker
+	// interface: the nil check in NewServer must run BEFORE any interface
+	// boxing. An interface-typed option could be set to a nil *intercept.Broker
+	// and still compare non-nil once boxed (a non-nil interface wrapping a nil
+	// pointer), silently mounting routes that panic on first use.
+	InterceptBroker *intercept.Broker
+	// InterceptDefaultMode is reported by the intercept-config endpoint so the
+	// CLI knows the operator's default modes.
+	InterceptDefaultMode []string
 }
 
 // Server is the honey web UI HTTP server.
@@ -219,6 +234,11 @@ type Server struct {
 	// idTokenVerifier interface so tests can inject a stub without a live
 	// identity provider.
 	oidcVerifier idTokenVerifier
+
+	// interceptBroker drives the server-brokered interception endpoints. Set
+	// from opts.InterceptBroker in NewServer only when non-nil, through the
+	// interceptBroker interface so tests can inject a stub.
+	interceptBroker interceptBroker
 
 	// stateDir is the resolved runtime state dir where the device/ssh CAs live.
 	// The SSO kube-login handler reads the k8s access proxy's serving CA under it
@@ -343,6 +363,12 @@ func NewServer(opts Options) (*Server, error) {
 	// would be a non-nil interface value, defeating the enabled/disabled check.
 	if opts.OIDCVerifier != nil {
 		s.oidcVerifier = opts.OIDCVerifier
+	}
+
+	// Same typed-nil concern as OIDCVerifier above: only wire the interface
+	// field when the caller actually set one.
+	if opts.InterceptBroker != nil {
+		s.interceptBroker = opts.InterceptBroker
 	}
 
 	if err := s.routes(); err != nil {
@@ -558,6 +584,16 @@ func (s *Server) routes() error {
 		s.router.Get("/api/v1/kube/oidc-config", s.handleOIDCConfig)
 		s.router.Post("/api/v1/kube/login", s.handleKubeLogin)
 		s.router.Post("/api/v1/ssh/login", s.handleSSHLogin)
+	}
+
+	// Server-brokered interception endpoints: authenticated by the id_token
+	// itself, like the SSO login endpoints above, so they mount outside the
+	// session-auth group. Registered only when both SSO login and the broker
+	// are enabled; absent ⇒ the routes stay unregistered (404).
+	if s.opts.OIDCVerifier != nil && s.opts.InterceptBroker != nil {
+		s.router.Get("/api/v1/intercept/config", s.handleInterceptConfig)
+		s.router.Post("/api/v1/intercept/authorize", s.handleInterceptAuthorize)
+		s.router.Post("/api/v1/intercept/{id}/stop", s.handleInterceptStop)
 	}
 
 	// Webhooks have their own custom auth, so they mount outside the main /api/v1 auth group

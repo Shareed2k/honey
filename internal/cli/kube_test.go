@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -230,4 +232,23 @@ func TestEnrollDevice_NonOKStatus(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-200 response, got nil")
 	}
+}
+
+func TestFetchKubeCertViaSSO_ReturnsCertAndExpiry(t *testing.T) {
+	exp := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
+	certPEM, keyPEM := selfSignedForTest(t, exp)
+	origFlow, origLogin := browserAuthCodeFlowFn, kubeOIDCLoginFn
+	t.Cleanup(func() { browserAuthCodeFlowFn, kubeOIDCLoginFn = origFlow, origLogin })
+	browserAuthCodeFlowFn = func(context.Context, string, []string) (string, string, error) { return "idtok", "n", nil }
+	kubeOIDCLoginFn = func(context.Context, string, string, string, string, []byte) ([]byte, []byte, string, []string, error) {
+		return certPEM, []byte("ca"), "alice@corp", []string{"eng"}, nil
+	}
+	gotCert, gotKey, gotCA, cn, notAfter, err := fetchKubeCertViaSSO(context.Background(), "http://admin", "prod", nil)
+	require.NoError(t, err)
+	require.Equal(t, certPEM, gotCert)
+	require.NotEmpty(t, gotKey) // the freshly generated key, not the stub's
+	require.Equal(t, []byte("ca"), gotCA)
+	require.Equal(t, "alice@corp", cn)
+	require.Equal(t, exp, notAfter)
+	_ = keyPEM
 }

@@ -24,17 +24,33 @@ const agentBypassGID int64 = 65533
 const ephemeralPollInterval = 200 * time.Millisecond
 
 // ephemeralContainer builds the EphemeralContainer spec for the interception
-// agent: it runs image with args, is granted the NET_ADMIN capability, and
-// targets targetContainer so it shares that container's namespaces.
+// agent: it runs image with args, targets targetContainer to share that
+// container's namespaces, and runs as ROOT with only the NET_ADMIN capability
+// (all others dropped) under the agent's bypass group.
+//
+// Root is required, not optional: the agent installs nftables via netlink,
+// which needs an EFFECTIVE CAP_NET_ADMIN. A capability listed in
+// capabilities.add is only *permitted* for a non-root user — it becomes
+// effective only via file capabilities (setcap) on the binary or ambient
+// capabilities, neither of which the stock agent image ships nor which a
+// Kubernetes container securityContext can grant. So a non-root agent fails the
+// nftables install with "operation not permitted"; running as uid 0 makes the
+// added NET_ADMIN effective. RunAsGroup is the agent's bypass GID so the agent's
+// own egress skips the redirect it installs.
 func ephemeralContainer(name, image, targetContainer string, args []string) corev1.EphemeralContainer {
+	runAsUser := int64(0)
+	runAsGroup := agentBypassGID
 	return corev1.EphemeralContainer{
 		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
 			Name:  name,
 			Image: image,
 			Args:  args,
 			SecurityContext: &corev1.SecurityContext{
+				RunAsUser:  &runAsUser,
+				RunAsGroup: &runAsGroup,
 				Capabilities: &corev1.Capabilities{
-					Add: []corev1.Capability{capNetAdmin},
+					Drop: []corev1.Capability{"ALL"},
+					Add:  []corev1.Capability{capNetAdmin},
 				},
 			},
 		},

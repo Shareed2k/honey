@@ -80,6 +80,23 @@ func RestConfigForKubeconfig(kubeconfigPath, kubeContext string) (*rest.Config, 
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 }
 
+// NamespaceForKubeconfig returns the namespace of the resolved kubeconfig
+// context, exactly like kubectl: the context's `namespace:` if set, otherwise
+// "default". It uses the same loading rules as RestConfigForKubeconfig (an
+// empty path/context means the standard KUBECONFIG/current-context discovery).
+func NamespaceForKubeconfig(kubeconfigPath, kubeContext string) (string, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		loadingRules.ExplicitPath = kubeconfigPath
+	}
+	overrides := &clientcmd.ConfigOverrides{}
+	if kubeContext != "" {
+		overrides.CurrentContext = kubeContext
+	}
+	ns, _, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).Namespace()
+	return ns, err
+}
+
 // k8sClientConfigFromRecord builds a *rest.Config from kubeconfig/context stored in r.Meta.
 func k8sClientConfigFromRecord(r hosts.Record) (*rest.Config, error) {
 	return RestConfigForKubeconfig(r.Meta["kubeconfig"], r.Meta["kube_context"])

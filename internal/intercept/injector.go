@@ -32,6 +32,13 @@ const injectorRoot = "injector"
 // under inside the destination directory.
 const injectorFileName = "injector.lib"
 
+// injectorRosettaFileName is the basename the extracted x86_64 injector is
+// written under. It is kept distinct from injectorFileName so a darwin session
+// can extract both the native (arm64) and the x86_64 injector into the same
+// directory: the x86_64 one is loaded when a SIP-patched binary is thinned to
+// its x86_64 slice and run under Rosetta.
+const injectorRosettaFileName = "injector-x86_64.lib"
+
 // extractInjector writes the injector library for the running platform into dir
 // at mode 0700 and returns its path. It returns ErrNoInjector when no library
 // is bundled for the current GOOS/GOARCH.
@@ -39,11 +46,39 @@ func extractInjector(dir string) (string, error) {
 	return extractInjectorFor(injectorFS, runtime.GOOS, runtime.GOARCH, dir)
 }
 
+// ExtractInjector is the exported form of extractInjector. It exists so the
+// CLI's brokered intercept path (internal/cli/intercept.go) can build its own
+// local.Config and run the local injection session directly — the agent in
+// that flow is deployed server-side by the Broker, so the CLI never
+// constructs a Session and has no other way to reach the embedded injector.
+func ExtractInjector(dir string) (string, error) {
+	return extractInjector(dir)
+}
+
+// ExtractRosettaInjector writes the x86_64 (darwin/amd64) injector into dir and
+// returns its path. It is used on Apple Silicon for the SIP path: a
+// SIP-restricted system binary is thinned to its x86_64 slice and run under
+// Rosetta, which loads the x86_64 injector rather than the native arm64 one. It
+// returns ErrNoInjector when no real x86_64 injector is bundled (for example a
+// build that did not compile the darwin/amd64 slice); callers treat that as an
+// empty InjectorLibRosetta so the SIP x86_64 path fails loud at use rather than
+// loading a placeholder.
+func ExtractRosettaInjector(dir string) (string, error) {
+	return extractInjectorForNamed(injectorFS, "darwin", "amd64", dir, injectorRosettaFileName)
+}
+
 // extractInjectorFor is the platform-parameterised core of extractInjector: it
 // reads the injector library for goos/goarch from fsys and writes it into dir
 // at mode 0700, returning the written path. Factoring the platform out makes
 // the not-found path testable without pretending to run on another OS.
 func extractInjectorFor(fsys fs.FS, goos, goarch, dir string) (string, error) {
+	return extractInjectorForNamed(fsys, goos, goarch, dir, injectorFileName)
+}
+
+// extractInjectorForNamed is extractInjectorFor with an explicit destination
+// basename, so a single directory can hold more than one extracted injector
+// (the native and the x86_64/Rosetta libraries) without colliding.
+func extractInjectorForNamed(fsys fs.FS, goos, goarch, dir, filename string) (string, error) {
 	entry, err := injectorEntry(fsys, goos, goarch)
 	if err != nil {
 		return "", err
@@ -52,7 +87,7 @@ func extractInjectorFor(fsys fs.FS, goos, goarch, dir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("intercept: read injector %q: %w", entry, err)
 	}
-	dest := filepath.Join(dir, injectorFileName)
+	dest := filepath.Join(dir, filename)
 	if err := os.WriteFile(dest, data, 0o600); err != nil {
 		return "", fmt.Errorf("intercept: write injector: %w", err)
 	}
