@@ -646,6 +646,14 @@ to the in-memory store.
   does not). If a restricted binary cannot be patched — for example an
   `arm64e`-only binary with no `x86_64` slice, or missing Rosetta — the command
   **fails loud** and is never run un-intercepted.
+- **`dig`/`nslookup`/`host` over UDP are not intercepted on macOS.** Interception
+  redirects the standard resolver (`getaddrinfo`) and the libc socket calls, so
+  ordinary tools and applications resolve cluster names through the agent. BIND's
+  DNS utilities (`dig`, `nslookup`, `host`) instead issue their UDP queries via
+  raw syscalls that bypass the injected libc symbols, so their **UDP** lookups
+  hang. Use TCP DNS, which is intercepted — `dig +tcp <name>`, `nslookup -vc
+  <name>`, `host -T <name>` — or any `getaddrinfo`-based check (`curl`,
+  `python3 -c 'import socket; socket.gethostbyname("<name>")'`).
 - **Sessions are short-lived and always gated.** Every session re-runs the
   [`intercept` gate](#the-intercept-opa-gate) and is fully torn down (agent
   signaled to exit, port-forwards closed, the local session token and
