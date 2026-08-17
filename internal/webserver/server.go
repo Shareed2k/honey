@@ -25,6 +25,7 @@ import (
 	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/intercept"
 	"github.com/shareed2k/honey/internal/jit"
 	"github.com/shareed2k/honey/internal/k8sproxy"
@@ -143,6 +144,17 @@ type Options struct {
 	// InterceptDefaultMode is reported by the intercept-config endpoint so the
 	// CLI knows the operator's default modes.
 	InterceptDefaultMode []string
+
+	// InterceptSessionFactory builds the DIRECT intercept.Session that backs the
+	// browser interception terminal (GET /ws/intercept). Given a target pod
+	// record, the built Options, and the web terminal's PTY LocalRunner, it wires
+	// the per-cluster dependencies (port-forward, exec, k8s client) with the same
+	// enforcer and audit sink the interception broker uses, and returns a Session
+	// ready to Run. Populated by the web command; nil ⇒ /ws/intercept stays
+	// unregistered (404). Unlike the brokered endpoints this is NOT gated on
+	// OIDCVerifier: the browser terminal is authenticated by the web session
+	// token (like /ws/ssh), which is the default single-operator topology.
+	InterceptSessionFactory func(rec hosts.Record, opts intercept.Options, runner intercept.LocalRunner) (*intercept.Session, error)
 }
 
 // Server is the honey web UI HTTP server.
@@ -239,6 +251,13 @@ type Server struct {
 	// from opts.InterceptBroker in NewServer only when non-nil, through the
 	// interceptBroker interface so tests can inject a stub.
 	interceptBroker interceptBroker
+
+	// interceptInnerRunner is the data-plane runner the browser PTY bridge
+	// (/ws/intercept) delegates to after wiring stdin/stdout/resize onto the
+	// injection session's local.Config. Defaults to intercept.DefaultLocalRunner
+	// (→ mogate local.Run); tests replace it with a fake so the bridge is
+	// exercised without a real injector or cluster data plane.
+	interceptInnerRunner intercept.LocalRunner
 
 	// stateDir is the resolved runtime state dir where the device/ssh CAs live.
 	// The SSO kube-login handler reads the k8s access proxy's serving CA under it
@@ -370,6 +389,10 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.InterceptBroker != nil {
 		s.interceptBroker = opts.InterceptBroker
 	}
+
+	// The browser interception terminal delegates to the real data-plane runner
+	// (mogate local.Run) unless a test overrides it.
+	s.interceptInnerRunner = intercept.DefaultLocalRunner()
 
 	if err := s.routes(); err != nil {
 		return nil, err
@@ -602,6 +625,14 @@ func (s *Server) routes() error {
 
 	s.router.Get("/ws/ssh", s.handleWebSSH)
 	s.router.Get("/ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
+
+	// Browser interception terminal: runs a direct intercept.Session on the
+	// honey-web host and bridges the injected shell's PTY to the WebSocket.
+	// Registered only when the session factory is wired (intercept enabled with a
+	// resolvable cluster); authenticated by the web session token like /ws/ssh.
+	if s.opts.InterceptSessionFactory != nil {
+		s.router.Get("/ws/intercept", s.handleWebIntercept)
+	}
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {

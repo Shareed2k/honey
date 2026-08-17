@@ -424,7 +424,7 @@ func mergeK8sDebugImageFromRecipe(recipe cuetry.Recipe, records []hosts.Record) 
 	}
 	img := strings.TrimSpace(recipe.Defaults.K8sDebugImage)
 	for i := range records {
-		if records[i].Provider == "k8s" && strings.EqualFold(records[i].Meta["kind"], "pod") {
+		if records[i].IsPod() {
 			if records[i].Meta == nil {
 				records[i].Meta = make(map[string]string)
 			}

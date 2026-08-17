@@ -102,6 +102,15 @@ func (r Record) IsDocker() bool {
 	return strings.TrimSpace(r.Meta["container_id"]) != ""
 }
 
+// IsPod reports whether r is a connectable Kubernetes pod row. It is the single
+// definition of the pod predicate that was previously inlined as
+// `Provider=="k8s" && Meta["kind"]=="pod"` across the exec, terminal, and
+// interception paths; matching is case-insensitive and whitespace-trimmed so a
+// record from an older build or a hand-built client still resolves.
+func (r Record) IsPod() bool {
+	return r.Provider == "k8s" && strings.EqualFold(strings.TrimSpace(r.Meta["kind"]), "pod")
+}
+
 // IsTrueNASAPIShell reports whether r is a TrueNAS row that can use /websocket/shell
 // (shape only; backend config is checked at runtime).
 func (r Record) IsTrueNASAPIShell() bool {
@@ -140,7 +149,7 @@ func (r Record) IsConnectable() bool {
 	if strings.TrimSpace(r.PrimaryIP) != "" {
 		return true
 	}
-	return r.Provider == "k8s" && strings.EqualFold(strings.TrimSpace(r.Meta["kind"]), "pod")
+	return r.IsPod()
 }
 
 // DeriveCapabilities returns connection protocols available for this host,
