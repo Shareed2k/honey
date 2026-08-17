@@ -69,6 +69,11 @@ func runInterceptPane(ctx context.Context, encoded string) error {
 	if err != nil {
 		return err
 	}
+	// Mirrors buildInterceptOptions' guard on the fallback path: the mapper
+	// itself doesn't check this, so the pane must.
+	if len(req.EnvInclude) > 0 && len(req.EnvExclude) > 0 {
+		return errors.New("intercept-pane: env_include and env_exclude are mutually exclusive")
+	}
 
 	cfg, err := loadPaneConfig(interceptPaneConfig)
 	if err != nil {
@@ -94,6 +99,12 @@ func runInterceptPane(ctx context.Context, encoded string) error {
 	if err != nil {
 		return err
 	}
+	// The mapper omits these; the web handler's buildInterceptOptions sets
+	// them the same way for the fallback path.
+	opts.Container = req.Container
+	opts.EnvInclude = req.EnvInclude
+	opts.EnvExclude = req.EnvExclude
+	opts.Actor = req.Actor
 
 	deps, sink, err := buildInterceptDeps(ctx, cfg, restCfg, clientset, opts.Namespace, opts.Pod, "")
 	if err != nil {

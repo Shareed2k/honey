@@ -205,6 +205,26 @@ func (s *Server) buildInterceptOptions(rec hosts.Record, hello wsInterceptHello,
 	return opts, nil
 }
 
+// interceptPaneRequestFromHello maps a validated pod hello to the pane's
+// InterceptPaneRequest payload: the same fields buildInterceptOptions sets on
+// the fallback path (Container/EnvInclude/EnvExclude/Actor), so the pane's
+// own Options end up identical regardless of which path ran. Actor comes
+// from the authenticated session, never the browser-supplied hello.
+func interceptPaneRequestFromHello(rec hosts.Record, hello wsInterceptHello, actor string) InterceptPaneRequest {
+	return InterceptPaneRequest{
+		Record:     rec,
+		Modes:      hello.Modes,
+		UDP:        hello.UDP,
+		Command:    hello.Command,
+		Container:  hello.Container,
+		EnvInclude: hello.EnvInclude,
+		EnvExclude: hello.EnvExclude,
+		Actor:      actor,
+		Cols:       hello.Cols,
+		Rows:       hello.Rows,
+	}
+}
+
 // handleWebInterceptResume runs the interception inside a tmux/zellij pane
 // owned by the hidden `honey intercept-pane` subcommand, reusing honey's
 // existing SSH pty-proxy machinery (handleWebPtyProxy's template): it builds
@@ -218,14 +238,7 @@ func (s *Server) buildInterceptOptions(rec hosts.Record, hello wsInterceptHello,
 // s.webIntercepts.admit for the fallback below) is added by the tmux-registry
 // task; this path does not call s.webIntercepts.admit.
 func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsInterceptHello, rec hosts.Record, actor string) {
-	payload, err := json.Marshal(InterceptPaneRequest{
-		Record:  rec,
-		Modes:   hello.Modes,
-		UDP:     hello.UDP,
-		Command: hello.Command,
-		Cols:    hello.Cols,
-		Rows:    hello.Rows,
-	})
+	payload, err := json.Marshal(interceptPaneRequestFromHello(rec, hello, actor))
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
 		return

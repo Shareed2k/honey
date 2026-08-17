@@ -26,7 +26,13 @@ func TestInterceptPaneDecode(t *testing.T) {
 		Record: hosts.Record{Provider: "k8s", Meta: map[string]string{
 			"kind": "pod", "namespace": "argocd", "pod_name": "api-0", "kube_context": "stg2",
 		}},
-		Modes: []string{"egress"}, Command: []string{"/bin/sh"}, Cols: 100, Rows: 30,
+		Modes:      []string{"egress"},
+		Command:    []string{"/bin/sh"},
+		Container:  "app",
+		EnvInclude: []string{"DATABASE_URL"},
+		Actor:      "alice",
+		Cols:       100,
+		Rows:       30,
 	}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
@@ -37,12 +43,27 @@ func TestInterceptPaneDecode(t *testing.T) {
 	require.Equal(t, "api-0", decoded.Record.Meta["pod_name"])
 	require.Equal(t, []string{"egress"}, decoded.Modes)
 	require.Equal(t, 100, decoded.Cols)
+	// Container/EnvInclude/EnvExclude/Actor must survive the round-trip: the
+	// mapper (OptionsFromPodRecord) omits them, so the pane sets them itself
+	// (mirroring the web fallback's buildInterceptOptions), and they'd
+	// otherwise be silently dropped.
+	require.Equal(t, "app", decoded.Container)
+	require.Equal(t, []string{"DATABASE_URL"}, decoded.EnvInclude)
+	require.Empty(t, decoded.EnvExclude)
+	require.Equal(t, "alice", decoded.Actor)
 
 	opts, err := intercept.OptionsFromPodRecord(decoded.Record, decoded.Modes, decoded.UDP, decoded.Command, "img:1")
 	require.NoError(t, err)
+	opts.Container = decoded.Container
+	opts.EnvInclude = decoded.EnvInclude
+	opts.EnvExclude = decoded.EnvExclude
+	opts.Actor = decoded.Actor
 	require.True(t, opts.Modes.Egress)
 	require.Equal(t, "argocd", opts.Namespace)
 	require.Equal(t, "api-0", opts.Pod)
+	require.Equal(t, "app", opts.Container)
+	require.Equal(t, []string{"DATABASE_URL"}, opts.EnvInclude)
+	require.Equal(t, "alice", opts.Actor)
 }
 
 // TestInterceptPaneDecodeRejectsGarbage rejects a non-base64 argv value with a

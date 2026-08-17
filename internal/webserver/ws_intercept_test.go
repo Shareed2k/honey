@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -191,6 +192,40 @@ func interceptTestConfig() *config.File {
 			AgentImage: "registry.example/agent:1",
 		},
 	}
+}
+
+// TestInterceptPaneRequestFromHello_CarriesFullOptionsSet proves the resume
+// path's payload builder carries the same fields buildInterceptOptions sets
+// on the fallback path (Container/EnvInclude/EnvExclude/Actor) — a prior
+// version silently dropped these, which meant the wrong container got
+// injected on multi-container pods, env-mode filters were ignored, and audit
+// events had no actor whenever a multiplexer was present.
+func TestInterceptPaneRequestFromHello_CarriesFullOptionsSet(t *testing.T) {
+	hello := wsInterceptHello{
+		Record:     podRecord(),
+		Modes:      []string{"egress", "env"},
+		Command:    []string{"/bin/sh"},
+		Container:  "sidecar",
+		EnvInclude: []string{"DATABASE_URL", "API_KEY"},
+		Cols:       100,
+		Rows:       40,
+	}
+	req := interceptPaneRequestFromHello(hello.Record, hello, "alice")
+	require.Equal(t, "sidecar", req.Container)
+	require.Equal(t, []string{"DATABASE_URL", "API_KEY"}, req.EnvInclude)
+	require.Empty(t, req.EnvExclude)
+	require.Equal(t, "alice", req.Actor)
+
+	// The four fields must also survive the actual base64(JSON) argv
+	// round-trip the pane decodes.
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+	var decoded InterceptPaneRequest
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Equal(t, req.Container, decoded.Container)
+	require.Equal(t, req.EnvInclude, decoded.EnvInclude)
+	require.Equal(t, req.EnvExclude, decoded.EnvExclude)
+	require.Equal(t, req.Actor, decoded.Actor)
 }
 
 func TestHandleWebIntercept_RejectsNonPodRecord(t *testing.T) {

@@ -16,6 +16,16 @@ type InterceptPaneRequest struct {
 	UDP bool `json:"udp"`
 	// Command is the local command run under injection; empty ⇒ a shell.
 	Command []string `json:"command,omitempty"`
+	// Container is the target container the agent shares namespaces with;
+	// empty selects the pod's first container (the CLI default).
+	Container string `json:"container,omitempty"`
+	// EnvInclude/EnvExclude carry env-mode key filters (names only, never
+	// values); optional and mutually exclusive, mirroring the CLI flags.
+	EnvInclude []string `json:"env_include,omitempty"`
+	EnvExclude []string `json:"env_exclude,omitempty"`
+	// Actor is the authenticated session identity from the web handler (never
+	// browser-supplied); a username, not a secret, so it's fine on argv.
+	Actor string `json:"actor,omitempty"`
 	// Cols/Rows are the initial terminal size in character cells; the pane's
 	// SIGWINCH handler supersedes them once the real tty size is known.
 	Cols int `json:"cols"`
