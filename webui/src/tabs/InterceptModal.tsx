@@ -10,9 +10,11 @@ export type InterceptModalProps = {
   onLaunch: (cfg: InterceptOptions) => void;
 };
 
+// Incoming is intentionally absent: it forwards the pod's inbound traffic to a
+// local host:port, which the browser terminal has no way to specify -- it is a
+// CLI-only mode (honey intercept --mode incoming --target host:port).
 const MODE_OPTIONS: { label: string; value: string; disabled?: boolean }[] = [
   { label: 'Egress', value: 'egress' },
-  { label: 'Incoming (requires a target)', value: 'incoming', disabled: true },
   { label: 'Files', value: 'files' },
   { label: 'Env', value: 'env' },
 ];

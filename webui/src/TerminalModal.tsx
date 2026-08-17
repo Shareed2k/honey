@@ -152,6 +152,11 @@ export function TerminalSession({
   const termRef = useRef<Terminal | null>(null);
   const rfbRef = useRef<NovncRfbHandle | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  // Read isActive without re-running the connect effect: switching tabs flips
+  // isActive, and having it in the effect deps tore down and recreated the
+  // terminal + WebSocket (a fresh session) on every tab switch.
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
   const [showConnectOverlay, setShowConnectOverlay] = useState(true);
 
   const [assistPrompt, setAssistPrompt] = useState('');
@@ -418,7 +423,7 @@ export function TerminalSession({
     });
 
     const onResize = () => {
-      if (isActive) {
+      if (isActiveRef.current) {
         fit.fit();
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
@@ -444,7 +449,10 @@ export function TerminalSession({
       term.dispose();
       termRef.current = null;
     };
-  }, [assistAvailable, isVnc, record, recordSession, registerCloseTabSender, sshUser, sessionId, isActive, truenasConsole, intercept]);
+    // isActive is intentionally excluded: it only toggles visibility, and
+    // recreating the terminal + WebSocket on a tab switch would drop the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistAvailable, isVnc, record, recordSession, registerCloseTabSender, sshUser, sessionId, truenasConsole, intercept]);
 
   // Refit terminal when it becomes active
   useEffect(() => {
