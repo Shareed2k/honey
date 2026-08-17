@@ -81,6 +81,37 @@ func isWebIntercept(ps intercept.PersistedSession) bool {
 	return len(ps.TokenHash) == 0
 }
 
+// samePodActive reports whether the shared store already holds an interception
+// for opts' (cluster, namespace, pod) — brokered OR browser. It is the
+// load-bearing collision guard: an interception programs a fixed nftables table
+// and the agent binds fixed ports (30000, 30001, 15080), so a second
+// interception in the same pod would fight the first.
+//
+// It deliberately does NOT take r.mu: admit calls it while holding the lock (so
+// its list -> check -> save stays atomic), and the tmux resume path — which
+// registers no entry of its own and so cannot see brokered sessions any other
+// way — calls it unlocked before starting a pane.
+func (r *webInterceptRegistry) samePodActive(ctx context.Context, opts intercept.Options) (bool, error) {
+	sessions, err := r.store.List(ctx)
+	if err != nil {
+		return false, fmt.Errorf("intercept: list active sessions: %w", err)
+	}
+	for _, s := range sessions {
+		if s.Cluster == opts.Cluster && s.Namespace == opts.Namespace && s.Pod == opts.Pod {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// errSamePodActive is the single rejection both admission paths return when
+// samePodActive hits, so the browser sees the same wording either way.
+func errSamePodActive(namespace, pod string) error {
+	return fmt.Errorf(
+		"intercept: pod %s/%s already has an active interception; the agent binds fixed ports (30000, 30001, 15080) and programs a fixed nftables table, so only one interception can run per pod at a time — stop the existing session or target a different pod",
+		namespace, pod)
+}
+
 // admit enforces the concurrency cap and the same-pod guard, then registers the
 // session. The whole list -> check -> save runs under mu so two concurrent
 // starts cannot both be admitted past the cap or into the same pod (no TOCTOU
@@ -100,19 +131,17 @@ func (r *webInterceptRegistry) admit(ctx context.Context, opts intercept.Options
 	if err != nil {
 		return "", fmt.Errorf("intercept: list active sessions: %w", err)
 	}
+	same, err := r.samePodActive(ctx, opts)
+	if err != nil {
+		return "", err
+	}
+	if same {
+		return "", errSamePodActive(opts.Namespace, opts.Pod)
+	}
 	web := 0
 	for _, s := range sessions {
 		if isWebIntercept(s) {
 			web++
-		}
-		// Same-pod guard applies across brokered AND browser sessions: an
-		// interception programs a fixed nftables table and the agent binds fixed
-		// ports (30000, 30001, 15080), so a second interception in the same pod
-		// would collide with the first.
-		if s.Cluster == opts.Cluster && s.Namespace == opts.Namespace && s.Pod == opts.Pod {
-			return "", fmt.Errorf(
-				"intercept: pod %s/%s already has an active interception; the agent binds fixed ports (30000, 30001, 15080) and programs a fixed nftables table, so only one interception can run per pod at a time — stop the existing session or target a different pod",
-				opts.Namespace, opts.Pod)
 		}
 	}
 	if web >= r.max {

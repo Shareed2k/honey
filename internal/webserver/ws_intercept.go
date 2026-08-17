@@ -108,8 +108,8 @@ func (s *Server) handleWebIntercept(w http.ResponseWriter, r *http.Request) {
 	// Resume path: with tmux on the server, run the interception inside a tmux
 	// pane owned by `honey intercept-pane`, keyed by a deterministic per-pod
 	// name so a browser refresh re-attaches to the same pane instead of starting
-	// a second one. It is tmux-specific (not ptyMuxAvailable, which also accepts
-	// zellij): the resume list/cap/stop are tmux-based, so a zellij-hosted pane
+	// a second one. It is tmux-specific (a zellij on PATH does not count): the
+	// resume list/cap/stop are tmux-based, so a zellij-hosted pane
 	// could not be managed. Without tmux, fall back to today's in-process
 	// one-shot session below (unchanged).
 	if tmuxOnPath() {
@@ -237,9 +237,10 @@ func interceptPaneRequestFromHello(rec hosts.Record, hello wsInterceptHello, act
 // recomputes the same mux name and re-attaches to the same pane instead of
 // starting a second interception.
 //
-// Session-cap/list/stop bookkeeping for this path (mirroring
-// s.webIntercepts.admit for the fallback below) is added by the tmux-registry
-// task; this path does not call s.webIntercepts.admit.
+// Session-cap/list/stop bookkeeping for this path is tmux-backed (the pane
+// itself is the session record), so it does not call s.webIntercepts.admit; it
+// does reuse admit's same-pod guard (samePodActive) so a pod already held by a
+// brokered or fallback session is never intercepted twice.
 func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsInterceptHello, rec hosts.Record, actor string) {
 	payload, err := json.Marshal(interceptPaneRequestFromHello(rec, hello, actor))
 	if err != nil {
@@ -255,7 +256,11 @@ func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsIntercep
 	}
 
 	cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
-	cluster, namespace, pod := rec.Meta["kube_context"], rec.Meta["namespace"], rec.Meta["pod_name"]
+	// Trimmed to match intercept.OptionsFromPodRecord, so the same-pod guard
+	// below compares against the exact values a registered session stores.
+	cluster := strings.TrimSpace(rec.Meta["kube_context"])
+	namespace := strings.TrimSpace(rec.Meta["namespace"])
+	pod := strings.TrimSpace(rec.Meta["pod_name"])
 	name := interceptPaneMuxName(cluster, namespace, pod)
 
 	// Cap: a fresh resume session is admitted only under the concurrency cap; an
@@ -282,6 +287,22 @@ func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsIntercep
 			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(fmt.Sprintf("intercept: max concurrent sessions (%d) reached — stop an active session before starting another", maxSessions))+`"}`))
 			return
 		}
+		// Cross-pool same-pod guard: a brokered (or in-process fallback) session
+		// lives in the shared SessionStore and has no tmux session, so the list
+		// above cannot see it. Without this, a second agent would be deployed into
+		// a pod that already has one and fight it for the fixed ports/nftables
+		// table. Attaches (existed) skip it — that IS the first session.
+		if s.webIntercepts != nil {
+			same, err := s.webIntercepts.samePodActive(context.Background(), intercept.Options{Cluster: cluster, Namespace: namespace, Pod: pod})
+			if err != nil {
+				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+				return
+			}
+			if same {
+				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(errSamePodActive(namespace, pod).Error())+`"}`))
+				return
+			}
+		}
 	}
 
 	cmd, muxName, useZellij, err := ptyMuxBuildInterceptCommand(bin, cfgPath, enc, name)
@@ -296,12 +317,11 @@ func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsIntercep
 		return
 	}
 
-	// Record secret-free metadata into the fresh session's tmux environment so
-	// it is listable/stoppable by the /sessions routes. Skip on an attach — the
-	// metadata (including the original start time) is already set.
-	if !existed {
-		interceptResumeSetMeta(muxName, pod, namespace, cluster, actor, strings.Join(hello.Modes, ","))
-	}
+	// Record secret-free metadata into the session's tmux environment so it is
+	// listable/stoppable by the /sessions routes. Called unconditionally: it
+	// no-ops when the metadata is already there (an attach keeps its original
+	// start time) and repairs a session whose earlier write failed.
+	interceptResumeSetMeta(muxName, pod, namespace, cluster, actor, strings.Join(hello.Modes, ","))
 
 	recorder := newWebSessionRecorder(s.opts.RecordDir, hello.RecordSession, rec, actor)
 	if recorder != nil {
@@ -311,7 +331,7 @@ func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsIntercep
 
 	closeTabKill := make(chan struct{}, 1)
 	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill)
-	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited)
+	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, interceptResumeCloseTabKill(muxName))
 }
 
 // bridgeInterceptWS runs the session and the WebSocket<->PTY bridge to

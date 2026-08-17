@@ -1,7 +1,6 @@
 package webserver
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -101,22 +100,6 @@ func TestTmuxListHoneyIntercept(t *testing.T) {
 	require.Equal(t, "pod-b", b.Pod)
 	require.Empty(t, b.Cluster)
 	require.True(t, b.StartedAt.IsZero())
-}
-
-func TestInterceptResumeSessionCount(t *testing.T) {
-	restore := swapTmuxRun(func(args ...string) ([]byte, error) {
-		if args[0] == "list-sessions" {
-			var buf strings.Builder
-			for i := 0; i < 8; i++ {
-				fmt.Fprintf(&buf, "honey-int-%016x\n", i)
-			}
-			return []byte(buf.String()), nil
-		}
-		return nil, errors.New("no environment") // show-environment error ⇒ empty meta, still counted
-	})
-	defer restore()
-
-	require.Equal(t, 8, interceptResumeSessionCount())
 }
 
 func TestInterceptResumeStop(t *testing.T) {

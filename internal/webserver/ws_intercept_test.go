@@ -277,8 +277,8 @@ func TestHandleWebIntercept_RejectsNonPodRecord(t *testing.T) {
 
 func TestHandleWebIntercept_BridgesStreamsAndTearsDownOnClose(t *testing.T) {
 	// This test exercises the in-process fallback (factory + bridgeInterceptWS)
-	// via an injected fake session factory; force ptyMuxAvailable() false so a
-	// tmux/zellij present on the test host doesn't divert it into the resume
+	// via an injected fake session factory; empty the PATH so tmuxOnPath() is
+	// false and a tmux present on the test host doesn't divert it into the resume
 	// path, which the standalone InterceptPane* tests cover instead.
 	t.Setenv("PATH", t.TempDir())
 
@@ -408,9 +408,9 @@ func contains(xs []int, want int) bool {
 // the first session stays.
 func TestHandleWebIntercept_SamePodRejected(t *testing.T) {
 	// Cap/same-pod rejection is admit()'s job, which only the fallback path
-	// calls (the resume path's own cap check is a later task); force
-	// ptyMuxAvailable() false so a tmux/zellij present on the test host
-	// doesn't bypass admit() here.
+	// calls; empty the PATH so tmuxOnPath() is false and a tmux present on the
+	// test host does not divert this into the resume path (whose own cross-pool
+	// same-pod guard is exercised through samePodActive).
 	t.Setenv("PATH", t.TempDir())
 
 	var factoryCalls int32

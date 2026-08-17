@@ -86,15 +86,6 @@ func ptyMuxBuildCommand(bin, configPath, encodedPayload, sessionID string) (cmd 
 	return nil, muxName, false, fmt.Errorf("neither zellij nor tmux found on the server")
 }
 
-// ptyMuxAvailable reports whether a terminal multiplexer is present on the
-// server. /ws/intercept uses it to pick between the tmux-owned resume path
-// (honey intercept-pane inside a pane) and the in-process one-shot fallback.
-func ptyMuxAvailable() bool {
-	_, zellijErr := exec.LookPath("zellij")
-	_, tmuxErr := exec.LookPath("tmux")
-	return zellijErr == nil || tmuxErr == nil
-}
-
 // interceptPaneMuxName derives a deterministic, per-pod mux session name for
 // the intercept resume path from a digest of cluster/namespace/pod, not the
 // raw fields themselves: a browser refresh recomputes the identical name for
@@ -279,28 +270,42 @@ func ptyProxyHandleCtrl(ptmx *os.File, recorder *engine.SessionRecorder, muxName
 	return false
 }
 
-func ptyProxyTeardown(ptmx *os.File, cmd *exec.Cmd, muxName string, useZellij bool, closeTabKill, ptyExited chan struct{}) {
+// ptyProxyTeardown ends one pty-proxy bridge. killSession is the explicit
+// close_tab (×) kill: the SSH path passes the honey_* mux killer, the intercept
+// resume path passes its own honey-int-* killer (the honey_* helpers gate on
+// validHoneyMuxSessionName and are inert for that name family).
+func ptyProxyTeardown(ptmx *os.File, cmd *exec.Cmd, muxName string, useZellij bool, closeTabKill, ptyExited chan struct{}, killSession func()) {
 	select {
 	case <-ptyExited:
 		_ = ptmx.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
+		reapPtyProxyCmd(cmd)
 		ptyMuxKillSessionIfExited(muxName, useZellij)
 	default:
 		_ = ptmx.Close()
 		select {
 		case <-closeTabKill:
 			zap.L().Debug("handleWebPtyProxy: killing mux session after close_tab", zap.String("session", muxName))
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-				_, _ = cmd.Process.Wait()
-			}
-			ptyMuxKillSession(muxName, useZellij)
+			reapPtyProxyCmd(cmd)
+			killSession()
 		default:
+			// Plain disconnect (browser refresh/detach): the mux client is left to
+			// exit on its own now that its pty master is closed — but it must still
+			// be reaped, or every refresh leaks a defunct child until honey-web
+			// exits. Waiting in the background because that exit is not immediate.
+			go func() { _ = cmd.Wait() }()
 		}
 	}
+}
+
+// reapPtyProxyCmd kills the mux client and reaps it, so no zombie survives the
+// teardown. Both callers run after a successful pty.Start, so Process is set;
+// the guard is defensive.
+func reapPtyProxyCmd(cmd *exec.Cmd) {
+	if cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
 }
 
 func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, recorder *engine.SessionRecorder, configPath string) error {
@@ -326,6 +331,6 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 
 	closeTabKill := make(chan struct{}, 1)
 	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxName, closeTabKill)
-	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited)
+	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, func() { ptyMuxKillSession(muxName, useZellij) })
 	return nil
 }

@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // interceptMuxPrefix names the tmux sessions that host web-interception resume
@@ -152,11 +154,6 @@ func tmuxListHoneyIntercept() []interceptSessionInfo {
 	return infos
 }
 
-// interceptResumeSessionCount is the concurrency count for the resume-path cap.
-func interceptResumeSessionCount() int {
-	return len(tmuxListHoneyIntercept())
-}
-
 // interceptResumeStop kills a resume session by name (guarded kill-session).
 func interceptResumeStop(name string) error {
 	if !validInterceptMuxName(name) {
@@ -168,15 +165,36 @@ func interceptResumeStop(name string) error {
 	return nil
 }
 
+// interceptResumeCloseTabKill returns the resume path's close_tab (×) teardown
+// kill for ptyProxyTeardown. The honey_* killers it would otherwise reach gate
+// on validHoneyMuxSessionName and are inert for honey-int-* names, so × would
+// close the tab while the pane, its relay and the ephemeral container kept
+// running.
+func interceptResumeCloseTabKill(name string) func() {
+	return func() {
+		if err := interceptResumeStop(name); err != nil {
+			zap.L().Warn("intercept resume: close_tab kill failed", zap.String("session", name), zap.Error(err))
+		}
+	}
+}
+
 // interceptResumeSetMeta records the secret-free metadata (pod/ns/cluster/actor/
-// modes + a start timestamp) into a freshly created resume session's tmux
-// environment, so tmuxListHoneyIntercept can read it back. It is a no-op for an
-// invalid name. tmux creates the session asynchronously after pty.Start, so the
-// first write is retried on a bounded budget until the session exists.
+// modes + a start timestamp) into a resume session's tmux environment, so
+// tmuxListHoneyIntercept can read it back. It is a no-op for an invalid name,
+// and a no-op when the metadata is already there (an attach: rewriting it would
+// reset HONEY_INT_STARTED) — but it DOES write on an attach to a session whose
+// earlier write failed, so a session can never stay unlisted forever. tmux
+// creates the session asynchronously after pty.Start, so the first write is
+// retried on a bounded budget until the session exists.
 // ponytail: fixed ~500ms poll budget; fine for a human-paced session start.
 func interceptResumeSetMeta(name, pod, namespace, cluster, actor, modeCSV string) {
 	if !validInterceptMuxName(name) {
 		return
+	}
+	if out, err := tmuxRun("show-environment", "-t", name); err == nil {
+		if parseTmuxEnvironment(string(out))["HONEY_INT_POD"] != "" {
+			return
+		}
 	}
 	rest := [][2]string{
 		{"HONEY_INT_NS", namespace},
@@ -185,13 +203,15 @@ func interceptResumeSetMeta(name, pod, namespace, cluster, actor, modeCSV string
 		{"HONEY_INT_MODE", modeCSV},
 		{"HONEY_INT_STARTED", time.Now().UTC().Format(time.RFC3339)},
 	}
+	// "--" ends tmux's option parsing so a value with a leading '-' (actor is a
+	// free-form SSO field) is never eaten as a flag.
 	for i := 0; i < 20; i++ {
-		if _, err := tmuxRun("set-environment", "-t", name, "HONEY_INT_POD", pod); err == nil {
+		if _, err := tmuxRun("set-environment", "-t", name, "--", "HONEY_INT_POD", pod); err == nil {
 			break
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	for _, kv := range rest {
-		_, _ = tmuxRun("set-environment", "-t", name, kv[0], kv[1])
+		_, _ = tmuxRun("set-environment", "-t", name, "--", kv[0], kv[1])
 	}
 }

@@ -10,7 +10,8 @@ import (
 )
 
 // TestInterceptResumeTmuxLifecycle exercises the real Task-5 resume helpers
-// (interceptResumeSetMeta, tmuxListHoneyIntercept, interceptResumeStop)
+// (interceptResumeSetMeta, tmuxListHoneyIntercept, interceptResumeCloseTabKill
+// — the × teardown kill, which wraps interceptResumeStop)
 // against a REAL tmux server — the part of the browser-refresh-resume feature
 // that is unique to this feature and not already covered by
 // TestTmuxListHoneyIntercept/TestInterceptResumeStop's canned-output unit
@@ -35,7 +36,9 @@ func TestInterceptResumeTmuxLifecycle(t *testing.T) {
 	pod := fmt.Sprintf("resume-test-pod-%d", time.Now().UnixNano())
 	const namespace = "resume-test-ns"
 	const cluster = "resume-test-cluster"
-	const actor = "resume-test-actor"
+	// Leading '-' on purpose: actor is a free-form SSO field, and the metadata
+	// writes pass "--" so tmux cannot mistake the value for a flag.
+	const actor = "-resume-test-actor"
 	const modeCSV = "egress"
 	name := interceptPaneMuxName(cluster, namespace, pod)
 	require.True(t, validInterceptMuxName(name), "generated mux name must pass the resume-path validator")
@@ -85,11 +88,20 @@ func TestInterceptResumeTmuxLifecycle(t *testing.T) {
 	require.Empty(t, clientsOut, "session must have no attached clients")
 	require.NoError(t, exec.Command("tmux", "has-session", "-t", name).Run(), "detached session must still be alive")
 
-	// Stop must kill the session...
-	require.NoError(t, interceptResumeStop(name))
+	// A re-write on attach must not clobber the original metadata (it would
+	// reset the start time), so a second call with a different actor is a no-op.
+	interceptResumeSetMeta(name, pod, namespace, cluster, "someone-else", modeCSV)
+	envOut, err := exec.Command("tmux", "show-environment", "-t", name).Output()
+	require.NoError(t, err)
+	require.Equal(t, actor, parseTmuxEnvironment(string(envOut))["HONEY_INT_ACTOR"], "attach must not rewrite metadata")
+
+	// The × (close_tab) teardown kill must kill the session — the honey_* mux
+	// killers ptyProxyTeardown reaches for the SSH path are inert for
+	// honey-int-* names, which is why the resume path passes this one.
+	interceptResumeCloseTabKill(name)()
 
 	// ...so has-session now fails and it drops out of the resume list.
-	require.Error(t, exec.Command("tmux", "has-session", "-t", name).Run(), "session must be gone after Stop")
+	require.Error(t, exec.Command("tmux", "has-session", "-t", name).Run(), "session must be gone after close_tab")
 	for _, si := range tmuxListHoneyIntercept() {
 		require.NotEqual(t, name, si.Name, "stopped session must not still be listed")
 	}

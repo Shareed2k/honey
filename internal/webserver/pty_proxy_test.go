@@ -1,8 +1,6 @@
 package webserver
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -39,17 +37,4 @@ func TestPtyProxyExecArgs_Subcommand(t *testing.T) {
 func TestPtyProxyExecArgs_PtyProxyUnchanged(t *testing.T) {
 	args := ptyProxyExecArgs("pty-proxy", "/usr/local/bin/honey", "", "BASE64PAYLOAD==")
 	require.Equal(t, []string{"/usr/local/bin/honey", "pty-proxy", "BASE64PAYLOAD=="}, args)
-}
-
-// TestPtyMuxAvailable_ReflectsLookPath proves ptyMuxAvailable is a pure PATH
-// lookup with no real tmux/zellij session involved: false with neither binary
-// resolvable, true once a stub executable named tmux appears on PATH.
-func TestPtyMuxAvailable_ReflectsLookPath(t *testing.T) {
-	emptyDir := t.TempDir()
-	t.Setenv("PATH", emptyDir)
-	require.False(t, ptyMuxAvailable(), "neither binary on PATH")
-
-	stub := filepath.Join(emptyDir, "tmux")
-	require.NoError(t, os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-	require.True(t, ptyMuxAvailable(), "stub tmux now resolves on PATH")
 }

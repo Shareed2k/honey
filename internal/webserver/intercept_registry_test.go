@@ -73,6 +73,28 @@ func TestWebInterceptRegistry_AdmitCapAndSamePod(t *testing.T) {
 	require.Len(t, views, 2, "only the two admitted sessions are listed")
 }
 
+// TestWebInterceptRegistry_SamePodActiveSeesBrokered proves the guard the tmux
+// resume path calls (it registers no entry of its own, so a tmux listing cannot
+// see a brokered session) hits on a BROKERED store entry — the collision that
+// would otherwise put a second agent into one pod.
+func TestWebInterceptRegistry_SamePodActiveSeesBrokered(t *testing.T) {
+	r := newWebInterceptRegistry(nil, 8)
+	ctx := context.Background()
+	require.NoError(t, r.store.Save(ctx, intercept.PersistedSession{
+		ID: "brokered-1", Cluster: "prod", Namespace: "apps", Pod: "a",
+		TokenHash: []byte{0x01}, // brokered, not a browser session
+		ExpiresAt: time.Now().Add(time.Hour),
+	}))
+
+	same, err := r.samePodActive(ctx, webOpts("prod", "apps", "a"))
+	require.NoError(t, err)
+	require.True(t, same, "a brokered session on the pod must block a resume start")
+
+	same, err = r.samePodActive(ctx, webOpts("prod", "apps", "b"))
+	require.NoError(t, err)
+	require.False(t, same, "a different pod is free")
+}
+
 // TestWebInterceptRegistry_NoTOCTOUDoubleAdmit_SamePod proves the admit path is
 // atomic: many concurrent starts for the SAME pod result in exactly one admit.
 func TestWebInterceptRegistry_NoTOCTOUDoubleAdmit_SamePod(t *testing.T) {
