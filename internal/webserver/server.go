@@ -826,10 +826,12 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Reap orphaned browser-interception registry entries (a crashed handler left
-	// a lapsed entry in a persistent store). When a Broker is present its janitor
-	// (started by the web command) already sweeps the shared store, so start the
-	// server-owned one only when there is no Broker janitor to reuse.
-	if s.webIntercepts != nil && s.opts.InterceptBroker == nil {
+	// a lapsed entry in a persistent store). The registry janitor owns ONLY
+	// browser entries (it skips brokered ones); the Broker's own janitor skips
+	// browser entries in turn, so the two partition the shared store — this one
+	// must run whether or not a Broker is present, otherwise browser entries fall
+	// to the Broker janitor, which would SIGTERM the wrong target.
+	if s.webIntercepts != nil {
 		s.webIntercepts.startJanitor(ctx)
 	}
 

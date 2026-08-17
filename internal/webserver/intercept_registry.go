@@ -254,8 +254,9 @@ func (r *webInterceptRegistry) list(ctx context.Context) ([]webInterceptView, er
 // cancel) owns the agent, so there is no SIGTERM here. Only browser entries are
 // touched (brokered entries are the Broker janitor's job), and an entry still
 // live in this process is skipped even if its lease briefly lagged. It is the
-// server-owned janitor's unit of work, used only when no Broker (hence no Broker
-// janitor) is present; exposed for a deterministic test.
+// server-owned janitor's unit of work — it runs alongside any Broker janitor,
+// which owns the brokered entries this one skips; exposed for a deterministic
+// test.
 func (r *webInterceptRegistry) reap(ctx context.Context) int {
 	now := r.now()
 	sessions, err := r.store.List(ctx)

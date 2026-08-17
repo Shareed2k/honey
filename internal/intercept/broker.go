@@ -331,6 +331,13 @@ func (b *Broker) reapExpired(ctx context.Context) int {
 		if !now.After(sess.ExpiresAt) {
 			continue
 		}
+		if len(sess.TokenHash) == 0 {
+			// Browser (/ws/intercept) sessions carry no broker token: they own
+			// their agent via the WebSocket lifetime and are reaped by the web
+			// registry janitor, which never SIGTERMs. Skip them here so the Broker
+			// never tears down (and mis-warns about) an entry it does not own.
+			continue
+		}
 		if err := b.teardown(ctx, sess, "expired"); err != nil {
 			zap.L().Warn("intercept: janitor failed to reap expired session; will retry next cycle",
 				zap.String("session_id", sess.ID), zap.String("cluster", sess.Cluster),
