@@ -690,11 +690,53 @@ until an active session ends. The UI lists the active interceptions
 (`GET /api/v1/intercept/sessions`) and can stop one
 (`POST /api/v1/intercept/sessions/{id}/stop`).
 
-**Teardown.** Closing the terminal tab — or otherwise dropping the WebSocket —
-cancels the session, which tears the agent down (a best-effort `SIGTERM` so it
-removes its network redirects), the same teardown the CLI runs when
-`<command>` exits. As on the CLI, the ephemeral container entry itself cannot
-be removed (see [Prerequisites & limits](#prerequisites--limits)).
+**Teardown.** What happens when the terminal tab closes (or the WebSocket
+otherwise drops) depends on whether the session resumed across a refresh —
+see below. Without a multiplexer it always ends the session immediately, the
+same teardown the CLI runs when `<command>` exits. As on the CLI, the
+ephemeral container entry itself cannot be removed (see [Prerequisites &
+limits](#prerequisites--limits)).
+
+### Resume across a browser refresh
+
+If **tmux** is on the `PATH` of the machine `honey web` runs on, a browser
+interception runs inside a tmux pane instead of directly under the
+WebSocket, so the session can outlive any one browser tab:
+
+- **Refreshing the browser reattaches, it doesn't restart.** Interception
+  into the same pod always resolves to the same tmux session (its name is
+  derived from the cluster/namespace/pod, so it's stable across reloads).
+  Reload the tab, or close it and reopen the Intercept modal on the same pod,
+  and it reattaches to the running pane — same injected shell, same
+  environment, same scrollback — instead of deploying a second agent.
+- **Two tabs on the same pod share one shell**, never two independent ones.
+  Opening a second tab attaches to that same tmux session, so both tabs are
+  driving the identical shell process, environment, and scrollback. Only one
+  tab is the live, interactive view at a time, though: attaching takes over
+  from whichever tab held it, which then shows disconnected — reattaching
+  (reopen or refresh that tab) reclaims it. Neither tab closing, nor this
+  hand-off, touches the underlying shell or the ephemeral container.
+- **The session outlives the tab.** With no tab attached, the pane and the
+  agent it drives keep running — there is no idle timeout. It ends only when
+  the injected shell exits on its own, or an operator stops it: **Stop** in
+  the sessions list (`POST /api/v1/intercept/sessions/{id}/stop`) kills the
+  tmux session, which hangs up the pane and runs the same teardown a normal
+  session exit does — the ephemeral container, the relay, and the
+  port-forward all get torn down.
+- **As a bonus, not a guarantee:** because the pane belongs to the tmux
+  server rather than to the `honey web` process, a resumed session also
+  typically survives restarting `honey web` itself (the sessions list, cap,
+  and Stop all read tmux directly, so they still see it). This is an
+  emergent side effect of running under tmux, not a contract honey commits
+  to — don't rely on it, and it does **not** survive a reboot of the honey
+  host.
+- **Requires tmux on the honey host.** The release image installs it, so a
+  container deployment of `honey web` gets resume for free. Running
+  `honey web` from a plain binary on a host without tmux on `PATH` still
+  intercepts fine, just without resume: every interception (and every
+  refresh) uses the one-shot session above, so closing the tab ends it
+  immediately and a refresh starts a fresh interception rather than
+  reattaching.
 
 ## Prerequisites & limits
 
