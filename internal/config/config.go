@@ -189,6 +189,10 @@ type InterceptConfig struct {
 	// SessionStoreDSN is the sqlite file path or postgres DSN for SessionStore
 	// "sqlite"/"postgres". Never logged: it may contain credentials.
 	SessionStoreDSN string `yaml:"session_store_dsn,omitempty" json:"session_store_dsn,omitempty" honey:"label=Intercept session store DSN (sqlite path or postgres DSN)" mod:"trim"`
+	// MaxSessions caps the number of concurrent browser interception sessions
+	// (GET /ws/intercept). A start beyond the cap is rejected before any agent is
+	// deployed. Non-positive selects the built-in default (8).
+	MaxSessions int `yaml:"max_sessions,omitempty" json:"max_sessions,omitempty" honey:"label=Max concurrent browser interception sessions (default 8)"`
 }
 
 // DefaultDeviceCertTTL is the fallback validity for SSO/enroll-issued device
@@ -231,6 +235,19 @@ func (c *InterceptConfig) SessionTTLValue() time.Duration {
 		return defaultInterceptSessionTTL
 	}
 	return d
+}
+
+// defaultMaxInterceptSessions bounds concurrent browser interception sessions
+// when max_sessions is unset or non-positive.
+const defaultMaxInterceptSessions = 8
+
+// MaxSessionsValue returns the configured concurrent browser-interception cap,
+// or defaultMaxInterceptSessions (8) when unset or non-positive. Nil-safe.
+func (c *InterceptConfig) MaxSessionsValue() int {
+	if c == nil || c.MaxSessions <= 0 {
+		return defaultMaxInterceptSessions
+	}
+	return c.MaxSessions
 }
 
 // defaultInterceptSessionStore is the SessionStoreValue used when

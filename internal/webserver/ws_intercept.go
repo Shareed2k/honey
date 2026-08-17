@@ -111,6 +111,33 @@ func (s *Server) handleWebIntercept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The session lifetime is bound to the WebSocket, not the (already-hijacked)
+	// request context: a post-upgrade request-context cancel must not abort the
+	// session, but a client disconnect must. Mirrors /ws/ssh's fresh context.
+	sessionCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Admit before deploying: enforce the concurrency cap and the same-pod guard
+	// and register the session so it is counted, listed, and stoppable by id.
+	// A rejection tears down nothing (no agent was deployed).
+	sessID, err := s.webIntercepts.admit(sessionCtx, opts, cancel)
+	if err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+		return
+	}
+	// Deregister on every return path below (normal teardown or a build error).
+	defer s.webIntercepts.remove(context.Background(), sessID)
+	// Keep the registry entry's lease fresh so the TTL janitor never reaps a
+	// live session. The heartbeat exits when sessionCtx is cancelled; the join
+	// (with a cancel first, in case the session was never started) runs BEFORE
+	// the deferred remove, so a late refresh cannot resurrect a deleted entry.
+	hbDone := make(chan struct{})
+	go func() {
+		defer close(hbDone)
+		s.webIntercepts.heartbeat(sessionCtx, sessID)
+	}()
+	defer func() { cancel(); <-hbDone }()
+
 	cols, rows := hello.Cols, hello.Rows
 	if cols <= 0 {
 		cols = 120
@@ -123,12 +150,6 @@ func (s *Server) handleWebIntercept(w http.ResponseWriter, r *http.Request) {
 		recorder.RecordResize(cols, rows)
 		defer recorder.Close()
 	}
-
-	// The session lifetime is bound to the WebSocket, not the (already-hijacked)
-	// request context: a post-upgrade request-context cancel must not abort the
-	// session, but a client disconnect must. Mirrors /ws/ssh's fresh context.
-	sessionCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Bridge streams: browser stdin -> pipe -> injected child; child stdout ->
 	// WS; browser resize -> local.Winsize channel.

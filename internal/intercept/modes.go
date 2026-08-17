@@ -15,6 +15,14 @@ const (
 	modeEnv      = "env"
 )
 
+// ModeStrings renders a mode set as its canonical string-slice form (the same
+// names ParseModes accepts and a Session's audit/gate payloads carry). It lets
+// callers outside this package (e.g. the web server's interception registry)
+// record the active modes without re-deriving the mapping.
+func ModeStrings(m local.Modes) []string {
+	return modeStrings(m)
+}
+
 // ParseModes maps interception mode names to the mode set a Session runs with.
 // It accepts "egress", "incoming", "files", and "env" (in any combination),
 // fails on an unknown name, and requires at least one mode. Keeping the mapping

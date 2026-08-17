@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -288,6 +289,12 @@ func TestHandleWebIntercept_BridgesStreamsAndTearsDownOnClose(t *testing.T) {
 	require.Equal(t, websocket.BinaryMessage, mt)
 	require.Equal(t, "id\r", string(echoed))
 
+	// The live session is registered exactly once, with its metadata.
+	require.Eventually(t, func() bool {
+		views, _ := s.webIntercepts.list(context.Background())
+		return len(views) == 1 && views[0].Pod == "target" && views[0].Namespace == "apps"
+	}, 3*time.Second, 10*time.Millisecond, "the live session must be listed in the registry")
+
 	// The PTY bridge forced a pseudo-terminal and built Options from the hello.
 	require.True(t, echo.config().Pty, "the browser bridge must run the child on a PTY")
 	require.Equal(t, "apps", capturedOpts.Namespace)
@@ -314,6 +321,12 @@ func TestHandleWebIntercept_BridgesStreamsAndTearsDownOnClose(t *testing.T) {
 		return contains(stopped, 30000) && contains(stopped, 30001)
 	}, 5*time.Second, 10*time.Millisecond, "WS close must tear the session down (both forwards stopped)")
 
+	// WS close also deregisters the session from the registry.
+	require.Eventually(t, func() bool {
+		views, _ := s.webIntercepts.list(context.Background())
+		return len(views) == 0
+	}, 5*time.Second, 10*time.Millisecond, "WS close must remove the registry entry")
+
 	// A stop audit event was emitted with a cancellation reason.
 	require.Eventually(t, func() bool {
 		for _, e := range sink.all() {
@@ -332,4 +345,79 @@ func contains(xs []int, want int) bool {
 		}
 	}
 	return false
+}
+
+// TestHandleWebIntercept_SamePodRejected proves a second interception into a pod
+// that already has an active one is rejected before any agent is deployed, and
+// the first session stays.
+func TestHandleWebIntercept_SamePodRejected(t *testing.T) {
+	var factoryCalls int32
+	factory := func(hosts.Record, intercept.Options, intercept.LocalRunner) (*intercept.Session, error) {
+		atomic.AddInt32(&factoryCalls, 1)
+		return nil, nil
+	}
+	s := newTestServer(t, Options{Config: interceptTestConfig(), InterceptSessionFactory: factory})
+
+	// A session already holds the target pod (resolved cluster/ns/pod from
+	// podRecord: prod/apps/target).
+	preID, err := s.webIntercepts.admit(context.Background(), intercept.Options{
+		Cluster: "prod", Namespace: "apps", Pod: "target", Actor: "bob", Modes: local.Modes{Egress: true},
+	}, func() {})
+	require.NoError(t, err)
+
+	ts := httptest.NewServer(s.router)
+	t.Cleanup(ts.Close)
+
+	wsURL := strings.Replace(ts.URL, "http", "ws", 1) + "/ws/intercept"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	require.NoError(t, conn.WriteJSON(wsInterceptHello{Record: podRecord(), Modes: []string{"egress"}, Cols: 80, Rows: 24}))
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, payload, err := conn.ReadMessage()
+	require.NoError(t, err)
+	require.Contains(t, string(payload), "already has an active interception")
+	require.Equal(t, int32(0), atomic.LoadInt32(&factoryCalls), "no agent may be deployed for a rejected same-pod start")
+
+	views, err := s.webIntercepts.list(context.Background())
+	require.NoError(t, err)
+	require.Len(t, views, 1, "the pre-existing session is untouched")
+	require.Equal(t, preID, views[0].ID)
+}
+
+// TestHandleWebIntercept_CapRejected proves that with the cap reached, a start on
+// a different pod is rejected before any agent is deployed.
+func TestHandleWebIntercept_CapRejected(t *testing.T) {
+	var factoryCalls int32
+	factory := func(hosts.Record, intercept.Options, intercept.LocalRunner) (*intercept.Session, error) {
+		atomic.AddInt32(&factoryCalls, 1)
+		return nil, nil
+	}
+	cfg := interceptTestConfig()
+	cfg.Intercept.MaxSessions = 1
+	s := newTestServer(t, Options{Config: cfg, InterceptSessionFactory: factory})
+
+	// One active session on a different pod fills the cap of 1.
+	_, err := s.webIntercepts.admit(context.Background(), intercept.Options{
+		Cluster: "prod", Namespace: "apps", Pod: "other", Actor: "bob", Modes: local.Modes{Egress: true},
+	}, func() {})
+	require.NoError(t, err)
+
+	ts := httptest.NewServer(s.router)
+	t.Cleanup(ts.Close)
+
+	wsURL := strings.Replace(ts.URL, "http", "ws", 1) + "/ws/intercept"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	require.NoError(t, conn.WriteJSON(wsInterceptHello{Record: podRecord(), Modes: []string{"egress"}, Cols: 80, Rows: 24}))
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, payload, err := conn.ReadMessage()
+	require.NoError(t, err)
+	require.Contains(t, string(payload), "max concurrent sessions (1)")
+	require.Equal(t, int32(0), atomic.LoadInt32(&factoryCalls))
 }

@@ -155,6 +155,13 @@ type Options struct {
 	// OIDCVerifier: the browser terminal is authenticated by the web session
 	// token (like /ws/ssh), which is the default single-operator topology.
 	InterceptSessionFactory func(rec hosts.Record, opts intercept.Options, runner intercept.LocalRunner) (*intercept.Session, error)
+
+	// InterceptStore is the SessionStore the browser-interception registry uses
+	// to track active /ws/intercept sessions (cap, same-pod guard, active list).
+	// The web command sets it to InterceptBroker.Store() when a Broker exists so
+	// there is ONE registry shared by brokered and browser interceptions; nil ⇒
+	// the server creates its own in-memory store.
+	InterceptStore intercept.SessionStore
 }
 
 // Server is the honey web UI HTTP server.
@@ -258,6 +265,12 @@ type Server struct {
 	// (→ mogate local.Run); tests replace it with a fake so the bridge is
 	// exercised without a real injector or cluster data plane.
 	interceptInnerRunner intercept.LocalRunner
+
+	// webIntercepts tracks active browser (/ws/intercept) sessions: it enforces
+	// the concurrency cap and the same-pod collision guard, lists active sessions
+	// for the UI, and stops one by id. Non-nil only when the browser interception
+	// terminal is enabled (InterceptSessionFactory set).
+	webIntercepts *webInterceptRegistry
 
 	// stateDir is the resolved runtime state dir where the device/ssh CAs live.
 	// The SSO kube-login handler reads the k8s access proxy's serving CA under it
@@ -393,6 +406,18 @@ func NewServer(opts Options) (*Server, error) {
 	// The browser interception terminal delegates to the real data-plane runner
 	// (mogate local.Run) unless a test overrides it.
 	s.interceptInnerRunner = intercept.DefaultLocalRunner()
+
+	// Registry of active browser interceptions, only when the terminal is
+	// enabled. It reuses the Broker's store (opts.InterceptStore) so brokered and
+	// browser interceptions share one registry — the same-pod guard sees both;
+	// with no store it owns a fresh in-memory one. The cap comes from config.
+	if opts.InterceptSessionFactory != nil {
+		var ic *config.InterceptConfig
+		if opts.Config != nil {
+			ic = opts.Config.Intercept
+		}
+		s.webIntercepts = newWebInterceptRegistry(opts.InterceptStore, ic.MaxSessionsValue())
+	}
 
 	if err := s.routes(); err != nil {
 		return nil, err
@@ -583,6 +608,14 @@ func (s *Server) routes() error {
 			sr.Get("/workspace", s.handleGetStudioWorkspace)
 			sr.Put("/workspace", s.handlePutStudioWorkspace)
 		})
+
+		// Active browser interception sessions (list + stop by id). Registered
+		// only when the browser terminal is enabled; session-token authenticated
+		// like the rest of /api/v1 (the same auth /ws/intercept uses).
+		if s.webIntercepts != nil {
+			r.Get("/intercept/sessions", s.handleInterceptSessions)
+			r.Post("/intercept/sessions/{id}/stop", s.handleInterceptSessionStop)
+		}
 	})
 
 	// Device enrollment is authenticated by the one-time code, not the session
@@ -790,6 +823,14 @@ func (s *Server) Start(ctx context.Context) error {
 	s.startRecordingRetention(ctx)
 	if s.scheduleManager != nil {
 		s.scheduleManager.Start(ctx)
+	}
+
+	// Reap orphaned browser-interception registry entries (a crashed handler left
+	// a lapsed entry in a persistent store). When a Broker is present its janitor
+	// (started by the web command) already sweeps the shared store, so start the
+	// server-owned one only when there is no Broker janitor to reuse.
+	if s.webIntercepts != nil && s.opts.InterceptBroker == nil {
+		s.webIntercepts.startJanitor(ctx)
 	}
 
 	nListeners := 1

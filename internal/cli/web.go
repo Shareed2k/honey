@@ -140,6 +140,13 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Reuse the Broker's session store for the browser-interception registry so
+	// brokered and browser interceptions share ONE registry (the same-pod guard
+	// then sees both). nil when no Broker: the web server owns an in-memory one.
+	var interceptStore intercept.SessionStore
+	if interceptBroker != nil {
+		interceptStore = interceptBroker.Store()
+	}
 
 	// Browser interception terminal (GET /ws/intercept): a DIRECT intercept
 	// Session run on the honey-web host, wired with the same enforcer and audit
@@ -216,6 +223,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		InterceptBroker:         interceptBroker,
 		InterceptDefaultMode:    interceptModes,
 		InterceptSessionFactory: interceptSessionFactory,
+		InterceptStore:          interceptStore,
 	})
 	if err != nil {
 		return err

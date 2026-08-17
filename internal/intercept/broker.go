@@ -125,6 +125,15 @@ func NewBroker(deps BrokerDeps) *Broker {
 	return &Broker{deps: deps, ttl: ttl, now: now}
 }
 
+// Store returns the SessionStore this Broker persists sessions in. It lets a
+// co-located component (the web server's browser-interception registry) reuse
+// the same store so there is a single registry of active interceptions — a
+// brokered session and a browser session targeting the same pod are then both
+// visible to the same-pod collision guard.
+func (b *Broker) Store() SessionStore {
+	return b.deps.Store
+}
+
 // Authorize gates the request (with the caller's full claims), deploys the
 // agent as an ephemeral container using honey's cluster credentials, delivers a
 // per-session token to the agent, persists the session (keyed by the sha256 of
