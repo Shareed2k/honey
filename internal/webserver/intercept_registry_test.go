@@ -3,6 +3,7 @@ package webserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -237,6 +238,10 @@ func TestServer_InterceptSessionsEndpoint(t *testing.T) {
 		InterceptSessionFactory: factory,
 	})
 	require.NotNil(t, s.webIntercepts)
+
+	// The list route unions in tmux-backed resume sessions; keep this test
+	// hermetic against a real tmux on the host by stubbing the runner empty.
+	defer swapTmuxRun(func(...string) ([]byte, error) { return nil, errors.New("no tmux") })()
 
 	// Seed two active sessions.
 	_, err := s.webIntercepts.admit(context.Background(), webOpts("prod", "apps", "a"), noopCancel)

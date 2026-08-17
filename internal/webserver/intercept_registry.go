@@ -340,14 +340,18 @@ func shortInterceptID(id string) string {
 // @Router /api/v1/intercept/sessions [get]
 // @Security BearerAuth
 func (s *Server) handleInterceptSessions(w http.ResponseWriter, r *http.Request) {
-	if s.webIntercepts == nil {
-		writeJSON(w, map[string]any{"sessions": []webInterceptView{}})
-		return
+	views := []webInterceptView{}
+	if s.webIntercepts != nil {
+		fallback, err := s.webIntercepts.list(r.Context())
+		if err != nil {
+			httpError(w, fmt.Errorf("list intercept sessions: %w", err), http.StatusInternalServerError)
+			return
+		}
+		views = append(views, fallback...)
 	}
-	views, err := s.webIntercepts.list(r.Context())
-	if err != nil {
-		httpError(w, fmt.Errorf("list intercept sessions: %w", err), http.StatusInternalServerError)
-		return
+	// Union in the tmux-backed resume sessions (empty when tmux is absent).
+	for _, si := range tmuxListHoneyIntercept() {
+		views = append(views, si.view())
 	}
 	writeJSON(w, map[string]any{"sessions": views})
 }
@@ -364,6 +368,17 @@ func (s *Server) handleInterceptSessions(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 func (s *Server) handleInterceptSessionStop(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	// A honey-int-* id is a tmux resume session: kill it directly. Any other id
+	// is a fallback-registry session cancelled by its context.
+	if validInterceptMuxName(id) {
+		if err := interceptResumeStop(id); err != nil {
+			// A missing session is indistinguishable from one that never existed.
+			http.Error(w, `{"error":"unknown session"}`, http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if s.webIntercepts == nil || !s.webIntercepts.stop(id) {
 		http.Error(w, `{"error":"unknown session"}`, http.StatusNotFound)
 		return

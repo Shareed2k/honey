@@ -116,17 +116,16 @@ func interceptPaneMuxName(cluster, namespace, pod string) string {
 // ptyMuxBuildInterceptCommand mirrors ptyMuxBuildCommand for the intercept
 // resume path: it takes an already-computed mux name (interceptPaneMuxName)
 // instead of sanitizing a client-supplied session id, and builds the
-// intercept-pane argv instead of pty-proxy's.
+// intercept-pane argv instead of pty-proxy's. It is tmux-ONLY (never zellij):
+// the resume list/cap/stop are tmux-based, so a zellij-hosted pane could not be
+// managed. useZellij is therefore always false. The caller gates on tmuxOnPath,
+// so the LookPath here is defense-in-depth.
 func ptyMuxBuildInterceptCommand(bin, configPath, encodedPayload, name string) (cmd *exec.Cmd, muxName string, useZellij bool, err error) {
 	proxyArgs := ptyProxyExecArgs("intercept-pane", bin, configPath, encodedPayload)
-	if _, err := exec.LookPath("zellij"); err == nil {
-		return ptyMuxZellijCommand(name, proxyArgs)
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return nil, name, false, fmt.Errorf("intercept resume requires tmux on the server: %w", err)
 	}
-	if _, err := exec.LookPath("tmux"); err == nil {
-		return ptyMuxTmuxCommand(name, proxyArgs)
-	}
-	zap.L().Debug("handleWebIntercept: no multiplexer found, falling back")
-	return nil, name, false, fmt.Errorf("neither zellij nor tmux found on the server")
+	return ptyMuxTmuxCommand(name, proxyArgs)
 }
 
 func ptyMuxZellijCommand(muxName string, proxyArgs []string) (*exec.Cmd, string, bool, error) {
