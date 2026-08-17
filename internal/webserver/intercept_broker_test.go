@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/shareed2k/honey/internal/audit"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/intercept"
 	"github.com/shareed2k/honey/internal/oidc"
 	"github.com/shareed2k/honey/internal/policy"
@@ -283,9 +284,15 @@ func TestInterceptStop_TokenNeverLogged(t *testing.T) {
 }
 
 func TestInterceptConfig_ReportsEnabledAndDefaultMode(t *testing.T) {
+	// "enabled" tracks the browser-terminal session factory (what the Intercept
+	// button drives), not the CLI broker — the two enable independently.
 	s := &Server{
-		opts:            Options{InterceptDefaultMode: []string{"egress"}},
-		interceptBroker: &stubBroker{},
+		opts: Options{
+			InterceptDefaultMode: []string{"egress"},
+			InterceptSessionFactory: func(hosts.Record, intercept.Options, intercept.LocalRunner) (*intercept.Session, error) {
+				return nil, nil
+			},
+		},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/intercept/config", nil)
 	rec := httptest.NewRecorder()
@@ -301,7 +308,9 @@ func TestInterceptConfig_ReportsEnabledAndDefaultMode(t *testing.T) {
 	require.Equal(t, []string{"egress"}, out.DefaultMode)
 }
 
-func TestInterceptConfig_DisabledWhenNoBroker(t *testing.T) {
+func TestInterceptConfig_DisabledWhenNoFactory(t *testing.T) {
+	// No browser-terminal session factory wired ⇒ the Intercept button is off,
+	// independent of whether a CLI broker exists.
 	s := &Server{opts: Options{}}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/intercept/config", nil)
 	rec := httptest.NewRecorder()

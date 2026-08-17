@@ -150,11 +150,15 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 
 	// Browser interception terminal (GET /ws/intercept): a DIRECT intercept
 	// Session run on the honey-web host, wired with the same enforcer and audit
-	// sink the broker uses. Built alongside the broker (same enable conditions),
-	// but keyed off the pod record itself rather than a --cluster flag: the web UI
-	// hands over the k8s record it already searched.
+	// sink the broker uses, keyed off the pod record itself rather than a
+	// --cluster flag: the web UI hands over the k8s record it already searched.
+	// It enables on intercept.enabled alone — the target cluster is resolved from
+	// the record (interceptWebRestConfig reads rec.Meta's kube_context/kubeconfig),
+	// so k8s_proxy.clusters is only an optional shortcut for the CLI broker and is
+	// NOT required for the web terminal.
+	interceptEnabled := cfg != nil && cfg.Intercept != nil && cfg.Intercept.Enabled
 	var interceptSessionFactory func(hosts.Record, intercept.Options, intercept.LocalRunner) (*intercept.Session, error)
-	if interceptBroker != nil {
+	if interceptEnabled {
 		enforcer := authCfg.enforcer
 		interceptSessionFactory = func(rec hosts.Record, opts intercept.Options, runner intercept.LocalRunner) (*intercept.Session, error) {
 			restCfg, rerr := interceptWebRestConfig(cfg, rec)
