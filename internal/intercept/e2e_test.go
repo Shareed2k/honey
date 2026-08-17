@@ -72,10 +72,15 @@ const (
 	// e2eK3sImage pins the same k3s image the k8s-proxy matrix uses.
 	e2eK3sImage = "rancher/k3s:v1.31.5-k3s1"
 	// mogateRepo and mogateTag identify the public data-plane module built here.
-	// mogateTag is the release whose agent supports both the targeted (nftables)
-	// and targetless (--no-redirect, egress-only) modes.
+	// mogateTag is the release whose agent supports the targeted (nftables),
+	// targetless (--no-redirect, egress-only), AND env (OpEnvGet: reads the
+	// target's /proc/1/environ) modes. It matches honey's own go.mod mogate
+	// version, so the injector library and agent built here speak exactly the
+	// wire protocol honey's compiled-in local.Run expects — env mode (the
+	// env_overlay subtest) needs an agent that answers OpEnvGet, which landed in
+	// v0.1.8.
 	mogateRepo = "https://github.com/shareed2k/mogate"
-	mogateTag  = "v0.1.3"
+	mogateTag  = "v0.1.8"
 	// agentBaseImage is the genuine mogate agent image, built from the module's
 	// own (unmodified) Dockerfile. The honey agent images layer only a thin
 	// timing-flag entrypoint on top of it (no token wait — kube-agent waits
@@ -164,6 +169,7 @@ func TestInterceptE2E(t *testing.T) {
 	t.Run("incoming_mirror_tcp", func(t *testing.T) { testIncomingMirrorTCP(t, env) })
 	t.Run("incoming_steal_udp", func(t *testing.T) { testIncomingStealUDP(t, env) })
 	t.Run("files", func(t *testing.T) { testFiles(t, env) })
+	t.Run("env_overlay", func(t *testing.T) { testEnvOverlay(t, env) })
 	t.Run("passthrough_baseline", func(t *testing.T) { testPassthroughBaseline(t, env) })
 	t.Run("gate_deny", func(t *testing.T) { testGateDeny(t, env) })
 	t.Run("audit", func(t *testing.T) { testAudit(t, env) })
@@ -371,6 +377,38 @@ func testFiles(t *testing.T, env *e2eEnv) {
 	requireSessionOK(t, env, ns, pod, err)
 }
 
+// testEnvOverlay proves env mode overlays the target container's environment
+// onto the injected command: a normal target var (HONEY_E2E_ENV_MARKER) is
+// visible, while a denylisted var (PATH) stays LOCAL — the injected command's
+// PATH never carries the target container's sentinel segment. The agent reads
+// the target's /proc/1/environ (OpEnvGet), which the privileged ephemeral
+// container (agentPrivileged, set by env.options) is free to do.
+func testEnvOverlay(t *testing.T, env *e2eEnv) {
+	const (
+		marker      = "HONEY_E2E_ENV_MARKER"
+		markerValue = "marker-value"
+		// A sentinel segment planted on the target container's PATH. PATH is in the
+		// data plane's built-in env denylist, so it must stay local: the injected
+		// command's PATH must never contain this segment. The standard dirs are kept
+		// so the target container itself still starts normally.
+		targetPathSentinel = "/honey-e2e-target-only-DO-NOT-LEAK"
+		targetPath         = targetPathSentinel + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	)
+	ns, pod, container := newTargetPodWithEnv(t, env, "target-env", map[string]string{
+		marker: markerValue,
+		"PATH": targetPath,
+	})
+	sink := &captureSink{}
+	deps, _ := env.deps(t, ns, pod, container, buildAllowEnforcer(t), sink)
+	opts := env.options(ns, pod, container, agentImageSteal, local.Modes{Egress: true, Env: true}, "",
+		[]string{env.clientBin, "env", marker, markerValue, "PATH", targetPathSentinel})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	err := New(deps, opts).Run(ctx)
+	requireSessionOK(t, env, ns, pod, err)
+}
+
 // testPassthroughBaseline proves that with NO session attached, Service traffic
 // reaches the pod's own app (intercept does not leak when off).
 func testPassthroughBaseline(t *testing.T, env *e2eEnv) {
@@ -528,8 +566,34 @@ func newTargetPodWithService(t *testing.T, env *e2eEnv, base, response string) (
 	return "default", pod, container
 }
 
+// newTargetPodWithEnv creates a fresh, ready single-container echo pod carrying
+// the given container environment variables (no Service), used by the
+// env_overlay subtest to plant a known target var — and a denylisted PATH
+// sentinel — the injected command reads back. It returns namespace, pod, and the
+// app container name.
+func newTargetPodWithEnv(t *testing.T, env *e2eEnv, base string, envVars map[string]string) (ns, pod, container string) {
+	t.Helper()
+	pod = uniqueName(base)
+	container = "app"
+	createEchoPodWithEnv(t, env.admin, "default", pod, container, "pod-remote", envVars)
+	waitPodReady(t, env.admin, "default", pod, 3*time.Minute)
+	return "default", pod, container
+}
+
 func createEchoPod(t *testing.T, admin *kubernetes.Clientset, ns, name, container, response string) {
 	t.Helper()
+	createEchoPodWithEnv(t, admin, ns, name, container, response, nil)
+}
+
+// createEchoPodWithEnv is createEchoPod with an optional container environment.
+// A nil/empty envVars map leaves the pod spec byte-identical to the plain echo
+// pod every other subtest uses.
+func createEchoPodWithEnv(t *testing.T, admin *kubernetes.Clientset, ns, name, container, response string, envVars map[string]string) {
+	t.Helper()
+	var envList []corev1.EnvVar
+	for key, value := range envVars {
+		envList = append(envList, corev1.EnvVar{Name: key, Value: value})
+	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{"app": name}},
 		Spec: corev1.PodSpec{
@@ -538,6 +602,7 @@ func createEchoPod(t *testing.T, admin *kubernetes.Clientset, ns, name, containe
 				Image:           targetImage,
 				ImagePullPolicy: corev1.PullNever,
 				Args:            []string{"server", "--address=:" + strconv.Itoa(appPort), "--response=" + response},
+				Env:             envList,
 				Ports: []corev1.ContainerPort{
 					{ContainerPort: appPort, Protocol: corev1.ProtocolTCP},
 					{ContainerPort: appPort, Protocol: corev1.ProtocolUDP},
@@ -1327,7 +1392,27 @@ static int do_file(const char *path, const char *expected) {
 
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "hold") == 0) { sleep(300); return 0; }
-    if (argc < 4) { fprintf(stderr, "usage: client tcp|udp host port expected | file path expected | hold\n"); return 2; }
+    // env <name> <expected> <denyname> <deny-sentinel-substr>: proves the env-mode
+    // overlay. getenv reads the child's process environment, which local.Run has
+    // already overlaid with the target container's before exec — no relay/injector
+    // hook is needed and no retry loop applies (the overlay is set synchronously
+    // before the command spawns). Exits 0 only when the target var was overlaid AND
+    // the denylisted var did NOT leak the target's value.
+    if (argc >= 2 && strcmp(argv[1], "env") == 0) {
+        if (argc < 6) { fprintf(stderr, "usage: client env name expected denyname deny-sentinel\n"); return 2; }
+        const char *got = getenv(argv[2]);
+        if (got == NULL || strcmp(got, argv[3]) != 0) {
+            fprintf(stderr, "env overlay: %s=%s want %s\n", argv[2], got ? got : "(unset)", argv[3]);
+            return 1;
+        }
+        const char *deny = getenv(argv[4]);
+        if (deny != NULL && strstr(deny, argv[5]) != NULL) {
+            fprintf(stderr, "denylisted var %s leaked target value (contains %s): %s\n", argv[4], argv[5], deny);
+            return 1;
+        }
+        return 0;
+    }
+    if (argc < 4) { fprintf(stderr, "usage: client tcp|udp host port expected | file path expected | env name expected denyname deny-sentinel | hold\n"); return 2; }
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
