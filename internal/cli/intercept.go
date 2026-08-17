@@ -29,7 +29,6 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/intercept"
-	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 )
 
@@ -200,14 +199,6 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		return fmt.Errorf("intercept: build kubernetes client: %w", err)
 	}
 
-	enforcer, err := policy.New(cmd.Context(), ic.PolicyDir, nil)
-	if err != nil {
-		return fmt.Errorf("intercept: load policy: %w", err)
-	}
-
-	sink := gatewayAuditSink(cfg)
-	defer func() { _ = sink.Close() }()
-
 	// honey must know the agent pod's name before building Deps, since the
 	// execer and port-forwarder bind to it. Targeted mode targets the
 	// pre-existing pod named by the positional argument; targetless generates
@@ -226,14 +217,12 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		execContainer = intercept.AgentContainerName
 	}
 
-	deps := intercept.Deps{
-		PortForwarder: &interceptPortForwarder{cfg: restCfg},
-		PodExecer:     &interceptPodExecer{cfg: restCfg, clientset: clientset, namespace: namespace, pod: agentPod, container: execContainer},
-		K8sClient:     clientset,
-		Enforcer:      enforcer,
-		Sink:          sink,
-		LocalRunner:   intercept.DefaultLocalRunner(),
+	deps, sink, err := buildInterceptDeps(cmd.Context(), cfg, restCfg, clientset, namespace, agentPod, execContainer)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = sink.Close() }()
+
 	opts := intercept.Options{
 		Namespace:  namespace,
 		Pod:        agentPod,
