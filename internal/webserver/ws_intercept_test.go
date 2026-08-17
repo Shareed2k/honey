@@ -226,6 +226,12 @@ func TestHandleWebIntercept_RejectsNonPodRecord(t *testing.T) {
 }
 
 func TestHandleWebIntercept_BridgesStreamsAndTearsDownOnClose(t *testing.T) {
+	// This test exercises the in-process fallback (factory + bridgeInterceptWS)
+	// via an injected fake session factory; force ptyMuxAvailable() false so a
+	// tmux/zellij present on the test host doesn't divert it into the resume
+	// path, which the standalone InterceptPane* tests cover instead.
+	t.Setenv("PATH", t.TempDir())
+
 	cs := fake.NewSimpleClientset(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "apps"},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
@@ -351,6 +357,12 @@ func contains(xs []int, want int) bool {
 // that already has an active one is rejected before any agent is deployed, and
 // the first session stays.
 func TestHandleWebIntercept_SamePodRejected(t *testing.T) {
+	// Cap/same-pod rejection is admit()'s job, which only the fallback path
+	// calls (the resume path's own cap check is a later task); force
+	// ptyMuxAvailable() false so a tmux/zellij present on the test host
+	// doesn't bypass admit() here.
+	t.Setenv("PATH", t.TempDir())
+
 	var factoryCalls int32
 	factory := func(hosts.Record, intercept.Options, intercept.LocalRunner) (*intercept.Session, error) {
 		atomic.AddInt32(&factoryCalls, 1)
@@ -390,6 +402,10 @@ func TestHandleWebIntercept_SamePodRejected(t *testing.T) {
 // TestHandleWebIntercept_CapRejected proves that with the cap reached, a start on
 // a different pod is rejected before any agent is deployed.
 func TestHandleWebIntercept_CapRejected(t *testing.T) {
+	// Same reasoning as TestHandleWebIntercept_SamePodRejected: the cap check
+	// lives in admit(), which only the fallback path calls.
+	t.Setenv("PATH", t.TempDir())
+
 	var factoryCalls int32
 	factory := func(hosts.Record, intercept.Options, intercept.LocalRunner) (*intercept.Session, error) {
 		atomic.AddInt32(&factoryCalls, 1)

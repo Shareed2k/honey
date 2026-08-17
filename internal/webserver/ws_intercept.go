@@ -2,19 +2,23 @@ package webserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
+	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
 	"github.com/shareed2k/mogate/pkg/local"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/intercept"
@@ -97,6 +101,16 @@ func (s *Server) handleWebIntercept(w http.ResponseWriter, r *http.Request) {
 	// intercept gate that Session.Run itself enforces.
 	if err := s.gateInteractiveSession(r, rec); err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("session denied: "+err.Error()))
+		return
+	}
+
+	// Resume path: with a multiplexer on the server, run the interception
+	// inside a tmux/zellij pane owned by `honey intercept-pane`, keyed by a
+	// deterministic per-pod name so a browser refresh re-attaches to the same
+	// pane instead of starting a second one. Without a multiplexer, fall back
+	// to today's in-process one-shot session below (unchanged).
+	if ptyMuxAvailable() {
+		s.handleWebInterceptResume(conn, hello, rec, actor)
 		return
 	}
 
@@ -189,6 +203,64 @@ func (s *Server) buildInterceptOptions(rec hosts.Record, hello wsInterceptHello,
 	opts.EnvInclude = hello.EnvInclude
 	opts.EnvExclude = hello.EnvExclude
 	return opts, nil
+}
+
+// handleWebInterceptResume runs the interception inside a tmux/zellij pane
+// owned by the hidden `honey intercept-pane` subcommand, reusing honey's
+// existing SSH pty-proxy machinery (handleWebPtyProxy's template): it builds
+// the pane's secret-free base64 payload, resolves an attach-or-create mux
+// command keyed by a deterministic per-pod name, and bridges the pane's PTY
+// to the browser exactly like the SSH terminal does. A browser refresh
+// recomputes the same mux name and re-attaches to the same pane instead of
+// starting a second interception.
+//
+// Session-cap/list/stop bookkeeping for this path (mirroring
+// s.webIntercepts.admit for the fallback below) is added by the tmux-registry
+// task; this path does not call s.webIntercepts.admit.
+func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsInterceptHello, rec hosts.Record, actor string) {
+	payload, err := json.Marshal(InterceptPaneRequest{
+		Record:  rec,
+		Modes:   hello.Modes,
+		UDP:     hello.UDP,
+		Command: hello.Command,
+		Cols:    hello.Cols,
+		Rows:    hello.Rows,
+	})
+	if err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+		return
+	}
+	enc := base64.StdEncoding.EncodeToString(payload)
+
+	bin, err := os.Executable()
+	if err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+		return
+	}
+
+	cfgPath, _ := config.ResolvePath(strings.TrimSpace(s.opts.ConfigPath))
+	name := interceptPaneMuxName(rec.Meta["kube_context"], rec.Meta["namespace"], rec.Meta["pod_name"])
+	cmd, muxName, useZellij, err := ptyMuxBuildInterceptCommand(bin, cfgPath, enc, name)
+	if err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+		return
+	}
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+		return
+	}
+
+	recorder := newWebSessionRecorder(s.opts.RecordDir, hello.RecordSession, rec, actor)
+	if recorder != nil {
+		recorder.RecordResize(hello.Cols, hello.Rows)
+		defer recorder.Close()
+	}
+
+	closeTabKill := make(chan struct{}, 1)
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill)
+	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited)
 }
 
 // bridgeInterceptWS runs the session and the WebSocket<->PTY bridge to
