@@ -14,6 +14,16 @@ import (
 // the target's network namespace (redirect rules, tunnel devices).
 const capNetAdmin corev1.Capability = "NET_ADMIN"
 
+// capSysPtrace lets the agent read the target container's /proc/1/environ for
+// the env mode. Reading another process's environ is a PTRACE_MODE_READ_FSCREDS
+// operation, which for a NON-root target process requires CAP_SYS_PTRACE.
+const capSysPtrace corev1.Capability = "SYS_PTRACE"
+
+// capDacReadSearch lets the agent bypass file read permission checks so it can
+// open the target's /proc/1/environ regardless of the target process owner. It
+// pairs with capSysPtrace for the env mode.
+const capDacReadSearch corev1.Capability = "DAC_READ_SEARCH"
+
 // agentBypassGID is the group id the agent runs under when elevated so that its
 // own egress bypasses the redirect it installs. It matches the agent's own
 // default owner-bypass group.
@@ -37,9 +47,21 @@ const ephemeralPollInterval = 200 * time.Millisecond
 // nftables install with "operation not permitted"; running as uid 0 makes the
 // added NET_ADMIN effective. RunAsGroup is the agent's bypass GID so the agent's
 // own egress skips the redirect it installs.
-func ephemeralContainer(name, image, targetContainer string, args []string) corev1.EphemeralContainer {
+//
+// needsProcRead adds CAP_SYS_PTRACE and CAP_DAC_READ_SEARCH so the agent can
+// read the target container's /proc/1/environ for the env mode. They are added
+// ONLY when env mode is active (least privilege — the network-only modes keep
+// the NET_ADMIN-only context byte-for-byte). A restricted-PSA namespace may
+// reject these two caps at admission; the env overlay then fails cleanly at the
+// agent (the environ read returns an errno the data plane surfaces) rather than
+// silently reading nothing.
+func ephemeralContainer(name, image, targetContainer string, args []string, needsProcRead bool) corev1.EphemeralContainer {
 	runAsUser := int64(0)
 	runAsGroup := agentBypassGID
+	add := []corev1.Capability{capNetAdmin}
+	if needsProcRead {
+		add = append(add, capSysPtrace, capDacReadSearch)
+	}
 	return corev1.EphemeralContainer{
 		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
 			Name:  name,
@@ -50,7 +72,7 @@ func ephemeralContainer(name, image, targetContainer string, args []string) core
 				RunAsGroup: &runAsGroup,
 				Capabilities: &corev1.Capabilities{
 					Drop: []corev1.Capability{"ALL"},
-					Add:  []corev1.Capability{capNetAdmin},
+					Add:  add,
 				},
 			},
 		},

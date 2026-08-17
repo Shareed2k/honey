@@ -304,9 +304,14 @@ func startPodRunningFlipper(cs *fake.Clientset, ns, pod string, log *eventLog) f
 	}
 }
 
-func waitForEvent(t *testing.T, log *eventLog, event string, timeout time.Duration) {
+// eventWaitTimeout bounds how long waitForEvent polls the log for an event
+// before failing the test. Every caller uses the same window, so it lives here
+// rather than as a per-call parameter.
+const eventWaitTimeout = 3 * time.Second
+
+func waitForEvent(t *testing.T, log *eventLog, event string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(eventWaitTimeout)
 	for time.Now().Before(deadline) {
 		for _, e := range log.snapshot() {
 			if e == event {
@@ -315,7 +320,7 @@ func waitForEvent(t *testing.T, log *eventLog, event string, timeout time.Durati
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("event %q not observed within %s; log=%v", event, timeout, log.snapshot())
+	t.Fatalf("event %q not observed within %s; log=%v", event, eventWaitTimeout, log.snapshot())
 }
 
 func indexOf(events []string, want string) int {
@@ -370,7 +375,7 @@ func TestSession_happyPathLifecycleAndTeardown(t *testing.T) {
 	res := make(chan error, 1)
 	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
 
-	waitForEvent(t, h.log, "run", 3*time.Second)
+	waitForEvent(t, h.log, "run")
 	cancel()
 
 	var runErr error
@@ -414,6 +419,57 @@ func TestSession_happyPathLifecycleAndTeardown(t *testing.T) {
 	assert.Equal(t, actionInterceptStop, h.sink.events[1].Action)
 	assert.Equal(t, "canceled", h.sink.events[1].Extra["reason"])
 	assert.NotEmpty(t, h.sink.events[1].Extra["duration"])
+}
+
+// TestSession_envThreadingToLocalConfig proves the env mode wiring flows end to
+// end through a targeted Session: Modes.Env and the include/exclude key filters
+// reach the LocalRunner's local.Config, and the deployed ephemeral container
+// carries the /proc-read capabilities the agent needs to read the target's
+// environ. It carries only key NAMES, never values, so nothing sensitive is
+// asserted or logged.
+func TestSession_envThreadingToLocalConfig(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	h := newHarness(t, true, nil)
+	h.opts.Modes = local.Modes{Egress: true, Env: true}
+	h.opts.EnvInclude = []string{"DATABASE_URL", "FEATURE_FLAG"}
+	h.opts.EnvExclude = nil
+	stopFlip := startEphemeralFlipper(h.cs, h.opts.Namespace, h.opts.Pod, h.log)
+	defer stopFlip()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := make(chan error, 1)
+	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
+
+	// Wait until the ephemeral container is applied, then assert it carries the
+	// /proc-read caps for env mode on top of NET_ADMIN.
+	waitForEvent(t, h.log, "ephemeral-applied")
+	p, err := h.cs.CoreV1().Pods(h.opts.Namespace).Get(context.Background(), h.opts.Pod, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, p.Spec.EphemeralContainers, 1)
+	add := p.Spec.EphemeralContainers[0].SecurityContext.Capabilities.Add
+	assert.Equal(t, []corev1.Capability{capNetAdmin, capSysPtrace, capDacReadSearch}, add)
+
+	// Wait until the LocalRunner is actually invoked before tearing down, so the
+	// config it captured is populated by the time it returns.
+	waitForEvent(t, h.log, "run")
+	cancel()
+	var runErr error
+	select {
+	case runErr = <-res:
+	case <-time.After(shutdownGrace + 2*time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+	assert.ErrorIs(t, runErr, context.Canceled)
+
+	// The LocalRunner received the env mode and the include filter verbatim
+	// (cfg is captured at the start of Run, so it is set by the time Run
+	// returns). Only key names are asserted — never values.
+	cfg := h.runner.config()
+	assert.True(t, cfg.Modes.Env, "Modes.Env must reach local.Config")
+	assert.Equal(t, []string{"DATABASE_URL", "FEATURE_FLAG"}, cfg.EnvInclude)
+	assert.Empty(t, cfg.EnvExclude)
 }
 
 func TestSession_teardownOnRunnerError(t *testing.T) {
@@ -481,7 +537,7 @@ func TestSession_ctxCancelDrainsWithinGrace(t *testing.T) {
 	res := make(chan error, 1)
 	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
 
-	waitForEvent(t, h.log, "run", 3*time.Second)
+	waitForEvent(t, h.log, "run")
 
 	cancel()
 	start := time.Now()
@@ -512,7 +568,7 @@ func TestSession_targetless_happyPathLifecycleAndTeardown(t *testing.T) {
 	res := make(chan error, 1)
 	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
 
-	waitForEvent(t, h.log, "run", 3*time.Second)
+	waitForEvent(t, h.log, "run")
 
 	// While the session is live, the standalone pod exists with exactly one
 	// container (the agent) and no ephemeral containers at all — targetless

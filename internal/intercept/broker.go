@@ -162,7 +162,7 @@ func (b *Broker) Authorize(ctx context.Context, req AuthorizeRequest) (*Brokered
 		return nil, fmt.Errorf("intercept: build execer: %w", err)
 	}
 
-	ec := ephemeralContainer(agentName, req.AgentImage, req.Container, agentArgs(req.UDP))
+	ec := ephemeralContainer(agentName, req.AgentImage, req.Container, agentArgs(req.UDP), req.Modes.Env)
 	if err := applyEphemeral(ctx, client, req.Namespace, req.Pod, ec); err != nil {
 		return nil, fmt.Errorf("intercept: deploy agent: %w", err)
 	}
