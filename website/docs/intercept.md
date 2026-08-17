@@ -690,11 +690,15 @@ until an active session ends. The UI lists the active interceptions
 (`GET /api/v1/intercept/sessions`) and can stop one
 (`POST /api/v1/intercept/sessions/{id}/stop`).
 
-**Teardown.** What happens when the terminal tab closes (or the WebSocket
-otherwise drops) depends on whether the session resumed across a refresh —
-see below. Without a multiplexer it always ends the session immediately, the
-same teardown the CLI runs when `<command>` exits. As on the CLI, the
-ephemeral container entry itself cannot be removed (see [Prerequisites &
+**Teardown.** Clicking the **×** ("Close Terminal") on the terminal's tab
+always ends that session immediately and tears the agent down (ephemeral
+container, relay, port-forward) — the same teardown the CLI runs when
+`<command>` exits — whether or not the session
+[resumed](#resume-across-a-browser-refresh) across a refresh. Without a
+multiplexer, any dropped WebSocket ends the session the same way, so
+refreshing, closing the browser tab, or a network drop all have the same
+effect as the × there too. As on the CLI, the ephemeral container entry
+itself cannot be removed (see [Prerequisites &
 limits](#prerequisites--limits)).
 
 ### Resume across a browser refresh
@@ -714,15 +718,20 @@ WebSocket, so the session can outlive any one browser tab:
   driving the identical shell process, environment, and scrollback. Only one
   tab is the live, interactive view at a time, though: attaching takes over
   from whichever tab held it, which then shows disconnected — reattaching
-  (reopen or refresh that tab) reclaims it. Neither tab closing, nor this
-  hand-off, touches the underlying shell or the ephemeral container.
-- **The session outlives the tab.** With no tab attached, the pane and the
-  agent it drives keep running — there is no idle timeout. It ends only when
-  the injected shell exits on its own, or an operator stops it: **Stop** in
-  the sessions list (`POST /api/v1/intercept/sessions/{id}/stop`) kills the
-  tmux session, which hangs up the pane and runs the same teardown a normal
-  session exit does — the ephemeral container, the relay, and the
-  port-forward all get torn down.
+  (reopen or refresh that tab) reclaims it. The hand-off itself never
+  touches the underlying shell or the ephemeral container — only the ×
+  button or Stop does (see below).
+- **The session outlives a dropped connection, but not the × button.**
+  Refreshing the browser, closing the browser tab or window, or a network
+  drop only disconnect the WebSocket — with nothing attached, the pane and
+  the agent it drives just keep running, no idle timeout. Only three things
+  end it: the injected shell exiting on its own, clicking the **×** ("Close
+  Terminal") on the terminal's tab, or **Stop** in the sessions list
+  (`POST /api/v1/intercept/sessions/{id}/stop`). The × and Stop both kill
+  the tmux session outright — hanging up the pane and running the same
+  teardown a normal session exit does, tearing down the ephemeral container,
+  the relay, and the port-forward — so either one also ends it for any other
+  tab still attached to that same pod's shared shell.
 - **As a bonus, not a guarantee:** because the pane belongs to the tmux
   server rather than to the `honey web` process, a resumed session also
   typically survives restarting `honey web` itself (the sessions list, cap,
@@ -734,9 +743,9 @@ WebSocket, so the session can outlive any one browser tab:
   container deployment of `honey web` gets resume for free. Running
   `honey web` from a plain binary on a host without tmux on `PATH` still
   intercepts fine, just without resume: every interception (and every
-  refresh) uses the one-shot session above, so closing the tab ends it
-  immediately and a refresh starts a fresh interception rather than
-  reattaching.
+  refresh) uses the one-shot session above, so any disconnect — the ×
+  button, a refresh, or closing the browser tab — ends it immediately, and a
+  refresh starts a fresh interception rather than reattaching.
 
 ## Prerequisites & limits
 
