@@ -20,11 +20,6 @@ import (
 	"github.com/shareed2k/honey/internal/intercept"
 )
 
-// defaultInterceptShell is the command run under injection when the hello does
-// not name one: a plain interactive shell, so the browser terminal behaves like
-// `honey intercept <pod> -- /bin/sh`.
-var defaultInterceptShell = []string{"/bin/sh"}
-
 // wsInterceptHello is the first frame a browser sends on /ws/intercept. It names
 // the target pod record, the interception modes, and the initial terminal size.
 // The actor is never taken from here — it comes from the authenticated session.
@@ -171,47 +166,29 @@ func (s *Server) handleWebIntercept(w http.ResponseWriter, r *http.Request) {
 	s.bridgeInterceptWS(sessionCtx, conn, session, cancel, stdinW, resizeInts, winCh, recorder, wsOut)
 }
 
-// buildInterceptOptions maps a validated pod hello to intercept.Options. The
-// actor is passed in from the authenticated session; the agent image comes from
-// the operator config, never the client.
+// buildInterceptOptions maps a validated pod hello to intercept.Options via the
+// shared intercept.OptionsFromPodRecord mapper (the same mapping the
+// intercept-pane subcommand uses), then sets the fields the mapper omits: the
+// actor is passed in from the authenticated session; the agent image and
+// Container/EnvInclude/EnvExclude come from the operator config and hello,
+// never the client-controlled actor.
 func (s *Server) buildInterceptOptions(rec hosts.Record, hello wsInterceptHello, actor string) (intercept.Options, error) {
-	namespace := strings.TrimSpace(rec.Meta["namespace"])
-	pod := strings.TrimSpace(rec.Meta["pod_name"])
-	if namespace == "" || pod == "" {
-		return intercept.Options{}, errors.New("intercept: pod record missing namespace or pod_name")
-	}
 	if len(hello.EnvInclude) > 0 && len(hello.EnvExclude) > 0 {
 		return intercept.Options{}, errors.New("intercept: env_include and env_exclude are mutually exclusive")
-	}
-	modes, err := intercept.ParseModes(hello.Modes)
-	if err != nil {
-		return intercept.Options{}, err
 	}
 	agentImage := ""
 	if s.opts.Config != nil && s.opts.Config.Intercept != nil {
 		agentImage = strings.TrimSpace(s.opts.Config.Intercept.AgentImage)
 	}
-	if agentImage == "" {
-		return intercept.Options{}, errors.New("intercept: no agent image configured (set intercept.agent_image)")
+	opts, err := intercept.OptionsFromPodRecord(rec, hello.Modes, hello.UDP, hello.Command, agentImage)
+	if err != nil {
+		return intercept.Options{}, err
 	}
-	command := hello.Command
-	if len(command) == 0 {
-		command = defaultInterceptShell
-	}
-	return intercept.Options{
-		Namespace:  namespace,
-		Pod:        pod,
-		Container:  strings.TrimSpace(hello.Container),
-		Cluster:    strings.TrimSpace(rec.Meta["kube_context"]),
-		AgentImage: agentImage,
-		Modes:      modes,
-		EnvInclude: hello.EnvInclude,
-		EnvExclude: hello.EnvExclude,
-		UDP:        hello.UDP,
-		Command:    command,
-		Actor:      actor,
-		Targetless: false,
-	}, nil
+	opts.Container = strings.TrimSpace(hello.Container)
+	opts.Actor = actor
+	opts.EnvInclude = hello.EnvInclude
+	opts.EnvExclude = hello.EnvExclude
+	return opts, nil
 }
 
 // bridgeInterceptWS runs the session and the WebSocket<->PTY bridge to
