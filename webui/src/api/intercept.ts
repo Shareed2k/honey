@@ -63,7 +63,7 @@ export async function fetchInterceptSessions(): Promise<InterceptSession[]> {
 
 /** Stops an active intercept session. Throws on failure (unlike the list/config helpers) so callers can surface the error. */
 export async function stopInterceptSession(id: string): Promise<void> {
-  const r = await apiPost(`/api/v1/intercept/${encodeURIComponent(id)}/stop`, {});
+  const r = await apiPost(`/api/v1/intercept/sessions/${encodeURIComponent(id)}/stop`, {});
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
     throw new Error((j as { error?: string }).error || r.statusText);
