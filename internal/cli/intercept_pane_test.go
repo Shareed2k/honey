@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,48 +23,88 @@ import (
 // exactly as the running pane does before it deploys anything.
 func TestInterceptPaneDecode(t *testing.T) {
 	t.Parallel()
+	// Table-driven over EnvInclude-only and EnvExclude-only (never both — the
+	// pane rejects that combination, see TestRunInterceptPane_RejectsEnvIncludeAndExclude):
+	// each field must independently survive the base64(JSON) round-trip and
+	// land on intercept.Options exactly like runInterceptPane sets it.
+	cases := []struct {
+		name       string
+		envInclude []string
+		envExclude []string
+	}{
+		{name: "env_include", envInclude: []string{"DATABASE_URL"}},
+		{name: "env_exclude", envExclude: []string{"SECRET_KEY"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := webserver.InterceptPaneRequest{
+				Record: hosts.Record{Provider: "k8s", Meta: map[string]string{
+					"kind": "pod", "namespace": "argocd", "pod_name": "api-0", "kube_context": "stg2",
+				}},
+				Modes:      []string{"egress"},
+				Command:    []string{"/bin/sh"},
+				Container:  "  app  ", // the pane must trim, matching buildInterceptOptions
+				EnvInclude: tc.envInclude,
+				EnvExclude: tc.envExclude,
+				Actor:      "alice",
+				Cols:       100,
+				Rows:       30,
+			}
+			raw, err := json.Marshal(req)
+			require.NoError(t, err)
+			enc := base64.StdEncoding.EncodeToString(raw)
+
+			decoded, err := decodeInterceptPaneRequest(enc)
+			require.NoError(t, err)
+			require.Equal(t, "api-0", decoded.Record.Meta["pod_name"])
+			require.Equal(t, []string{"egress"}, decoded.Modes)
+			require.Equal(t, 100, decoded.Cols)
+			// Container/EnvInclude/EnvExclude/Actor must survive the round-trip:
+			// the mapper (OptionsFromPodRecord) omits them, so the pane sets
+			// them itself (mirroring the web fallback's buildInterceptOptions),
+			// and they'd otherwise be silently dropped.
+			require.Equal(t, "  app  ", decoded.Container, "decode itself must not trim")
+			require.Equal(t, tc.envInclude, decoded.EnvInclude)
+			require.Equal(t, tc.envExclude, decoded.EnvExclude)
+			require.Equal(t, "alice", decoded.Actor)
+
+			opts, err := intercept.OptionsFromPodRecord(decoded.Record, decoded.Modes, decoded.UDP, decoded.Command, "img:1")
+			require.NoError(t, err)
+			// Mirrors the field-copy runInterceptPane performs, trim included.
+			opts.Container = strings.TrimSpace(decoded.Container)
+			opts.EnvInclude = decoded.EnvInclude
+			opts.EnvExclude = decoded.EnvExclude
+			opts.Actor = decoded.Actor
+			require.True(t, opts.Modes.Egress)
+			require.Equal(t, "argocd", opts.Namespace)
+			require.Equal(t, "api-0", opts.Pod)
+			require.Equal(t, "app", opts.Container, "runInterceptPane must trim Container")
+			require.Equal(t, tc.envInclude, opts.EnvInclude)
+			require.Equal(t, tc.envExclude, opts.EnvExclude)
+			require.Equal(t, "alice", opts.Actor)
+		})
+	}
+}
+
+// TestRunInterceptPane_RejectsEnvIncludeAndExclude proves the pane enforces
+// the same env_include/env_exclude mutual-exclusion buildInterceptOptions
+// enforces on the fallback path — the shared mapper doesn't check it, so each
+// caller must.
+func TestRunInterceptPane_RejectsEnvIncludeAndExclude(t *testing.T) {
+	t.Parallel()
 	req := webserver.InterceptPaneRequest{
-		Record: hosts.Record{Provider: "k8s", Meta: map[string]string{
-			"kind": "pod", "namespace": "argocd", "pod_name": "api-0", "kube_context": "stg2",
-		}},
-		Modes:      []string{"egress"},
-		Command:    []string{"/bin/sh"},
-		Container:  "app",
+		Record:     hosts.Record{Provider: "k8s", Meta: map[string]string{"kind": "pod", "namespace": "argocd", "pod_name": "api-0"}},
+		Modes:      []string{"env"},
 		EnvInclude: []string{"DATABASE_URL"},
-		Actor:      "alice",
-		Cols:       100,
-		Rows:       30,
+		EnvExclude: []string{"SECRET_KEY"},
 	}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 	enc := base64.StdEncoding.EncodeToString(raw)
 
-	decoded, err := decodeInterceptPaneRequest(enc)
-	require.NoError(t, err)
-	require.Equal(t, "api-0", decoded.Record.Meta["pod_name"])
-	require.Equal(t, []string{"egress"}, decoded.Modes)
-	require.Equal(t, 100, decoded.Cols)
-	// Container/EnvInclude/EnvExclude/Actor must survive the round-trip: the
-	// mapper (OptionsFromPodRecord) omits them, so the pane sets them itself
-	// (mirroring the web fallback's buildInterceptOptions), and they'd
-	// otherwise be silently dropped.
-	require.Equal(t, "app", decoded.Container)
-	require.Equal(t, []string{"DATABASE_URL"}, decoded.EnvInclude)
-	require.Empty(t, decoded.EnvExclude)
-	require.Equal(t, "alice", decoded.Actor)
-
-	opts, err := intercept.OptionsFromPodRecord(decoded.Record, decoded.Modes, decoded.UDP, decoded.Command, "img:1")
-	require.NoError(t, err)
-	opts.Container = decoded.Container
-	opts.EnvInclude = decoded.EnvInclude
-	opts.EnvExclude = decoded.EnvExclude
-	opts.Actor = decoded.Actor
-	require.True(t, opts.Modes.Egress)
-	require.Equal(t, "argocd", opts.Namespace)
-	require.Equal(t, "api-0", opts.Pod)
-	require.Equal(t, "app", opts.Container)
-	require.Equal(t, []string{"DATABASE_URL"}, opts.EnvInclude)
-	require.Equal(t, "alice", opts.Actor)
+	err = runInterceptPane(context.Background(), enc)
+	require.ErrorContains(t, err, "mutually exclusive")
 }
 
 // TestInterceptPaneDecodeRejectsGarbage rejects a non-base64 argv value with a

@@ -201,31 +201,46 @@ func interceptTestConfig() *config.File {
 // injected on multi-container pods, env-mode filters were ignored, and audit
 // events had no actor whenever a multiplexer was present.
 func TestInterceptPaneRequestFromHello_CarriesFullOptionsSet(t *testing.T) {
-	hello := wsInterceptHello{
-		Record:     podRecord(),
-		Modes:      []string{"egress", "env"},
-		Command:    []string{"/bin/sh"},
-		Container:  "sidecar",
-		EnvInclude: []string{"DATABASE_URL", "API_KEY"},
-		Cols:       100,
-		Rows:       40,
+	// Table-driven over EnvInclude-only and EnvExclude-only so both filters
+	// are actually exercised with a non-empty value, not just empty-to-empty.
+	cases := []struct {
+		name       string
+		envInclude []string
+		envExclude []string
+	}{
+		{name: "env_include", envInclude: []string{"DATABASE_URL", "API_KEY"}},
+		{name: "env_exclude", envExclude: []string{"SECRET_KEY"}},
 	}
-	req := interceptPaneRequestFromHello(hello.Record, hello, "alice")
-	require.Equal(t, "sidecar", req.Container)
-	require.Equal(t, []string{"DATABASE_URL", "API_KEY"}, req.EnvInclude)
-	require.Empty(t, req.EnvExclude)
-	require.Equal(t, "alice", req.Actor)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hello := wsInterceptHello{
+				Record:     podRecord(),
+				Modes:      []string{"egress", "env"},
+				Command:    []string{"/bin/sh"},
+				Container:  "sidecar",
+				EnvInclude: tc.envInclude,
+				EnvExclude: tc.envExclude,
+				Cols:       100,
+				Rows:       40,
+			}
+			req := interceptPaneRequestFromHello(hello.Record, hello, "alice")
+			require.Equal(t, "sidecar", req.Container)
+			require.Equal(t, tc.envInclude, req.EnvInclude)
+			require.Equal(t, tc.envExclude, req.EnvExclude)
+			require.Equal(t, "alice", req.Actor)
 
-	// The four fields must also survive the actual base64(JSON) argv
-	// round-trip the pane decodes.
-	raw, err := json.Marshal(req)
-	require.NoError(t, err)
-	var decoded InterceptPaneRequest
-	require.NoError(t, json.Unmarshal(raw, &decoded))
-	require.Equal(t, req.Container, decoded.Container)
-	require.Equal(t, req.EnvInclude, decoded.EnvInclude)
-	require.Equal(t, req.EnvExclude, decoded.EnvExclude)
-	require.Equal(t, req.Actor, decoded.Actor)
+			// The four fields must also survive the actual base64(JSON) argv
+			// round-trip the pane decodes.
+			raw, err := json.Marshal(req)
+			require.NoError(t, err)
+			var decoded InterceptPaneRequest
+			require.NoError(t, json.Unmarshal(raw, &decoded))
+			require.Equal(t, req.Container, decoded.Container)
+			require.Equal(t, req.EnvInclude, decoded.EnvInclude)
+			require.Equal(t, req.EnvExclude, decoded.EnvExclude)
+			require.Equal(t, req.Actor, decoded.Actor)
+		})
+	}
 }
 
 func TestHandleWebIntercept_RejectsNonPodRecord(t *testing.T) {

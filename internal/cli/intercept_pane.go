@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -100,8 +101,9 @@ func runInterceptPane(ctx context.Context, encoded string) error {
 		return err
 	}
 	// The mapper omits these; the web handler's buildInterceptOptions sets
-	// them the same way for the fallback path.
-	opts.Container = req.Container
+	// them the same way for the fallback path (including the Container trim,
+	// so whitespace behaves identically on both paths).
+	opts.Container = strings.TrimSpace(req.Container)
 	opts.EnvInclude = req.EnvInclude
 	opts.EnvExclude = req.EnvExclude
 	opts.Actor = req.Actor
