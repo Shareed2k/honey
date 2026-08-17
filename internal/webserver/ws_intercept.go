@@ -272,15 +272,20 @@ func (s *Server) bridgeInterceptWS(
 	waitErr := <-sessDone
 	cancel()           // idempotent: ensures the session is cancelled if it ended first
 	_ = stdinW.Close() // release mogate's stdin pump (also closed by the pump on WS close)
-	_ = conn.Close()   // unblock the WS pump's ReadMessage so it returns
-	wg.Wait()          // join the pump and the resize translator
 
+	// Report the outcome BEFORE closing the conn: the close below tears the
+	// socket down, so anything written after it is lost and the browser sees a
+	// bare 1006 with no reason (a session error, e.g. a failed agent deploy,
+	// would be computed and then silently dropped).
 	if waitErr != nil && !errors.Is(waitErr, context.Canceled) {
 		recorder.RecordError(waitErr)
 		_ = wsOut.writeText(`{"closed":true,"error":"` + escapeJSON(waitErr.Error()) + `"}`)
-		return
+	} else {
+		_ = wsOut.writeText(`{"closed":true}`)
 	}
-	_ = wsOut.writeText(`{"closed":true}`)
+
+	_ = conn.Close() // unblock the WS pump's ReadMessage so it returns
+	wg.Wait()        // join the pump and the resize translator
 }
 
 // wsPtyRunner is the intercept.LocalRunner that bridges the injected child's PTY
