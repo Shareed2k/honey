@@ -237,15 +237,15 @@ func (c *InterceptConfig) SessionTTLValue() time.Duration {
 	return d
 }
 
-// defaultMaxInterceptSessions bounds concurrent browser interception sessions
+// DefaultMaxInterceptSessions bounds concurrent browser interception sessions
 // when max_sessions is unset or non-positive.
-const defaultMaxInterceptSessions = 8
+const DefaultMaxInterceptSessions = 8
 
 // MaxSessionsValue returns the configured concurrent browser-interception cap,
-// or defaultMaxInterceptSessions (8) when unset or non-positive. Nil-safe.
+// or DefaultMaxInterceptSessions (8) when unset or non-positive. Nil-safe.
 func (c *InterceptConfig) MaxSessionsValue() int {
 	if c == nil || c.MaxSessions <= 0 {
-		return defaultMaxInterceptSessions
+		return DefaultMaxInterceptSessions
 	}
 	return c.MaxSessions
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/intercept"
 )
 
@@ -59,7 +60,7 @@ func newWebInterceptRegistry(store intercept.SessionStore, maxSessions int) *web
 		store = intercept.NewMemStore()
 	}
 	if maxSessions <= 0 {
-		maxSessions = 8
+		maxSessions = config.DefaultMaxInterceptSessions
 	}
 	return &webInterceptRegistry{
 		store:             store,
