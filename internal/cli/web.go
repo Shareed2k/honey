@@ -159,7 +159,15 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	interceptEnabled := cfg != nil && cfg.Intercept != nil && cfg.Intercept.Enabled
 	var interceptSessionFactory func(hosts.Record, intercept.Options, intercept.LocalRunner) (*intercept.Session, error)
 	if interceptEnabled {
-		enforcer := authCfg.enforcer
+		// Gate the browser terminal with the intercept policy (intercept.policy_dir,
+		// embedded default-allow when unset) — the SAME enforcer the CLI
+		// `honey intercept` builds. Reusing the web-auth enforcer denied every
+		// interception whenever no web policy_dir was set (a nil enforcer fails the
+		// gate closed), even though the identical CLI path is allowed.
+		enforcer, perr := policy.New(cmd.Context(), cfg.Intercept.PolicyDir, nil)
+		if perr != nil {
+			return fmt.Errorf("intercept: load policy: %w", perr)
+		}
 		interceptSessionFactory = func(rec hosts.Record, opts intercept.Options, runner intercept.LocalRunner) (*intercept.Session, error) {
 			restCfg, rerr := interceptWebRestConfig(cfg, rec)
 			if rerr != nil {
