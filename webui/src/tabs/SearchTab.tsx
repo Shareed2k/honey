@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Button, Card, Checkbox, Input, Modal, Progress, Segmented, Select, Space, Table, Tag, Typography,
+  Alert, Button, Card, Checkbox, Input, Modal, Popover, Progress, Segmented, Select, Space, Table, Tag, Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { apiPost } from '../api/core';
@@ -17,6 +17,14 @@ import { useReplay } from '../contexts/ReplayContext';
 import { useTerminal } from '../contexts/TerminalContext';
 import type { BackendRow } from '../contexts/AppContext';
 import { ShareAccessModal } from './ShareAccessModal';
+import { InterceptModal } from './InterceptModal';
+import {
+  fetchInterceptEnabled,
+  fetchInterceptSessions,
+  stopInterceptSession,
+  type InterceptOptions,
+  type InterceptSession,
+} from '../api/intercept';
 
 const CodeEditor = lazy(() => import('../CodeEditor'));
 import type { HostRecord } from '../HostPicker';
@@ -58,6 +66,10 @@ function canPortForwardTunnel(rec: HostRecord): boolean {
   if (rec.provider === 'k8s') return true;
   if (rec.provider === 'truenas') return canTrueNASAPIShell(rec);
   return false;
+}
+
+function canIntercept(rec: HostRecord): boolean {
+  return rec.provider === 'k8s' && (rec.meta?.kind || '').toLowerCase() === 'pod';
 }
 
 function truenasAPIShellLabel(rec: HostRecord): string {
@@ -215,6 +227,10 @@ export function SearchTab() {
   const [visibleRecords, setVisibleRecords] = useState<HostRecord[]>([]);
   const [shareTarget, setShareTarget] = useState<HostRecord | null>(null);
 
+  const [interceptTarget, setInterceptTarget] = useState<HostRecord | null>(null);
+  const [interceptEnabled, setInterceptEnabled] = useState(true);
+  const [interceptSessions, setInterceptSessions] = useState<InterceptSession[]>([]);
+
   const [recordWebSession, setRecordWebSession] = useState(() => {
     return new URLSearchParams(window.location.search).get('recordWebSession') === 'true';
   });
@@ -277,6 +293,39 @@ export function SearchTab() {
       return Math.min(Math.max(0, i), records.length - 1);
     });
   }, [records]);
+
+  // Whether server-side intercept is enabled at all — defensive: an absent/erroring
+  // `/api/v1/intercept/config` (a later backend task) resolves to `true`, so the button
+  // is not hidden just because that optional endpoint hasn't shipped yet.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchInterceptEnabled().then((enabled) => {
+      if (!cancelled) setInterceptEnabled(enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Active-intercepts affordance: `/api/v1/intercept/sessions` is added by a later
+  // backend task, so this defensively resolves to [] (hiding the panel) until then.
+  const refreshInterceptSessions = useCallback(() => {
+    void fetchInterceptSessions().then(setInterceptSessions);
+  }, []);
+
+  useEffect(() => {
+    refreshInterceptSessions();
+  }, [refreshInterceptSessions]);
+
+  const stopIntercept = async (id: string) => {
+    try {
+      await stopInterceptSession(id);
+    } catch {
+      // best-effort — refresh below will reflect whatever the server actually did
+    } finally {
+      refreshInterceptSessions();
+    }
+  };
 
   // ── actions ───────────────────────────────────────────────────────────────
 
@@ -620,6 +669,19 @@ export function SearchTab() {
     handleOpenTerminal(cfg);
   };
 
+  const openInterceptSession = (opts: InterceptOptions) => {
+    const rec = interceptTarget;
+    if (!rec) return;
+    const id = crypto.randomUUID();
+    sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
+    const cfg: TerminalSessionConfig = { id, record: rec, pve: 'serial', intercept: opts };
+    handleOpenTerminal(cfg);
+    setInterceptTarget(null);
+    // The new session shows up server-side once the injected container is running —
+    // refresh shortly after so the active-intercepts badge picks it up.
+    window.setTimeout(refreshInterceptSessions, 1500);
+  };
+
   // ── exec table columns ────────────────────────────────────────────────────
 
   const execColumns: ColumnsType<HostExecResultRow> = [
@@ -683,6 +745,29 @@ export function SearchTab() {
         />
         {meta?.session_recording_available && (
           <Button onClick={() => void openReplayAllRecordings()}>Browse recordings</Button>
+        )}
+        {interceptSessions.length > 0 && (
+          <Popover
+            trigger="click"
+            placement="bottomLeft"
+            title="Active intercepts"
+            content={
+              <Space direction="vertical" size={6} style={{ minWidth: 240 }}>
+                {interceptSessions.map((s) => (
+                  <Space key={s.id} style={{ width: '100%', justifyContent: 'space-between' }}>
+                    <Typography.Text style={{ fontSize: '0.82rem' }} ellipsis={{ tooltip: s.name || s.record_key || s.id }}>
+                      {s.name || s.record_key || s.id}
+                    </Typography.Text>
+                    <Button size="small" danger onClick={() => void stopIntercept(s.id)}>
+                      Stop
+                    </Button>
+                  </Space>
+                ))}
+              </Space>
+            }
+          >
+            <Button>Intercepts: {interceptSessions.length}</Button>
+          </Popover>
         )}
       </Space>
 
@@ -919,9 +1004,10 @@ export function SearchTab() {
           const recKey = recordKey(rec);
 
           const activeTerms = terminals.filter((t) => recordKey(t.record) === recKey);
-          const serialTerms = activeTerms.filter((t) => t.pve === 'serial' && (t.truenasConsole ?? 'ssh') === 'ssh');
+          const serialTerms = activeTerms.filter((t) => t.pve === 'serial' && (t.truenasConsole ?? 'ssh') === 'ssh' && !t.intercept);
           const apiTerms = activeTerms.filter((t) => t.truenasConsole === 'api');
           const vncTerms = activeTerms.filter((t) => t.pve === 'vnc');
+          const interceptTerms = activeTerms.filter((t) => !!t.intercept);
 
           const hasSSH = !!(rec.primary_ip || '').trim();
           const showTrueNASAPI = canTrueNASAPIShell(rec);
@@ -956,6 +1042,15 @@ export function SearchTab() {
                   onClick={() => openTerminalSession(rec, 'vnc')}
                 >
                   {vncTerms.length > 0 ? 'VNC (Open)' : 'VNC'}
+                </Button>
+              ) : null}
+              {canIntercept(rec) && interceptEnabled ? (
+                <Button
+                  size="small"
+                  type={interceptTerms.length > 0 ? 'primary' : 'default'}
+                  onClick={() => setInterceptTarget(rec)}
+                >
+                  {interceptTerms.length > 0 ? 'Intercept (Open)' : 'Intercept'}
                 </Button>
               ) : null}
               <Button size="small" onClick={() => openUploadModal(rec)}>
@@ -1133,6 +1228,13 @@ export function SearchTab() {
         record={shareTarget}
         open={shareTarget !== null}
         onClose={() => setShareTarget(null)}
+      />
+
+      <InterceptModal
+        record={interceptTarget}
+        open={interceptTarget !== null}
+        onClose={() => setInterceptTarget(null)}
+        onLaunch={openInterceptSession}
       />
     </section>
   );

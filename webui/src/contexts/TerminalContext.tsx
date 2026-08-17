@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import { TerminalTabsModal, type TerminalSessionConfig, type PveConsoleMode, type TrueNASConsoleMode } from '../TerminalModal';
+import type { InterceptOptions } from '../api/intercept';
 import { useHostSelection } from './HostSelectionContext';
 import { useAppContext } from './AppContext';
 import { recordKey } from '../HostPicker';
@@ -30,14 +31,23 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     if (!val) return [];
     try {
       return val.split(',').map(part => {
-        const [id, key, pve, truenasConsole] = part.split('|');
+        const [id, key, pve, truenasConsole, interceptRaw] = part.split('|');
         const sessionRec = sessionStorage.getItem(`honey_term_${id}`);
         const record = sessionRec ? JSON.parse(sessionRec) : { _key: key, provider: 'loading', name: 'loading', primary_ip: '' };
+        let intercept: InterceptOptions | undefined;
+        if (interceptRaw) {
+          try {
+            intercept = JSON.parse(decodeURIComponent(interceptRaw)) as InterceptOptions;
+          } catch {
+            intercept = undefined;
+          }
+        }
         return {
           id: id || crypto.randomUUID(),
           record,
           pve: (pve as PveConsoleMode) || 'serial',
           truenasConsole: (truenasConsole as TrueNASConsoleMode) || 'ssh',
+          intercept,
         };
       });
     } catch {
@@ -52,7 +62,11 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     if (terminals.length > 0) {
       const joined = terminals.map(t => {
         const rKey = (t.record as { _key?: string })._key || recordKey(t.record);
-        return `${t.id}|${rKey}|${t.pve || 'serial'}|${t.truenasConsole || 'ssh'}`;
+        const parts = [t.id, rKey, t.pve || 'serial', t.truenasConsole || 'ssh'];
+        if (t.intercept) {
+          parts.push(encodeURIComponent(JSON.stringify(t.intercept)));
+        }
+        return parts.join('|');
       }).join(',');
       updateUrlParam('terminals', joined);
     } else {
