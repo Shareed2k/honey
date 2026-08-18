@@ -185,7 +185,7 @@ export function SearchTab() {
   const { meta, backends } = useAppContext();
   const { handleOpenTunnel } = useTunnel();
   const { openReplayModal, openReplayAllRecordings } = useReplay();
-  const { handleOpenTerminal, terminals = [] } = useTerminal();
+  const { handleOpenTerminal, terminals = [], closeTerminal } = useTerminal();
 
   const [name, setName] = useState(() => {
     return new URLSearchParams(window.location.search).get('name') || '';
@@ -317,9 +317,18 @@ export function SearchTab() {
     refreshInterceptSessions();
   }, [refreshInterceptSessions]);
 
-  const stopIntercept = async (id: string) => {
+  const stopIntercept = async (s: InterceptSession) => {
+    // Close the matching terminal tab immediately (by pod key), so Stop feels
+    // instant instead of leaving a dead tab until the reconcile poll catches up.
+    if (s.record_key) {
+      for (const t of terminals) {
+        if (t.intercept && ((t.record as { _key?: string })._key || recordKey(t.record)) === s.record_key) {
+          closeTerminal(t.id);
+        }
+      }
+    }
     try {
-      await stopInterceptSession(id);
+      await stopInterceptSession(s.id);
     } catch {
       // best-effort — refresh below will reflect whatever the server actually did
     } finally {
@@ -758,7 +767,7 @@ export function SearchTab() {
                     <Typography.Text style={{ fontSize: '0.82rem' }} ellipsis={{ tooltip: s.name || s.record_key || s.id }}>
                       {s.name || s.record_key || s.id}
                     </Typography.Text>
-                    <Button size="small" danger onClick={() => void stopIntercept(s.id)}>
+                    <Button size="small" danger onClick={() => void stopIntercept(s)}>
                       Stop
                     </Button>
                   </Space>
