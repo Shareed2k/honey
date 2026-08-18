@@ -244,7 +244,15 @@ func establishInterceptStepSession(ctx context.Context, step cuetry.Step, ic *cu
 	if err != nil {
 		return nil, fmt.Errorf("intercept: generate agent pod name: %w", err)
 	}
-	modes, err := intercept.ParseModes(ic.Mode)
+	modeStrs := ic.Mode
+	if len(modeStrs) == 0 {
+		// Validate requires targetless (egress-only) and rejects any mode
+		// other than "egress", but leaves an empty mode list alone — default
+		// it here the same way the CLI's direct targetless path does (see
+		// resolveDirectModes in internal/cli/intercept.go).
+		modeStrs = []string{"egress"}
+	}
+	modes, err := intercept.ParseModes(modeStrs)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +274,16 @@ func establishInterceptStepSession(ctx context.Context, step cuetry.Step, ic *cu
 	if err != nil {
 		return nil, err
 	}
-	opts.InterceptCoord.Register(step.Base().ID, live)
+	// The Count() check above is a fast path that avoids deploying an agent
+	// in the common sequential over-cap case; it is not itself atomic with
+	// this Establish, so Register re-checks the cap under its own mutex
+	// right before adding the session. A same-wave race can still briefly
+	// deploy then tear down the loser's agent here — acceptable for a safety
+	// cap.
+	if err := opts.InterceptCoord.Register(step.Base().ID, live, cfg.Intercept.MaxSessionsValue()); err != nil {
+		live.Close("max_sessions")
+		return nil, err
+	}
 	return live, nil
 }
 

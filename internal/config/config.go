@@ -189,10 +189,14 @@ type InterceptConfig struct {
 	// SessionStoreDSN is the sqlite file path or postgres DSN for SessionStore
 	// "sqlite"/"postgres". Never logged: it may contain credentials.
 	SessionStoreDSN string `yaml:"session_store_dsn,omitempty" json:"session_store_dsn,omitempty" honey:"label=Intercept session store DSN (sqlite path or postgres DSN)" mod:"trim"`
-	// MaxSessions caps the number of concurrent browser interception sessions
-	// (GET /ws/intercept). A start beyond the cap is rejected before any agent is
-	// deployed. Non-positive selects the built-in default (8).
-	MaxSessions int `yaml:"max_sessions,omitempty" json:"max_sessions,omitempty" honey:"label=Max concurrent browser interception sessions (default 8)"`
+	// MaxSessions caps the number of concurrent interception sessions,
+	// enforced separately for each of the two session pools it gates: browser
+	// interception sessions (GET /ws/intercept) and the sessions a recipe's
+	// `intercept` steps establish in one cue-exec run (see
+	// RecipeInterceptCoordinator.Register). A start beyond the cap is
+	// rejected before any agent is deployed. Non-positive selects the
+	// built-in default (8).
+	MaxSessions int `yaml:"max_sessions,omitempty" json:"max_sessions,omitempty" honey:"label=Max concurrent interception sessions (default 8)"`
 }
 
 // DefaultDeviceCertTTL is the fallback validity for SSO/enroll-issued device
@@ -237,12 +241,13 @@ func (c *InterceptConfig) SessionTTLValue() time.Duration {
 	return d
 }
 
-// DefaultMaxInterceptSessions bounds concurrent browser interception sessions
-// when max_sessions is unset or non-positive.
+// DefaultMaxInterceptSessions bounds concurrent interception sessions (per
+// pool — see MaxSessions) when max_sessions is unset or non-positive.
 const DefaultMaxInterceptSessions = 8
 
-// MaxSessionsValue returns the configured concurrent browser-interception cap,
-// or DefaultMaxInterceptSessions (8) when unset or non-positive. Nil-safe.
+// MaxSessionsValue returns the configured concurrent-interception-session
+// cap, or DefaultMaxInterceptSessions (8) when unset or non-positive.
+// Nil-safe.
 func (c *InterceptConfig) MaxSessionsValue() int {
 	if c == nil || c.MaxSessions <= 0 {
 		return DefaultMaxInterceptSessions

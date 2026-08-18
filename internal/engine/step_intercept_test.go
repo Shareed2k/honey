@@ -203,6 +203,71 @@ func TestInterceptExecutor_establish(t *testing.T) {
 	assert.Empty(t, fake.closeReasons())
 }
 
+// TestInterceptExecutor_defaultModeEgress proves an establishing step with no
+// mode set at all runs with egress by default (matching the CLI's targetless
+// default in resolveDirectModes), instead of failing at execute time with a
+// ParseModes "at least one mode is required" error — Validate allows an
+// empty mode list precisely because the executor is expected to default it.
+func TestInterceptExecutor_defaultModeEgress(t *testing.T) {
+	defer goleak.VerifyNone(t, interceptGoleakOpts()...)
+
+	var gotOpts intercept.Options
+	stubEstablishInterceptSession(t, func(_ context.Context, _ *config.File, opts intercept.Options) (interceptLive, error) {
+		gotOpts = opts
+		return &fakeInterceptLive{}, nil
+	})
+
+	coord := NewRecipeInterceptCoordinator()
+	defer coord.Close()
+
+	step := newInterceptStep("est-nomode", &cuetry.RecipeStepIntercept{
+		Targetless: true, Cluster: "prod", Namespace: "apps", Command: "echo hi",
+	})
+	opts := ExecutionOptions{ConfigPath: writeInterceptConfig(t, 8), InterceptCoord: coord}
+	res := runInterceptExecuteStream(t, ExecutionRequest{Index: 0, Step: step}, opts)
+
+	require.True(t, res.Success, "an omitted mode must default to egress, not fail at execute: %s", res.ErrMsg)
+	assert.True(t, gotOpts.Modes.Egress)
+}
+
+// TestInterceptExecutor_registerCapRejectedClosesRace proves the atomic cap
+// check inside Register — not just the pre-Establish Count() fast path —
+// rejects a session that only goes over cap during Establish (e.g. a
+// same-wave sibling establishing step winning the race and registering its
+// own session first), and that the executor closes the just-established but
+// rejected live and fails the step, rather than leaking a deployed agent
+// nobody tracks.
+func TestInterceptExecutor_registerCapRejectedClosesRace(t *testing.T) {
+	defer goleak.VerifyNone(t, interceptGoleakOpts()...)
+
+	coord := NewRecipeInterceptCoordinator()
+	defer coord.Close()
+
+	fake := &fakeInterceptLive{}
+	stubEstablishInterceptSession(t, func(context.Context, *config.File, intercept.Options) (interceptLive, error) {
+		// Simulate a same-wave sibling step winning the race and registering
+		// its own session between this step's Count() fast-path check and
+		// this step's own Register call below.
+		require.NoError(t, coord.Register("sibling", &fakeInterceptLive{}, 0))
+		return fake, nil
+	})
+
+	step := newInterceptStep("est-race", &cuetry.RecipeStepIntercept{
+		Mode: []string{"egress"}, Targetless: true, Cluster: "prod", Namespace: "apps",
+		Command: "echo hi",
+	})
+	opts := ExecutionOptions{ConfigPath: writeInterceptConfig(t, 1), InterceptCoord: coord}
+	res := runInterceptExecuteStream(t, ExecutionRequest{Index: 0, Step: step}, opts)
+
+	assert.False(t, res.Success)
+	assert.Contains(t, res.ErrMsg, "max_sessions")
+	assert.Equal(t, []string{"max_sessions"}, fake.closeReasons(), "the rejected live must be closed by the executor")
+
+	_, ok := coord.Lookup("est-race")
+	assert.False(t, ok, "a rejected session must not be registered")
+	assert.Equal(t, 1, coord.Count(), "only the sibling's session should remain registered")
+}
+
 // TestInterceptExecutor_exitCode proves a runner error that errors.As unwraps
 // to *exec.ExitError surfaces as a numeric res.ExitCode (never a
 // string-parsed one), which is what failed_when/changed_when read.
@@ -246,7 +311,7 @@ func TestInterceptExecutor_sessionStepReuse(t *testing.T) {
 	fake := &fakeInterceptLive{output: "reused"}
 	coord := NewRecipeInterceptCoordinator()
 	defer coord.Close()
-	coord.Register("est1", fake)
+	require.NoError(t, coord.Register("est1", fake, 0))
 
 	var establishCalls int
 	stubEstablishInterceptSession(t, func(context.Context, *config.File, intercept.Options) (interceptLive, error) {
@@ -349,7 +414,7 @@ func TestInterceptExecutor_stepFailures(t *testing.T) {
 			coord := NewRecipeInterceptCoordinator()
 			defer coord.Close()
 			for i := 0; i < tc.preRegister; i++ {
-				coord.Register(fmt.Sprintf("pre-%d", i), &fakeInterceptLive{})
+				require.NoError(t, coord.Register(fmt.Sprintf("pre-%d", i), &fakeInterceptLive{}, 0))
 			}
 
 			step := newInterceptStep("s", tc.ic)

@@ -34,8 +34,14 @@ func TestInterceptStepValidate_missingBlock(t *testing.T) {
 
 func TestValidateInterceptStep_ok(t *testing.T) {
 	cases := map[string]*RecipeStepIntercept{
-		"targetless establisher": {
-			Mode:       []string{"egress", "env"},
+		"targetless establisher with explicit egress mode": {
+			Mode:       []string{"egress"},
+			Targetless: true,
+			Cluster:    "staging",
+			Namespace:  "checkout",
+			Command:    "curl svc.checkout.svc:8080/health",
+		},
+		"targetless establisher with omitted mode": {
 			Targetless: true,
 			Cluster:    "staging",
 			Namespace:  "checkout",
@@ -68,13 +74,33 @@ func TestValidateInterceptStep_errors(t *testing.T) {
 			&RecipeStepIntercept{Command: "curl x", Script: "run.sh"},
 			"mutually exclusive",
 		},
-		"bad mode": {
+		"mode incoming rejected (targetless is egress-only)": {
 			&RecipeStepIntercept{Command: "curl x", Mode: []string{"incoming"}, Targetless: true, Cluster: "c", Namespace: "n"},
-			"unsupported mode",
+			"supports only egress",
 		},
-		"env_include and env_exclude together": {
-			&RecipeStepIntercept{Command: "curl x", Targetless: true, Cluster: "c", Namespace: "n", EnvInclude: []string{"A"}, EnvExclude: []string{"B"}},
-			"env_include and env_exclude are mutually exclusive",
+		"mode env rejected (needs a target pod)": {
+			&RecipeStepIntercept{Command: "curl x", Mode: []string{"env"}, Targetless: true, Cluster: "c", Namespace: "n"},
+			"supports only egress",
+		},
+		"mode files rejected (needs a target pod)": {
+			&RecipeStepIntercept{Command: "curl x", Mode: []string{"files"}, Targetless: true, Cluster: "c", Namespace: "n"},
+			"supports only egress",
+		},
+		"targetless false rejected": {
+			&RecipeStepIntercept{Command: "curl x", Targetless: false, Cluster: "c", Namespace: "n"},
+			"only targetless",
+		},
+		"targetless absent rejected": {
+			&RecipeStepIntercept{Command: "curl x", Cluster: "c", Namespace: "n"},
+			"only targetless",
+		},
+		"env_include on establishing step rejected": {
+			&RecipeStepIntercept{Command: "curl x", Targetless: true, Cluster: "c", Namespace: "n", EnvInclude: []string{"A"}},
+			"env_include/env_exclude require env mode",
+		},
+		"env_exclude on establishing step rejected": {
+			&RecipeStepIntercept{Command: "curl x", Targetless: true, Cluster: "c", Namespace: "n", EnvExclude: []string{"B"}},
+			"env_include/env_exclude require env mode",
 		},
 		"session_step with mode and cluster set": {
 			&RecipeStepIntercept{SessionStep: "a", Script: "run.sh", Mode: []string{"egress"}, Cluster: "c"},
@@ -103,14 +129,13 @@ recipe: {
 		{
 			host: "_"
 			intercept: {
-				mode:        ["egress", "env"]
-				targetless:  true
-				cluster:     "staging"
-				namespace:   "checkout"
-				command:     "npm test"
-				udp:         true
-				env_include: ["DATABASE_URL"]
-				output:      "intercept_result"
+				mode:       ["egress"]
+				targetless: true
+				cluster:    "staging"
+				namespace:  "checkout"
+				command:    "npm test"
+				udp:        true
+				output:     "intercept_result"
 			}
 		},
 	]
@@ -137,11 +162,8 @@ recipe: {
 	if ic.Command != "npm test" || !ic.UDP {
 		t.Errorf("command/udp wrong: %+v", ic)
 	}
-	if len(ic.Mode) != 2 || ic.Mode[0] != "egress" || ic.Mode[1] != "env" {
+	if len(ic.Mode) != 1 || ic.Mode[0] != "egress" {
 		t.Errorf("mode wrong: %v", ic.Mode)
-	}
-	if len(ic.EnvInclude) != 1 || ic.EnvInclude[0] != "DATABASE_URL" {
-		t.Errorf("env_include wrong: %v", ic.EnvInclude)
 	}
 	if ic.Output != "intercept_result" {
 		t.Errorf("output wrong: %q", ic.Output)

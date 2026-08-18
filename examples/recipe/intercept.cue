@@ -1,9 +1,10 @@
 // Kubernetes interception, targetless: an `intercept` step gives a *local*
-// command/script egress (and, here, environment overlay) through an
-// in-cluster agent, with no target pod and no SSH access to any host. A
-// follow-up step reuses the same session via `session_step` instead of
-// paying the deploy cost again. See website/docs/intercept.md and
-// website/docs/cue-recipes.md#intercept-steps.
+// command/script egress through an in-cluster agent, with no target pod and
+// no SSH access to any host. A targetless session is egress-only (env and
+// files both need a target pod, which v1 does not support — see
+// website/docs/intercept.md's targetless note). A follow-up step reuses the
+// same session via `session_step` instead of paying the deploy cost again.
+// See website/docs/intercept.md and website/docs/cue-recipes.md#intercept-steps.
 //
 //   honey cue-validate examples/recipe/intercept.cue
 //   honey cue-exec examples/recipe/intercept.cue
@@ -17,8 +18,9 @@
 //   `type: "graph"`. The reusing step then auto-orders after the
 //   establishing step; no `depends` is written by hand.
 // - The establishing step sets `targetless: true` plus `cluster` and
-//   `namespace`; `mode` selects which of egress/env/files the session
-//   carries. A `session_step` step must NOT repeat
+//   `namespace`; `mode` is optional and, if set, must be `["egress"]` (the
+//   only mode a targetless session supports — it defaults to egress when
+//   omitted). A `session_step` step must NOT repeat
 //   `mode`/`targetless`/`cluster`/`namespace`/`udp`/`env_include`/
 //   `env_exclude` — those belong on the establishing step only.
 // - `failed_when: "exit_code != 0"` treats the command's numeric exit code
@@ -33,7 +35,7 @@ recipe: {
 			id:   "cluster"
 			host: "_"
 			intercept: {
-				mode:       ["egress", "env"]
+				mode:       ["egress"]
 				targetless: true
 				cluster:    "staging"
 				namespace:  "checkout"

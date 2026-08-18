@@ -23,8 +23,8 @@ func TestRecipeInterceptCoordinator_registerLookupCount(t *testing.T) {
 
 	live1 := &fakeInterceptLive{}
 	live2 := &fakeInterceptLive{}
-	coord.Register("s1", live1)
-	coord.Register("s2", live2)
+	require.NoError(t, coord.Register("s1", live1, 0))
+	require.NoError(t, coord.Register("s2", live2, 0))
 	assert.Equal(t, 2, coord.Count())
 
 	got, ok := coord.Lookup("s1")
@@ -45,9 +45,9 @@ func TestRecipeInterceptCoordinator_closeExactlyOnceReverseOrder(t *testing.T) {
 	live1 := &fakeInterceptLive{name: "a", log: log}
 	live2 := &fakeInterceptLive{name: "b", log: log}
 	live3 := &fakeInterceptLive{name: "c", log: log}
-	coord.Register("a", live1)
-	coord.Register("b", live2)
-	coord.Register("c", live3)
+	require.NoError(t, coord.Register("a", live1, 0))
+	require.NoError(t, coord.Register("b", live2, 0))
+	require.NoError(t, coord.Register("c", live3, 0))
 
 	coord.Close()
 	assert.Equal(t, []string{"c", "b", "a"}, log.snapshot(), "Close must tear sessions down in reverse registration order")
@@ -75,7 +75,7 @@ func TestRecipeInterceptCoordinator_registerAfterCloseClosesImmediately(t *testi
 	coord.Close()
 
 	late := &fakeInterceptLive{}
-	coord.Register("late", late)
+	require.NoError(t, coord.Register("late", late, 0))
 
 	assert.Equal(t, []string{interceptCoordCloseReason}, late.closeReasons())
 	assert.Equal(t, 0, coord.Count())
@@ -98,6 +98,31 @@ func TestRecipeInterceptCoordinator_nilSafe(t *testing.T) {
 	assert.NotPanics(t, func() { coord.Close() })
 
 	live := &fakeInterceptLive{}
-	assert.NotPanics(t, func() { coord.Register("x", live) })
+	assert.NotPanics(t, func() { _ = coord.Register("x", live, 0) })
 	assert.Equal(t, []string{interceptCoordCloseReason}, live.closeReasons())
+}
+
+// TestRecipeInterceptCoordinator_registerMaxSessionsCap proves Register
+// enforces max_sessions atomically: once the coordinator holds max sessions,
+// a further Register is rejected (and does not add the session), while a
+// max of 0 (disabled) never rejects.
+func TestRecipeInterceptCoordinator_registerMaxSessionsCap(t *testing.T) {
+	defer goleak.VerifyNone(t, interceptGoleakOpts()...)
+
+	coord := NewRecipeInterceptCoordinator()
+	defer coord.Close()
+
+	require.NoError(t, coord.Register("s1", &fakeInterceptLive{}, 2))
+	require.NoError(t, coord.Register("s2", &fakeInterceptLive{}, 2))
+	assert.Equal(t, 2, coord.Count())
+
+	rejected := &fakeInterceptLive{}
+	err := coord.Register("s3", rejected, 2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_sessions")
+	assert.Equal(t, 2, coord.Count(), "a rejected Register must not add the session")
+	assert.Empty(t, rejected.closeReasons(), "Register itself must not close a rejected live; that is the caller's job")
+
+	require.NoError(t, coord.Register("s4", &fakeInterceptLive{}, 0), "max <= 0 disables the cap")
+	assert.Equal(t, 3, coord.Count())
 }

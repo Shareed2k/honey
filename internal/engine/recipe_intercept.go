@@ -1,6 +1,9 @@
 package engine
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // interceptCoordCloseReason is the audit-visible stop reason recorded for
 // every session still registered when the coordinator tears down at run end
@@ -45,22 +48,35 @@ func (c *RecipeInterceptCoordinator) Count() int {
 // closed immediately instead of being retained, so a race with run teardown
 // never leaves an agent deployed past the point the run believes everything
 // is torn down.
-func (c *RecipeInterceptCoordinator) Register(stepID string, live interceptLive) {
+//
+// maxSessions enforces the config's max_sessions cap atomically with
+// registration: when maxSessions > 0 and the coordinator already holds
+// maxSessions sessions, Register rejects live (closing neither it nor any
+// existing session) and returns an error instead of adding it — the caller
+// closes the just-established live. This is what makes the cap race-safe
+// across a graph wave's concurrent establishing steps: a
+// Count()-then-Register check from the caller would be a check-then-act
+// race, since two steps could both pass Count() before either registers.
+func (c *RecipeInterceptCoordinator) Register(stepID string, live interceptLive, maxSessions int) error {
 	if live == nil {
-		return
+		return nil
 	}
 	if c == nil {
 		live.Close(interceptCoordCloseReason)
-		return
+		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		live.Close(interceptCoordCloseReason)
-		return
+		return nil
+	}
+	if maxSessions > 0 && len(c.sessions) >= maxSessions {
+		return fmt.Errorf("intercept: max_sessions (%d) reached", maxSessions)
 	}
 	c.sessions[stepID] = live
 	c.order = append(c.order, stepID)
+	return nil
 }
 
 // Lookup returns the live session registered under stepID, for a

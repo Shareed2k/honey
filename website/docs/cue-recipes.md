@@ -56,7 +56,7 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 | `summarize` | Local (operator) | `host: "_"`; terminal step only — must be last, at most one per recipe, nothing may depend on it; summarizes the whole run/ancestor chain; needs `OPENAI_API_KEY` when executing |
 | `ai` | Local (operator) | `host: "_"`; a single LLM completion, usable anywhere (any position, any number of times, other steps may depend on its output) — like `template:` but calling an LLM instead of rendering a template; optional `templated`; needs `OPENAI_API_KEY` when executing |
 | `recipe` | Local (operator) | Invoke a sub-recipe — [Sub-recipes](#sub-recipes) |
-| `intercept` | Local (operator) | Targetless Kubernetes interception: runs a local `command`/`script` whose egress/env/files route through an in-cluster agent; reuse across steps via `session_step` — [Intercept steps](#intercept-steps) |
+| `intercept` | Local (operator) | Targetless Kubernetes interception: runs a local `command`/`script` whose network egress routes through an in-cluster agent; reuse across steps via `session_step` — [Intercept steps](#intercept-steps) |
 
 Optional **`recipe.defaults`**: `run_as`, `env`, `secrets`, `kv_tunnel`, `max_parallel`, `ssh_port`, `ssh_private_key`, `k8s_debug_image`.
 
@@ -833,13 +833,16 @@ The postgres WASM plugin can rewrite a sealed DSN to the tunnel endpoint via **`
 ## Intercept steps
 
 An **`intercept:`** step runs a local `command`/`script` — on the **operator**,
-not over SSH — with its network egress, environment, and/or file reads
-routed through an agent honey deploys into a Kubernetes cluster. It is the
-recipe-step form of [`honey intercept`](./intercept.md): a **targetless**
-session, meaning honey deploys its own standalone agent Pod rather than
-attaching to an existing workload, so there is no `--container`/`--target`
-and no incoming-traffic mode — only egress, environment overlay, and file
-access, same as [Targetless (no target pod)](./intercept.md#targetless-no-target-pod).
+not over SSH — with its network egress routed through an agent honey deploys
+into a Kubernetes cluster. It is the recipe-step form of
+[`honey intercept`](./intercept.md): a **targetless** session, meaning honey
+deploys its own standalone agent Pod rather than attaching to an existing
+workload, so there is no `--container`/`--target`, no incoming-traffic mode,
+and no environment overlay or file access — targetless is **egress only**,
+same as [Targetless (no target pod)](./intercept.md#targetless-no-target-pod).
+Environment overlay and file redirection both need a target pod's namespaces
+to attach to, which a standalone agent doesn't have; they are reserved for a
+future targeted recipe step.
 
 ```cue
 {
@@ -858,13 +861,13 @@ access, same as [Targetless (no target pod)](./intercept.md#targetless-no-target
 
 | Field | Meaning |
 |-------|---------|
-| `mode` | Any of `egress`, `env`, `files` (repeatable) — what the session routes through the agent. |
+| `mode` | Optional; if set, must be `["egress"]` — the only mode a targetless (v1) session supports. Omit it and it defaults to egress. `env`/`files` are rejected: both need a target pod, reserved for a future targeted step. |
 | `cluster` | Target cluster name (gating, audit, and port-forwarding), same as `honey intercept --cluster`. |
 | `namespace` | Namespace the standalone agent Pod is deployed into. |
 | `targetless` | Must be `true` — this is the only form of interception a recipe step supports (see [Intercept limitations](#intercept-limitations) below). |
 | `command` / `script` | Exactly one, run under the session via `/bin/sh -c`. |
 | `udp` | Also tunnel UDP traffic alongside TCP. |
-| `env_include` / `env_exclude` | With `env` mode, narrow the overlaid environment names (mutually exclusive). |
+| `env_include` / `env_exclude` | Not usable on a targetless step: they narrow an `env`-mode overlay, and `env` mode needs a target pod. Rejected at validation. |
 | `session_step` | Reuse an already-established session instead of deploying a new agent — see below. |
 | `output` | Capture the command's combined stdout+stderr under this name for `env_from`. |
 
