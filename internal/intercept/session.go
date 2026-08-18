@@ -309,6 +309,12 @@ func (s *Session) Establish(ctx context.Context) (live *Live, err error) {
 // per-run create/remove of the socket file. The runner's error is returned
 // verbatim (wrapped only with %w where wrapped at all) so callers can
 // errors.As into it, for example to recover an *exec.ExitError.
+//
+// Run is sequential-only: it does not guard against concurrent invocation, so
+// callers must not overlap Run calls on one Live — always wait for one call
+// to return before starting the next (a per-Live relay socket, not a lock,
+// is what keeps sequential calls from colliding; a concurrent pair would
+// race on l.socketSeq's ordering guarantee and on the shared l.cfg copy).
 func (l *Live) Run(ctx context.Context, runner LocalRunner, command []string) error {
 	cfg := l.cfg
 	cfg.Socket = l.socketPath()
