@@ -1279,6 +1279,8 @@ github.com/shareed2k/mogate v0.1.7 h1:EUuVunbdZATP8yskYJRntxi3wdeeHyC4s2qo5FlbQn
 github.com/shareed2k/mogate v0.1.7/go.mod h1:c3WIAVagtXuiz4G6ofZMA/Jp+HZpFUdrnGWOW/baxAI=
 github.com/shareed2k/mogate v0.1.8 h1:9RKTEUNiVqiH8geSOqEnCC5xL0S8hjt2ERa1DYd6os8=
 github.com/shareed2k/mogate v0.1.8/go.mod h1:Ej3d03aIcjumvu/XXQPcuuGjeWwPKDIM10zF4Ejpsnc=
+github.com/shareed2k/mogate v0.1.9 h1:KiYT/BuaZMWuwUPWdzcf5Pwt2a0qamEEDvJqeZsOBWk=
+github.com/shareed2k/mogate v0.1.9/go.mod h1:Ej3d03aIcjumvu/XXQPcuuGjeWwPKDIM10zF4Ejpsnc=
 github.com/shirou/gopsutil/v4 v4.26.7 h1:IXzpHz/dkMRYAhKkOXr1HB6SuzWU3eoyyeWe7g3bNZc=
 github.com/shirou/gopsutil/v4 v4.26.7/go.mod h1:5O9FjBiXoTDFatIWjZZosqj4pV0DRtLx598xGbBehzM=
 github.com/shopspring/decimal v1.4.0 h1:bxl37RwXBklmTi0C79JfXCEBD1cqqHt0bbgBAGFp81k=
