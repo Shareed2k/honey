@@ -232,6 +232,19 @@ func TestBuildStepGraph_interceptSessionStepUnknown(t *testing.T) {
 	}
 }
 
+func TestBuildStepGraph_interceptSessionStepSelf(t *testing.T) {
+	t.Parallel()
+	steps := wrapAll(
+		&InterceptStep{StepBase: StepBase{ID: "establish", Host: "*"}, Intercept: &RecipeStepIntercept{
+			SessionStep: "establish", Script: "run-suite.sh",
+		}},
+	)
+	_, err := BuildStepGraph(steps)
+	if err == nil || !strings.Contains(err.Error(), "must not reference itself") {
+		t.Fatalf("expected self-reference error, got %v", err)
+	}
+}
+
 func containsInt(haystack []int, needle int) bool {
 	for _, v := range haystack {
 		if v == needle {
