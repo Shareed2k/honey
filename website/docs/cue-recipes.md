@@ -4,7 +4,7 @@ title: CUE Recipes
 slug: /cue-recipes
 ---
 
-Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each step targets hosts from your current search and performs **exactly one** action: `command`, `put`, `get`, `script`, `agent_transfer`, `summarize`, `ai`, `plugin` (WASM — see [Plugin development](./plugins-development.md)), `tunnel` (operator-side port forward), or `k8s` (Kubernetes API — see [Kubernetes steps](#kubernetes-steps)).
+Honey can run multi-step playbooks defined in [CUE](https://cuelang.org/). Each step targets hosts from your current search and performs **exactly one** action: `command`, `put`, `get`, `script`, `agent_transfer`, `summarize`, `ai`, `plugin` (WASM — see [Plugin development](./plugins-development.md)), `tunnel` (operator-side port forward), `k8s` (Kubernetes API — see [Kubernetes steps](#kubernetes-steps)), or `intercept` (run a local command through an in-cluster agent — see [Intercept steps](#intercept-steps)).
 
 Use **`honey cue-validate`** to check a file, **`honey cue-exec`** to dry-run or execute (same host resolution as `honey search`). From the search TUI, press **r** (append `!` to the path to execute). The [Web UI](./web-ui.md) Recipes tab runs the same engine.
 
@@ -56,6 +56,7 @@ For **`agent_transfer`**, `host` is the **source**; `agent_transfer.dest_host` s
 | `summarize` | Local (operator) | `host: "_"`; terminal step only — must be last, at most one per recipe, nothing may depend on it; summarizes the whole run/ancestor chain; needs `OPENAI_API_KEY` when executing |
 | `ai` | Local (operator) | `host: "_"`; a single LLM completion, usable anywhere (any position, any number of times, other steps may depend on its output) — like `template:` but calling an LLM instead of rendering a template; optional `templated`; needs `OPENAI_API_KEY` when executing |
 | `recipe` | Local (operator) | Invoke a sub-recipe — [Sub-recipes](#sub-recipes) |
+| `intercept` | Local (operator) | Targetless Kubernetes interception: runs a local `command`/`script` whose egress/env/files route through an in-cluster agent; reuse across steps via `session_step` — [Intercept steps](#intercept-steps) |
 
 Optional **`recipe.defaults`**: `run_as`, `env`, `secrets`, `kv_tunnel`, `max_parallel`, `ssh_port`, `ssh_private_key`, `k8s_debug_image`.
 
@@ -828,6 +829,77 @@ Note: `TUNNEL_PORT` is the **operator** listen port — useful for local `templa
 ### Postgres integration
 
 The postgres WASM plugin can rewrite a sealed DSN to the tunnel endpoint via **`tunnel_step`** (see [Plugin development — Postgres](./plugins-development.md#postgres_query--postgres_exec)). Examples: [`postgres_tunnel_demo.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_tunnel_demo.cue), [`postgres_tunnel_ssh_config.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/postgres_tunnel_ssh_config.cue).
+
+## Intercept steps
+
+An **`intercept:`** step runs a local `command`/`script` — on the **operator**,
+not over SSH — with its network egress, environment, and/or file reads
+routed through an agent honey deploys into a Kubernetes cluster. It is the
+recipe-step form of [`honey intercept`](./intercept.md): a **targetless**
+session, meaning honey deploys its own standalone agent Pod rather than
+attaching to an existing workload, so there is no `--container`/`--target`
+and no incoming-traffic mode — only egress, environment overlay, and file
+access, same as [Targetless (no target pod)](./intercept.md#targetless-no-target-pod).
+
+```cue
+{
+  id:   "cluster"
+  host: "_"
+  intercept: {
+    mode:       ["egress"]
+    targetless: true
+    cluster:    "staging"
+    namespace:  "checkout"
+    command:    "curl -sf http://payments.checkout.svc.cluster.local:8080/healthz"
+  }
+  failed_when: "exit_code != 0"
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | Any of `egress`, `env`, `files` (repeatable) — what the session routes through the agent. |
+| `cluster` | Target cluster name (gating, audit, and port-forwarding), same as `honey intercept --cluster`. |
+| `namespace` | Namespace the standalone agent Pod is deployed into. |
+| `targetless` | Must be `true` — this is the only form of interception a recipe step supports (see [Intercept limitations](#intercept-limitations) below). |
+| `command` / `script` | Exactly one, run under the session via `/bin/sh -c`. |
+| `udp` | Also tunnel UDP traffic alongside TCP. |
+| `env_include` / `env_exclude` | With `env` mode, narrow the overlaid environment names (mutually exclusive). |
+| `session_step` | Reuse an already-established session instead of deploying a new agent — see below. |
+| `output` | Capture the command's combined stdout+stderr under this name for `env_from`. |
+
+**Establishing vs. reusing a session.** The first `intercept` step on a
+session sets `mode`, `targetless`, `cluster`, and `namespace` (the
+"establishing" step) and deploys the agent. A later step points
+**`session_step`** at that step's `id` to reuse the same agent instead of
+paying the deploy cost again; it must **not** repeat `mode`, `targetless`,
+`cluster`, `namespace`, `udp`, `env_include`, or `env_exclude` — those stay
+on the establishing step only. In **graph mode** (`type: "graph"`), a
+`session_step` reference auto-orders the reusing step after the establishing
+one, so no manual `depends` is needed. Reuse across steps requires a stable
+`id`, which linear recipes only allow on steps that also set `when` — so a
+recipe using `session_step` in practice needs `type: "graph"`. Every
+established session is closed when the run ends, whether or not a later step
+reused it.
+
+**Exit code.** Like `command`/`script`, the run's exit code is exposed as
+`exit_code` for **`failed_when`**/**`changed_when`** (and
+`steps['id'].exit_code` in `when`/CEL) — see [CEL variables and
+functions](#cel-variables-and-functions).
+
+### Intercept limitations
+
+- Only the `command`/`script` you name on the `intercept` step itself is
+  injected. The engine's other in-process steps — **`postgres`**, **`http`**,
+  **`opensearch`** — make their own connections directly from the operator
+  process and cannot be routed through an `intercept` session; use a
+  [`tunnel`](#tunnel-steps) step for their in-cluster access instead.
+- `intercept` steps are local-only, like `summarize`/`ai`: use `host: "_"`.
+- See [Local Interception](./intercept.md) for the full set of modes, the
+  `intercept` OPA gate, and audit events — all of it applies the same way
+  whether the session started from `honey intercept` or from a recipe step.
+
+Example: [`intercept.cue`](https://github.com/shareed2k/honey/blob/main/examples/recipe/intercept.cue).
 
 ## Recipe KV tunnel
 

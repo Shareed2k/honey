@@ -832,3 +832,11 @@ WebSocket, so the session can outlive any one browser tab:
   extracted injector removed) when `<command>` exits or the session is
   interrupted — there is no persistent or background interception left
   running after `honey intercept` returns.
+
+## From a CUE recipe
+
+The same interception is also available as an `intercept` step in a
+[CUE recipe](./cue-recipes.md), targetless, so a playbook can give a local
+`command`/`script` egress and environment access into a cluster without the
+CLI or a terminal session — see [CUE Recipes — Intercept
+steps](./cue-recipes.md#intercept-steps).

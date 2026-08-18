@@ -313,7 +313,7 @@ func TestRunIntercept_Targetless(t *testing.T) {
 		cmd := newInterceptCmd()
 		// A cluster name absent from k8s_proxy.clusters forces a fast,
 		// deterministic failure past the targetless/mode validation (inside
-		// interceptRestConfig, before any real cluster or policy work), so this
+		// interceptwire.RestConfigForCluster, before any real cluster or policy work), so this
 		// assertion doesn't depend on the host's kubeconfig or network.
 		err := runIntercept(cmd, nil, enabled, interceptFlags{namespace: "apps", cluster: "does-not-exist", modes: []string{"egress"}})
 		require.Error(t, err)
