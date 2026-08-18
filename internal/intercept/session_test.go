@@ -121,6 +121,38 @@ func (f *fakeRunner) wasCalled() bool {
 	return f.called
 }
 
+// sequentialRunner stands in for the data-plane local session across several
+// Live.Run calls: unlike fakeRunner it returns immediately instead of
+// blocking on ctx, so a test can drive multiple sequential runs on one Live
+// without a cancel-and-wait dance after each one.
+type sequentialRunner struct {
+	mu    sync.Mutex
+	calls []local.Config
+	cmds  [][]string
+	log   *eventLog
+}
+
+func (r *sequentialRunner) Run(_ context.Context, cfg local.Config, cmd []string) error {
+	r.mu.Lock()
+	r.calls = append(r.calls, cfg)
+	r.cmds = append(r.cmds, cmd)
+	r.mu.Unlock()
+	r.log.record("run")
+	return nil
+}
+
+func (r *sequentialRunner) invocations() []local.Config {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]local.Config(nil), r.calls...)
+}
+
+func (r *sequentialRunner) commands() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]string(nil), r.cmds...)
+}
+
 // loggingExecer records that the token was delivered and drains the token from
 // stdin (without retaining it).
 type loggingExecer struct {
@@ -335,6 +367,19 @@ func waitForEvent(t *testing.T, log *eventLog, event string) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("event %q not observed within %s; log=%v", event, eventWaitTimeout, log.snapshot())
+}
+
+// countEvents returns how many times want appears in events, so a test can
+// assert a step ran exactly once (deploy, forward) rather than merely "at
+// least once".
+func countEvents(events []string, want string) int {
+	n := 0
+	for _, e := range events {
+		if e == want {
+			n++
+		}
+	}
+	return n
 }
 
 func indexOf(events []string, want string) int {
@@ -658,4 +703,120 @@ func TestSession_targetless_teardownOnRunnerError(t *testing.T) {
 	require.Len(t, h.sink.events, 2)
 	assert.Equal(t, actionInterceptStop, h.sink.events[1].Action)
 	assert.Equal(t, "runner boom", h.sink.events[1].Extra["reason"])
+}
+
+// TestEstablish_deploysWithoutRunning proves Establish does everything up to
+// (and including) opening the port-forwards and delivering the token, but
+// never invokes the LocalRunner — running a command is Live.Run's job, not
+// Establish's. It also proves the returned Live is usable: Close tears down
+// what Establish built and records the stop audit event.
+func TestEstablish_deploysWithoutRunning(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	h := newHarness(t, true, nil)
+	stopFlip := startEphemeralFlipper(h.cs, h.opts.Namespace, h.opts.Pod, h.log)
+	defer stopFlip()
+
+	live, err := New(h.deps, h.opts).Establish(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, live)
+
+	// Ordered deploy: ephemeral container -> token -> both port-forwards.
+	assertOrder(t, h.log.snapshot(),
+		"ephemeral-applied", "token-delivered", "forward:30000", "forward:30001")
+	assert.False(t, h.runner.wasCalled(), "Establish must never invoke the LocalRunner")
+	assert.NotContains(t, h.log.snapshot(), "run")
+
+	// Only the start audit event has fired; the stop event is Close's job.
+	require.Len(t, h.sink.events, 1)
+	assert.Equal(t, actionInterceptStart, h.sink.events[0].Action)
+
+	live.Close("test-teardown")
+
+	stopped := h.fwd.stoppedPorts()
+	assert.Contains(t, stopped, agentControlRemotePort)
+	assert.Contains(t, stopped, agentEgressRemotePort)
+
+	require.Len(t, h.sink.events, 2)
+	assert.Equal(t, actionInterceptStop, h.sink.events[1].Action)
+	assert.Equal(t, "test-teardown", h.sink.events[1].Extra["reason"])
+}
+
+// TestLive_runReusesEstablishedAgent proves the whole point of the split:
+// two sequential Live.Run calls on one Live each invoke the LocalRunner, but
+// the agent is deployed and its ports forwarded exactly ONCE — a later
+// CUE-recipe intercept step depends on this reuse to run several commands
+// through a single deployed agent instead of redeploying per command.
+func TestLive_runReusesEstablishedAgent(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	h := newHarness(t, true, nil)
+	stopFlip := startEphemeralFlipper(h.cs, h.opts.Namespace, h.opts.Pod, h.log)
+	defer stopFlip()
+
+	live, err := New(h.deps, h.opts).Establish(context.Background())
+	require.NoError(t, err)
+	defer live.Close("test-teardown")
+
+	runner := &sequentialRunner{log: h.log}
+	require.NoError(t, live.Run(context.Background(), runner, []string{"echo", "one"}))
+	require.NoError(t, live.Run(context.Background(), runner, []string{"echo", "two"}))
+
+	// The runner ran twice, once per command, with each command threaded
+	// through verbatim.
+	require.Equal(t, [][]string{{"echo", "one"}, {"echo", "two"}}, runner.commands())
+
+	// Each call got a fresh relay socket so serial reuse never collides with
+	// mogate's per-run create+remove of the socket file.
+	calls := runner.invocations()
+	require.Len(t, calls, 2)
+	assert.NotEqual(t, calls[0].Socket, calls[1].Socket, "each Live.Run call must get its own relay socket")
+	assert.Equal(t, RelaySocketName, filepath.Base(calls[0].Socket), "the first call keeps the well-known relay socket name")
+
+	// Deploy and both port-forwards happened exactly once, regardless of how
+	// many commands ran through the reused agent.
+	assert.Equal(t, 1, countEvents(h.log.snapshot(), "ephemeral-applied"))
+	assert.Equal(t, 1, countEvents(h.log.snapshot(), "token-delivered"))
+	assert.Equal(t, 1, countEvents(h.log.snapshot(), "forward:30000"))
+	assert.Equal(t, 1, countEvents(h.log.snapshot(), "forward:30001"))
+	assert.Equal(t, 2, countEvents(h.log.snapshot(), "run"))
+}
+
+// TestLive_closeIsIdempotent proves Close is safe to call more than once —
+// the back-compat Run's defer can race an Establish-error path that already
+// closed, and a future multi-command caller may defer Close alongside its
+// own error handling. A second Close must not stop the port-forwards or
+// record the stop audit event again.
+func TestLive_closeIsIdempotent(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	h := newHarness(t, true, nil)
+	stopFlip := startEphemeralFlipper(h.cs, h.opts.Namespace, h.opts.Pod, h.log)
+	defer stopFlip()
+
+	live, err := New(h.deps, h.opts).Establish(context.Background())
+	require.NoError(t, err)
+
+	live.Close("first")
+	live.Close("second")
+
+	stoppedControl, stoppedEgress := 0, 0
+	for _, p := range h.fwd.stoppedPorts() {
+		switch p {
+		case agentControlRemotePort:
+			stoppedControl++
+		case agentEgressRemotePort:
+			stoppedEgress++
+		}
+	}
+	assert.Equal(t, 1, stoppedControl, "control port-forward must stop exactly once across two Close calls")
+	assert.Equal(t, 1, stoppedEgress, "egress port-forward must stop exactly once across two Close calls")
+
+	_, statErr := os.Stat(live.dir)
+	assert.Truef(t, os.IsNotExist(statErr), "session dir %q must be removed exactly once", live.dir)
+
+	// Only the first Close's reason is recorded; the second call is a no-op.
+	require.Len(t, h.sink.events, 2)
+	assert.Equal(t, actionInterceptStop, h.sink.events[1].Action)
+	assert.Equal(t, "first", h.sink.events[1].Extra["reason"])
 }
