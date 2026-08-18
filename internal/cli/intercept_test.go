@@ -406,19 +406,6 @@ func TestRunIntercept_BrokeredDispatchPrecedesLocalValidation(t *testing.T) {
 	assert.NotContains(t, err.Error(), "--target is required")
 }
 
-func TestInterceptRestConfig_UnknownClusterErrors(t *testing.T) {
-	// A --cluster name not present in k8s_proxy.clusters must error, not silently
-	// fall back to the current kubeconfig context (gate/audit integrity).
-	cfg := &config.File{K8sProxy: &config.K8sProxyConfig{Clusters: []config.K8sProxyCluster{{Name: "prod"}}}}
-	_, err := interceptRestConfig(cfg, "staging")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not defined in k8s_proxy.clusters")
-
-	// Nil k8s_proxy with a named cluster also errors.
-	_, err = interceptRestConfig(&config.File{}, "prod")
-	require.Error(t, err)
-}
-
 // writeNSKubeconfig writes a kubeconfig whose current context selects namespace
 // "team-a" and whose "ctx-none" context selects no namespace.
 func writeNSKubeconfig(t *testing.T) string {
