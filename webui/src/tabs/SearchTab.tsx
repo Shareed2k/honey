@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Button, Card, Checkbox, Input, Modal, Popover, Progress, Segmented, Select, Space, Table, Tag, Typography,
+  Alert, Badge, Button, Card, Checkbox, Input, Modal, Popover, Progress, Segmented, Select, Space, Table, Tag, Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { apiPost } from '../api/core';
@@ -691,6 +691,17 @@ export function SearchTab() {
     window.setTimeout(refreshInterceptSessions, 1500);
   };
 
+  // reattachIntercept reopens a terminal for a session that is already running
+  // on the pod (survived a refresh, or was started from another tab). No modal:
+  // the modes are fixed for the live session, so the server reattaches to the
+  // same shell + scrollback by pod, ignoring a fresh hello's mode choices.
+  const reattachIntercept = (rec: HostRecord, live: InterceptSession) => {
+    const id = crypto.randomUUID();
+    sessionStorage.setItem(`honey_term_${id}`, JSON.stringify(rec));
+    const cfg: TerminalSessionConfig = { id, record: rec, pve: 'serial', intercept: { modes: live.modes && live.modes.length > 0 ? live.modes : ['egress'], udp: false } };
+    handleOpenTerminal(cfg);
+  };
+
   // ── exec table columns ────────────────────────────────────────────────────
 
   const execColumns: ColumnsType<HostExecResultRow> = [
@@ -1053,15 +1064,28 @@ export function SearchTab() {
                   {vncTerms.length > 0 ? 'VNC (Open)' : 'VNC'}
                 </Button>
               ) : null}
-              {canIntercept(rec) && interceptEnabled ? (
-                <Button
-                  size="small"
-                  type={interceptTerms.length > 0 ? 'primary' : 'default'}
-                  onClick={() => setInterceptTarget(rec)}
-                >
-                  {interceptTerms.length > 0 ? 'Intercept (Open)' : 'Intercept'}
-                </Button>
-              ) : null}
+              {canIntercept(rec) && interceptEnabled ? (() => {
+                const liveIntercept = interceptSessions.find((s) => s.record_key === recordKey(rec));
+                // A live session with no open tab (survived a refresh, or started
+                // elsewhere) → Reattach straight to it, no modal. An open tab, or
+                // no session → the original Intercept-modal path.
+                if (interceptTerms.length === 0 && liveIntercept) {
+                  return (
+                    <Button size="small" type="primary" ghost onClick={() => reattachIntercept(rec, liveIntercept)}>
+                      <Badge status="processing" /> Reattach
+                    </Button>
+                  );
+                }
+                return (
+                  <Button
+                    size="small"
+                    type={interceptTerms.length > 0 ? 'primary' : 'default'}
+                    onClick={() => setInterceptTarget(rec)}
+                  >
+                    {interceptTerms.length > 0 ? 'Intercept (Open)' : 'Intercept'}
+                  </Button>
+                );
+              })() : null}
               <Button size="small" onClick={() => openUploadModal(rec)}>
                 Upload
               </Button>

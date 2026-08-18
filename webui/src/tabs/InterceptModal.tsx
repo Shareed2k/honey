@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Button, Checkbox, Input, Modal, Space, Switch, Typography } from 'antd';
 import type { InterceptOptions } from '../api/intercept';
 import type { HostRecord } from '../HostPicker';
@@ -10,13 +10,22 @@ export type InterceptModalProps = {
   onLaunch: (cfg: InterceptOptions) => void;
 };
 
+function modeLabel(name: string, desc: string): ReactNode {
+  return (
+    <span>
+      {name}{' '}
+      <Typography.Text type="secondary" style={{ fontSize: '0.78rem' }}>— {desc}</Typography.Text>
+    </span>
+  );
+}
+
 // Incoming is intentionally absent: it forwards the pod's inbound traffic to a
 // local host:port, which the browser terminal has no way to specify -- it is a
 // CLI-only mode (honey intercept --mode incoming --target host:port).
-const MODE_OPTIONS: { label: string; value: string; disabled?: boolean }[] = [
-  { label: 'Egress', value: 'egress' },
-  { label: 'Files', value: 'files' },
-  { label: 'Env', value: 'env' },
+const MODE_OPTIONS: { label: ReactNode; value: string }[] = [
+  { value: 'egress', label: modeLabel('Egress', "the pod's network: cluster DNS and service IPs") },
+  { value: 'files', label: modeLabel('Files', "read the pod's filesystem") },
+  { value: 'env', label: modeLabel('Env', "the pod's environment variables") },
 ];
 
 const DEFAULT_MODES = ['egress'];
@@ -76,6 +85,7 @@ export function InterceptModal({ record, open, onClose, onLaunch }: InterceptMod
               options={MODE_OPTIONS}
               value={modes}
               onChange={(vals) => setModes(vals as string[])}
+              style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
             />
           </div>
           <div>
@@ -94,7 +104,15 @@ export function InterceptModal({ record, open, onClose, onLaunch }: InterceptMod
               onChange={(e) => setCommand(e.target.value)}
               placeholder={DEFAULT_COMMAND}
             />
+            <Typography.Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: '0.78rem' }}>
+              Runs on this machine; its network, files, and env come from the pod.
+            </Typography.Text>
           </div>
+          <Typography.Text type="secondary" style={{ fontSize: '0.78rem' }}>
+            The session survives a browser refresh — reattach from the pod row or the
+            intercepts list. It ends when you Stop it, close the terminal tab, or the
+            shell exits.
+          </Typography.Text>
         </Space>
       )}
     </Modal>
