@@ -21,7 +21,11 @@ const interceptMuxPrefix = "honey-int-"
 // and the subcommand verbs are fixed literals — the args are never
 // shell-interpreted (exec.Command runs no shell).
 var tmuxRun = func(args ...string) ([]byte, error) {
-	return exec.Command("tmux", args...).Output() // #nosec G204 -- fixed tmux verbs + names validated by validInterceptMuxName; no shell
+	// CombinedOutput (not Output) so a non-zero exit carries tmux's stderr
+	// message (e.g. "can't find session") into the returned error, instead of a
+	// bare "exit status 1". On success stderr is empty, so parsers that read the
+	// bytes as stdout are unaffected.
+	return exec.Command("tmux", args...).CombinedOutput() // #nosec G204 -- fixed tmux verbs + names validated by validInterceptMuxName; no shell
 }
 
 // tmuxOnPath reports whether tmux is available. The intercept resume path is
@@ -159,10 +163,27 @@ func interceptResumeStop(name string) error {
 	if !validInterceptMuxName(name) {
 		return fmt.Errorf("intercept: refusing to stop invalid session name %q", name)
 	}
-	if _, err := tmuxRun("kill-session", "-t", name); err != nil {
-		return fmt.Errorf("intercept: kill resume session: %w", err)
+	out, err := tmuxRun("kill-session", "-t", name)
+	if err == nil {
+		return nil
 	}
-	return nil
+	// kill-session exits non-zero when the session is already gone — which is the
+	// teardown goal (the pane exited on its own, or a prior stop already killed
+	// it), not a failure. Only a session that still exists after a failed kill is
+	// a real error worth surfacing.
+	if !tmuxHasInterceptSession(name) {
+		return nil
+	}
+	return fmt.Errorf("intercept: kill resume session %q: %w: %s", name, err, strings.TrimSpace(string(out)))
+}
+
+// tmuxHasInterceptSession reports whether a honey-int-* session is still live.
+func tmuxHasInterceptSession(name string) bool {
+	if !validInterceptMuxName(name) {
+		return false
+	}
+	_, err := tmuxRun("has-session", "-t", name)
+	return err == nil
 }
 
 // interceptResumeCloseTabKill returns the resume path's close_tab (×) teardown
