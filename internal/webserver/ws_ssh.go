@@ -218,7 +218,7 @@ var _ hostexec.InteractiveStreamer = sshFallbackStreamer{}
 
 // interactiveWSKind labels the local shell path for connection metrics.
 func interactiveWSKind(rec hosts.Record) string {
-	if rec.Provider == "k8s" && strings.EqualFold(rec.Meta["kind"], "pod") {
+	if rec.IsPod() {
 		return "k8s"
 	}
 	if rec.IsDocker() {
@@ -325,7 +325,7 @@ func newWebSessionRecorder(recordDir string, requestRecord bool, rec hosts.Recor
 	}
 	mode := "ssh"
 	switch {
-	case rec.Provider == "k8s" && strings.EqualFold(rec.Meta["kind"], "pod"):
+	case rec.IsPod():
 		mode = "k8s"
 	case rec.IsDocker():
 		mode = "docker"

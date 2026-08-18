@@ -16,6 +16,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/intercept"
 	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/meshnet"
@@ -139,6 +140,54 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Reuse the Broker's session store for the browser-interception registry so
+	// brokered and browser interceptions share ONE registry (the same-pod guard
+	// then sees both). nil when no Broker: the web server owns an in-memory one.
+	var interceptStore intercept.SessionStore
+	if interceptBroker != nil {
+		interceptStore = interceptBroker.Store()
+	}
+
+	// Browser interception terminal (GET /ws/intercept): a DIRECT intercept
+	// Session run on the honey-web host, wired with the same enforcer and audit
+	// sink the broker uses, keyed off the pod record itself rather than a
+	// --cluster flag: the web UI hands over the k8s record it already searched.
+	// It enables on intercept.enabled alone — the target cluster is resolved from
+	// the record (interceptWebRestConfig reads rec.Meta's kube_context/kubeconfig),
+	// so k8s_proxy.clusters is only an optional shortcut for the CLI broker and is
+	// NOT required for the web terminal.
+	interceptEnabled := cfg != nil && cfg.Intercept != nil && cfg.Intercept.Enabled
+	var interceptSessionFactory func(hosts.Record, intercept.Options, intercept.LocalRunner) (*intercept.Session, error)
+	if interceptEnabled {
+		// Gate the browser terminal with the intercept policy (intercept.policy_dir,
+		// embedded default-allow when unset) — the SAME enforcer the CLI
+		// `honey intercept` builds. Reusing the web-auth enforcer denied every
+		// interception whenever no web policy_dir was set (a nil enforcer fails the
+		// gate closed), even though the identical CLI path is allowed.
+		enforcer, perr := policy.New(cmd.Context(), cfg.Intercept.PolicyDir, nil)
+		if perr != nil {
+			return fmt.Errorf("intercept: load policy: %w", perr)
+		}
+		interceptSessionFactory = func(rec hosts.Record, opts intercept.Options, runner intercept.LocalRunner) (*intercept.Session, error) {
+			restCfg, rerr := interceptWebRestConfig(cfg, rec)
+			if rerr != nil {
+				return nil, rerr
+			}
+			clientset, cerr := kubernetes.NewForConfig(restCfg)
+			if cerr != nil {
+				return nil, fmt.Errorf("intercept: build kubernetes client: %w", cerr)
+			}
+			deps := intercept.Deps{
+				PortForwarder: &interceptPortForwarder{cfg: restCfg},
+				PodExecer:     &interceptPodExecer{cfg: restCfg, clientset: clientset, namespace: opts.Namespace, pod: opts.Pod},
+				K8sClient:     clientset,
+				Enforcer:      enforcer,
+				Sink:          auditSink,
+				LocalRunner:   runner,
+			}
+			return intercept.New(deps, opts), nil
+		}
+	}
 
 	// Non-secret OIDC values the login command echoes back to clients. Kept out
 	// of the webserver package so it needn't import config for these strings.
@@ -152,39 +201,41 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	}
 
 	srv, err := webserver.NewServer(webserver.Options{
-		ListenAddr:           webListen,
-		Token:                token,
-		DisableAuth:          disableAuth,
-		ConfigPath:           cfgPath,
-		Config:               cfg,
-		ExecRegistry:         buildHostExecRegistry(),
-		SearchRegistry:       GetSearchRegistry(),
-		RecordDir:            recordDir,
-		LocalFilesRoot:       webFilesRoot,
-		AgentBinaryPath:      webAgentBin,
-		AgentBuildCacheDir:   webAgentBuildCacheDir,
-		Version:              BuildVersion(),
-		Commit:               BuildCommit(),
-		Date:                 BuildDate(),
-		MetricsListenAddr:    strings.TrimSpace(webMetricsListen),
-		Metrics:              prom,
-		NoCache:              flagNoCache,
-		Refresh:              flagRefresh,
-		AllowLogsCommand:     webAllowLogsCommand,
-		OnReady:              onReady,
-		Enforcer:             authCfg.enforcer,
-		Guardrails:           guardrailRules,
-		JWTPubKey:            authCfg.jwtPubKey,
-		TrustedProxyNets:     authCfg.trustedNets,
-		WebAuthn:             authCfg.webauthn,
-		EnableMesh:           meshnet.Enabled(),
-		AuditSink:            auditSink,
-		K8sProxy:             k8sProxyCfg,
-		OIDCVerifier:         authCfg.oidcVerifier,
-		OIDCPublic:           oidcPublic,
-		DeviceCertTTL:        cfg.DeviceCertTTLValue(),
-		InterceptBroker:      interceptBroker,
-		InterceptDefaultMode: interceptModes,
+		ListenAddr:              webListen,
+		Token:                   token,
+		DisableAuth:             disableAuth,
+		ConfigPath:              cfgPath,
+		Config:                  cfg,
+		ExecRegistry:            buildHostExecRegistry(),
+		SearchRegistry:          GetSearchRegistry(),
+		RecordDir:               recordDir,
+		LocalFilesRoot:          webFilesRoot,
+		AgentBinaryPath:         webAgentBin,
+		AgentBuildCacheDir:      webAgentBuildCacheDir,
+		Version:                 BuildVersion(),
+		Commit:                  BuildCommit(),
+		Date:                    BuildDate(),
+		MetricsListenAddr:       strings.TrimSpace(webMetricsListen),
+		Metrics:                 prom,
+		NoCache:                 flagNoCache,
+		Refresh:                 flagRefresh,
+		AllowLogsCommand:        webAllowLogsCommand,
+		OnReady:                 onReady,
+		Enforcer:                authCfg.enforcer,
+		Guardrails:              guardrailRules,
+		JWTPubKey:               authCfg.jwtPubKey,
+		TrustedProxyNets:        authCfg.trustedNets,
+		WebAuthn:                authCfg.webauthn,
+		EnableMesh:              meshnet.Enabled(),
+		AuditSink:               auditSink,
+		K8sProxy:                k8sProxyCfg,
+		OIDCVerifier:            authCfg.oidcVerifier,
+		OIDCPublic:              oidcPublic,
+		DeviceCertTTL:           cfg.DeviceCertTTLValue(),
+		InterceptBroker:         interceptBroker,
+		InterceptDefaultMode:    interceptModes,
+		InterceptSessionFactory: interceptSessionFactory,
+		InterceptStore:          interceptStore,
 	})
 	if err != nil {
 		return err
@@ -304,6 +355,34 @@ func buildInterceptBroker(cfg *config.File, enforcer *policy.Enforcer, sink audi
 		Store:      store,
 	}
 	return intercept.NewBroker(deps), cfg.Intercept.DefaultMode, nil
+}
+
+// interceptWebRestConfig resolves the cluster REST config for a browser-driven
+// interception on a Kubernetes pod record. It prefers a k8s_proxy.clusters entry
+// whose name or context matches the record's kube_context — honey's own
+// configured credentials — and otherwise falls back to the record's own
+// kubeconfig + kube_context meta, the same resolution the k8s exec/terminal path
+// uses for a pod record (internal/provider/k8sprovider/executor.go). The direct
+// Session runs with whatever credentials this resolves, so on the default local
+// topology it is the operator's own kubeconfig.
+func interceptWebRestConfig(cfg *config.File, rec hosts.Record) (*rest.Config, error) {
+	kubeContext := strings.TrimSpace(rec.Meta["kube_context"])
+	if cfg != nil && cfg.K8sProxy != nil {
+		for _, c := range cfg.K8sProxy.Clusters {
+			if c.Name == kubeContext || strings.TrimSpace(c.Context) == kubeContext {
+				restCfg, err := k8sprovider.RestConfigForKubeconfig(c.Kubeconfig, c.Context)
+				if err != nil {
+					return nil, fmt.Errorf("intercept: resolve cluster %q kubeconfig: %w", kubeContext, err)
+				}
+				return restCfg, nil
+			}
+		}
+	}
+	restCfg, err := k8sprovider.RestConfigForKubeconfig(strings.TrimSpace(rec.Meta["kubeconfig"]), kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("intercept: resolve pod kubeconfig: %w", err)
+	}
+	return restCfg, nil
 }
 
 // buildInterceptSessionStore selects the backing store for brokered intercept

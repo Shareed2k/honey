@@ -402,6 +402,12 @@ body {
   color: #c8d0dc;
 }
 
+.terminal-tab-badge {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: #3b82f6;
+}
+
 .terminal-tab-close {
   background: transparent;
   border: none;

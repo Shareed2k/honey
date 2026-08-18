@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Button, Flex, InputNumber, Input, Popover, Select, Splitter, Typography } from 'antd';
 import { apiGet, apiPost, getToken } from './api/core';
+import { interceptWebSocketURL, type InterceptOptions } from './api/intercept';
 
 type HostRecord = {
   provider: string;
@@ -32,6 +33,8 @@ type SessionProps = {
   assistAvailable?: boolean;
   pveConsole?: PveConsoleMode;
   truenasConsole?: TrueNASConsoleMode;
+  /** When set, this session binds to `/ws/intercept` with an intercept hello instead of `/ws/ssh`. */
+  intercept?: InterceptOptions;
   isActive: boolean;
   registerCloseTabSender?: (id: string, sender: (() => void) | null) => void;
 };
@@ -41,6 +44,8 @@ export type TerminalSessionConfig = {
   record: HostRecord;
   pve: PveConsoleMode;
   truenasConsole?: TrueNASConsoleMode;
+  /** When set, this session binds to `/ws/intercept` with an intercept hello instead of `/ws/ssh`. */
+  intercept?: InterceptOptions;
 };
 
 type TabsProps = {
@@ -138,6 +143,7 @@ export function TerminalSession({
   assistAvailable,
   pveConsole = 'serial',
   truenasConsole = 'ssh',
+  intercept,
   isActive,
   registerCloseTabSender,
 }: SessionProps) {
@@ -146,6 +152,11 @@ export function TerminalSession({
   const termRef = useRef<Terminal | null>(null);
   const rfbRef = useRef<NovncRfbHandle | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  // Read isActive without re-running the connect effect: switching tabs flips
+  // isActive, and having it in the effect deps tore down and recreated the
+  // terminal + WebSocket (a fresh session) on every tab switch.
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
   const [showConnectOverlay, setShowConnectOverlay] = useState(true);
 
   const [assistPrompt, setAssistPrompt] = useState('');
@@ -303,27 +314,47 @@ export function TerminalSession({
     fit.fit();
     termRef.current = term;
 
-    const token = getToken();
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const u = new URL(`/ws/ssh?token=${encodeURIComponent(token)}`, window.location.href);
-    u.protocol = proto;
-    const ws = new WebSocket(u.toString());
+    let wsUrl: string;
+    if (intercept) {
+      wsUrl = interceptWebSocketURL();
+    } else {
+      const token = getToken();
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const u = new URL(`/ws/ssh?token=${encodeURIComponent(token)}`, window.location.href);
+      u.protocol = proto;
+      wsUrl = u.toString();
+    }
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       fit.fit();
       const cols = term.cols;
       const rows = term.rows;
-      const hello: Record<string, unknown> = {
-        session_id: sessionId,
-        ssh_user: sshUser,
-        record,
-        cols,
-        rows,
-        record_session: recordSession,
-      };
-      if (truenasConsole === 'api') {
-        hello.console = 'truenas_api';
+      let hello: Record<string, unknown>;
+      if (intercept) {
+        hello = {
+          record,
+          modes: intercept.modes,
+          udp: intercept.udp,
+          cols,
+          rows,
+        };
+        if (intercept.command && intercept.command.length > 0) {
+          hello.command = intercept.command;
+        }
+      } else {
+        hello = {
+          session_id: sessionId,
+          ssh_user: sshUser,
+          record,
+          cols,
+          rows,
+          record_session: recordSession,
+        };
+        if (truenasConsole === 'api') {
+          hello.console = 'truenas_api';
+        }
       }
       ws.send(JSON.stringify(hello));
       requestAnimationFrame(() => {
@@ -392,7 +423,7 @@ export function TerminalSession({
     });
 
     const onResize = () => {
-      if (isActive) {
+      if (isActiveRef.current) {
         fit.fit();
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
@@ -418,7 +449,10 @@ export function TerminalSession({
       term.dispose();
       termRef.current = null;
     };
-  }, [assistAvailable, isVnc, record, recordSession, registerCloseTabSender, sshUser, sessionId, isActive, truenasConsole]);
+    // isActive is intentionally excluded: it only toggles visibility, and
+    // recreating the terminal + WebSocket on a tab switch would drop the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistAvailable, isVnc, record, recordSession, registerCloseTabSender, sshUser, sessionId, truenasConsole, intercept]);
 
   // Refit terminal when it becomes active
   useEffect(() => {
@@ -1024,9 +1058,12 @@ export function TerminalTabsModal({
                   key={t.id}
                   className={`terminal-tab ${t.id === activeTermId ? 'active' : ''}`}
                   onClick={() => onSetActive(t.id)}
-                  title={`${t.record.name} (${t.truenasConsole === 'api' ? 'truenas-api' : t.pve})`}
+                  title={`${t.record.name} (${t.intercept ? 'intercept' : t.truenasConsole === 'api' ? 'truenas-api' : t.pve})`}
                 >
-                  <span className="terminal-tab-title">{t.record.name}</span>
+                  <span className="terminal-tab-title">
+                    {t.record.name}
+                    {t.intercept ? <span className="terminal-tab-badge"> intercept</span> : null}
+                  </span>
                   <button
                     type="button"
                     className="terminal-tab-close"
@@ -1121,6 +1158,7 @@ export function TerminalTabsModal({
                 assistAvailable={layout === 'none' ? assistAvailable : false}
                 pveConsole={t.pve}
                 truenasConsole={t.truenasConsole ?? 'ssh'}
+                intercept={t.intercept}
                 isActive={visible}
                 registerCloseTabSender={registerCloseTabSender}
               />,

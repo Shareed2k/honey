@@ -25,12 +25,15 @@ func TestParseModes(t *testing.T) {
 		wantEgress   bool
 		wantIncoming bool
 		wantFiles    bool
+		wantEnv      bool
 		wantErr      bool
 	}{
 		{name: "egress", in: []string{"egress"}, wantEgress: true},
 		{name: "incoming", in: []string{"incoming"}, wantIncoming: true},
 		{name: "files", in: []string{"files"}, wantFiles: true},
-		{name: "all three", in: []string{"egress", "incoming", "files"}, wantEgress: true, wantIncoming: true, wantFiles: true},
+		{name: "env", in: []string{"env"}, wantEnv: true},
+		{name: "egress and env", in: []string{"egress", "env"}, wantEgress: true, wantEnv: true},
+		{name: "all four", in: []string{"egress", "incoming", "files", "env"}, wantEgress: true, wantIncoming: true, wantFiles: true, wantEnv: true},
 		{name: "unknown mode errors", in: []string{"egress", "bogus"}, wantErr: true},
 		{name: "empty requires at least one", in: nil, wantErr: true},
 	}
@@ -46,6 +49,7 @@ func TestParseModes(t *testing.T) {
 			assert.Equal(t, tc.wantEgress, modes.Egress)
 			assert.Equal(t, tc.wantIncoming, modes.Incoming)
 			assert.Equal(t, tc.wantFiles, modes.Files)
+			assert.Equal(t, tc.wantEnv, modes.Env)
 		})
 	}
 }
@@ -56,7 +60,8 @@ func TestInterceptCmd_FlagParsing(t *testing.T) {
 	require.NoError(t, cmd.ParseFlags([]string{
 		"-n", "apps",
 		"--container", "app",
-		"--mode", "egress,files",
+		"--mode", "egress,env",
+		"--env-include", "FOO,BAR",
 		"--target", "127.0.0.1:8080",
 		"--udp",
 		"--cluster", "prod",
@@ -74,7 +79,11 @@ func TestInterceptCmd_FlagParsing(t *testing.T) {
 
 	modes, err := cmd.Flags().GetStringSlice("mode")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"egress", "files"}, modes)
+	assert.Equal(t, []string{"egress", "env"}, modes)
+
+	envInclude, err := cmd.Flags().GetStringSlice("env-include")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"FOO", "BAR"}, envInclude)
 
 	target, err := cmd.Flags().GetString("target")
 	require.NoError(t, err)
@@ -223,6 +232,19 @@ func TestRunIntercept_ValidationErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "agent image")
 	})
+
+	t.Run("env-include and env-exclude are mutually exclusive", func(t *testing.T) {
+		t.Parallel()
+		cmd := newInterceptCmd()
+		err := runIntercept(cmd, []string{"api-0"}, enabled, interceptFlags{
+			namespace:  "apps",
+			modes:      []string{"env"},
+			envInclude: []string{"FOO"},
+			envExclude: []string{"BAR"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mutually exclusive")
+	})
 }
 
 func TestRunIntercept_ConfigDefaultMode(t *testing.T) {
@@ -261,6 +283,14 @@ func TestRunIntercept_Targetless(t *testing.T) {
 		t.Parallel()
 		cmd := newInterceptCmd()
 		err := runIntercept(cmd, nil, enabled, interceptFlags{namespace: "apps", modes: []string{"files"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), targetlessMsg)
+	})
+
+	t.Run("env mode rejected", func(t *testing.T) {
+		t.Parallel()
+		cmd := newInterceptCmd()
+		err := runIntercept(cmd, nil, enabled, interceptFlags{namespace: "apps", modes: []string{"env"}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), targetlessMsg)
 	})

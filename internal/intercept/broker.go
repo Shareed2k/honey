@@ -125,6 +125,15 @@ func NewBroker(deps BrokerDeps) *Broker {
 	return &Broker{deps: deps, ttl: ttl, now: now}
 }
 
+// Store returns the SessionStore this Broker persists sessions in. It lets a
+// co-located component (the web server's browser-interception registry) reuse
+// the same store so there is a single registry of active interceptions — a
+// brokered session and a browser session targeting the same pod are then both
+// visible to the same-pod collision guard.
+func (b *Broker) Store() SessionStore {
+	return b.deps.Store
+}
+
 // Authorize gates the request (with the caller's full claims), deploys the
 // agent as an ephemeral container using honey's cluster credentials, delivers a
 // per-session token to the agent, persists the session (keyed by the sha256 of
@@ -162,7 +171,7 @@ func (b *Broker) Authorize(ctx context.Context, req AuthorizeRequest) (*Brokered
 		return nil, fmt.Errorf("intercept: build execer: %w", err)
 	}
 
-	ec := ephemeralContainer(agentName, req.AgentImage, req.Container, agentArgs(req.UDP))
+	ec := ephemeralContainer(agentName, req.AgentImage, req.Container, agentArgs(req.UDP), req.Modes.Env)
 	if err := applyEphemeral(ctx, client, req.Namespace, req.Pod, ec); err != nil {
 		return nil, fmt.Errorf("intercept: deploy agent: %w", err)
 	}
@@ -320,6 +329,13 @@ func (b *Broker) reapExpired(ctx context.Context) int {
 	count := 0
 	for _, sess := range list {
 		if !now.After(sess.ExpiresAt) {
+			continue
+		}
+		if len(sess.TokenHash) == 0 {
+			// Browser (/ws/intercept) sessions carry no broker token: they own
+			// their agent via the WebSocket lifetime and are reaped by the web
+			// registry janitor, which never SIGTERMs. Skip them here so the Broker
+			// never tears down (and mis-warns about) an entry it does not own.
 			continue
 		}
 		if err := b.teardown(ctx, sess, "expired"); err != nil {

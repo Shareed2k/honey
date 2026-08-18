@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // injectorFS embeds the per-platform interception injector libraries, one
@@ -103,9 +104,14 @@ func extractInjectorForNamed(fsys fs.FS, goos, goarch, dir, filename string) (st
 	return dest, nil
 }
 
-// injectorEntry returns the embedded-FS path of the first regular file in the
-// goos_goarch injector subdirectory, or ErrNoInjector when that subdirectory is
-// absent or holds no regular file.
+// injectorEntry returns the embedded-FS path of the first real injector library
+// in the goos_goarch subdirectory, or ErrNoInjector when that subdirectory is
+// absent or holds no real library. A committed *.placeholder file is NOT a
+// library: it only lets the //go:embed directive compile from a source checkout
+// on a platform whose injector the current build did not compile. Serving it
+// would write non-ELF/non-Mach-O bytes that the loader rejects with a cryptic
+// "invalid ELF header"; skipping it instead makes the caller report the intended
+// clean "no bundled injector for this platform" error.
 func injectorEntry(fsys fs.FS, goos, goarch string) (string, error) {
 	plat := goos + "_" + goarch
 	dir := path.Join(injectorRoot, plat)
@@ -114,7 +120,7 @@ func injectorEntry(fsys fs.FS, goos, goarch string) (string, error) {
 		return "", fmt.Errorf("%w: %s", ErrNoInjector, plat)
 	}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || strings.HasSuffix(e.Name(), ".placeholder") {
 			continue
 		}
 		return path.Join(dir, e.Name()), nil

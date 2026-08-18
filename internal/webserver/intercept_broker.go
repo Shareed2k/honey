@@ -25,11 +25,15 @@ type interceptBroker interface {
 	StopByToken(ctx context.Context, id, token, reason string) error
 }
 
-// handleInterceptConfig reports whether brokered interception is enabled and
-// the operator-configured default modes. Non-secret; mirrors handleOIDCConfig.
+// handleInterceptConfig reports whether interception is available from the web
+// UI and the operator-configured default modes. "enabled" tracks the browser
+// terminal (the /ws/intercept session factory), which is what the Intercept
+// button drives — not the CLI broker; the two enable independently now that the
+// web terminal resolves its cluster from the pod record. Non-secret; mirrors
+// handleOIDCConfig.
 func (s *Server) handleInterceptConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{
-		"enabled":      s.interceptBroker != nil,
+		"enabled":      s.opts.InterceptSessionFactory != nil,
 		"default_mode": s.opts.InterceptDefaultMode,
 	})
 }

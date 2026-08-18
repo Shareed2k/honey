@@ -25,7 +25,7 @@ type RemoteFileEntry = hostexec.RemoteFileEntry
 // FormatTargetForDryRun returns a string describing how the target will be connected to.
 // FormatTargetForDryRun ...
 func FormatTargetForDryRun(r hosts.Record) string {
-	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
+	if r.IsPod() {
 		return fmt.Sprintf("k8s_exec(ns=%s pod=%s)", r.Meta["namespace"], r.Meta["pod_name"])
 	}
 	if r.Provider == "proxmox" {

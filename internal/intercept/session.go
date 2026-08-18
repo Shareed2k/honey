@@ -131,6 +131,16 @@ type Options struct {
 	Target string
 	// Modes selects which interception capabilities are active.
 	Modes local.Modes
+	// EnvInclude, when non-empty, restricts the env-mode overlay to these
+	// target environment keys (after the built-in and EnvExclude filters). It is
+	// mutually exclusive with EnvExclude and only meaningful when Modes.Env is
+	// set. It carries key names only, never values, so it is safe to record.
+	EnvInclude []string
+	// EnvExclude names additional target environment keys to drop from the
+	// env-mode overlay, on top of the data plane's built-in defaults. It is
+	// mutually exclusive with EnvInclude and only meaningful when Modes.Env is
+	// set. It carries key names only, never values.
+	EnvExclude []string
 	// UDP includes the UDP tunnels alongside TCP.
 	UDP bool
 	// Command is the local command run under injection.
@@ -251,6 +261,8 @@ func (s *Session) Run(ctx context.Context) (err error) {
 		Root:               s.fileRoot(),
 		UDP:                s.opts.UDP,
 		Modes:              s.opts.Modes,
+		EnvInclude:         s.opts.EnvInclude,
+		EnvExclude:         s.opts.EnvExclude,
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -276,7 +288,7 @@ func (s *Session) provisionTargeted(ctx context.Context, token string, cleanups 
 	if err != nil {
 		return "", "", err
 	}
-	ec := ephemeralContainer(agentName, s.opts.AgentImage, s.opts.Container, agentArgs(s.opts.UDP))
+	ec := ephemeralContainer(agentName, s.opts.AgentImage, s.opts.Container, agentArgs(s.opts.UDP), s.opts.Modes.Env)
 	if s.opts.agentPrivileged {
 		elevateEphemeralPrivilege(&ec)
 	}
@@ -491,6 +503,9 @@ func modeStrings(m local.Modes) []string {
 	}
 	if m.Files {
 		out = append(out, "files")
+	}
+	if m.Env {
+		out = append(out, "env")
 	}
 	return out
 }

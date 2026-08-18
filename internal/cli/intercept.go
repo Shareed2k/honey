@@ -29,7 +29,6 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/intercept"
-	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 )
 
@@ -66,6 +65,8 @@ type interceptFlags struct {
 	target     string
 	actor      string
 	modes      []string
+	envInclude []string
+	envExclude []string
 	udp        bool
 	adminURL   string
 }
@@ -106,8 +107,10 @@ Example:
 	flags := cmd.Flags()
 	flags.StringVarP(&f.namespace, "namespace", "n", "", "Target pod namespace (default: the kubeconfig context's namespace, like kubectl)")
 	flags.StringVar(&f.container, "container", "", "Target container the agent shares namespaces with (default: the pod's first container)")
-	flags.StringSliceVar(&f.modes, "mode", nil, "Interception modes to enable: egress|incoming|files (repeatable; default from config)")
+	flags.StringSliceVar(&f.modes, "mode", nil, "Interception modes to enable: egress|incoming|files|env (repeatable; default from config)")
 	flags.StringVar(&f.target, "target", "", "Local application address incoming traffic is forwarded to (host:port; required with --mode incoming)")
+	flags.StringSliceVar(&f.envInclude, "env-include", nil, "With --mode env, overlay only these target env var names (repeatable; mutually exclusive with --env-exclude)")
+	flags.StringSliceVar(&f.envExclude, "env-exclude", nil, "With --mode env, drop these target env var names from the overlay (repeatable; mutually exclusive with --env-include)")
 	flags.BoolVar(&f.udp, "udp", false, "Include UDP tunnels alongside TCP")
 	flags.StringVar(&f.cluster, "cluster", "", "Target cluster name (resolves kubeconfig/context from k8s_proxy.clusters; default: current kubeconfig context)")
 	flags.StringVar(&f.agentImage, "agent-image", "", "Interception agent container image (default from config)")
@@ -125,6 +128,13 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		return errors.New("intercept is not configured; set intercept.enabled and intercept.agent_image in the honey config")
 	}
 	ic := cfg.Intercept
+
+	// --env-include and --env-exclude are mutually exclusive: an allow-list and a
+	// deny-list on the same overlay are contradictory. Checked up front so both
+	// the direct and the brokered path below reject the combination identically.
+	if len(f.envInclude) > 0 && len(f.envExclude) > 0 {
+		return errors.New("intercept: --env-include and --env-exclude are mutually exclusive; use one or the other")
+	}
 
 	pod, targetless, command, err := interceptArgs(cmd, args)
 	if err != nil {
@@ -162,27 +172,9 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		}
 	}
 
-	modeStrs := f.modes
-	if len(modeStrs) == 0 {
-		modeStrs = ic.DefaultMode
-	}
-	if targetless && len(modeStrs) == 0 {
-		// A bare `honey intercept -- <command>` (no --mode, no configured
-		// default) defaults to egress: targetless supports only egress+DNS, so
-		// there is exactly one sensible default, unlike the pod-targeted path
-		// where an empty mode set is ambiguous and left as an error.
-		modeStrs = []string{"egress"}
-	}
-	modes, err := intercept.ParseModes(modeStrs)
+	modes, err := resolveDirectModes(ic, f, targetless)
 	if err != nil {
 		return err
-	}
-	if targetless {
-		if modes.Incoming || modes.Files {
-			return errors.New("intercept: targetless mode supports only egress; drop --mode incoming/files or name a target pod")
-		}
-	} else if modes.Incoming && strings.TrimSpace(f.target) == "" {
-		return errors.New("intercept: --target is required with --mode incoming")
 	}
 
 	agentImage := strings.TrimSpace(f.agentImage)
@@ -207,14 +199,6 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		return fmt.Errorf("intercept: build kubernetes client: %w", err)
 	}
 
-	enforcer, err := policy.New(cmd.Context(), ic.PolicyDir, nil)
-	if err != nil {
-		return fmt.Errorf("intercept: load policy: %w", err)
-	}
-
-	sink := gatewayAuditSink(cfg)
-	defer func() { _ = sink.Close() }()
-
 	// honey must know the agent pod's name before building Deps, since the
 	// execer and port-forwarder bind to it. Targeted mode targets the
 	// pre-existing pod named by the positional argument; targetless generates
@@ -233,14 +217,12 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		execContainer = intercept.AgentContainerName
 	}
 
-	deps := intercept.Deps{
-		PortForwarder: &interceptPortForwarder{cfg: restCfg},
-		PodExecer:     &interceptPodExecer{cfg: restCfg, clientset: clientset, namespace: namespace, pod: agentPod, container: execContainer},
-		K8sClient:     clientset,
-		Enforcer:      enforcer,
-		Sink:          sink,
-		LocalRunner:   intercept.DefaultLocalRunner(),
+	deps, sink, err := buildInterceptDeps(cmd.Context(), cfg, restCfg, clientset, namespace, agentPod, execContainer)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = sink.Close() }()
+
 	opts := intercept.Options{
 		Namespace:  namespace,
 		Pod:        agentPod,
@@ -249,6 +231,8 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		AgentImage: agentImage,
 		Target:     strings.TrimSpace(f.target),
 		Modes:      modes,
+		EnvInclude: f.envInclude,
+		EnvExclude: f.envExclude,
 		UDP:        f.udp,
 		Command:    command,
 		Actor:      interceptActor(f.actor),
@@ -265,6 +249,37 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		return err
 	}
 	return nil
+}
+
+// resolveDirectModes resolves and validates the interception modes for the
+// direct path: it falls back to the configured default (and, for a targetless
+// session with no default, to egress), parses the names, and enforces the
+// path-specific rules — targetless supports only egress (incoming, files, and
+// env all need a target pod), and incoming requires a --target.
+func resolveDirectModes(ic *config.InterceptConfig, f interceptFlags, targetless bool) (local.Modes, error) {
+	modeStrs := f.modes
+	if len(modeStrs) == 0 {
+		modeStrs = ic.DefaultMode
+	}
+	if targetless && len(modeStrs) == 0 {
+		// A bare `honey intercept -- <command>` (no --mode, no configured
+		// default) defaults to egress: targetless supports only egress+DNS, so
+		// there is exactly one sensible default, unlike the pod-targeted path
+		// where an empty mode set is ambiguous and left as an error.
+		modeStrs = []string{"egress"}
+	}
+	modes, err := intercept.ParseModes(modeStrs)
+	if err != nil {
+		return local.Modes{}, err
+	}
+	if targetless {
+		if modes.Incoming || modes.Files || modes.Env {
+			return local.Modes{}, errors.New("intercept: targetless mode supports only egress; drop --mode incoming/files/env or name a target pod")
+		}
+	} else if modes.Incoming && strings.TrimSpace(f.target) == "" {
+		return local.Modes{}, errors.New("intercept: --target is required with --mode incoming")
+	}
+	return modes, nil
 }
 
 // runInterceptBrokered runs one server-brokered interception: honey web (at
@@ -429,6 +444,8 @@ func runInterceptBrokered(ctx context.Context, cfg *config.File, f interceptFlag
 		Root:               root,
 		UDP:                f.udp,
 		Modes:              modes,
+		EnvInclude:         f.envInclude,
+		EnvExclude:         f.envExclude,
 	}
 
 	// Bounded drain (mirrors intercept.Session's own drain in session.go): run

@@ -180,18 +180,31 @@ func newHarness(t *testing.T, allow bool, runErr error) *harness {
 		LocalRunner:   runner,
 	}
 	opts := Options{
-		Namespace:  "apps",
-		Pod:        "target",
-		Container:  "app",
-		Cluster:    "prod",
-		AgentImage: "registry.example/agent:1",
-		Target:     "127.0.0.1:9000",
-		Modes:      local.Modes{Egress: true, Incoming: true, Files: true},
-		UDP:        true,
-		Command:    []string{"curl", "http://svc"},
-		Actor:      "roman",
+		Namespace:   "apps",
+		Pod:         "target",
+		Container:   "app",
+		Cluster:     "prod",
+		AgentImage:  "registry.example/agent:1",
+		Target:      "127.0.0.1:9000",
+		Modes:       local.Modes{Egress: true, Incoming: true, Files: true},
+		UDP:         true,
+		Command:     []string{"curl", "http://svc"},
+		Actor:       "roman",
+		InjectorLib: fakeInjectorLib(t),
 	}
 	return &harness{deps: deps, opts: opts, cs: cs, fwd: fwd, runner: runner, sink: sink, log: log}
+}
+
+// fakeInjectorLib writes a stand-in injector library and returns its path.
+// Session tests must not depend on a real embedded injector: a fresh source
+// checkout (and the unit-test CI) carries only the *.placeholder, which
+// resolveInjector correctly refuses with ErrNoInjector, so every harness
+// supplies an explicit override instead.
+func fakeInjectorLib(t *testing.T) string {
+	t.Helper()
+	lib := filepath.Join(t.TempDir(), "injector.test")
+	require.NoError(t, os.WriteFile(lib, []byte("test-injector"), 0o600))
+	return lib
 }
 
 // startEphemeralFlipper mimics the kubelet: once the Session has applied the
@@ -254,15 +267,16 @@ func newTargetlessHarness(t *testing.T, allow bool, runErr error) *harness {
 		LocalRunner:   runner,
 	}
 	opts := Options{
-		Namespace:  "apps",
-		Pod:        "mogate-test1234",
-		Cluster:    "prod",
-		AgentImage: "registry.example/agent:1",
-		Modes:      local.Modes{Egress: true},
-		UDP:        false,
-		Command:    []string{"curl", "http://svc"},
-		Actor:      "roman",
-		Targetless: true,
+		Namespace:   "apps",
+		Pod:         "mogate-test1234",
+		Cluster:     "prod",
+		AgentImage:  "registry.example/agent:1",
+		Modes:       local.Modes{Egress: true},
+		UDP:         false,
+		Command:     []string{"curl", "http://svc"},
+		Actor:       "roman",
+		Targetless:  true,
+		InjectorLib: fakeInjectorLib(t),
 	}
 	return &harness{deps: deps, opts: opts, cs: cs, fwd: fwd, runner: runner, sink: sink, log: log}
 }
@@ -304,9 +318,14 @@ func startPodRunningFlipper(cs *fake.Clientset, ns, pod string, log *eventLog) f
 	}
 }
 
-func waitForEvent(t *testing.T, log *eventLog, event string, timeout time.Duration) {
+// eventWaitTimeout bounds how long waitForEvent polls the log for an event
+// before failing the test. Every caller uses the same window, so it lives here
+// rather than as a per-call parameter.
+const eventWaitTimeout = 3 * time.Second
+
+func waitForEvent(t *testing.T, log *eventLog, event string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(eventWaitTimeout)
 	for time.Now().Before(deadline) {
 		for _, e := range log.snapshot() {
 			if e == event {
@@ -315,7 +334,7 @@ func waitForEvent(t *testing.T, log *eventLog, event string, timeout time.Durati
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("event %q not observed within %s; log=%v", event, timeout, log.snapshot())
+	t.Fatalf("event %q not observed within %s; log=%v", event, eventWaitTimeout, log.snapshot())
 }
 
 func indexOf(events []string, want string) int {
@@ -370,7 +389,7 @@ func TestSession_happyPathLifecycleAndTeardown(t *testing.T) {
 	res := make(chan error, 1)
 	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
 
-	waitForEvent(t, h.log, "run", 3*time.Second)
+	waitForEvent(t, h.log, "run")
 	cancel()
 
 	var runErr error
@@ -414,6 +433,57 @@ func TestSession_happyPathLifecycleAndTeardown(t *testing.T) {
 	assert.Equal(t, actionInterceptStop, h.sink.events[1].Action)
 	assert.Equal(t, "canceled", h.sink.events[1].Extra["reason"])
 	assert.NotEmpty(t, h.sink.events[1].Extra["duration"])
+}
+
+// TestSession_envThreadingToLocalConfig proves the env mode wiring flows end to
+// end through a targeted Session: Modes.Env and the include/exclude key filters
+// reach the LocalRunner's local.Config, and the deployed ephemeral container
+// carries the /proc-read capabilities the agent needs to read the target's
+// environ. It carries only key NAMES, never values, so nothing sensitive is
+// asserted or logged.
+func TestSession_envThreadingToLocalConfig(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	h := newHarness(t, true, nil)
+	h.opts.Modes = local.Modes{Egress: true, Env: true}
+	h.opts.EnvInclude = []string{"DATABASE_URL", "FEATURE_FLAG"}
+	h.opts.EnvExclude = nil
+	stopFlip := startEphemeralFlipper(h.cs, h.opts.Namespace, h.opts.Pod, h.log)
+	defer stopFlip()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := make(chan error, 1)
+	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
+
+	// Wait until the ephemeral container is applied, then assert it carries the
+	// /proc-read caps for env mode on top of NET_ADMIN.
+	waitForEvent(t, h.log, "ephemeral-applied")
+	p, err := h.cs.CoreV1().Pods(h.opts.Namespace).Get(context.Background(), h.opts.Pod, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, p.Spec.EphemeralContainers, 1)
+	add := p.Spec.EphemeralContainers[0].SecurityContext.Capabilities.Add
+	assert.Equal(t, []corev1.Capability{capNetAdmin, capSysPtrace, capDacReadSearch}, add)
+
+	// Wait until the LocalRunner is actually invoked before tearing down, so the
+	// config it captured is populated by the time it returns.
+	waitForEvent(t, h.log, "run")
+	cancel()
+	var runErr error
+	select {
+	case runErr = <-res:
+	case <-time.After(shutdownGrace + 2*time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+	assert.ErrorIs(t, runErr, context.Canceled)
+
+	// The LocalRunner received the env mode and the include filter verbatim
+	// (cfg is captured at the start of Run, so it is set by the time Run
+	// returns). Only key names are asserted — never values.
+	cfg := h.runner.config()
+	assert.True(t, cfg.Modes.Env, "Modes.Env must reach local.Config")
+	assert.Equal(t, []string{"DATABASE_URL", "FEATURE_FLAG"}, cfg.EnvInclude)
+	assert.Empty(t, cfg.EnvExclude)
 }
 
 func TestSession_teardownOnRunnerError(t *testing.T) {
@@ -460,12 +530,18 @@ func TestSession_resolveInjectorOverridePrecedence(t *testing.T) {
 	_, err = sMissing.resolveInjector(t.TempDir())
 	require.Error(t, err)
 
-	// With no override, resolveInjector falls back to extracting the embedded
-	// library into the session dir (a path under that dir, not the override).
+	// With no override, resolveInjector falls back to the embedded library:
+	// a build carrying a real injector extracts it into the session dir; a
+	// fresh source checkout (and the unit-test CI) has only the *.placeholder,
+	// which must yield ErrNoInjector rather than a loader-rejected text file.
 	dir := t.TempDir()
 	sDefault := New(Deps{}, Options{})
 	extracted, err := sDefault.resolveInjector(dir)
-	require.NoError(t, err)
+	if err != nil {
+		assert.True(t, errors.Is(err, ErrNoInjector),
+			"a placeholder-only build must yield ErrNoInjector, got %v", err)
+		return
+	}
 	assert.Equal(t, dir, filepath.Dir(extracted), "the embedded library is extracted into the session dir")
 	assert.NotEqual(t, override, extracted)
 }
@@ -481,7 +557,7 @@ func TestSession_ctxCancelDrainsWithinGrace(t *testing.T) {
 	res := make(chan error, 1)
 	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
 
-	waitForEvent(t, h.log, "run", 3*time.Second)
+	waitForEvent(t, h.log, "run")
 
 	cancel()
 	start := time.Now()
@@ -512,7 +588,7 @@ func TestSession_targetless_happyPathLifecycleAndTeardown(t *testing.T) {
 	res := make(chan error, 1)
 	go func() { res <- New(h.deps, h.opts).Run(ctx) }()
 
-	waitForEvent(t, h.log, "run", 3*time.Second)
+	waitForEvent(t, h.log, "run")
 
 	// While the session is live, the standalone pod exists with exactly one
 	// container (the agent) and no ephemeral containers at all — targetless

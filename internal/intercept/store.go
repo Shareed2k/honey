@@ -76,6 +76,14 @@ func newMemStore() *memStore {
 	return &memStore{sessions: make(map[string]PersistedSession)}
 }
 
+// NewMemStore returns an in-memory SessionStore safe for concurrent use. It is
+// the default registry when no persistent store is configured; callers that own
+// their own registry (e.g. the web server's browser-interception registry when
+// no Broker is present) construct one with this.
+func NewMemStore() SessionStore {
+	return newMemStore()
+}
+
 // Save stores a deep copy of ps, replacing any existing session with the
 // same ID.
 func (m *memStore) Save(_ context.Context, ps PersistedSession) error {

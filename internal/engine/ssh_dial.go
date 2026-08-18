@@ -51,7 +51,7 @@ func RunTerminalInteractive(user string, r hosts.Record, console string, reg hos
 		}
 	}
 
-	if r.Provider == "k8s" && r.Meta["kind"] == "pod" {
+	if r.IsPod() {
 		return RunK8sInteractiveWithRecorder(user, r, nil)
 	}
 	if r.IsDocker() {

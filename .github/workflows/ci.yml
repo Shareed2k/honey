@@ -117,6 +117,13 @@ jobs:
       - name: Build web UI (embed static)
         run: go tool task webui
 
+      # Replace the committed injector placeholders with real per-platform
+      # libraries before the build embeds them — a plain `go build` would
+      # otherwise ship a text placeholder that the loader rejects at intercept
+      # time. The goreleaser-cross container carries every needed toolchain.
+      - name: Build interception injector libraries
+        run: go tool task build-intercept-injector
+
       - name: Build binary
         shell: bash
         env:

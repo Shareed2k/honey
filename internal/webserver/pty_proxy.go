@@ -60,9 +60,11 @@ func ptyWinsize(cols, rows int) pty.Winsize {
 	return pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}
 }
 
-func ptyProxyExecArgs(bin, configPath, encodedPayload string) []string {
-	// tmux/zellij run this argv as the pane command; bin must be first (see os.Executable()).
-	args := []string{bin, "pty-proxy"}
+// ptyProxyExecArgs builds the argv tmux/zellij run as the pane command: the
+// binary first (see os.Executable()), then sub ("pty-proxy" or
+// "intercept-pane"), an optional --config, and the base64 payload last.
+func ptyProxyExecArgs(sub, bin, configPath, encodedPayload string) []string {
+	args := []string{bin, sub}
 	if strings.TrimSpace(configPath) != "" {
 		args = append(args, "--config", configPath)
 	}
@@ -73,7 +75,7 @@ func ptyProxyExecArgs(bin, configPath, encodedPayload string) []string {
 // ptyMuxBuildCommand returns a zellij/tmux attach-or-create command for the session id.
 func ptyMuxBuildCommand(bin, configPath, encodedPayload, sessionID string) (cmd *exec.Cmd, muxName string, useZellij bool, err error) {
 	muxName = ptyMuxSessionName(sessionID)
-	proxyArgs := ptyProxyExecArgs(bin, configPath, encodedPayload)
+	proxyArgs := ptyProxyExecArgs("pty-proxy", bin, configPath, encodedPayload)
 	if _, err := exec.LookPath("zellij"); err == nil {
 		return ptyMuxZellijCommand(muxName, proxyArgs)
 	}
@@ -82,6 +84,39 @@ func ptyMuxBuildCommand(bin, configPath, encodedPayload, sessionID string) (cmd 
 	}
 	zap.L().Debug("handleWebPtyProxy: no multiplexer found, falling back")
 	return nil, muxName, false, fmt.Errorf("neither zellij nor tmux found on the server")
+}
+
+// interceptPaneMuxName derives a deterministic, per-pod mux session name for
+// the intercept resume path from a digest of cluster/namespace/pod, not the
+// raw fields themselves: a browser refresh recomputes the identical name for
+// the same pod, which is how it re-attaches to its own pane, and a later task
+// lists live panes by the "honey-int-" prefix. It intentionally does NOT
+// route through ptyMuxSessionName's "honey_" wrapping: the name is already
+// exec-argv-safe (fixed literal + hex digest, never raw record fields), and
+// the tmux-registry task must find sessions by their literal "honey-int-"
+// prefix. One consequence: ptyMuxTmuxCommand's validHoneyMuxSessionName-gated
+// fast paths (tmuxSessionAlive/tmuxHasSession/respawn-dead-pane) don't fire
+// for this name family, so attach-or-create for tmux falls through to its
+// default branch — which still works because `tmux new-session -A -D`
+// attaches to an existing session by its real name regardless.
+func interceptPaneMuxName(cluster, namespace, pod string) string {
+	sum := sha256.Sum256([]byte(cluster + "\x00" + namespace + "\x00" + pod))
+	return "honey-int-" + hex.EncodeToString(sum[:])[:16]
+}
+
+// ptyMuxBuildInterceptCommand mirrors ptyMuxBuildCommand for the intercept
+// resume path: it takes an already-computed mux name (interceptPaneMuxName)
+// instead of sanitizing a client-supplied session id, and builds the
+// intercept-pane argv instead of pty-proxy's. It is tmux-ONLY (never zellij):
+// the resume list/cap/stop are tmux-based, so a zellij-hosted pane could not be
+// managed. useZellij is therefore always false. The caller gates on tmuxOnPath,
+// so the LookPath here is defense-in-depth.
+func ptyMuxBuildInterceptCommand(bin, configPath, encodedPayload, name string) (cmd *exec.Cmd, muxName string, useZellij bool, err error) {
+	proxyArgs := ptyProxyExecArgs("intercept-pane", bin, configPath, encodedPayload)
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return nil, name, false, fmt.Errorf("intercept resume requires tmux on the server: %w", err)
+	}
+	return ptyMuxTmuxCommand(name, proxyArgs)
 }
 
 func ptyMuxZellijCommand(muxName string, proxyArgs []string) (*exec.Cmd, string, bool, error) {
@@ -235,28 +270,42 @@ func ptyProxyHandleCtrl(ptmx *os.File, recorder *engine.SessionRecorder, muxName
 	return false
 }
 
-func ptyProxyTeardown(ptmx *os.File, cmd *exec.Cmd, muxName string, useZellij bool, closeTabKill, ptyExited chan struct{}) {
+// ptyProxyTeardown ends one pty-proxy bridge. killSession is the explicit
+// close_tab (×) kill: the SSH path passes the honey_* mux killer, the intercept
+// resume path passes its own honey-int-* killer (the honey_* helpers gate on
+// validHoneyMuxSessionName and are inert for that name family).
+func ptyProxyTeardown(ptmx *os.File, cmd *exec.Cmd, muxName string, useZellij bool, closeTabKill, ptyExited chan struct{}, killSession func()) {
 	select {
 	case <-ptyExited:
 		_ = ptmx.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
+		reapPtyProxyCmd(cmd)
 		ptyMuxKillSessionIfExited(muxName, useZellij)
 	default:
 		_ = ptmx.Close()
 		select {
 		case <-closeTabKill:
 			zap.L().Debug("handleWebPtyProxy: killing mux session after close_tab", zap.String("session", muxName))
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-				_, _ = cmd.Process.Wait()
-			}
-			ptyMuxKillSession(muxName, useZellij)
+			reapPtyProxyCmd(cmd)
+			killSession()
 		default:
+			// Plain disconnect (browser refresh/detach): the mux client is left to
+			// exit on its own now that its pty master is closed — but it must still
+			// be reaped, or every refresh leaks a defunct child until honey-web
+			// exits. Waiting in the background because that exit is not immediate.
+			go func() { _ = cmd.Wait() }()
 		}
 	}
+}
+
+// reapPtyProxyCmd kills the mux client and reaps it, so no zombie survives the
+// teardown. Both callers run after a successful pty.Start, so Process is set;
+// the guard is defensive.
+func reapPtyProxyCmd(cmd *exec.Cmd) {
+	if cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
 }
 
 func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, recorder *engine.SessionRecorder, configPath string) error {
@@ -282,6 +331,6 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 
 	closeTabKill := make(chan struct{}, 1)
 	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxName, closeTabKill)
-	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited)
+	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, func() { ptyMuxKillSession(muxName, useZellij) })
 	return nil
 }

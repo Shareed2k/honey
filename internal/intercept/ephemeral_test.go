@@ -24,7 +24,7 @@ func newSeededPod() *corev1.Pod {
 func TestEphemeralContainer(t *testing.T) {
 	t.Parallel()
 
-	ec := ephemeralContainer("honey-x", "registry.example/agent:1", "app", []string{"--mode", "egress"})
+	ec := ephemeralContainer("honey-x", "registry.example/agent:1", "app", []string{"--mode", "egress"}, false)
 
 	assert.Equal(t, "honey-x", ec.Name)
 	assert.Equal(t, "registry.example/agent:1", ec.Image)
@@ -41,7 +41,12 @@ func TestEphemeralContainer(t *testing.T) {
 	sc := ec.SecurityContext
 	require.NotNil(t, sc)
 	require.NotNil(t, sc.Capabilities)
+	// Without env mode the context is byte-for-byte the network-only one: only
+	// NET_ADMIN is added — the /proc-read caps must NOT leak onto every intercept
+	// (least privilege).
 	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, sc.Capabilities.Add)
+	assert.NotContains(t, sc.Capabilities.Add, capSysPtrace)
+	assert.NotContains(t, sc.Capabilities.Add, capDacReadSearch)
 	assert.Equal(t, []corev1.Capability{"ALL"}, sc.Capabilities.Drop)
 	require.NotNil(t, sc.RunAsUser)
 	assert.Equal(t, int64(0), *sc.RunAsUser, "agent needs root for an effective NET_ADMIN (nftables via netlink)")
@@ -52,11 +57,36 @@ func TestEphemeralContainer(t *testing.T) {
 	assert.Equal(t, "/tmp/mogate", agentRunDir)
 }
 
+// TestEphemeralContainer_envCaps asserts that env mode (needsProcRead=true)
+// adds CAP_SYS_PTRACE and CAP_DAC_READ_SEARCH so the agent can read the target
+// container's /proc/1/environ, on top of the always-present NET_ADMIN, while
+// still dropping ALL others. These caps are the least privilege the env overlay
+// needs and are added only for env mode.
+func TestEphemeralContainer_envCaps(t *testing.T) {
+	t.Parallel()
+
+	ec := ephemeralContainer("honey-x", "registry.example/agent:1", "app", []string{"--mode", "env"}, true)
+
+	sc := ec.SecurityContext
+	require.NotNil(t, sc)
+	require.NotNil(t, sc.Capabilities)
+	assert.Equal(t, []corev1.Capability{capNetAdmin, capSysPtrace, capDacReadSearch}, sc.Capabilities.Add)
+	assert.Contains(t, sc.Capabilities.Add, capSysPtrace)
+	assert.Contains(t, sc.Capabilities.Add, capDacReadSearch)
+	// ALL is still dropped and the run-as identity is unchanged from the
+	// network-only path.
+	assert.Equal(t, []corev1.Capability{"ALL"}, sc.Capabilities.Drop)
+	require.NotNil(t, sc.RunAsUser)
+	assert.Equal(t, int64(0), *sc.RunAsUser)
+	require.NotNil(t, sc.RunAsGroup)
+	assert.Equal(t, agentBypassGID, *sc.RunAsGroup)
+}
+
 func TestApplyEphemeral(t *testing.T) {
 	t.Parallel()
 
 	client := fake.NewSimpleClientset(newSeededPod())
-	ec := ephemeralContainer("honey-x", "registry.example/agent:1", "app", []string{"--mode", "egress"})
+	ec := ephemeralContainer("honey-x", "registry.example/agent:1", "app", []string{"--mode", "egress"}, false)
 
 	require.NoError(t, applyEphemeral(context.Background(), client, "apps", "target", ec))
 
@@ -75,7 +105,7 @@ func TestApplyEphemeral_podNotFound(t *testing.T) {
 	t.Parallel()
 
 	client := fake.NewSimpleClientset()
-	ec := ephemeralContainer("honey-x", "img", "app", nil)
+	ec := ephemeralContainer("honey-x", "img", "app", nil, false)
 
 	err := applyEphemeral(context.Background(), client, "apps", "missing", ec)
 	require.Error(t, err)

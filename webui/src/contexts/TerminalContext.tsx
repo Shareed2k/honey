@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { TerminalTabsModal, type TerminalSessionConfig, type PveConsoleMode, type TrueNASConsoleMode } from '../TerminalModal';
+import { type InterceptOptions, type InterceptSession, fetchInterceptSessions, sessionPodKey, recordPodKey } from '../api/intercept';
 import { useHostSelection } from './HostSelectionContext';
 import { useAppContext } from './AppContext';
 import { recordKey } from '../HostPicker';
@@ -10,6 +11,16 @@ interface TerminalContextType {
   isTerminalModalOpen: boolean;
   handleOpenTerminal: (cfg: TerminalSessionConfig) => void;
   setIsTerminalModalOpen: (open: boolean) => void;
+  // closeTerminal removes a tab (and clears its saved record). The sessions-list
+  // Stop button uses it to drop the tab the instant a session is stopped,
+  // instead of waiting for the reconcile poll.
+  closeTerminal: (id: string) => void;
+  // interceptSessions is the single source of truth for the server's active
+  // interception list: the SearchTab badge/panel, the Reattach button, and the
+  // dead-tab reconcile all read this one polled state so they can never
+  // disagree with each other.
+  interceptSessions: InterceptSession[];
+  refreshInterceptSessions: () => void;
 }
 
 const TerminalContext = createContext<TerminalContextType | null>(null);
@@ -21,6 +32,14 @@ function updateUrlParam(key: string, value: string | null) {
   window.history.replaceState(null, '', `?${params.toString()}`);
 }
 
+// termRecordKey is the stable per-pod key a terminal tab carries: the `_key`
+// restored from the URL, or the record's computed key for a freshly opened tab.
+// It matches InterceptSession.record_key so open tabs can be reconciled against
+// the server's active-session list.
+function termRecordKey(t: TerminalSessionConfig): string {
+  return (t.record as { _key?: string })._key || recordKey(t.record);
+}
+
 export function TerminalProvider({ children }: { children: ReactNode }) {
   const { sshUser } = useHostSelection();
   const { meta } = useAppContext();
@@ -30,14 +49,23 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     if (!val) return [];
     try {
       return val.split(',').map(part => {
-        const [id, key, pve, truenasConsole] = part.split('|');
+        const [id, key, pve, truenasConsole, interceptRaw] = part.split('|');
         const sessionRec = sessionStorage.getItem(`honey_term_${id}`);
         const record = sessionRec ? JSON.parse(sessionRec) : { _key: key, provider: 'loading', name: 'loading', primary_ip: '' };
+        let intercept: InterceptOptions | undefined;
+        if (interceptRaw) {
+          try {
+            intercept = JSON.parse(decodeURIComponent(interceptRaw)) as InterceptOptions;
+          } catch {
+            intercept = undefined;
+          }
+        }
         return {
           id: id || crypto.randomUUID(),
           record,
           pve: (pve as PveConsoleMode) || 'serial',
           truenasConsole: (truenasConsole as TrueNASConsoleMode) || 'ssh',
+          intercept,
         };
       });
     } catch {
@@ -51,8 +79,12 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (terminals.length > 0) {
       const joined = terminals.map(t => {
-        const rKey = (t.record as { _key?: string })._key || recordKey(t.record);
-        return `${t.id}|${rKey}|${t.pve || 'serial'}|${t.truenasConsole || 'ssh'}`;
+        const rKey = termRecordKey(t);
+        const parts = [t.id, rKey, t.pve || 'serial', t.truenasConsole || 'ssh'];
+        if (t.intercept) {
+          parts.push(encodeURIComponent(JSON.stringify(t.intercept)));
+        }
+        return parts.join('|');
       }).join(',');
       updateUrlParam('terminals', joined);
     } else {
@@ -68,6 +100,67 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     updateUrlParam('isTerminalModalOpen', isTerminalModalOpen ? 'true' : null);
   }, [isTerminalModalOpen]);
 
+  // interceptSessions is polled here — the ONE place — so every consumer (the
+  // SearchTab badge/panel, the Reattach button, the dead-tab reconcile below)
+  // reads the same list and can't disagree. Polling is unconditional: the list
+  // must stay fresh even with no open tab (a session started elsewhere, or one
+  // whose only tab just closed), otherwise a stopped/gone intercept lingers in
+  // the panel until a manual refresh.
+  const [interceptSessions, setInterceptSessions] = useState<InterceptSession[]>([]);
+  const refreshInterceptSessions = useCallback(() => {
+    void fetchInterceptSessions().then(setInterceptSessions).catch(() => { /* keep last list */ });
+  }, []);
+  useEffect(() => {
+    refreshInterceptSessions();
+    const iv = window.setInterval(refreshInterceptSessions, 3000);
+    return () => window.clearInterval(iv);
+  }, [refreshInterceptSessions]);
+
+  const closeTerminal = useCallback((id: string) => {
+    sessionStorage.removeItem(`honey_term_${id}`);
+    let wasIntercept = false;
+    setTerminals((prev) => {
+      wasIntercept = prev.some((t) => t.id === id && !!t.intercept);
+      const next = prev.filter((t) => t.id !== id);
+      setActiveTermId((cur) => (cur === id ? (next.length > 0 ? next[next.length - 1].id : null) : cur));
+      if (next.length === 0) setIsTerminalModalOpen(false);
+      return next;
+    });
+    // Closing an intercept tab via the × sends close_tab, which the server turns
+    // into tmux kill-session — so the session leaves the list. Refresh once the
+    // kill has had a moment to land (the 3s poll is the backstop).
+    if (wasIntercept) window.setTimeout(refreshInterceptSessions, 600);
+  }, [refreshInterceptSessions]);
+
+  // Reconcile open intercept tabs against interceptSessions. An intercept
+  // session survives a browser refresh (the tmux pane keeps running), so a
+  // closed WebSocket alone must NOT close its tab. The list is the truth: once
+  // a tab's session has been seen active and then disappears (Stop, the shell
+  // exiting, or the pane dying), the session is gone for good — drop the
+  // now-dead tab. A tab whose session has never appeared yet (just opened, poll
+  // still stale) is left alone via the seen-key gate.
+  const seenKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const active = new Set(interceptSessions.map(sessionPodKey));
+    active.forEach((k) => seenKeysRef.current.add(k));
+    setTerminals((prev) => {
+      const survivors = prev.filter((t) => {
+        if (!t.intercept) return true;
+        const key = recordPodKey(t.record);
+        if (seenKeysRef.current.has(key) && !active.has(key)) {
+          sessionStorage.removeItem(`honey_term_${t.id}`);
+          seenKeysRef.current.delete(key);
+          return false;
+        }
+        return true;
+      });
+      if (survivors.length === prev.length) return prev;
+      setActiveTermId((cur) => (survivors.some((t) => t.id === cur) ? cur : (survivors.length > 0 ? survivors[survivors.length - 1].id : null)));
+      if (survivors.length === 0) setIsTerminalModalOpen(false);
+      return survivors;
+    });
+  }, [interceptSessions]);
+
   const handleOpenTerminal = (cfg: TerminalSessionConfig) => {
     setTerminals((prev) => [...prev, cfg]);
     setActiveTermId(cfg.id);
@@ -76,7 +169,8 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
 
   return (
     <TerminalContext.Provider value={{
-      terminals, activeTermId, isTerminalModalOpen, handleOpenTerminal, setIsTerminalModalOpen
+      terminals, activeTermId, isTerminalModalOpen, handleOpenTerminal, setIsTerminalModalOpen, closeTerminal,
+      interceptSessions, refreshInterceptSessions,
     }}>
       {children}
       {terminals.length > 0 ? (
@@ -88,15 +182,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
           recordSession={false}
           assistAvailable={!!meta?.terminal_assist_available}
           onSetActive={setActiveTermId}
-          onCloseTerminal={(id) => {
-            sessionStorage.removeItem(`honey_term_${id}`);
-            setTerminals((prev) => {
-              const next = prev.filter((t) => t.id !== id);
-              if (activeTermId === id) setActiveTermId(next.length > 0 ? next[next.length - 1].id : null);
-              if (next.length === 0) setIsTerminalModalOpen(false);
-              return next;
-            });
-          }}
+          onCloseTerminal={closeTerminal}
           onCloseModal={() => setIsTerminalModalOpen(false)}
         />
       ) : null}

@@ -55,7 +55,7 @@ defaults:
 intercept:
   enabled: true                                              # required to enable `honey intercept`
   agent_image: ghcr.io/shareed2k/mogate:0.1.3               # the stock data-plane agent image (waits for its token file)
-  default_mode: ["egress", "files"]                          # modes used when --mode is omitted (egress|incoming|files)
+  default_mode: ["egress", "files"]                          # modes used when --mode is omitted (egress|incoming|files|env)
   policy_dir: /etc/honey/intercept-policy                    # OPA policy directory for the intercept gate (optional)
 ```
 
@@ -68,8 +68,10 @@ intercept:
   agent waits for that token file at startup — so the image needs no wrapper
   and nothing pre-installed. Any image whose agent waits for `--token-file`
   works; pin an immutable tag for production.
-- **`default_mode`** — the modes (`egress`, `incoming`, `files`) used when
-  `--mode` is not passed on the command line.
+- **`default_mode`** — the modes (`egress`, `incoming`, `files`, `env`) used
+  when `--mode` is not passed on the command line. (`env` is targeted-only, so a
+  default that includes it still requires naming a target pod — see
+  [Environment variables](#environment-variables).)
 - **`policy_dir`** — an OPA policy directory dedicated to the `intercept`
   action. If set, it takes precedence for this command; if empty, `honey
   intercept` falls back to the same policy resolution as every other honey
@@ -148,8 +150,10 @@ existing workload's pod.
 | --- | --- |
 | `--namespace`, `-n` | Namespace of the target pod. Defaults to the kubeconfig context's namespace (falling back to `default`), exactly like `kubectl`. |
 | `--container` | Target container the agent shares namespaces with. |
-| `--mode` | Interception mode; repeatable: `egress`, `incoming`, `files`. Defaults to `intercept.default_mode`. |
+| `--mode` | Interception mode; repeatable: `egress`, `incoming`, `files`, `env`. `env` is targeted-only. Defaults to `intercept.default_mode`. |
 | `--target` | Local address that incoming traffic is delivered to. Required when `--mode incoming` is set. |
+| `--env-include` | With `--mode env`, overlay **only** these target env var names (repeatable, comma-separated; mutually exclusive with `--env-exclude`). |
+| `--env-exclude` | With `--mode env`, drop these target env var names from the overlay, on top of the built-in denylist (repeatable, comma-separated; mutually exclusive with `--env-include`). |
 | `--udp` | Also tunnel UDP traffic (egress and/or incoming) alongside TCP. |
 | `--cluster` | Target cluster name (gating, audit, and port-forwarding). |
 | `--agent-image` | Overrides `intercept.agent_image` for this session. |
@@ -204,6 +208,74 @@ honey intercept api-7d9f -n prod --container web --mode files -- \
 Modes combine freely — `--mode egress,files` runs a command whose network
 egress leaves from the pod and whose file reads resolve against the pod's
 root in the same session.
+
+### Environment variables
+
+`env` mode overlays the **target container's environment** onto `<command>`,
+so a service you run locally sees the same `DATABASE_URL`, feature flags, and
+other configuration the pod's own process would:
+
+```bash
+honey intercept api-7d9f -n prod --container web --mode egress,env -- ./my-service
+# ./my-service now reads the pod's DATABASE_URL, FEATURE_FLAGS, etc.,
+# while its own PATH/HOME and language-toolchain vars stay local.
+```
+
+**Where the values come from.** The agent reads the target container's
+`/proc/1/environ` (PID 1 of the shared PID namespace) and hands it back over
+the relay. honey fetches it **once, just before** `<command>` starts, and
+overlays it onto the command's own environment. For a name present both
+locally and in the target, the **target value wins**; a variable that exists
+only locally is **kept**; honey's own injector/loader variables always win
+over a same-named target value.
+
+**What is always kept local.** honey never overlays the variables that select
+executables, interpreters, or language-toolchain paths — importing the pod's
+values would make your local command resolve the wrong binaries. This built-in
+denylist is fixed and cannot be overlaid:
+
+`PATH`, `HOME`, `HOMEPATH`, `CLASSPATH`, `JAVA_EXE`, `JAVA_HOME`,
+`JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `CATALINA_HOME`, `GEM_HOME`, `GEM_PATH`,
+`GOPATH`, `PYTHONPATH`, `BUNDLE_PATH`, `BUNDLE_BIN_PATH`, `BUNDLE_GEM_PATH`,
+and any `BUNDLER_ORIG_*` variable.
+
+**Narrowing the overlay.** Two mutually exclusive filters refine which names
+are overlaid, on top of that denylist:
+
+```bash
+# overlay ONLY these names (an allow-list)
+honey intercept api-7d9f -n prod --mode env \
+  --env-include DATABASE_URL,REDIS_URL -- ./my-service
+
+# overlay everything EXCEPT these names (extends the built-in denylist)
+honey intercept api-7d9f -n prod --mode env \
+  --env-exclude OTEL_EXPORTER_OTLP_ENDPOINT -- ./my-service
+```
+
+Both flags are repeatable and comma-separated, and they carry **names only** —
+never values. Values are never logged, gated, or audited: honey fetches them
+solely to hand to your command.
+
+**Targeted-only.** `env` needs a target container to read from, so it is
+rejected on a [targetless](#targetless-no-target-pod) session (there is no
+target pod). `honey intercept --mode env` with no `<pod>` fails with a clear
+error; name a pod.
+
+**Extra privilege, added only for `env`.** Reading another process's
+`/proc/1/environ` is a `PTRACE_MODE_READ_FSCREDS` operation, so for a non-root
+target the agent needs `CAP_SYS_PTRACE` and `CAP_DAC_READ_SEARCH`. honey adds
+those two capabilities to the ephemeral container **only when `env` is active**
+(least privilege — the network-only modes keep their `NET_ADMIN`-only context).
+A `restricted`-PSA namespace may refuse them the same way it already refuses
+the targeted agent's root + `NET_ADMIN` (see [Prerequisites &
+limits](#prerequisites--limits)); the overlay is **best-effort**, so if the
+agent cannot read the environ, honey runs `<command>` with its local
+environment unchanged rather than failing the session.
+
+**Agent image requirement.** `env` mode needs an agent that answers the
+environment request, which is `mogate` **`v0.1.9`+**
+(`ghcr.io/shareed2k/mogate:0.1.9`). Older agents predate it and cannot serve
+`env` mode.
 
 ## Targetless (no target pod)
 
@@ -574,6 +646,106 @@ An invalid configuration — an unknown `session_store` value, a `sqlite`/
 `postgres` store with no `session_store_dsn`, or a store that fails to
 open — fails `honey web` startup outright rather than silently falling back
 to the in-memory store.
+
+## Intercept from the web UI
+
+`honey web` can start an interception straight from the browser. In the host
+search a **Kubernetes pod** record carries an **Intercept** action; it opens a
+small config modal — the interception **modes** (`egress`, `files`, `env`;
+`incoming` is shown but disabled, because the browser terminal has no local
+`--target` to deliver stolen traffic to), a **UDP** toggle, and an optional
+**command** (default `/bin/sh`) — and **Start intercept** opens a browser
+terminal whose shell is `mogate`-injected, exactly like `honey intercept <pod>
+-- /bin/sh` on the command line.
+
+**Where the shell runs.** The browser terminal is a **direct** intercept
+session (not the [brokered](#server-brokered-sso-interception) path), and its
+injected shell runs on the **honey-web host** — the machine `honey web` runs
+on. Run `honey web` locally (the default operator setup) and it has exactly the
+CLI's local semantics: your machine's files and `PATH`, but its egress now
+leaving from the pod. (A honey web deployed on a remote server would instead run
+that shell server-side; that is a deployment choice, out of scope here.)
+
+**Gated and audited, like the CLI.** A browser interception passes the same
+interactive-session OPA gate the [SSH terminal](./ssh-gateway.md) uses, on top of the
+[`intercept` gate](#the-intercept-opa-gate) every session enforces, and it
+emits the same `intercept_start` / `intercept_stop` [audit](#audit) events. The
+actor is the authenticated browser session — never a client-supplied field.
+
+**Concurrency.** Browser interceptions into **different** pods run at the same
+time. A second interception into a pod that **already** has one is rejected —
+the agent binds fixed in-pod ports and programs a fixed nftables table, so two
+in the same pod would collide (the same [one-per-pod](#prerequisites--limits)
+rule the CLI has). A configurable cap bounds how many run concurrently:
+
+```yaml
+intercept:
+  enabled: true
+  agent_image: ghcr.io/shareed2k/mogate:0.1.9
+  max_sessions: 8          # concurrent browser interceptions (default 8)
+```
+
+`intercept.max_sessions` defaults to **8**; a start past the cap is rejected
+until an active session ends. The UI lists the active interceptions
+(`GET /api/v1/intercept/sessions`) and can stop one
+(`POST /api/v1/intercept/sessions/{id}/stop`).
+
+**Teardown.** Clicking the **×** ("Close Terminal") on the terminal's tab
+always ends that session immediately and tears the agent down (ephemeral
+container, relay, port-forward) — the same teardown the CLI runs when
+`<command>` exits — whether or not the session
+[resumed](#resume-across-a-browser-refresh) across a refresh. Without a
+multiplexer, any dropped WebSocket ends the session the same way, so
+refreshing, closing the browser tab, or a network drop all have the same
+effect as the × there too. As on the CLI, the ephemeral container entry
+itself cannot be removed (see [Prerequisites &
+limits](#prerequisites--limits)).
+
+### Resume across a browser refresh
+
+If **tmux** is on the `PATH` of the machine `honey web` runs on, a browser
+interception runs inside a tmux pane instead of directly under the
+WebSocket, so the session can outlive any one browser tab:
+
+- **Refreshing the browser reattaches, it doesn't restart.** Interception
+  into the same pod always resolves to the same tmux session (its name is
+  derived from the cluster/namespace/pod, so it's stable across reloads).
+  Reload the tab, or close it and reopen the Intercept modal on the same pod,
+  and it reattaches to the running pane — same injected shell, same
+  environment, same scrollback — instead of deploying a second agent.
+- **Two tabs on the same pod share one shell**, never two independent ones.
+  Opening a second tab attaches to that same tmux session, so both tabs are
+  driving the identical shell process, environment, and scrollback. Only one
+  tab is the live, interactive view at a time, though: attaching takes over
+  from whichever tab held it, which then shows disconnected — reattaching
+  (reopen or refresh that tab) reclaims it. The hand-off itself never
+  touches the underlying shell or the ephemeral container — only the ×
+  button or Stop does (see below).
+- **The session outlives a dropped connection, but not the × button.**
+  Refreshing the browser, closing the browser tab or window, or a network
+  drop only disconnect the WebSocket — with nothing attached, the pane and
+  the agent it drives just keep running, no idle timeout. Only three things
+  end it: the injected shell exiting on its own, clicking the **×** ("Close
+  Terminal") on the terminal's tab, or **Stop** in the sessions list
+  (`POST /api/v1/intercept/sessions/{id}/stop`). The × and Stop both kill
+  the tmux session outright — hanging up the pane and running the same
+  teardown a normal session exit does, tearing down the ephemeral container,
+  the relay, and the port-forward — so either one also ends it for any other
+  tab still attached to that same pod's shared shell.
+- **As a bonus, not a guarantee:** because the pane belongs to the tmux
+  server rather than to the `honey web` process, a resumed session also
+  typically survives restarting `honey web` itself (the sessions list, cap,
+  and Stop all read tmux directly, so they still see it). This is an
+  emergent side effect of running under tmux, not a contract honey commits
+  to — don't rely on it, and it does **not** survive a reboot of the honey
+  host.
+- **Requires tmux on the honey host.** The release image installs it, so a
+  container deployment of `honey web` gets resume for free. Running
+  `honey web` from a plain binary on a host without tmux on `PATH` still
+  intercepts fine, just without resume: every interception (and every
+  refresh) uses the one-shot session above, so any disconnect — the ×
+  button, a refresh, or closing the browser tab — ends it immediately, and a
+  refresh starts a fresh interception rather than reattaching.
 
 ## Prerequisites & limits
 
