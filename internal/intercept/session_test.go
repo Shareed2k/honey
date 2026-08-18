@@ -180,18 +180,31 @@ func newHarness(t *testing.T, allow bool, runErr error) *harness {
 		LocalRunner:   runner,
 	}
 	opts := Options{
-		Namespace:  "apps",
-		Pod:        "target",
-		Container:  "app",
-		Cluster:    "prod",
-		AgentImage: "registry.example/agent:1",
-		Target:     "127.0.0.1:9000",
-		Modes:      local.Modes{Egress: true, Incoming: true, Files: true},
-		UDP:        true,
-		Command:    []string{"curl", "http://svc"},
-		Actor:      "roman",
+		Namespace:   "apps",
+		Pod:         "target",
+		Container:   "app",
+		Cluster:     "prod",
+		AgentImage:  "registry.example/agent:1",
+		Target:      "127.0.0.1:9000",
+		Modes:       local.Modes{Egress: true, Incoming: true, Files: true},
+		UDP:         true,
+		Command:     []string{"curl", "http://svc"},
+		Actor:       "roman",
+		InjectorLib: fakeInjectorLib(t),
 	}
 	return &harness{deps: deps, opts: opts, cs: cs, fwd: fwd, runner: runner, sink: sink, log: log}
+}
+
+// fakeInjectorLib writes a stand-in injector library and returns its path.
+// Session tests must not depend on a real embedded injector: a fresh source
+// checkout (and the unit-test CI) carries only the *.placeholder, which
+// resolveInjector correctly refuses with ErrNoInjector, so every harness
+// supplies an explicit override instead.
+func fakeInjectorLib(t *testing.T) string {
+	t.Helper()
+	lib := filepath.Join(t.TempDir(), "injector.test")
+	require.NoError(t, os.WriteFile(lib, []byte("test-injector"), 0o600))
+	return lib
 }
 
 // startEphemeralFlipper mimics the kubelet: once the Session has applied the
@@ -254,15 +267,16 @@ func newTargetlessHarness(t *testing.T, allow bool, runErr error) *harness {
 		LocalRunner:   runner,
 	}
 	opts := Options{
-		Namespace:  "apps",
-		Pod:        "mogate-test1234",
-		Cluster:    "prod",
-		AgentImage: "registry.example/agent:1",
-		Modes:      local.Modes{Egress: true},
-		UDP:        false,
-		Command:    []string{"curl", "http://svc"},
-		Actor:      "roman",
-		Targetless: true,
+		Namespace:   "apps",
+		Pod:         "mogate-test1234",
+		Cluster:     "prod",
+		AgentImage:  "registry.example/agent:1",
+		Modes:       local.Modes{Egress: true},
+		UDP:         false,
+		Command:     []string{"curl", "http://svc"},
+		Actor:       "roman",
+		Targetless:  true,
+		InjectorLib: fakeInjectorLib(t),
 	}
 	return &harness{deps: deps, opts: opts, cs: cs, fwd: fwd, runner: runner, sink: sink, log: log}
 }
@@ -516,12 +530,18 @@ func TestSession_resolveInjectorOverridePrecedence(t *testing.T) {
 	_, err = sMissing.resolveInjector(t.TempDir())
 	require.Error(t, err)
 
-	// With no override, resolveInjector falls back to extracting the embedded
-	// library into the session dir (a path under that dir, not the override).
+	// With no override, resolveInjector falls back to the embedded library:
+	// a build carrying a real injector extracts it into the session dir; a
+	// fresh source checkout (and the unit-test CI) has only the *.placeholder,
+	// which must yield ErrNoInjector rather than a loader-rejected text file.
 	dir := t.TempDir()
 	sDefault := New(Deps{}, Options{})
 	extracted, err := sDefault.resolveInjector(dir)
-	require.NoError(t, err)
+	if err != nil {
+		assert.True(t, errors.Is(err, ErrNoInjector),
+			"a placeholder-only build must yield ErrNoInjector, got %v", err)
+		return
+	}
 	assert.Equal(t, dir, filepath.Dir(extracted), "the embedded library is extracted into the session dir")
 	assert.NotEqual(t, override, extracted)
 }
