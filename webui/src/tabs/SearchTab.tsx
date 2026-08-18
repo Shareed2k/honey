@@ -20,7 +20,6 @@ import { ShareAccessModal } from './ShareAccessModal';
 import { InterceptModal } from './InterceptModal';
 import {
   fetchInterceptEnabled,
-  fetchInterceptSessions,
   stopInterceptSession,
   type InterceptOptions,
   type InterceptSession,
@@ -185,7 +184,7 @@ export function SearchTab() {
   const { meta, backends } = useAppContext();
   const { handleOpenTunnel } = useTunnel();
   const { openReplayModal, openReplayAllRecordings } = useReplay();
-  const { handleOpenTerminal, terminals = [], closeTerminal } = useTerminal();
+  const { handleOpenTerminal, terminals = [], closeTerminal, interceptSessions, refreshInterceptSessions } = useTerminal();
 
   const [name, setName] = useState(() => {
     return new URLSearchParams(window.location.search).get('name') || '';
@@ -229,7 +228,6 @@ export function SearchTab() {
 
   const [interceptTarget, setInterceptTarget] = useState<HostRecord | null>(null);
   const [interceptEnabled, setInterceptEnabled] = useState(true);
-  const [interceptSessions, setInterceptSessions] = useState<InterceptSession[]>([]);
 
   const [recordWebSession, setRecordWebSession] = useState(() => {
     return new URLSearchParams(window.location.search).get('recordWebSession') === 'true';
@@ -306,16 +304,6 @@ export function SearchTab() {
       cancelled = true;
     };
   }, []);
-
-  // Active-intercepts affordance: `/api/v1/intercept/sessions` is added by a later
-  // backend task, so this defensively resolves to [] (hiding the panel) until then.
-  const refreshInterceptSessions = useCallback(() => {
-    void fetchInterceptSessions().then(setInterceptSessions);
-  }, []);
-
-  useEffect(() => {
-    refreshInterceptSessions();
-  }, [refreshInterceptSessions]);
 
   const stopIntercept = async (s: InterceptSession) => {
     // Close the matching terminal tab immediately (by pod key), so Stop feels
