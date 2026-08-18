@@ -202,3 +202,52 @@ func validatePostgresStep(p *RecipeStepPostgres) error {
 	}
 	return nil
 }
+
+// validateInterceptStep validates an intercept step's config. The step index
+// (vc) is intentionally unused here — like postgres, these errors carry no
+// step-index prefix; the graph-level session_step checks live in
+// recipe_graph.go, which does have the context (recipe.type) this validator
+// does not.
+func validateInterceptStep(_ StepValidateCtx, i *RecipeStepIntercept) error {
+	hasCommand := strings.TrimSpace(i.Command) != ""
+	hasScript := strings.TrimSpace(i.Script) != ""
+	if !hasCommand && !hasScript {
+		return fmt.Errorf("intercept step requires one of command or script")
+	}
+	if hasCommand && hasScript {
+		return fmt.Errorf("intercept: command and script are mutually exclusive")
+	}
+	for _, m := range i.Mode {
+		switch m {
+		case "egress", "env", "files":
+		default:
+			return fmt.Errorf("intercept.mode: unsupported mode %q (allowed: egress, env, files)", m)
+		}
+	}
+	if len(i.EnvInclude) > 0 && len(i.EnvExclude) > 0 {
+		return fmt.Errorf("intercept: env_include and env_exclude are mutually exclusive")
+	}
+	if strings.TrimSpace(i.SessionStep) != "" {
+		switch {
+		case len(i.Mode) > 0:
+			return fmt.Errorf("intercept: session_step reuses a session; mode belongs on the establishing step")
+		case i.Targetless:
+			return fmt.Errorf("intercept: session_step reuses a session; targetless belongs on the establishing step")
+		case strings.TrimSpace(i.Cluster) != "":
+			return fmt.Errorf("intercept: session_step reuses a session; cluster belongs on the establishing step")
+		case strings.TrimSpace(i.Namespace) != "":
+			return fmt.Errorf("intercept: session_step reuses a session; namespace belongs on the establishing step")
+		case i.UDP:
+			return fmt.Errorf("intercept: session_step reuses a session; udp belongs on the establishing step")
+		case len(i.EnvInclude) > 0:
+			return fmt.Errorf("intercept: session_step reuses a session; env_include belongs on the establishing step")
+		case len(i.EnvExclude) > 0:
+			return fmt.Errorf("intercept: session_step reuses a session; env_exclude belongs on the establishing step")
+		}
+		return nil
+	}
+	if i.Targetless && (strings.TrimSpace(i.Cluster) == "" || strings.TrimSpace(i.Namespace) == "") {
+		return fmt.Errorf("intercept: targetless requires cluster and namespace")
+	}
+	return nil
+}

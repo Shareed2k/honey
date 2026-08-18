@@ -280,6 +280,19 @@ const schemaSource = `
 		files?:          [...string]
 		output?:         string
 	})
+	intercept?: close({
+		mode?:         [...string]
+		targetless?:   bool
+		cluster?:      string
+		namespace?:    string
+		command?:      string
+		script?:       string
+		udp?:          bool
+		env_include?:  [...string]
+		env_exclude?:  [...string]
+		session_step?: string
+		output?:       string
+	})
 	package?: close({
 		name:  string
 		state: "present" | "absent" | "latest"

@@ -61,6 +61,14 @@ recipe: { name: "x", type: "controller"
 		{id: "b", host: "_", depends: ["a"], command: "whoami"},
 	] }`, "depends is not allowed in controller mode"},
 
+		"intercept session_step not allowed": {`
+recipe: { name: "x", type: "controller"
+	tasks: [{name: "t", description: "d"}]
+	steps: [
+		{id: "a", host: "_", intercept: {command: "curl x", targetless: true, cluster: "c", namespace: "n"}},
+		{id: "b", host: "_", intercept: {session_step: "a", script: "run.sh"}},
+	] }`, "intercept.session_step is not allowed in controller mode"},
+
 		"duplicate id": {`
 recipe: { name: "x", type: "controller"
 	tasks: [{name: "t", description: "d"}]

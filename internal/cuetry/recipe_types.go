@@ -564,6 +564,22 @@ type RecipeStepPostgres struct {
 	Output        string            `json:"output,omitempty"`
 }
 
+// RecipeStepIntercept configures a Kubernetes interception step: run a local
+// command/script whose egress/env/files route through an in-cluster agent.
+type RecipeStepIntercept struct {
+	Mode        []string `json:"mode,omitempty"` // egress|env|files
+	Targetless  bool     `json:"targetless,omitempty"`
+	Cluster     string   `json:"cluster,omitempty"`
+	Namespace   string   `json:"namespace,omitempty"`
+	Command     string   `json:"command,omitempty"`
+	Script      string   `json:"script,omitempty"`
+	UDP         bool     `json:"udp,omitempty"`
+	EnvInclude  []string `json:"env_include,omitempty"`
+	EnvExclude  []string `json:"env_exclude,omitempty"`
+	SessionStep string   `json:"session_step,omitempty"`
+	Output      string   `json:"output,omitempty"`
+}
+
 // RecipeStepPackage configures a package management step.
 type RecipeStepPackage struct {
 	Name  string `json:"name"`
