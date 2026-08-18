@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { TerminalTabsModal, type TerminalSessionConfig, type PveConsoleMode, type TrueNASConsoleMode } from '../TerminalModal';
-import { type InterceptOptions, type InterceptSession, fetchInterceptSessions } from '../api/intercept';
+import { type InterceptOptions, type InterceptSession, fetchInterceptSessions, sessionPodKey, recordPodKey } from '../api/intercept';
 import { useHostSelection } from './HostSelectionContext';
 import { useAppContext } from './AppContext';
 import { recordKey } from '../HostPicker';
@@ -141,12 +141,12 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   // still stale) is left alone via the seen-key gate.
   const seenKeysRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const active = new Set(interceptSessions.map((s) => s.record_key).filter((k): k is string => !!k));
+    const active = new Set(interceptSessions.map(sessionPodKey));
     active.forEach((k) => seenKeysRef.current.add(k));
     setTerminals((prev) => {
       const survivors = prev.filter((t) => {
         if (!t.intercept) return true;
-        const key = termRecordKey(t);
+        const key = recordPodKey(t.record);
         if (seenKeysRef.current.has(key) && !active.has(key)) {
           sessionStorage.removeItem(`honey_term_${t.id}`);
           seenKeysRef.current.delete(key);

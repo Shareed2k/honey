@@ -6,14 +6,36 @@ export type InterceptOptions = {
   command?: string[];
 };
 
+// InterceptSession mirrors the server's webInterceptView JSON. There is no
+// record_key or name field — a session is identified against a host record by
+// its (cluster, namespace, pod) triple, matched to the record's kube_context /
+// namespace / pod_name meta.
 export type InterceptSession = {
   id: string;
-  record_key?: string;
-  name?: string;
+  cluster?: string;
+  namespace?: string;
+  pod?: string;
+  actor?: string;
   modes?: string[];
-  udp?: boolean;
   started_at?: string;
 };
+
+// interceptPodKey is the identity a running interception shares with the host
+// record it targets: cluster + namespace + pod. Both an InterceptSession (from
+// the server) and a HostRecord (from search) resolve to this, so the UI can tell
+// whether a given pod has a live session — for the Reattach button, the
+// dead-tab reconcile, and the Stop-closes-tab wiring.
+export function interceptPodKey(cluster?: string, namespace?: string, pod?: string): string {
+  return `${cluster || ''}\x1e${namespace || ''}\x1e${pod || ''}`;
+}
+
+export function sessionPodKey(s: InterceptSession): string {
+  return interceptPodKey(s.cluster, s.namespace, s.pod);
+}
+
+export function recordPodKey(rec: { meta?: Record<string, string> }): string {
+  return interceptPodKey(rec.meta?.kube_context, rec.meta?.namespace, rec.meta?.pod_name);
+}
 
 /** Builds the `/ws/intercept` URL (ws:// or wss:// to match the current page), same token/auth pattern as `/ws/ssh`. */
 export function interceptWebSocketURL(): string {

@@ -21,6 +21,8 @@ import { InterceptModal } from './InterceptModal';
 import {
   fetchInterceptEnabled,
   stopInterceptSession,
+  sessionPodKey,
+  recordPodKey,
   type InterceptOptions,
   type InterceptSession,
 } from '../api/intercept';
@@ -308,11 +310,10 @@ export function SearchTab() {
   const stopIntercept = async (s: InterceptSession) => {
     // Close the matching terminal tab immediately (by pod key), so Stop feels
     // instant instead of leaving a dead tab until the reconcile poll catches up.
-    if (s.record_key) {
-      for (const t of terminals) {
-        if (t.intercept && ((t.record as { _key?: string })._key || recordKey(t.record)) === s.record_key) {
-          closeTerminal(t.id);
-        }
+    const key = sessionPodKey(s);
+    for (const t of terminals) {
+      if (t.intercept && recordPodKey(t.record) === key) {
+        closeTerminal(t.id);
       }
     }
     try {
@@ -763,8 +764,8 @@ export function SearchTab() {
               <Space direction="vertical" size={6} style={{ minWidth: 240 }}>
                 {interceptSessions.map((s) => (
                   <Space key={s.id} style={{ width: '100%', justifyContent: 'space-between' }}>
-                    <Typography.Text style={{ fontSize: '0.82rem' }} ellipsis={{ tooltip: s.name || s.record_key || s.id }}>
-                      {s.name || s.record_key || s.id}
+                    <Typography.Text style={{ fontSize: '0.82rem' }} ellipsis={{ tooltip: s.pod ? `${s.namespace || ''}/${s.pod}` : s.id }}>
+                      {s.pod ? `${s.namespace || ''}/${s.pod}` : s.id}
                     </Typography.Text>
                     <Button size="small" danger onClick={() => void stopIntercept(s)}>
                       Stop
@@ -1053,7 +1054,7 @@ export function SearchTab() {
                 </Button>
               ) : null}
               {canIntercept(rec) && interceptEnabled ? (() => {
-                const liveIntercept = interceptSessions.find((s) => s.record_key === recordKey(rec));
+                const liveIntercept = interceptSessions.find((s) => sessionPodKey(s) === recordPodKey(rec));
                 // A live session with no open tab (survived a refresh, or started
                 // elsewhere) → Reattach straight to it, no modal. An open tab, or
                 // no session → the original Intercept-modal path.
