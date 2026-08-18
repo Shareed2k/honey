@@ -187,7 +187,7 @@ func runInterceptStep(ctx context.Context, i int, step cuetry.Step, opts Executi
 		live, err = establishInterceptStepSession(ctx, step, ic, opts)
 	} else {
 		var found bool
-		live, found = opts.InterceptCoord.Lookup(ic.SessionStep)
+		live, found = opts.InterceptCoord.Lookup(strings.TrimSpace(ic.SessionStep))
 		if !found {
 			err = fmt.Errorf("intercept: session_step %q has no live session", ic.SessionStep)
 		}
