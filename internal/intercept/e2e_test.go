@@ -80,7 +80,7 @@ const (
 	// env_overlay subtest) needs an agent that answers OpEnvGet, which landed in
 	// v0.1.8.
 	mogateRepo = "https://github.com/shareed2k/mogate"
-	mogateTag  = "v0.1.9"
+	mogateTag  = "v0.1.10"
 	// agentBaseImage is the genuine mogate agent image, built from the module's
 	// own (unmodified) Dockerfile. The honey agent images layer only a thin
 	// timing-flag entrypoint on top of it (no token wait — kube-agent waits
