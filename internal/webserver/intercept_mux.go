@@ -199,6 +199,25 @@ func interceptResumeCloseTabKill(name string) func() {
 	}
 }
 
+// interceptSessionActor returns the HONEY_INT_ACTOR recorded for a
+// honey-int-* resume session by interceptResumeSetMeta, or "" when name is
+// invalid, tmux/the session cannot be reached, or no actor was ever recorded.
+// Callers (MED-3: applyLiveTerminalShare's live-share ownership check) treat
+// "" as "unknown" rather than "no owner" — they must not fail closed on it,
+// since a transient tmux hiccup or an in-flight metadata write (see
+// interceptResumeSetMeta's bounded retry) is common and must not block an
+// otherwise legitimate request.
+func interceptSessionActor(name string) string {
+	if !validInterceptMuxName(name) {
+		return ""
+	}
+	out, err := tmuxRun("show-environment", "-t", name)
+	if err != nil {
+		return ""
+	}
+	return parseTmuxEnvironment(string(out))["HONEY_INT_ACTOR"]
+}
+
 // interceptResumeSetMeta records the secret-free metadata (pod/ns/cluster/actor/
 // modes + a start timestamp) into a resume session's tmux environment, so
 // tmuxListHoneyIntercept can read it back. It is a no-op for an invalid name,

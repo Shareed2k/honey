@@ -72,18 +72,50 @@ const jitKindLiveTerminal = "live_terminal"
 // — then Capability replaces Capabilities and Delivery is forced to web (a
 // live-terminal attach only exists over the browser terminal, never the SSH
 // certificate path).
-func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantRequest) error {
+//
+// The caller (handleCreateJITGrant) must invoke this whenever EITHER the
+// top-level Kind or body.Resource.Meta["kind"] equals jitKindLiveTerminal
+// (MED-2): Meta is copied into resource verbatim before this ever runs, so a
+// request that set the kind only inside Meta used to skip this entire gate —
+// an unvalidated mux_session reaching a guest's attach untouched.
+//
+// requester is the actor creating the grant (handleCreateJITGrant's
+// actorFromCtx). For the honey-int-* (intercept resume) family it is
+// cross-checked (MED-3) against the HONEY_INT_ACTOR interceptResumeSetMeta
+// recorded for that session, refusing a live share whose actor doesn't match
+// — a best-effort check: interceptSessionActor returns "" (never checked
+// against requester) when the owner can't be determined, rather than failing
+// every request closed on a transient tmux hiccup. honey_* (plain SSH/docker/
+// k8s web-terminal) sessions carry no such recorded owner today; that gap is
+// real and is left as a follow-up, not invented here as a new store.
+func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantRequest, requester string) error {
 	mux := strings.TrimSpace(body.MuxSession)
 	if mux == "" {
-		return fmt.Errorf("mux_session is required for a live_terminal share")
+		return errors.New("mux_session is required for a live_terminal share")
 	}
 	if !validHoneyMuxSessionName(mux) && !validInterceptMuxName(mux) {
 		return fmt.Errorf("invalid mux_session %q", mux)
+	}
+	if validInterceptMuxName(mux) {
+		if owner := interceptSessionActor(mux); owner != "" && owner != requester {
+			return fmt.Errorf("refusing to share session %q: not owned by %q", mux, requester)
+		}
 	}
 	switch body.Capability {
 	case jit.CapWatch, jit.CapCollab:
 	default:
 		return fmt.Errorf("capability must be %q or %q for a live_terminal share", jit.CapWatch, jit.CapCollab)
+	}
+	// MED-4: grant creation must not succeed for a tab with no live tmux
+	// session (zellij preferred, no-mux fallback, pve-serial/truenas tabs never
+	// have one) — otherwise the guest only discovers the broken link after
+	// burning a redemption. Checked last (session reality), after every static
+	// validation above, using the same liveness seam the attach path itself
+	// uses. A live-share grant is only ever redeemable on the honey node that
+	// actually holds this tmux session — it does not follow the session
+	// elsewhere.
+	if !tmuxGuestSessionAlive(mux) {
+		return errors.New("this terminal is not shareable — no live tmux session")
 	}
 
 	meta := make(map[string]string, len(resource.Meta)+2)
@@ -191,8 +223,10 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 		Meta:      body.Resource.Meta,
 	}
 
-	if body.Kind == jitKindLiveTerminal {
-		if err := applyLiveTerminalShare(&resource, &body); err != nil {
+	// MED-2: trigger on either the top-level Kind or a meta-only kind — see
+	// applyLiveTerminalShare's doc comment for why both must be checked.
+	if body.Kind == jitKindLiveTerminal || body.Resource.Meta["kind"] == jitKindLiveTerminal {
+		if err := applyLiveTerminalShare(&resource, &body, actor); err != nil {
 			httpError(w, err, http.StatusBadRequest)
 			return
 		}
@@ -310,6 +344,11 @@ func (s *Server) gateJITGrant(r *http.Request, actor string, resource jit.Resour
 			"provider": resource.Provider,
 			"env":      resource.Meta["env"],
 			"groups":   groups,
+			// MED-3: a live_terminal grant's mux_session — the exact session a
+			// redeemer will be attached to — so policy can see (and gate on)
+			// which live session is being shared, not just the target host.
+			// Empty for every non-live grant, same as before this existed.
+			"mux_session": resource.Meta["mux_session"],
 		},
 		"capabilities":     caps,
 		"delivery":         delivery,

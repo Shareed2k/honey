@@ -448,14 +448,18 @@ func jitLiveTerminalBody(muxSession, capability string) map[string]any {
 // TestHandleCreateJITGrant_LiveTerminalShare table-drives the grant-create
 // side of a live-session share: a valid honey_*/honey-int-* mux_session with
 // watch or collaborate succeeds and rewrites the stored grant's
-// ResourceRef.Meta + Capabilities + Delivery; a missing/invalid mux_session or
-// a bad capability is a 400, never a silently-accepted grant a guest could
-// later redeem into a broken or over-privileged attach.
+// ResourceRef.Meta + Capabilities + Delivery; a missing/invalid mux_session, a
+// bad capability, or (MED-4) a session that isn't actually live is a 400,
+// never a silently-accepted grant a guest could later redeem into a broken or
+// over-privileged attach. Every case fakes tmuxGuestSessionAlive (see
+// pty_proxy_test.go) so this stays hermetic — no real tmux server needed —
+// except the one case that specifically exercises MED-4's "not live" 400.
 func TestHandleCreateJITGrant_LiveTerminalShare(t *testing.T) {
 	tests := []struct {
 		name       string
 		muxSession string
 		capability string
+		notAlive   bool // MED-4: fake the session as ended instead of live
 		wantStatus int
 	}{
 		{name: "watch on honey_ session", muxSession: "honey_abc123", capability: "watch", wantStatus: http.StatusOK},
@@ -464,10 +468,12 @@ func TestHandleCreateJITGrant_LiveTerminalShare(t *testing.T) {
 		{name: "malformed mux_session rejected", muxSession: "rm -rf /", capability: "watch", wantStatus: http.StatusBadRequest},
 		{name: "shell capability rejected for live_terminal", muxSession: "honey_abc123", capability: "shell", wantStatus: http.StatusBadRequest},
 		{name: "empty capability rejected", muxSession: "honey_abc123", capability: "", wantStatus: http.StatusBadRequest},
+		{name: "no live tmux session rejected", muxSession: "honey_abc123", capability: "watch", notAlive: true, wantStatus: http.StatusBadRequest},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			withFakeGuestSessionAlive(t, !tc.notAlive)
 			s, store := newJitTestServer(t, Options{})
 			w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", jitLiveTerminalBody(tc.muxSession, tc.capability))
 			if w.Code != tc.wantStatus {
@@ -492,6 +498,66 @@ func TestHandleCreateJITGrant_LiveTerminalShare(t *testing.T) {
 			}
 			if g.Delivery != jit.DeliveryWeb {
 				t.Fatalf("Delivery = %q, want web (a live-terminal attach only exists over the browser terminal)", g.Delivery)
+			}
+		})
+	}
+}
+
+// TestHandleCreateJITGrant_MetaOnlyKindStillValidated is the MED-2 regression:
+// a request that sets kind/mux_session only inside resource.meta (never the
+// top-level fields) used to skip applyLiveTerminalShare entirely, reaching
+// the store with an unvalidated mux_session baked into ResourceRef.Meta —
+// exactly what a probe would send to bypass the mux-name gate. It must be
+// validated (and here, rejected) the same as the top-level form.
+func TestHandleCreateJITGrant_MetaOnlyKindStillValidated(t *testing.T) {
+	s, store := newJitTestServer(t, Options{})
+	body := map[string]any{
+		"resource": map[string]any{
+			"name": "op-terminal",
+			"meta": map[string]any{"kind": "live_terminal", "mux_session": "rm -rf /"},
+		},
+		"duration": "1h",
+	}
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body=%s", w.Code, w.Body)
+	}
+	if len(store.List()) != 0 {
+		t.Fatal("a meta-only bypass attempt must never reach the store")
+	}
+}
+
+// TestHandleCreateJITGrant_LiveTerminalShare_InterceptActorMismatch is the
+// MED-3 ownership regression: a live share of a honey-int-* (intercept
+// resume) session is refused when its recorded HONEY_INT_ACTOR
+// (interceptResumeSetMeta) does not match the requester creating the grant.
+// doJSON's requests carry no auth, so the requester is actorFromCtx's default
+// ("api"). An unrecorded/unknown owner (the plain "collaborate on
+// honey-int-" case in TestHandleCreateJITGrant_LiveTerminalShare, which fakes
+// no tmuxRun at all) must NOT be treated as a mismatch — that is covered
+// there, not here.
+func TestHandleCreateJITGrant_LiveTerminalShare_InterceptActorMismatch(t *testing.T) {
+	const mux = "honey-int-actorcheck01"
+	tests := []struct {
+		name          string
+		recordedActor string
+		wantStatus    int
+	}{
+		{name: "different actor refused", recordedActor: "someone-else", wantStatus: http.StatusBadRequest},
+		{name: "matching actor allowed", recordedActor: "api", wantStatus: http.StatusOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			withFakeGuestSessionAlive(t, true)
+			restore := swapTmuxRun(func(...string) ([]byte, error) {
+				return []byte("HONEY_INT_ACTOR=" + tc.recordedActor + "\n"), nil
+			})
+			defer restore()
+
+			s, _ := newJitTestServer(t, Options{})
+			w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", jitLiveTerminalBody(mux, "collaborate"))
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d body=%s", w.Code, tc.wantStatus, w.Body)
 			}
 		})
 	}

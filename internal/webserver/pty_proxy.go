@@ -144,13 +144,38 @@ const (
 	// client) or new-session -A -D (attach-or-create). UNCHANGED behavior —
 	// every caller before this task passes this mode, verbatim.
 	attachExclusive attachMode = iota
-	// attachShared joins an EXISTING session read-write, alongside the
-	// operator's own client (no -d). It never creates or respawns a session.
+	// attachShared is the collaborate guest mode. Its tmux CLIENT is attached
+	// read-only (`-r`), exactly like attachReadonly — a guest client is NEVER
+	// given a mutating tmux client, full stop (see the HIGH-1 note below). What
+	// makes it "collaborate" is that the guest's keystrokes still reach the
+	// pane, via a separate out-of-band `tmux send-keys -H` call
+	// (tmuxSendKeysHex) that ptyProxyRunBridge issues instead of writing to
+	// this client's ptmx. It never creates or respawns a session.
 	attachShared
-	// attachReadonly joins an EXISTING session read-only (tmux `-r`), alongside
-	// the operator's own client (no -d). It never creates or respawns a session.
+	// attachReadonly is the watch guest mode: read-only tmux client (`-r`),
+	// AND no stdin wired into the bridge at all (see ptyProxyRunBridge) — the
+	// guest cannot influence the pane in any way. It never creates or
+	// respawns a session.
 	attachReadonly
 )
+
+// HIGH-1 (ship-blocker, closed by this task): a collaborate guest used to be
+// attached with a plain `tmux attach -t <name>` — a FULL tmux client on
+// honey-web's own tmux socket, default keybindings and all. On tmux 3.5a, a
+// guest merely typing `\x02c` (`C-b c`) opened a brand-new window running a
+// local shell ON THE HONEY CONTROL-PLANE HOST: remote code execution for
+// anyone holding an unauthenticated share code. `C-b :` (run-shell,
+// kill-session) and `C-b s` / `C-b )` (switch to any other honey_*/
+// honey-int-* session) were the same hole. Both guest modes now attach `-r`
+// (see ptyMuxTmuxGuestAttach) so neither can ever run a tmux command that
+// mutates state — note `-r` alone is NOT sufficient (tmux still permits its
+// small set of CMD_READONLY commands to a read-only client), which is why a
+// collaborate guest's actual keystrokes never reach this client's ptmx at
+// all; they are relayed to the pane directly via tmuxSendKeysHex. The
+// longer-term correct fix — moving honey's mux to its own socket with
+// `prefix none` — was rejected for this task because it relocates every
+// existing OPERATOR session (attachExclusive) and touches a path this task
+// must leave byte-identical; it remains a real follow-up.
 
 // tmuxGuestSessionAlive reports whether muxName is a live tmux session,
 // dispatching to the family-appropriate check (see the two mux families in
@@ -212,22 +237,83 @@ func ptyMuxTmuxGuestAttach(muxName string, mode attachMode) (*exec.Cmd, string, 
 	if !tmuxGuestSessionAlive(muxName) {
 		return nil, muxName, false, fmt.Errorf("shared session %q has ended", muxName)
 	}
-	args := []string{"attach", "-t", muxName}
-	if mode == attachReadonly {
-		args = []string{"attach", "-r", "-t", muxName}
-	}
-	cmd := exec.Command("tmux", args...) // #nosec G204 -- muxName sanitized
-	zap.L().Debug("handleWebPtyProxy: tmux guest attach", zap.String("session", muxName), zap.Bool("readonly", mode == attachReadonly))
+	// HIGH-1: BOTH guest modes attach -r (read-only). A collaborate guest's
+	// keystrokes still reach the pane, but never through this client — see
+	// tmuxSendKeysHex and the HIGH-1 comment on the attachMode consts above.
+	cmd := exec.Command("tmux", "attach", "-r", "-t", muxName) // #nosec G204 -- muxName sanitized
+	zap.L().Debug("handleWebPtyProxy: tmux guest attach", zap.String("session", muxName), zap.String("mode", guestAttachModeLabel(mode)))
 	return cmd, muxName, false, nil
 }
 
-// ptyProxyRunBridge pipes ptmx<->conn until either side closes. readOnly is
-// true only for a share-link guest holding a "watch" grant: it drops every
-// BinaryMessage (stdin) frame instead of writing it to ptmx, so a watch guest
-// cannot type into the session even if the client were compromised — belt and
-// braces alongside tmux's own `-r` attach flag, which is the primary
-// enforcement (see ptyMuxTmuxGuestAttach). Every pre-existing caller passes
-// false, keeping their behavior byte-identical.
+// guestAttachModeLabel names an attachMode for logging.
+func guestAttachModeLabel(mode attachMode) string {
+	if mode == attachShared {
+		return "collaborate"
+	}
+	return "watch"
+}
+
+// maxSendKeysHexArgsPerExec bounds how many single-byte hex args one
+// tmuxSendKeysHex exec carries: a large paste chunks into several bounded
+// execs instead of one unbounded argv/subprocess.
+const maxSendKeysHexArgsPerExec = 512
+
+// tmuxSendKeysHex is the HIGH-1 mediation seam: it relays a collaborate
+// guest's raw keystroke bytes to target (a pre-validated tmux target, e.g.
+// "<session>:") out-of-band via `tmux send-keys -H <hex> <hex> ...` — one
+// two-digit hex argument per byte, generated here, NEVER the raw bytes
+// themselves as an argv string. This is the only way a collaborate guest's
+// input ever reaches the pane: its own tmux client is attached read-only
+// (ptyMuxTmuxGuestAttach), so send-keys is issued against the session/pane
+// directly, never through that client. Because every guest byte now passes
+// through this one function, it is also the seam a later command-policy task
+// wraps to filter guest keystrokes before they reach argv.
+func tmuxSendKeysHex(target string, payload []byte) error {
+	for len(payload) > 0 {
+		n := len(payload)
+		if n > maxSendKeysHexArgsPerExec {
+			n = maxSendKeysHexArgsPerExec
+		}
+		chunk := payload[:n]
+		payload = payload[n:]
+
+		args := make([]string, 0, len(chunk)+4)
+		args = append(args, "send-keys", "-H", "-t", target)
+		for _, b := range chunk {
+			args = append(args, fmt.Sprintf("%02x", b))
+		}
+		if _, err := tmuxRun(args...); err != nil {
+			return fmt.Errorf("relay keystrokes to %q: %w", target, err)
+		}
+	}
+	return nil
+}
+
+// ptyProxyStdinPolicy controls how ptyProxyRunBridge handles inbound
+// WebSocket stdin/control traffic. The zero value is the pre-existing
+// operator/non-guest behavior — stdin forwarded straight to ptmx, resize
+// honored — so every pre-existing caller passing the zero value keeps
+// byte-identical behavior.
+type ptyProxyStdinPolicy struct {
+	// DropStdin discards every BinaryMessage frame instead of writing it
+	// anywhere. Set only for a watch guest: on top of tmux's own `-r` attach
+	// (defense in depth, not the primary control — see the HIGH-1 comment on
+	// the attachMode consts), this means our own code never even attempts a
+	// write for that guest.
+	DropStdin bool
+	// RelayTarget, set only for a collaborate guest, is a pre-validated tmux
+	// target ("<session>:") that inbound bytes are relayed to out-of-band via
+	// tmuxSendKeysHex — never written to this connection's ptmx (see HIGH-1).
+	RelayTarget string
+	// IgnoreResize drops "resize" control frames (LOW-5): a guest, watch or
+	// collaborate, never resizes the operator's shared window — the operator
+	// alone drives sizing.
+	IgnoreResize bool
+}
+
+// ptyProxyRunBridge pipes ptmx<->conn until either side closes. stdin
+// controls how inbound guest bytes are handled (see ptyProxyStdinPolicy); the
+// zero value keeps every pre-existing caller byte-identical.
 func ptyProxyRunBridge(
 	ptmx *os.File,
 	conn *websocket.Conn,
@@ -235,7 +321,7 @@ func ptyProxyRunBridge(
 	hello WSHello,
 	muxName string,
 	closeTabKill chan struct{},
-	readOnly bool,
+	stdin ptyProxyStdinPolicy,
 ) chan struct{} {
 	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
 	bridgeCtx, bridgeCancel := context.WithCancel(context.Background())
@@ -250,6 +336,19 @@ func ptyProxyRunBridge(
 	wg.Add(2)
 
 	ptyExited := make(chan struct{})
+
+	// LOW-7: a plain disconnect (browser tab closed, network dropped) makes
+	// the conn-reading goroutine below return and cancel bridgeCtx, but the
+	// ptmx-reading goroutine only checks bridgeCtx between reads — if it is
+	// currently blocked in ptmx.Read on an idle session (nothing to read),
+	// that check never runs again until some other byte eventually arrives,
+	// leaving a guest's own tmux client attached to the OPERATOR's session
+	// indefinitely. This watcher force-expires that blocked Read the instant
+	// the bridge is cancelled, so the guest's client detaches promptly.
+	go func() {
+		<-bridgeCtx.Done()
+		_ = ptmx.SetReadDeadline(time.Now())
+	}()
 
 	go func() {
 		defer wg.Done()
@@ -294,19 +393,25 @@ func ptyProxyRunBridge(
 			}
 			switch mt {
 			case websocket.BinaryMessage:
-				if readOnly {
-					// A watch guest: never write to the shared pty. tmux's `-r`
-					// attach already enforces this server-side; dropping the
-					// frame here too means our own code path never even
-					// attempts the write.
+				switch {
+				case stdin.DropStdin:
+					// A watch guest: never deliver its bytes anywhere.
 					continue
-				}
-				recorder.RecordData("stdin", payload)
-				if _, werr := ptmx.Write(payload); werr != nil {
-					return
+				case stdin.RelayTarget != "":
+					// A collaborate guest: relay out-of-band via send-keys,
+					// never write to this connection's (read-only) ptmx.
+					recorder.RecordData("stdin", payload)
+					if err := tmuxSendKeysHex(stdin.RelayTarget, payload); err != nil {
+						zap.L().Warn("ptyProxyRunBridge: relay guest keystrokes failed", zap.Error(err))
+					}
+				default:
+					recorder.RecordData("stdin", payload)
+					if _, werr := ptmx.Write(payload); werr != nil {
+						return
+					}
 				}
 			case websocket.TextMessage:
-				if ptyProxyHandleCtrl(ptmx, recorder, muxName, closeTabKill, payload) {
+				if ptyProxyHandleCtrl(ptmx, recorder, muxName, closeTabKill, payload, stdin.IgnoreResize) {
 					return
 				}
 			}
@@ -318,7 +423,10 @@ func ptyProxyRunBridge(
 	return ptyExited
 }
 
-func ptyProxyHandleCtrl(ptmx *os.File, recorder *engine.SessionRecorder, muxName string, closeTabKill chan struct{}, payload []byte) (stop bool) {
+// ptyProxyHandleCtrl handles one JSON control frame. ignoreResize drops a
+// "resize" frame outright (LOW-5, guest paths): detach/close_tab are always
+// honored, since neither lets a guest touch the operator's session.
+func ptyProxyHandleCtrl(ptmx *os.File, recorder *engine.SessionRecorder, muxName string, closeTabKill chan struct{}, payload []byte, ignoreResize bool) (stop bool) {
 	var ctrl struct {
 		Type string `json:"type"`
 		Cols int    `json:"cols"`
@@ -329,6 +437,9 @@ func ptyProxyHandleCtrl(ptmx *os.File, recorder *engine.SessionRecorder, muxName
 	}
 	switch ctrl.Type {
 	case "resize":
+		if ignoreResize {
+			return false
+		}
 		if ctrl.Cols > 0 && ctrl.Rows > 0 {
 			recorder.RecordResize(ctrl.Cols, ctrl.Rows)
 			ws := ptyWinsize(ctrl.Cols, ctrl.Rows)
@@ -350,13 +461,21 @@ func ptyProxyHandleCtrl(ptmx *os.File, recorder *engine.SessionRecorder, muxName
 // ptyProxyTeardown ends one pty-proxy bridge. killSession is the explicit
 // close_tab (×) kill: the SSH path passes the honey_* mux killer, the intercept
 // resume path passes its own honey-int-* killer (the honey_* helpers gate on
-// validHoneyMuxSessionName and are inert for that name family).
-func ptyProxyTeardown(ptmx *os.File, cmd *exec.Cmd, muxName string, useZellij bool, closeTabKill, ptyExited chan struct{}, killSession func()) {
+// validHoneyMuxSessionName and are inert for that name family). guestPath is
+// true only for a share-link guest's own attach client (LOW-6): it skips
+// ptyMuxKillSessionIfExited even on a natural ptyExited, so a guest bridge can
+// NEVER be the one to reap the operator's session — not through the explicit
+// close_tab (×) branch (already a no-op killSession there) and not through
+// this "all panes exited" cleanup either. The invariant is absolute, not
+// scoped to one teardown branch.
+func ptyProxyTeardown(ptmx *os.File, cmd *exec.Cmd, muxName string, useZellij bool, closeTabKill, ptyExited chan struct{}, killSession func(), guestPath bool) {
 	select {
 	case <-ptyExited:
 		_ = ptmx.Close()
 		reapPtyProxyCmd(cmd)
-		ptyMuxKillSessionIfExited(muxName, useZellij)
+		if !guestPath {
+			ptyMuxKillSessionIfExited(muxName, useZellij)
+		}
 	default:
 		_ = ptmx.Close()
 		select {
@@ -407,8 +526,8 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 	}
 
 	closeTabKill := make(chan struct{}, 1)
-	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxName, closeTabKill, false)
-	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, func() { ptyMuxKillSession(muxName, useZellij) })
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxName, closeTabKill, ptyProxyStdinPolicy{})
+	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, func() { ptyMuxKillSession(muxName, useZellij) }, false)
 	return nil
 }
 
@@ -436,8 +555,21 @@ func handleLiveTerminalAttach(conn *websocket.Conn, muxSession string, mode atta
 
 	hello := WSHello{Cols: cols, Rows: rows}
 	closeTabKill := make(chan struct{}, 1)
-	readOnly := mode == attachReadonly
-	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxSession, closeTabKill, readOnly)
-	ptyProxyTeardown(ptmx, cmd, muxSession, false, closeTabKill, ptyExited, func() {})
+	// IgnoreResize (LOW-5): neither guest mode drives the shared window's
+	// size. DropStdin (watch) / RelayTarget (collaborate) implement HIGH-1 —
+	// see ptyProxyStdinPolicy and the attachMode consts.
+	stdin := ptyProxyStdinPolicy{IgnoreResize: true}
+	switch mode {
+	case attachReadonly:
+		stdin.DropStdin = true
+	case attachShared:
+		// "<session>:" targets the session's active window/pane — muxSession
+		// is already validated (ptyMuxTmuxCommand/ptyMuxTmuxGuestAttach ran
+		// above and returned no error), so nothing guest-supplied reaches this
+		// target string.
+		stdin.RelayTarget = muxSession + ":"
+	}
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxSession, closeTabKill, stdin)
+	ptyProxyTeardown(ptmx, cmd, muxSession, false, closeTabKill, ptyExited, func() {}, true)
 	return nil
 }

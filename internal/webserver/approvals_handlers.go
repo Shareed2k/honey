@@ -16,7 +16,7 @@ import (
 // interactive shell on the target (action "interactive_session"). A nil
 // enforcer always allows.
 func (s *Server) gateInteractiveSession(r *http.Request, rec hosts.Record) error {
-	return s.evalInteractiveSession(r.Context(), userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey), rec, "")
+	return s.evalInteractiveSession(r.Context(), userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey), rec, "", "")
 }
 
 // evalInteractiveSession asks OPA whether actor may open an interactive shell
@@ -28,10 +28,11 @@ func (s *Server) gateInteractiveSession(r *http.Request, rec hosts.Record) error
 // capability is "" for a brand-new shell (the pre-existing behavior, and
 // gateInteractiveSession's only caller shape); a live-session share link
 // passes "watch" or "collaborate" so policy can tell a fresh shell apart from
-// attaching to someone else's live terminal. It is omitted from the OPA input
-// entirely when empty, so existing policies see the exact same input shape as
-// before this capability existed.
-func (s *Server) evalInteractiveSession(ctx context.Context, actor string, rec hosts.Record, capability string) error {
+// attaching to someone else's live terminal. muxSession (MED-3) is the exact
+// tmux/zellij session a live share attaches to, empty for a brand-new shell.
+// Both are omitted from the OPA input entirely when empty, so existing
+// policies see the exact same input shape as before either field existed.
+func (s *Server) evalInteractiveSession(ctx context.Context, actor string, rec hosts.Record, capability, muxSession string) error {
 	if s.opts.Enforcer == nil {
 		return nil
 	}
@@ -47,6 +48,9 @@ func (s *Server) evalInteractiveSession(ctx context.Context, actor string, rec h
 	}
 	if capability != "" {
 		input["capability"] = capability
+	}
+	if muxSession != "" {
+		input["mux_session"] = muxSession
 	}
 	d, err := s.opts.Enforcer.Evaluate(ctx, input)
 	if err != nil {

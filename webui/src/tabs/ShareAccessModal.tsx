@@ -43,7 +43,10 @@ export function ShareAccessModal({ record, open, onClose, liveSession = null }: 
   const [requireApproval, setRequireApproval] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [reason, setReason] = useState('');
-  const [maxRedemptions, setMaxRedemptions] = useState(0);
+  // A live share defaults to 1 redemption: 0 (unlimited concurrent guests on
+  // a live, running shell) is a poor default for that case, even though it
+  // stays the right default for a brand-new-shell share.
+  const [maxRedemptions, setMaxRedemptions] = useState(() => (liveSession ? 1 : 0));
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -63,13 +66,13 @@ export function ShareAccessModal({ record, open, onClose, liveSession = null }: 
       setRequireApproval(false);
       setRecipient('');
       setReason('');
-      setMaxRedemptions(0);
+      setMaxRedemptions(liveSession ? 1 : 0);
       setBusy(false);
       setErr(null);
       setResult(null);
       setCopied(false);
     }
-  }, [open, record]);
+  }, [open, record, liveSession]);
 
   const onSubmit = async () => {
     if (!record) {

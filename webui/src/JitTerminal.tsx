@@ -6,10 +6,12 @@ export type JitTerminalProps = {
   code: string;
   /**
    * True for a "watch" live-terminal grant: the guest joins an operator's
-   * live session read-only. The server is the actual enforcement (tmux `-r`
-   * attach, and the bridge never wires the stdin frame even if it arrived) —
-   * this just stops the client from sending keystrokes that would silently
-   * go nowhere.
+   * live session read-only. The server is the actual enforcement — the pty
+   * bridge never wires a guest's stdin frame into the shared session at all;
+   * tmux's own `-r` attach is defense in depth on top of that, not the
+   * primary control (tmux still permits its own small set of read-only
+   * commands to a `-r` client) — this just stops the client from sending
+   * keystrokes that would silently go nowhere.
    */
   readOnly?: boolean;
 };

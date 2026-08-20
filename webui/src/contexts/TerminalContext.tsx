@@ -204,7 +204,14 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
           onSetActive={setActiveTermId}
           onCloseTerminal={closeTerminal}
           onCloseModal={() => setIsTerminalModalOpen(false)}
-          onShareTerminal={setShareTarget}
+          onShareTerminal={(t) => {
+            // Resolve the mux name HERE, in the click handler, and only set
+            // the target when it resolves: `open` below gates on the same
+            // resolution (!!shareMuxSession), so setting the target
+            // unconditionally used to pop the modal open later, whenever the
+            // intercept poll happened to land, instead of on click.
+            if (liveMuxSession(t)) setShareTarget(t);
+          }}
         />
       ) : null}
       <ShareAccessModal

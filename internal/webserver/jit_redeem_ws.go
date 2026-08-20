@@ -136,7 +136,7 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 		user = s.sshUser("")
 	}
 
-	if err := s.evalInteractiveSession(r.Context(), actor, rec, string(liveCapability)); err != nil {
+	if err := s.evalInteractiveSession(r.Context(), actor, rec, string(liveCapability), muxSession); err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("session denied: "+err.Error()))
 		return
 	}
@@ -160,6 +160,9 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 	auditExtra := map[string]string{"delivery": "web"}
 	if isLive {
 		auditExtra["capability"] = string(liveCapability)
+		// MED-3: record which live session was joined, not just that a live
+		// share happened — the audit trail otherwise can't say which session.
+		auditExtra["mux_session"] = muxSession
 	}
 	_ = s.opts.AuditSink.Log(r.Context(), audit.Event{
 		Source:     "web",
