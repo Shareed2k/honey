@@ -19,14 +19,24 @@ import (
 	"github.com/shareed2k/honey/internal/intercept"
 )
 
-// interceptGoleakOpts ignores GlobalTunnelPool's process-wide background
-// sweep goroutine, started once (and never stopped) the moment any test in
-// this package builds a tunnel coordinator — a pre-existing condition
-// unrelated to the intercept code these tests exercise. Mirrors the same
-// exclusion used for this exact leak elsewhere in the repo (e.g.
-// internal/sshgateway, internal/provider/honeyprovider).
+// interceptGoleakOpts scopes each test's leak check to goroutines the test
+// itself starts. goleak.IgnoreCurrent() must be called at each test's start
+// (it is — these opts are built where the `defer goleak.VerifyNone(t,
+// interceptGoleakOpts()...)` is registered, so the args evaluate then), so it
+// snapshots and excludes every goroutine already running: the GlobalTunnelPool
+// sweepLoop, stepkv's process-wide ttlcache, and any goroutine a sibling test
+// in this package leaked before this one ran. Under `go test ./...` (whole
+// package) those siblings run first and their leftovers would otherwise be
+// misattributed here; the intercept executor + coordinator themselves start no
+// goroutines (the seam fake and the synchronous coordinator are leak-free), so
+// anything IgnoreCurrent does NOT cover is a genuine leak from the code under
+// test. The explicit sweepLoop exclusion stays for the case where the pool's
+// goroutine is first created mid-test (after the snapshot).
 func interceptGoleakOpts() []goleak.Option {
-	return []goleak.Option{goleak.IgnoreTopFunction("github.com/shareed2k/honey/internal/engine.(*GlobalTunnelPool).sweepLoop")}
+	return []goleak.Option{
+		goleak.IgnoreCurrent(),
+		goleak.IgnoreTopFunction("github.com/shareed2k/honey/internal/engine.(*GlobalTunnelPool).sweepLoop"),
+	}
 }
 
 // fakeCloseLog is a concurrency-safe ordered record of the names passed to
