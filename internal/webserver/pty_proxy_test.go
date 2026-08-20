@@ -369,6 +369,68 @@ func TestPtyProxyRunBridge_DisconnectUnblocksIdlePtmxRead(t *testing.T) {
 	}
 }
 
+// TestPtyProxyRunBridge_DeadBothDirectionsStillTearsDown is the NEW-12
+// residual regression: LOW-7's ptmx watcher only covers the READ direction.
+// A guest's connection can be dead in BOTH directions at once (network
+// partition, frozen tab — exactly what NEW-12 named, where TCP keepalive
+// doesn't help), with the operator's pane still producing output: the
+// ptmx-reading goroutine's wsOut.Write eventually blocks and times out
+// (wsWriteTimeout), calling bridgeCancel — but the conn-reading goroutine's
+// bare conn.ReadMessage() has no deadline and no select on
+// bridgeCtx.Done(), so without a symmetric watcher it stayed blocked
+// forever: wg.Wait() never returned, ptyProxyTeardown never ran, and the
+// guest's tmux client stayed attached to the operator's session forever.
+// This drives a real, continuously-producing ptmx against a real conn that
+// never reads or writes again, and asserts the bridge call itself still
+// returns.
+func TestPtyProxyRunBridge_DeadBothDirectionsStillTearsDown(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	origTimeout := wsWriteTimeout
+	wsWriteTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { wsWriteTimeout = origTimeout })
+
+	ptmx, peer := newFakePtyPair(t)
+	defer ptmx.Close()
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_deadconn_test", closeTabKill, ptyProxyStdinPolicy{})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+	// Deliberately dead in BOTH directions: never call conn.ReadMessage()
+	// (frozen tab) and never send anything either (network partition) — the
+	// only thing moving is the simulated operator pane below, backing the
+	// connection up until the write side's deadline fires.
+
+	go func() {
+		chunk := bytes.Repeat([]byte{'x'}, 1<<20) // 1 MiB per write
+		for i := 0; i < 64; i++ {                 // up to 64 MiB — comfortably overflows any realistic buffer
+			if _, err := peer.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return with a connection dead in both directions")
+	}
+}
+
 // TestPtyProxyHandleCtrl_IgnoreResize is the LOW-5 regression: a guest's
 // resize control frame is dropped entirely when ignoreResize is set, leaving
 // the operator's pane size untouched — the operator alone drives sizing. An

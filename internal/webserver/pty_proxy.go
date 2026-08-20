@@ -579,6 +579,24 @@ func ptyProxyRunBridge(
 		_ = ptmx.SetReadDeadline(time.Now())
 	}()
 
+	// NEW-12 residual (round 4): the symmetric watcher for the OTHER
+	// direction. conn.ReadMessage() below has no deadline and no select on
+	// bridgeCtx.Done() — so when the guest's connection is dead in BOTH
+	// directions (network partition, frozen tab: exactly the case NEW-12
+	// named, where TCP keepalive doesn't help) and the operator's pane is
+	// still producing output, the write side now correctly times out
+	// (wsWriter's write deadline) and calls bridgeCancel(), but the reader
+	// stays blocked in ReadMessage forever — wg.Wait() never returns,
+	// ptyProxyTeardown never runs, and the guest's tmux client stays
+	// attached to the operator's session indefinitely. Closing conn here
+	// unblocks it, same pattern as ws_intercept.go's pump teardown. Safe
+	// against the caller's own deferred conn.Close(): gorilla's Close is
+	// idempotent, and nothing else here assumes single ownership of conn.
+	go func() {
+		<-bridgeCtx.Done()
+		_ = conn.Close()
+	}()
+
 	go func() {
 		defer wg.Done()
 		innerExited := false
