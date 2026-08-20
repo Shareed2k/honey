@@ -3,10 +3,12 @@ package webserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -277,4 +279,150 @@ func TestHandleJITRedeemTerminal_NoExecRegistry503(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// liveTerminalGrant returns a Grant shaped like the webserver grant-create
+// handler's live_terminal output (applyLiveTerminalShare): Meta carries kind +
+// mux_session, Capabilities carries exactly the one requested capability.
+func liveTerminalGrant(muxSession string, capability jit.Capability) jit.Grant {
+	return jit.Grant{
+		Resource: jit.ResourceRef{
+			Name:     "shared-host",
+			Provider: "ssh",
+			Meta:     map[string]string{"kind": jitKindLiveTerminal, "mux_session": muxSession},
+		},
+		Capabilities: []jit.Capability{capability},
+	}
+}
+
+// TestHandleJITRedeemTerminal_LiveTerminalInvalidMuxSession404 proves the
+// missing/invalid mux_session case collapses to the same generic 404 as any
+// other bad code (matching the pre-upgrade gate at :49/:53) — decidable
+// entirely from the grant, so it never reaches the WebSocket upgrade. Store
+// validation only requires mux_session to be non-empty (internal/jit cannot
+// import the webserver mux-name validators without a cycle), so "not a real
+// honey_*/honey-int-* name" is exactly the gap this handler-level check closes.
+func TestHandleJITRedeemTerminal_LiveTerminalInvalidMuxSession404(t *testing.T) {
+	store, _, wsBase := newJitWSTestServer(t, "banner", Options{})
+	_, code := createWebGrant(t, store, liveTerminalGrant("not-a-real-mux-name", jit.CapWatch))
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/jit/redeem/"+code+"/terminal", nil)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// TestHandleJITRedeemTerminal_LiveTerminalWatchAttach proves the S.3 routing
+// end to end against a REAL tmux session standing in for an operator's live
+// terminal: a redeemed live_terminal watch grant attaches to that EXACT
+// session (never one derived from the client's hello, which here lies about
+// session_id/ssh_user/record to prove they are ignored), streams its output,
+// and a guest close_tab reaps only the guest's own client — the operator's
+// session survives. Skips cleanly when tmux is not on PATH.
+func TestHandleJITRedeemTerminal_LiveTerminalWatchAttach(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH; live-terminal attach requires it")
+	}
+
+	name := fmt.Sprintf("honey_live_watch_%d", time.Now().UnixNano())
+	require.True(t, validHoneyMuxSessionName(name))
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
+	// A trivial producer stands in for the operator's live shell: it proves
+	// content flows from the GRANTED session without needing real keystrokes.
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", name, "--",
+		"sh", "-c", "while :; do echo tick; sleep 0.05; done").Run())
+
+	store, sink, wsBase := newJitWSTestServer(t, "unused-banner", Options{})
+	created, code := createWebGrant(t, store, liveTerminalGrant(name, jit.CapWatch))
+
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/jit/redeem/"+code+"/terminal", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+
+	// hello.Record/SSHUser/SessionID all lie about the target; the attach must
+	// still go to the grant's mux_session, never anything derived from these.
+	require.NoError(t, conn.WriteJSON(map[string]any{
+		"cols": 80, "rows": 24,
+		"session_id": "guest-supplied-should-be-ignored",
+		"ssh_user":   "mallory",
+		"record":     map[string]any{"name": "someone-elses-host"},
+	}))
+
+	sawTick := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !sawTick {
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		mt, payload, rerr := conn.ReadMessage()
+		require.NoError(t, rerr)
+		if mt == websocket.BinaryMessage && strings.Contains(string(payload), "tick") {
+			sawTick = true
+		}
+	}
+	require.True(t, sawTick, "expected to see output from the operator's granted session")
+
+	got, ok := store.Get(created.ID)
+	require.True(t, ok)
+	require.Equal(t, 1, got.Redemptions)
+
+	var redeemed bool
+	for _, e := range sink.all() {
+		if e.Action == "jit_redeemed" {
+			redeemed = true
+			require.Equal(t, "watch", e.Extra["capability"])
+		}
+	}
+	require.True(t, redeemed, "expected a jit_redeemed audit event")
+
+	// Guest close_tab must reap only the guest's own client — never the
+	// operator's session.
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"close_tab"}`)))
+	require.NoError(t, conn.Close())
+
+	require.Eventually(t, func() bool {
+		return exec.Command("tmux", "has-session", "-t", name).Run() == nil
+	}, 3*time.Second, 50*time.Millisecond, "operator's session must survive a guest close_tab")
+}
+
+// TestHandleJITRedeemTerminal_LiveTerminalCollaborateWritesReachSession proves
+// a collaborate grant is read-write end to end: unlike watch, the guest's
+// stdin reaches the shared session. The pane runs `cat`, so a write comes
+// straight back as output — proof the frame was actually forwarded, not just
+// that the socket accepted it. Skips cleanly when tmux is not on PATH.
+func TestHandleJITRedeemTerminal_LiveTerminalCollaborateWritesReachSession(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH; live-terminal attach requires it")
+	}
+
+	name := fmt.Sprintf("honey_live_collab_%d", time.Now().UnixNano())
+	require.True(t, validHoneyMuxSessionName(name))
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", name, "--", "cat").Run())
+
+	store, _, wsBase := newJitWSTestServer(t, "unused-banner", Options{})
+	_, code := createWebGrant(t, store, liveTerminalGrant(name, jit.CapCollab))
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/jit/redeem/"+code+"/terminal", nil)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+
+	require.NoError(t, conn.WriteJSON(map[string]int{"cols": 80, "rows": 24}))
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("collab-write\r")))
+
+	sawEcho := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !sawEcho {
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		mt, payload, rerr := conn.ReadMessage()
+		require.NoError(t, rerr)
+		if mt == websocket.BinaryMessage && strings.Contains(string(payload), "collab-write") {
+			sawEcho = true
+		}
+	}
+	require.True(t, sawEcho, "a collaborate guest's stdin must reach the shared session")
 }

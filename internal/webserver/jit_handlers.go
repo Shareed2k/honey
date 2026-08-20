@@ -39,7 +39,17 @@ type jitResourceRequest struct {
 }
 
 // jitCreateGrantRequest is the POST /jit/grants body.
+//
+// Kind/MuxSession/Capability are the live-terminal share extension: when Kind
+// is "live_terminal", Capability ("watch" or "collaborate") replaces
+// Capabilities, Delivery is forced to web, and MuxSession is validated here
+// (this package, unlike internal/jit, can import both mux-name validators)
+// before it lands in the grant's ResourceRef.Meta. Every other field keeps its
+// normal meaning and is unaffected by Kind.
 type jitCreateGrantRequest struct {
+	Kind            string             `json:"kind,omitempty"`
+	MuxSession      string             `json:"mux_session,omitempty"`
+	Capability      jit.Capability     `json:"capability,omitempty"`
 	Resource        jitResourceRequest `json:"resource"`
 	Capabilities    []jit.Capability   `json:"capabilities"`
 	Delivery        jit.Delivery       `json:"delivery"`
@@ -48,6 +58,45 @@ type jitCreateGrantRequest struct {
 	RequireApproval bool               `json:"require_approval,omitempty"`
 	MaxRedemptions  int                `json:"max_redemptions,omitempty"`
 	Recipient       string             `json:"recipient,omitempty"`
+}
+
+// jitKindLiveTerminal marks a grant request that attaches the redeemer to an
+// operator's EXISTING tmux-backed session instead of a brand-new shell.
+const jitKindLiveTerminal = "live_terminal"
+
+// applyLiveTerminalShare validates a live_terminal share request and rewrites
+// resource + body in place for the rest of grant creation: the mux session
+// name is validated HERE — internal/jit cannot import validHoneyMuxSessionName
+// / validInterceptMuxName without an import cycle, so this is the one place
+// that gates a session name before it is ever handed to a guest to attach to
+// — then Capability replaces Capabilities and Delivery is forced to web (a
+// live-terminal attach only exists over the browser terminal, never the SSH
+// certificate path).
+func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantRequest) error {
+	mux := strings.TrimSpace(body.MuxSession)
+	if mux == "" {
+		return fmt.Errorf("mux_session is required for a live_terminal share")
+	}
+	if !validHoneyMuxSessionName(mux) && !validInterceptMuxName(mux) {
+		return fmt.Errorf("invalid mux_session %q", mux)
+	}
+	switch body.Capability {
+	case jit.CapWatch, jit.CapCollab:
+	default:
+		return fmt.Errorf("capability must be %q or %q for a live_terminal share", jit.CapWatch, jit.CapCollab)
+	}
+
+	meta := make(map[string]string, len(resource.Meta)+2)
+	for k, v := range resource.Meta {
+		meta[k] = v
+	}
+	meta["kind"] = jitKindLiveTerminal
+	meta["mux_session"] = mux
+	resource.Meta = meta
+
+	body.Capabilities = []jit.Capability{body.Capability}
+	body.Delivery = jit.DeliveryWeb
+	return nil
 }
 
 // jitGrantView is the redacted, wire-safe view of a jit.Grant. It deliberately
@@ -140,6 +189,13 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 		Provider:  body.Resource.Provider,
 		PrimaryIP: body.Resource.PrimaryIP,
 		Meta:      body.Resource.Meta,
+	}
+
+	if body.Kind == jitKindLiveTerminal {
+		if err := applyLiveTerminalShare(&resource, &body); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
 	}
 
 	if err := s.gateJITGrant(r, actor, resource, body.Capabilities, body.Delivery, body.RequireApproval); err != nil {

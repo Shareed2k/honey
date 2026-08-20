@@ -83,7 +83,19 @@ func shareBaseURL(publicURL, listenAddr string, resolveLAN func() (string, error
 		}
 	}
 
-	if unreachableHosts[strings.ToLower(host)] {
+	// unreachableHosts is a fast-path literal-string set, so a listen host that
+	// is merely SOME loopback address without being exactly one of those
+	// literals (e.g. 127.0.0.2, or an IPv6-mapped/expanded form) would
+	// otherwise fall through as "concrete reachable" and ship verbatim in a
+	// share link — unreachable from any other device. A real net.ParseIP +
+	// IsLoopback check catches every such form the literal set misses.
+	needsLAN := unreachableHosts[strings.ToLower(host)]
+	if !needsLAN {
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			needsLAN = true
+		}
+	}
+	if needsLAN {
 		lan, lerr := resolveLAN()
 		if lerr != nil {
 			return "", fmt.Errorf("shareBaseURL: no reachable host for listen address %q: %w", listenAddr, lerr)

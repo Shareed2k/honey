@@ -58,6 +58,8 @@ type TabsProps = {
   onSetActive: (id: string) => void;
   onCloseTerminal: (id: string) => void;
   onCloseModal: () => void;
+  /** Opens the "Share this terminal" flow (watch/collaborate live-session grant) for one open tab. */
+  onShareTerminal?: (t: TerminalSessionConfig) => void;
 };
 
 /** Split-screen layouts for the terminal modal (Rundeck-style tiling). */
@@ -706,6 +708,7 @@ export function TerminalTabsModal({
   onSetActive,
   onCloseTerminal,
   onCloseModal,
+  onShareTerminal,
 }: TabsProps) {
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -1064,6 +1067,19 @@ export function TerminalTabsModal({
                     {t.record.name}
                     {t.intercept ? <span className="terminal-tab-badge"> intercept</span> : null}
                   </span>
+                  {onShareTerminal && t.pve !== 'vnc' && t.truenasConsole !== 'api' ? (
+                    <button
+                      type="button"
+                      className="terminal-tab-share"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onShareTerminal(t);
+                      }}
+                      title="Share this terminal (watch or collaborate)"
+                    >
+                      Share…
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="terminal-tab-close"

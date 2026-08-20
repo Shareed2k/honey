@@ -402,3 +402,97 @@ func TestHandleCreateJITGrant_MaxDurationConfigCap(t *testing.T) {
 		t.Fatalf("expires_at ~%s after now, want ~1h (config max_duration cap must win over the 8h request and the 24h built-in default)", got)
 	}
 }
+
+// TestHandleCreateJITGrant_LinkUsesConcreteListenAddrNotRealResolver is the
+// LOW-Q2 regression: newTestServer's ListenAddr must be a concrete,
+// non-loopback address so shareBaseURL takes its fast path here — if it were
+// still the old loopback default, this handler would fall through to
+// defaultLANResolver and make real net.Dial/net.InterfaceAddrs syscalls in
+// what is otherwise a hermetic test suite.
+func TestHandleCreateJITGrant_LinkUsesConcreteListenAddrNotRealResolver(t *testing.T) {
+	s, _ := newJitTestServer(t, Options{})
+	body := map[string]any{
+		"resource":     map[string]any{"name": "host1"},
+		"capabilities": []string{"shell"},
+		"delivery":     "web",
+		"duration":     "1h",
+	}
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	code, _ := resp["code"].(string)
+	link, _ := resp["link"].(string)
+	if want := "http://203.0.113.10:0/?access=" + code; link != want {
+		t.Fatalf("link = %q, want %q (deterministic from the concrete ListenAddr, no real resolver call)", link, want)
+	}
+}
+
+// jitLiveTerminalBody returns a POST /jit/grants body shaped like the webui's
+// "Share this terminal" action: kind/mux_session/capability instead of a
+// generic capabilities array.
+func jitLiveTerminalBody(muxSession, capability string) map[string]any {
+	return map[string]any{
+		"kind":        "live_terminal",
+		"mux_session": muxSession,
+		"capability":  capability,
+		"resource":    map[string]any{"name": "op-terminal", "provider": "ssh"},
+		"duration":    "1h",
+	}
+}
+
+// TestHandleCreateJITGrant_LiveTerminalShare table-drives the grant-create
+// side of a live-session share: a valid honey_*/honey-int-* mux_session with
+// watch or collaborate succeeds and rewrites the stored grant's
+// ResourceRef.Meta + Capabilities + Delivery; a missing/invalid mux_session or
+// a bad capability is a 400, never a silently-accepted grant a guest could
+// later redeem into a broken or over-privileged attach.
+func TestHandleCreateJITGrant_LiveTerminalShare(t *testing.T) {
+	tests := []struct {
+		name       string
+		muxSession string
+		capability string
+		wantStatus int
+	}{
+		{name: "watch on honey_ session", muxSession: "honey_abc123", capability: "watch", wantStatus: http.StatusOK},
+		{name: "collaborate on honey-int- session", muxSession: "honey-int-deadbeef", capability: "collaborate", wantStatus: http.StatusOK},
+		{name: "empty mux_session rejected", muxSession: "", capability: "watch", wantStatus: http.StatusBadRequest},
+		{name: "malformed mux_session rejected", muxSession: "rm -rf /", capability: "watch", wantStatus: http.StatusBadRequest},
+		{name: "shell capability rejected for live_terminal", muxSession: "honey_abc123", capability: "shell", wantStatus: http.StatusBadRequest},
+		{name: "empty capability rejected", muxSession: "honey_abc123", capability: "", wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, store := newJitTestServer(t, Options{})
+			w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", jitLiveTerminalBody(tc.muxSession, tc.capability))
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d body=%s", w.Code, tc.wantStatus, w.Body)
+			}
+			if tc.wantStatus != http.StatusOK {
+				return
+			}
+			all := store.List()
+			if len(all) != 1 {
+				t.Fatalf("expected 1 stored grant, got %d", len(all))
+			}
+			g := all[0]
+			if g.Resource.Meta["kind"] != "live_terminal" {
+				t.Fatalf("Meta[kind] = %q, want live_terminal", g.Resource.Meta["kind"])
+			}
+			if g.Resource.Meta["mux_session"] != tc.muxSession {
+				t.Fatalf("Meta[mux_session] = %q, want %q", g.Resource.Meta["mux_session"], tc.muxSession)
+			}
+			if len(g.Capabilities) != 1 || string(g.Capabilities[0]) != tc.capability {
+				t.Fatalf("Capabilities = %v, want [%s]", g.Capabilities, tc.capability)
+			}
+			if g.Delivery != jit.DeliveryWeb {
+				t.Fatalf("Delivery = %q, want web (a live-terminal attach only exists over the browser terminal)", g.Delivery)
+			}
+		})
+	}
+}

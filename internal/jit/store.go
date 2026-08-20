@@ -37,6 +37,13 @@ const (
 	CapShell  Capability = "shell"
 	CapExec   Capability = "exec"
 	CapTunnel Capability = "tunnel"
+	// CapWatch and CapCollab are exclusive to a live_terminal grant (see
+	// ResourceRef.Meta): they attach a redeemer to an operator's EXISTING
+	// tmux-backed session instead of opening a brand-new shell. CapWatch is
+	// read-only; CapCollab is read-write. A grant carries exactly one of the
+	// two — never both, never neither on a live_terminal resource.
+	CapWatch  Capability = "watch"
+	CapCollab Capability = "collaborate"
 )
 
 // Grant lifecycle states.
@@ -67,6 +74,16 @@ var (
 const retention = 7 * 24 * time.Hour
 
 // ResourceRef identifies the target a grant applies to.
+//
+// A live-session share (attach to an operator's EXISTING tmux-backed terminal,
+// rather than a brand-new shell) reuses Meta instead of a new struct:
+// Meta["kind"]=="live_terminal" and Meta["mux_session"] names the tmux session
+// (a honey_* web-tty session or a honey-int-* intercept-resume session — see
+// internal/webserver's validHoneyMuxSessionName / validInterceptMuxName). The
+// full mux-name validation lives in the webserver grant-create handler (this
+// package cannot import internal/webserver without a cycle); Store.Create only
+// enforces the shape that is decidable here: a non-empty mux_session and
+// exactly one of CapWatch/CapCollab.
 type ResourceRef struct {
 	Name      string            `json:"name"`
 	Provider  string            `json:"provider,omitempty"`
@@ -495,7 +512,7 @@ func validateGrant(g Grant) error {
 	}
 	for _, c := range g.Capabilities {
 		switch c {
-		case CapShell, CapExec, CapTunnel:
+		case CapShell, CapExec, CapTunnel, CapWatch, CapCollab:
 		default:
 			return fmt.Errorf("%w: invalid capability %q", ErrInvalidGrant, c)
 		}
@@ -511,7 +528,50 @@ func validateGrant(g Grant) error {
 	if g.MaxRedemptions < 0 {
 		return fmt.Errorf("%w: max redemptions must be non-negative", ErrInvalidGrant)
 	}
+	if err := validateLiveTerminal(g); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateLiveTerminal enforces the decidable half of a live_terminal grant's
+// shape (this package cannot import internal/webserver's mux-name validators
+// without a cycle, so the actual session-name check runs in the webserver
+// grant-create handler before Store.Create is ever called):
+//   - CapWatch and CapCollab are mutually exclusive on any grant.
+//   - A grant whose Resource.Meta["kind"] is "live_terminal" must carry
+//     exactly one of them, plus a non-empty Meta["mux_session"].
+//   - Neither capability may appear on a grant that is NOT Meta["kind"] ==
+//     "live_terminal" — they have no meaning outside that context.
+func validateLiveTerminal(g Grant) error {
+	watch := hasCapability(g.Capabilities, CapWatch)
+	collab := hasCapability(g.Capabilities, CapCollab)
+	if watch && collab {
+		return fmt.Errorf("%w: a live_terminal grant needs exactly one of watch or collaborate, not both", ErrInvalidGrant)
+	}
+	if g.Resource.Meta["kind"] == "live_terminal" {
+		if !watch && !collab {
+			return fmt.Errorf("%w: a live_terminal grant needs exactly one of watch or collaborate", ErrInvalidGrant)
+		}
+		if strings.TrimSpace(g.Resource.Meta["mux_session"]) == "" {
+			return fmt.Errorf("%w: a live_terminal grant requires a non-empty mux_session", ErrInvalidGrant)
+		}
+		return nil
+	}
+	if watch || collab {
+		return fmt.Errorf("%w: watch/collaborate capabilities require resource.meta.kind=live_terminal", ErrInvalidGrant)
+	}
+	return nil
+}
+
+// hasCapability reports whether caps contains want.
+func hasCapability(caps []Capability, want Capability) bool {
+	for _, c := range caps {
+		if c == want {
+			return true
+		}
+	}
+	return false
 }
 
 // newID returns a new grant ID: "jit_" followed by 12 random bytes, hex-encoded.

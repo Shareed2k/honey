@@ -11,22 +11,30 @@ import (
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/jit"
 )
 
 // handleJITRedeemTerminal is the browser web-terminal redeem for a share link:
 // a recipient with only the link (NO honey login) opens a live interactive
 // terminal to the granted record. It is a thin adapter over the existing
-// web-terminal pipeline — after authorizing the link it reuses
+// web-terminal pipeline — after authorizing the link a shell grant reuses
 // serveWebInteractive verbatim, so docker/k8s/ssh and mesh-routed records all
-// dispatch through the one InteractiveStreamer seam.
+// dispatch through the one InteractiveStreamer seam. A live_terminal grant
+// (Meta["kind"]=="live_terminal") instead ATTACHES to the operator's EXISTING
+// tmux-backed session via handleLiveTerminalAttach — watch (read-only) or
+// collaborate (read-write) — never opening a brand-new shell. Either way the
+// guest reaches the session ONLY through this redeemed, code-authenticated
+// grant; there is no path here (or anywhere) that lets a plain-token client
+// attach to someone else's session_id.
 //
 // Every check that needs no WebSocket frame runs BEFORE the upgrade and returns
 // a plain HTTP status; everything after the upgrade is reported over the socket
 // (as a text frame) and then the handler returns so the deferred Close runs.
 // Pre-upgrade lookup failures collapse to a single generic 404 so a probe cannot
-// distinguish unknown from expired from wrong-delivery codes; the record is
-// reconstructed from the grant (never the client), so a recipient cannot
-// substitute another host.
+// distinguish unknown from expired from wrong-delivery from bad-mux_session
+// codes; the record (and, for a live grant, the mux_session) is reconstructed
+// from the grant (never the client), so a recipient cannot substitute another
+// host or session.
 //
 // Scope: web-terminal share links cover ssh/docker/k8s and mesh-routed records.
 // They do NOT currently support Proxmox-serial or TrueNAS-console records (those
@@ -54,6 +62,30 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// A live_terminal grant attaches instead of opening a new shell. Everything
+	// this branch needs is decidable from the grant alone, so it runs here,
+	// pre-upgrade: an absent/invalid mux_session, or a capability that is
+	// neither watch nor collaborate, collapses to the same generic 404 as any
+	// other bad code — never a distinguishable error a probe could use.
+	isLive := g.Resource.Meta["kind"] == "live_terminal"
+	muxSession := g.Resource.Meta["mux_session"]
+	var liveCapability jit.Capability
+	if isLive {
+		if !validHoneyMuxSessionName(muxSession) && !validInterceptMuxName(muxSession) {
+			httpError(w, fmt.Errorf("invalid or expired link"), http.StatusNotFound)
+			return
+		}
+		switch {
+		case hasCapability(g.Capabilities, jit.CapCollab):
+			liveCapability = jit.CapCollab
+		case hasCapability(g.Capabilities, jit.CapWatch):
+			liveCapability = jit.CapWatch
+		default:
+			httpError(w, fmt.Errorf("invalid or expired link"), http.StatusNotFound)
+			return
+		}
+	}
+
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -67,8 +99,9 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 	}()
 
 	// One hello frame: only Cols/Rows are honored. hello.Record and hello.SSHUser
-	// are deliberately ignored for authorization — the target and login are fixed
-	// by the grant, so a client cannot redirect the session.
+	// are deliberately ignored for authorization — the target (and, for a live
+	// grant, the session) are fixed by the grant, so a client cannot redirect
+	// the session.
 	_, helloRaw, err := conn.ReadMessage()
 	if err != nil {
 		return
@@ -95,14 +128,15 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 	}
 
 	// actor is the audit/authorization identity for the link; user is the login
-	// on the target host.
+	// on the target host (unused for a live-terminal attach, which has no login
+	// of its own — it joins the operator's already-running shell).
 	actor := firstNonEmpty(g.Recipient, "share:"+g.ID)
 	user := firstNonEmpty(g.Recipient, rec.Meta["ssh_user"])
 	if user == "" {
 		user = s.sshUser("")
 	}
 
-	if err := s.evalInteractiveSession(r.Context(), actor, rec); err != nil {
+	if err := s.evalInteractiveSession(r.Context(), actor, rec, string(liveCapability)); err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("session denied: "+err.Error()))
 		return
 	}
@@ -123,6 +157,10 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 		defer recorder.Close()
 	}
 
+	auditExtra := map[string]string{"delivery": "web"}
+	if isLive {
+		auditExtra["capability"] = string(liveCapability)
+	}
 	_ = s.opts.AuditSink.Log(r.Context(), audit.Event{
 		Source:     "web",
 		Actor:      actor,
@@ -130,8 +168,19 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 		Target:     rec.Name,
 		Decision:   "allow",
 		ApprovalID: g.ID,
-		Extra:      map[string]string{"delivery": "web"},
+		Extra:      auditExtra,
 	})
+
+	if isLive {
+		mode := attachReadonly
+		if liveCapability == jit.CapCollab {
+			mode = attachShared
+		}
+		if err := handleLiveTerminalAttach(conn, muxSession, mode, cols, rows, recorder); err != nil {
+			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
+		}
+		return
+	}
 
 	// Reuse the existing pipeline as-is: serveWebInteractive already handles the
 	// mesh-proxy case and the ssh/docker/k8s InteractiveStreamer (plus the

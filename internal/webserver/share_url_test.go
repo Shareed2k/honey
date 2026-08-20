@@ -57,6 +57,15 @@ func TestShareURL(t *testing.T) {
 			want:       "http://10.1.2.3:8765",
 		},
 		{
+			// 127.0.0.2 is not in the unreachableHosts literal set (only
+			// 127.0.0.1 is listed) but IS a real loopback address, and would
+			// leak verbatim into a share link without the net.ParseIP fallback.
+			name:       "non-canonical loopback ip resolves lan ip",
+			listenAddr: "127.0.0.2:8765",
+			resolveLAN: fakeLAN,
+			want:       "http://10.1.2.3:8765",
+		},
+		{
 			name:       "bare port bind resolves lan ip",
 			listenAddr: ":8765",
 			resolveLAN: fakeLAN,

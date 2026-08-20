@@ -330,7 +330,7 @@ func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsIntercep
 	}
 
 	closeTabKill := make(chan struct{}, 1)
-	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill)
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill, false)
 	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, interceptResumeCloseTabKill(muxName))
 }
 

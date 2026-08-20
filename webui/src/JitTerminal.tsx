@@ -4,6 +4,14 @@ import { FitAddon } from '@xterm/addon-fit';
 
 export type JitTerminalProps = {
   code: string;
+  /**
+   * True for a "watch" live-terminal grant: the guest joins an operator's
+   * live session read-only. The server is the actual enforcement (tmux `-r`
+   * attach, and the bridge never wires the stdin frame even if it arrived) —
+   * this just stops the client from sending keystrokes that would silently
+   * go nowhere.
+   */
+  readOnly?: boolean;
 };
 
 // JitTerminal is the unauthenticated (no honey session, no bearer token)
@@ -11,7 +19,7 @@ export type JitTerminalProps = {
 // the WebSocket wiring in TerminalModal.tsx (same hello/resize/control-frame
 // wire protocol as /ws/ssh) but dials the code-scoped redeem endpoint, which
 // needs no token: the code itself is the credential.
-export function JitTerminal({ code }: JitTerminalProps) {
+export function JitTerminal({ code, readOnly = false }: JitTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -90,7 +98,10 @@ export function JitTerminal({ code }: JitTerminalProps) {
 
     const enc = new TextEncoder();
     term.onData((data) => {
-      if (ws.readyState !== WebSocket.OPEN) {
+      // A watch grant is read-only: the server never wires this frame into
+      // the shared session anyway (belt and braces alongside tmux's own `-r`
+      // attach), so don't even send it.
+      if (readOnly || ws.readyState !== WebSocket.OPEN) {
         return;
       }
       ws.send(enc.encode(data));
@@ -114,7 +125,7 @@ export function JitTerminal({ code }: JitTerminalProps) {
       ws.close();
       term.dispose();
     };
-  }, [code]);
+  }, [code, readOnly]);
 
   // Fill the parent so callers control the size (a small card box or the full
   // viewport); the ResizeObserver above keeps xterm fitted to whatever that is.

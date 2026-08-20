@@ -288,6 +288,70 @@ func TestCreate_ValidationFailures(t *testing.T) {
 	}
 }
 
+// TestJITLiveTerminalGrant_Validation table-drives Store.Create's decidable
+// half of the live_terminal shape check (validateLiveTerminal): the full
+// mux-session-name validation lives in the webserver grant-create handler
+// (this package cannot import it without a cycle), so here mux_session is
+// only checked for non-emptiness.
+func TestJITLiveTerminalGrant_Validation(t *testing.T) {
+	liveGrant := func(caps []Capability, muxSession string) Grant {
+		g := validGrant()
+		g.Capabilities = caps
+		g.Resource.Meta = map[string]string{"kind": "live_terminal"}
+		if muxSession != "" {
+			g.Resource.Meta["mux_session"] = muxSession
+		}
+		return g
+	}
+
+	tests := map[string]struct {
+		grant   Grant
+		wantErr bool
+	}{
+		"watch is valid": {
+			grant: liveGrant([]Capability{CapWatch}, "honey_abc123"),
+		},
+		"collaborate is valid": {
+			grant: liveGrant([]Capability{CapCollab}, "honey-int-deadbeef"),
+		},
+		"reject both watch and collaborate": {
+			grant:   liveGrant([]Capability{CapWatch, CapCollab}, "honey_abc123"),
+			wantErr: true,
+		},
+		"reject neither watch nor collaborate": {
+			grant:   liveGrant([]Capability{CapShell}, "honey_abc123"),
+			wantErr: true,
+		},
+		"reject empty mux_session": {
+			grant:   liveGrant([]Capability{CapWatch}, ""),
+			wantErr: true,
+		},
+		"reject watch capability outside live_terminal kind": {
+			grant: func() Grant {
+				g := validGrant()
+				g.Capabilities = []Capability{CapWatch}
+				return g
+			}(),
+			wantErr: true,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			stored, code, err := s.Create(tc.grant)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.ErrorIs(t, err, ErrInvalidGrant)
+				return
+			}
+			require.NoError(t, err)
+			require.NotEmpty(t, code)
+			require.Equal(t, tc.grant.Resource.Meta["mux_session"], stored.Resource.Meta["mux_session"])
+		})
+	}
+}
+
 func TestPersistence_RoundTrip(t *testing.T) {
 	c := newClock(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
 	path := filepath.Join(t.TempDir(), "grants.jsonl")

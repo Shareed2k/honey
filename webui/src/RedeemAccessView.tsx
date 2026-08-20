@@ -12,6 +12,8 @@ const CAPABILITY_LABELS: Record<JitCapability, string> = {
   shell: 'Shell',
   exec: 'Exec',
   tunnel: 'Tunnel',
+  watch: 'Watch (read-only)',
+  collaborate: 'Collaborate (read-write)',
 };
 
 // Human explanation for an inactive link, keyed by the server's `reason`.
@@ -138,6 +140,11 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
   const inactive = !loading && !!status && (status.status !== 'approved' || !status.active);
   const active = !loading && !!status && status.status === 'approved' && status.active;
 
+  // A watch grant attaches read-only: the server enforces this (tmux `-r`
+  // attach, plus the bridge never wires the stdin frame), but the guest UI
+  // shouldn't invite typing that will silently go nowhere.
+  const isReadOnly = !!status?.capabilities.includes('watch');
+
   // Once the recipient opens the terminal, give it the whole viewport — a
   // terminal in a narrow card is cramped. A slim bar keeps the resource
   // context and a way back to the lobby.
@@ -167,6 +174,7 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
             {status.resource.name}{' '}
             <Typography.Text type="secondary">({status.resource.provider})</Typography.Text>
           </Typography.Text>
+          {isReadOnly ? <Tag color="orange">read-only</Tag> : null}
           {status.expires_at ? (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               expires {new Date(status.expires_at).toLocaleString()}
@@ -178,7 +186,7 @@ export function RedeemAccessView({ code }: RedeemAccessViewProps) {
           </Button>
         </div>
         <div style={{ flex: 1, minHeight: 0, padding: 8 }}>
-          <JitTerminal code={code} />
+          <JitTerminal code={code} readOnly={isReadOnly} />
         </div>
       </div>
     );

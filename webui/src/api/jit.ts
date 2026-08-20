@@ -1,8 +1,11 @@
 import { apiGet, apiPost } from './core';
 
-export type JitCapability = 'shell' | 'exec' | 'tunnel';
+export type JitCapability = 'shell' | 'exec' | 'tunnel' | 'watch' | 'collaborate';
 export type JitDelivery = 'web' | 'cert' | 'both';
 export type JitGrantDecision = 'approve' | 'deny' | 'revoke';
+
+/** watch = read-only attach, collaborate = read-write attach to an existing live terminal. */
+export type LiveTerminalCapability = 'watch' | 'collaborate';
 
 export interface JitResourceRef {
   name: string;
@@ -20,6 +23,16 @@ export interface CreateGrantRequest {
   require_approval: boolean;
   max_redemptions: number;
   recipient?: string;
+  /**
+   * live_terminal share extension: set kind to attach the redeemer to an
+   * operator's EXISTING tmux-backed session instead of a brand-new shell.
+   * mux_session/capability replace `capabilities` (which is ignored server-side
+   * when kind is set); delivery is forced to "web" server-side regardless of
+   * what is sent.
+   */
+  kind?: 'live_terminal';
+  mux_session?: string;
+  capability?: LiveTerminalCapability;
 }
 
 export interface CreateGrantResponse {

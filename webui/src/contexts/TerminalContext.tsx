@@ -4,6 +4,7 @@ import { type InterceptOptions, type InterceptSession, fetchInterceptSessions, s
 import { useHostSelection } from './HostSelectionContext';
 import { useAppContext } from './AppContext';
 import { recordKey } from '../HostPicker';
+import { ShareAccessModal } from '../tabs/ShareAccessModal';
 
 interface TerminalContextType {
   terminals: TerminalSessionConfig[];
@@ -167,6 +168,25 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     setIsTerminalModalOpen(true);
   };
 
+  // "Share this terminal" — the tab being shared, so ShareAccessModal can be
+  // pre-seeded with its live mux_session (the server-side tmux/zellij session
+  // name a redeemed grant attaches to; see internal/webserver/pty_proxy.go).
+  const [shareTarget, setShareTarget] = useState<TerminalSessionConfig | null>(null);
+  // An SSH web-tty tab's mux name is "honey_" + its id (see ptyMuxSessionName
+  // server-side): the id is a crypto.randomUUID(), whose characters are all in
+  // ptyMuxSessionName's allowed set, so it passes through unchanged and this
+  // stays a pure client-side computation. An intercept tab's mux name
+  // (honey-int-<hex>) is a server-computed digest of pod identity that the
+  // client never sees directly — it is read back from the one place that
+  // carries it: the polled interceptSessions list's `id` field (the server's
+  // webInterceptView.ID, which IS the tmux session name).
+  const liveMuxSession = (t: TerminalSessionConfig): string | null => {
+    if (!t.intercept) return `honey_${t.id}`;
+    const key = recordPodKey(t.record);
+    return interceptSessions.find((s) => sessionPodKey(s) === key)?.id ?? null;
+  };
+  const shareMuxSession = shareTarget ? liveMuxSession(shareTarget) : null;
+
   return (
     <TerminalContext.Provider value={{
       terminals, activeTermId, isTerminalModalOpen, handleOpenTerminal, setIsTerminalModalOpen, closeTerminal,
@@ -184,8 +204,15 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
           onSetActive={setActiveTermId}
           onCloseTerminal={closeTerminal}
           onCloseModal={() => setIsTerminalModalOpen(false)}
+          onShareTerminal={setShareTarget}
         />
       ) : null}
+      <ShareAccessModal
+        record={shareTarget?.record ?? null}
+        open={!!shareTarget && !!shareMuxSession}
+        onClose={() => setShareTarget(null)}
+        liveSession={shareMuxSession ? { muxSession: shareMuxSession } : null}
+      />
     </TerminalContext.Provider>
   );
 }

@@ -408,6 +408,24 @@ body {
   color: #3b82f6;
 }
 
+.terminal-tab-share {
+  background: transparent;
+  border: none;
+  color: #9aa4b2;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 2px 4px;
+  margin-right: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.terminal-tab-share:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
 .terminal-tab-close {
   background: transparent;
   border: none;

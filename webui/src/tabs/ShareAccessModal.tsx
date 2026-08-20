@@ -2,13 +2,21 @@ import { useEffect, useState } from 'react';
 import { Alert, Button, Checkbox, Input, InputNumber, Modal, Radio, Space, Tag, Typography } from 'antd';
 import { QRCodeSVG } from 'qrcode.react';
 import { createGrant } from '../api/jit';
-import type { CreateGrantResponse, JitCapability, JitDelivery } from '../api/jit';
+import type { CreateGrantResponse, JitCapability, JitDelivery, LiveTerminalCapability } from '../api/jit';
 import type { HostRecord } from '../HostPicker';
 
 export type ShareAccessModalProps = {
   record: HostRecord | null;
   open: boolean;
   onClose: () => void;
+  /**
+   * When set, this modal shares the CALLER's live terminal session (a
+   * `mux_session` name, e.g. `honey_<uuid>` for SSH web-tty or
+   * `honey-int-<hex>` for an intercept resume pane) instead of a brand-new
+   * shell: the form swaps Capabilities/Delivery for a watch/collaborate
+   * radio, and the resulting grant attaches a redeemer to that EXACT session.
+   */
+  liveSession?: { muxSession: string } | null;
 };
 
 const CAPABILITY_OPTIONS: { label: string; value: JitCapability }[] = [
@@ -17,14 +25,21 @@ const CAPABILITY_OPTIONS: { label: string; value: JitCapability }[] = [
   { label: 'Tunnel', value: 'tunnel' },
 ];
 
+const LIVE_CAPABILITY_OPTIONS: { label: string; value: LiveTerminalCapability }[] = [
+  { label: 'Watch (read-only)', value: 'watch' },
+  { label: 'Collaborate (read-write)', value: 'collaborate' },
+];
+
 const DEFAULT_CAPABILITIES: JitCapability[] = ['shell'];
 const DEFAULT_DELIVERY: JitDelivery = 'both';
 const DEFAULT_DURATION = '2h';
+const DEFAULT_LIVE_CAPABILITY: LiveTerminalCapability = 'watch';
 
-export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProps) {
+export function ShareAccessModal({ record, open, onClose, liveSession = null }: ShareAccessModalProps) {
   const [duration, setDuration] = useState(DEFAULT_DURATION);
   const [capabilities, setCapabilities] = useState<JitCapability[]>(DEFAULT_CAPABILITIES);
   const [delivery, setDelivery] = useState<JitDelivery>(DEFAULT_DELIVERY);
+  const [liveCapability, setLiveCapability] = useState<LiveTerminalCapability>(DEFAULT_LIVE_CAPABILITY);
   const [requireApproval, setRequireApproval] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [reason, setReason] = useState('');
@@ -35,6 +50,8 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
   const [result, setResult] = useState<CreateGrantResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const isLiveShare = !!liveSession;
+
   // Reset to a blank form every time the modal is opened (fresh target, or the
   // same one re-opened) so a previous grant's result/code never lingers.
   useEffect(() => {
@@ -42,6 +59,7 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
       setDuration(DEFAULT_DURATION);
       setCapabilities(DEFAULT_CAPABILITIES);
       setDelivery(DEFAULT_DELIVERY);
+      setLiveCapability(DEFAULT_LIVE_CAPABILITY);
       setRequireApproval(false);
       setRecipient('');
       setReason('');
@@ -74,6 +92,9 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
         require_approval: requireApproval,
         max_redemptions: maxRedemptions,
         recipient: recipient.trim() || undefined,
+        ...(liveSession
+          ? { kind: 'live_terminal' as const, mux_session: liveSession.muxSession, capability: liveCapability }
+          : {}),
       });
       setResult(resp);
     } catch (e) {
@@ -86,7 +107,9 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
   const link = result?.link || (result ? window.location.origin + result.link_path : '');
   // Tunnel access is redeemed as an SSH certificate (for `ssh -L`), so a
   // web-terminal-only delivery would produce a dead link — block that combo.
-  const tunnelNeedsCert = capabilities.includes('tunnel') && delivery === 'web';
+  // Not applicable to a live-terminal share, which is always web/watch-or-collaborate.
+  const tunnelNeedsCert = !isLiveShare && capabilities.includes('tunnel') && delivery === 'web';
+  const canSubmit = !!record && (isLiveShare || (capabilities.length > 0 && !tunnelNeedsCert));
 
   const copyLink = () => {
     if (!link) {
@@ -105,7 +128,7 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
     <Modal
       open={open}
       onCancel={onClose}
-      title={record ? `Share access — ${record.name}` : 'Share access'}
+      title={record ? `${isLiveShare ? 'Share this terminal' : 'Share access'} — ${record.name}` : 'Share access'}
       width={480}
       destroyOnHidden
       footer={
@@ -123,7 +146,7 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
                 key="create"
                 type="primary"
                 loading={busy}
-                disabled={!record || capabilities.length === 0 || tunnelNeedsCert}
+                disabled={!canSubmit}
                 onClick={() => void onSubmit()}
               >
                 Create link
@@ -150,37 +173,57 @@ export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProp
             />
           </div>
 
-          <div>
-            <Typography.Text id="jit-capabilities-label" style={{ display: 'block', marginBottom: 4 }}>
-              Capabilities
-            </Typography.Text>
-            <Checkbox.Group
-              aria-labelledby="jit-capabilities-label"
-              options={CAPABILITY_OPTIONS}
-              value={capabilities}
-              onChange={(vals) => setCapabilities(vals)}
-            />
-          </div>
-
-          <div>
-            <Typography.Text id="jit-delivery-label" style={{ display: 'block', marginBottom: 4 }}>
-              Delivery
-            </Typography.Text>
-            <Radio.Group
-              aria-labelledby="jit-delivery-label"
-              value={delivery}
-              onChange={(e) => setDelivery(e.target.value as JitDelivery)}
-            >
-              <Radio value="web">Browser terminal</Radio>
-              <Radio value="cert">SSH certificate</Radio>
-              <Radio value="both">Both</Radio>
-            </Radio.Group>
-            {tunnelNeedsCert ? (
-              <Typography.Text type="warning" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
-                Tunnel access is delivered via an SSH certificate — pick SSH certificate or Both.
+          {isLiveShare ? (
+            <div>
+              <Typography.Text id="jit-live-capability-label" style={{ display: 'block', marginBottom: 4 }}>
+                Access
               </Typography.Text>
-            ) : null}
-          </div>
+              <Radio.Group
+                aria-labelledby="jit-live-capability-label"
+                options={LIVE_CAPABILITY_OPTIONS}
+                value={liveCapability}
+                onChange={(e) => setLiveCapability(e.target.value as LiveTerminalCapability)}
+              />
+              <Typography.Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+                The guest joins this exact terminal session — not a new shell. Delivered over the browser
+                terminal only.
+              </Typography.Text>
+            </div>
+          ) : (
+            <>
+              <div>
+                <Typography.Text id="jit-capabilities-label" style={{ display: 'block', marginBottom: 4 }}>
+                  Capabilities
+                </Typography.Text>
+                <Checkbox.Group
+                  aria-labelledby="jit-capabilities-label"
+                  options={CAPABILITY_OPTIONS}
+                  value={capabilities}
+                  onChange={(vals) => setCapabilities(vals)}
+                />
+              </div>
+
+              <div>
+                <Typography.Text id="jit-delivery-label" style={{ display: 'block', marginBottom: 4 }}>
+                  Delivery
+                </Typography.Text>
+                <Radio.Group
+                  aria-labelledby="jit-delivery-label"
+                  value={delivery}
+                  onChange={(e) => setDelivery(e.target.value as JitDelivery)}
+                >
+                  <Radio value="web">Browser terminal</Radio>
+                  <Radio value="cert">SSH certificate</Radio>
+                  <Radio value="both">Both</Radio>
+                </Radio.Group>
+                {tunnelNeedsCert ? (
+                  <Typography.Text type="warning" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+                    Tunnel access is delivered via an SSH certificate — pick SSH certificate or Both.
+                  </Typography.Text>
+                ) : null}
+              </div>
+            </>
+          )}
 
           <div>
             <Typography.Text id="jit-access-label" style={{ display: 'block', marginBottom: 4 }}>

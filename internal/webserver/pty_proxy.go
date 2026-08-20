@@ -80,7 +80,7 @@ func ptyMuxBuildCommand(bin, configPath, encodedPayload, sessionID string) (cmd 
 		return ptyMuxZellijCommand(muxName, proxyArgs)
 	}
 	if _, err := exec.LookPath("tmux"); err == nil {
-		return ptyMuxTmuxCommand(muxName, proxyArgs)
+		return ptyMuxTmuxCommand(muxName, proxyArgs, attachExclusive)
 	}
 	zap.L().Debug("handleWebPtyProxy: no multiplexer found, falling back")
 	return nil, muxName, false, fmt.Errorf("neither zellij nor tmux found on the server")
@@ -116,7 +116,7 @@ func ptyMuxBuildInterceptCommand(bin, configPath, encodedPayload, name string) (
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return nil, name, false, fmt.Errorf("intercept resume requires tmux on the server: %w", err)
 	}
-	return ptyMuxTmuxCommand(name, proxyArgs)
+	return ptyMuxTmuxCommand(name, proxyArgs, attachExclusive)
 }
 
 func ptyMuxZellijCommand(muxName string, proxyArgs []string) (*exec.Cmd, string, bool, error) {
@@ -132,7 +132,45 @@ func ptyMuxZellijCommand(muxName string, proxyArgs []string) (*exec.Cmd, string,
 	return cmd, muxName, true, nil
 }
 
-func ptyMuxTmuxCommand(muxName string, proxyArgs []string) (*exec.Cmd, string, bool, error) {
+// attachMode selects how ptyMuxTmuxCommand joins a tmux session. It exists so
+// a share-link GUEST — authenticated only by a redeemed JIT grant, never by
+// the shared web token — can be attached to the operator's live session
+// without ever gaining the power to detach the operator or conjure a session
+// that doesn't already exist.
+type attachMode int
+
+const (
+	// attachExclusive is the host/refresh path: attach -d (detaching any other
+	// client) or new-session -A -D (attach-or-create). UNCHANGED behavior —
+	// every caller before this task passes this mode, verbatim.
+	attachExclusive attachMode = iota
+	// attachShared joins an EXISTING session read-write, alongside the
+	// operator's own client (no -d). It never creates or respawns a session.
+	attachShared
+	// attachReadonly joins an EXISTING session read-only (tmux `-r`), alongside
+	// the operator's own client (no -d). It never creates or respawns a session.
+	attachReadonly
+)
+
+// tmuxGuestSessionAlive reports whether muxName is a live tmux session,
+// dispatching to the family-appropriate check (see the two mux families in
+// pty_mux.go / intercept_mux.go). It is a package var so tests can simulate an
+// alive/dead session without a real tmux server. name has already been
+// re-validated by the caller before this runs.
+var tmuxGuestSessionAlive = func(name string) bool {
+	if validHoneyMuxSessionName(name) {
+		return tmuxSessionAlive(name)
+	}
+	if validInterceptMuxName(name) {
+		return tmuxHasInterceptSession(name)
+	}
+	return false
+}
+
+func ptyMuxTmuxCommand(muxName string, proxyArgs []string, mode attachMode) (*exec.Cmd, string, bool, error) {
+	if mode != attachExclusive {
+		return ptyMuxTmuxGuestAttach(muxName, mode)
+	}
 	pruneHoneyTmuxSessions(muxName)
 	switch {
 	case tmuxSessionAlive(muxName):
@@ -159,6 +197,37 @@ func ptyMuxTmuxCommand(muxName string, proxyArgs []string) (*exec.Cmd, string, b
 	}
 }
 
+// ptyMuxTmuxGuestAttach builds the attachShared/attachReadonly command for a
+// guest joining an operator's live session. Unlike attachExclusive it NEVER
+// creates or respawns a session — a guest that guessed or was handed a
+// mux_session for a session that has already ended must get an error, never a
+// freshly conjured session masquerading as the one it was granted. The name is
+// re-validated here, immediately before it reaches a tmux argv, so the
+// "#nosec G204 -- muxName sanitized" invariant holds for this call path too,
+// independent of whatever validated it at grant-create time.
+func ptyMuxTmuxGuestAttach(muxName string, mode attachMode) (*exec.Cmd, string, bool, error) {
+	if !validHoneyMuxSessionName(muxName) && !validInterceptMuxName(muxName) {
+		return nil, muxName, false, fmt.Errorf("invalid mux session name %q", muxName)
+	}
+	if !tmuxGuestSessionAlive(muxName) {
+		return nil, muxName, false, fmt.Errorf("shared session %q has ended", muxName)
+	}
+	args := []string{"attach", "-t", muxName}
+	if mode == attachReadonly {
+		args = []string{"attach", "-r", "-t", muxName}
+	}
+	cmd := exec.Command("tmux", args...) // #nosec G204 -- muxName sanitized
+	zap.L().Debug("handleWebPtyProxy: tmux guest attach", zap.String("session", muxName), zap.Bool("readonly", mode == attachReadonly))
+	return cmd, muxName, false, nil
+}
+
+// ptyProxyRunBridge pipes ptmx<->conn until either side closes. readOnly is
+// true only for a share-link guest holding a "watch" grant: it drops every
+// BinaryMessage (stdin) frame instead of writing it to ptmx, so a watch guest
+// cannot type into the session even if the client were compromised — belt and
+// braces alongside tmux's own `-r` attach flag, which is the primary
+// enforcement (see ptyMuxTmuxGuestAttach). Every pre-existing caller passes
+// false, keeping their behavior byte-identical.
 func ptyProxyRunBridge(
 	ptmx *os.File,
 	conn *websocket.Conn,
@@ -166,6 +235,7 @@ func ptyProxyRunBridge(
 	hello WSHello,
 	muxName string,
 	closeTabKill chan struct{},
+	readOnly bool,
 ) chan struct{} {
 	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
 	bridgeCtx, bridgeCancel := context.WithCancel(context.Background())
@@ -224,6 +294,13 @@ func ptyProxyRunBridge(
 			}
 			switch mt {
 			case websocket.BinaryMessage:
+				if readOnly {
+					// A watch guest: never write to the shared pty. tmux's `-r`
+					// attach already enforces this server-side; dropping the
+					// frame here too means our own code path never even
+					// attempts the write.
+					continue
+				}
 				recorder.RecordData("stdin", payload)
 				if _, werr := ptmx.Write(payload); werr != nil {
 					return
@@ -330,7 +407,37 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 	}
 
 	closeTabKill := make(chan struct{}, 1)
-	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxName, closeTabKill)
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxName, closeTabKill, false)
 	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, func() { ptyMuxKillSession(muxName, useZellij) })
+	return nil
+}
+
+// handleLiveTerminalAttach bridges conn to muxSession — an operator's EXISTING
+// tmux session — for a share-link guest holding a redeemed live_terminal
+// grant. mode must be attachShared (collaborate) or attachReadonly (watch);
+// unlike handleWebPtyProxy this path never creates or respawns a session:
+// ptyMuxTmuxCommand errors out instead, because a guest must never conjure a
+// session it was not actually granted a LIVE counterpart for.
+//
+// Guest teardown never kills the operator's session: close_tab reaps only the
+// guest's own tmux client process (ptyProxyTeardown's killSession is a no-op
+// here), and tmux itself keeps a session alive as long as it exists,
+// independent of how many clients are attached.
+func handleLiveTerminalAttach(conn *websocket.Conn, muxSession string, mode attachMode, cols, rows int, recorder *engine.SessionRecorder) error {
+	cmd, _, _, err := ptyMuxTmuxCommand(muxSession, nil, mode)
+	if err != nil {
+		return err
+	}
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return fmt.Errorf("start guest attach pty: %w", err)
+	}
+
+	hello := WSHello{Cols: cols, Rows: rows}
+	closeTabKill := make(chan struct{}, 1)
+	readOnly := mode == attachReadonly
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxSession, closeTabKill, readOnly)
+	ptyProxyTeardown(ptmx, cmd, muxSession, false, closeTabKill, ptyExited, func() {})
 	return nil
 }
