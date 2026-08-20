@@ -1,25 +1,29 @@
 package webserver
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
 )
 
-// unreachableHosts are listenAddr hosts that describe "any interface" or
-// "this machine only" rather than an address a recipient on another device
-// could actually dial. Any of these must be replaced by the resolved LAN IP
-// before a share link is handed out.
-var unreachableHosts = map[string]bool{
-	"":          true, // e.g. listenAddr ":8765"
-	"0.0.0.0":   true,
-	"::":        true,
-	"::1":       true,
-	"[::1]":     true,
-	"localhost": true,
-	"127.0.0.1": true,
+// wildcardHosts are listenAddr hosts that mean "every interface". The listener
+// really is answering on this machine's LAN address, so substituting the
+// resolved LAN IP produces a URL another device can dial.
+var wildcardHosts = map[string]bool{
+	"":        true, // e.g. listenAddr ":8765"
+	"0.0.0.0": true,
+	"::":      true,
+	"[::]":    true,
 }
+
+// ErrListenerLoopbackOnly reports that honey web is bound to loopback only, so
+// no share link can reach another device: substituting a LAN IP would hand out
+// a URL nothing is listening on. Loopback is the default (--listen
+// localhost:8765), so this is the common case and the caller must surface it as
+// actionable operator guidance rather than fabricate an address.
+var ErrListenerLoopbackOnly = errors.New("share: honey web is listening on loopback only — restart it with --listen 0.0.0.0:<port> (or set --public-url) for share links to reach another device")
 
 // defaultLANResolver is the resolveLAN implementation used outside tests. It
 // returns this host's primary outbound LAN IP: the local address the OS
@@ -57,11 +61,15 @@ var defaultLANResolver = func() (string, error) {
 // link must use so a recipient on another device can reach this honey web
 // instance. Precedence: an explicit publicURL wins (trailing "/" trimmed,
 // "http://" prepended if it carries no scheme); otherwise the base is
-// derived from listenAddr — a concrete non-loopback host is used as-is,
-// while an empty / 0.0.0.0 / :: / localhost / 127.0.0.1 host is replaced by
-// resolveLAN's primary outbound LAN IP. The main honey web listener is plain
-// HTTP, so the derived scheme is always "http"; publicURL is how an operator
-// behind a TLS reverse proxy supplies "https://...".
+// derived from listenAddr: a concrete non-loopback host is used as-is, a
+// wildcard bind (empty / 0.0.0.0 / ::) is replaced by resolveLAN's primary
+// outbound LAN IP (the listener does answer there), and a LOOPBACK bind
+// returns ErrListenerLoopbackOnly — nothing outside this machine can reach
+// that listener, so there is no share URL to hand out and the caller must say
+// so instead of fabricating one. The main honey web listener is plain HTTP, so
+// the derived scheme is always "http"; publicURL is how an operator behind a
+// TLS reverse proxy supplies "https://..." (and is also the way to publish a
+// loopback-bound instance that sits behind a proxy).
 func shareBaseURL(publicURL, listenAddr string, resolveLAN func() (string, error)) (string, error) {
 	if pu := strings.TrimRight(strings.TrimSpace(publicURL), "/"); pu != "" {
 		if !strings.Contains(pu, "://") {
@@ -83,24 +91,29 @@ func shareBaseURL(publicURL, listenAddr string, resolveLAN func() (string, error
 		}
 	}
 
-	// unreachableHosts is a fast-path literal-string set, so a listen host that
-	// is merely SOME loopback address without being exactly one of those
-	// literals (e.g. 127.0.0.2, or an IPv6-mapped/expanded form) would
-	// otherwise fall through as "concrete reachable" and ship verbatim in a
-	// share link — unreachable from any other device. A real net.ParseIP +
-	// IsLoopback check catches every such form the literal set misses.
-	needsLAN := unreachableHosts[strings.ToLower(host)]
-	if !needsLAN {
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-			needsLAN = true
-		}
-	}
-	if needsLAN {
+	// Wildcard vs loopback are NOT interchangeable, and conflating them is how
+	// this function shipped a broken link once already: a wildcard bind really
+	// does answer on the LAN address, so substituting it is correct, but a
+	// loopback bind answers ONLY on loopback — substituting a LAN IP there
+	// yields a URL nothing is listening on. Loopback is the default
+	// (--listen localhost:8765), so it must fail loudly, not silently guess.
+	lowered := strings.ToLower(strings.Trim(host, "[]"))
+	switch {
+	case wildcardHosts[strings.ToLower(host)] || wildcardHosts[lowered]:
 		lan, lerr := resolveLAN()
 		if lerr != nil {
 			return "", fmt.Errorf("shareBaseURL: no reachable host for listen address %q: %w", listenAddr, lerr)
 		}
 		host = lan
+	case lowered == "localhost":
+		return "", ErrListenerLoopbackOnly
+	default:
+		// A literal check misses forms like 127.0.0.2 or an expanded IPv6
+		// loopback, which would otherwise fall through as "concrete reachable"
+		// and ship verbatim.
+		if ip := net.ParseIP(lowered); ip != nil && ip.IsLoopback() {
+			return "", ErrListenerLoopbackOnly
+		}
 	}
 
 	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {

@@ -312,10 +312,19 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 	// failure (no usable listen host and no resolvable LAN IP) it is simply
 	// omitted; the web UI then falls back to window.location.origin +
 	// link_path, same as before this existed.
-	if base, err := shareBaseURL(s.opts.PublicURL, s.opts.ListenAddr, defaultLANResolver); err != nil {
-		zap.L().Debug("jit: could not compute absolute share link, client will fall back to browser origin", zap.Error(err))
-	} else {
+	switch base, err := shareBaseURL(s.opts.PublicURL, s.opts.ListenAddr, defaultLANResolver); {
+	case err == nil:
 		resp["link"] = base + "/?access=" + code
+	case errors.Is(err, ErrListenerLoopbackOnly):
+		// The common default (--listen localhost:8765): the listener answers on
+		// loopback only, so no absolute link could reach another device.
+		// Substituting a LAN IP here would hand out a URL nothing is listening
+		// on, so instead tell the operator what to change — the UI shows this
+		// next to the (browser-origin) link so a QR code that cannot work is
+		// never presented as if it could.
+		resp["link_warning"] = err.Error()
+	default:
+		zap.L().Debug("jit: could not compute absolute share link, client will fall back to browser origin", zap.Error(err))
 	}
 	if !stored.ExpiresAt.IsZero() {
 		resp["expires_at"] = stored.ExpiresAt.Format(time.RFC3339)
