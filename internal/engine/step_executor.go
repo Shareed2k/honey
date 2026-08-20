@@ -12,7 +12,6 @@ import (
 	"github.com/shareed2k/honey/internal/postgres"
 
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -56,7 +55,6 @@ type ExecutionOptions struct {
 	RecipeKV          *RecipeKVCoordinator
 	ConfigPath        string
 	Enforcer          *policy.Enforcer
-	Guardrails        *guardrails.Ruleset
 	Inventory         config.Inventory
 	CmdTimeout        time.Duration
 	Reg               hostexec.Registry

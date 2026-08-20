@@ -10,7 +10,6 @@ import (
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/termguard"
@@ -23,12 +22,11 @@ import (
 // termguard.ModeEnforce, set by the caller — an untrusted party never gets a
 // weaker mode via config).
 type termGuardInputs struct {
-	Enforcer   *policy.Enforcer
-	Guardrails *guardrails.Ruleset
-	Actor      string
-	Record     hosts.Record
-	AuditSink  audit.Sink
-	Mode       termguard.Mode
+	Enforcer  *policy.Enforcer
+	Actor     string
+	Record    hosts.Record
+	AuditSink audit.Sink
+	Mode      termguard.Mode
 }
 
 // webGuardMode resolves the configured interactive guardrail mode for a
@@ -41,18 +39,16 @@ func (s *Server) webGuardMode() termguard.Mode {
 // newTermGuardDecide builds the decide/onDecision pair termguard.NewReader
 // needs, mirroring internal/sshgateway/session.go's interactive decide
 // closure so one behavior serves the gateway and the web/share terminal: the
-// SAME risk+policy assessment (cmdgate.AssessTargets) runExec and the
-// gateway's own interactive guard use, denying on a hard verdict and writing
-// (plus auditing) any non-fatal guardrail warning to notify. notify must be
-// the connection's own write-serializing wsWriter (never a second, unrelated
-// writer over the same *websocket.Conn) since it is invoked concurrently
-// with the stdout pump.
+// SAME OPA command_exec decision (via cmdgate.AssessTargets) runExec and the
+// gateway's own interactive guard use, denying on a hard verdict. (The deny
+// notice itself is written by termguard.NewReader's own notify writer, passed
+// separately by the caller — not by this function.)
 //
 // A policy-evaluation error fails closed only when in.Mode is
 // termguard.ModeEnforce — audit mode records but never blocks, matching the
 // gateway's behavior. A share collaborate guest always passes Mode enforce,
 // so it always fails closed; a config-off/audit operator terminal does not.
-func newTermGuardDecide(notify io.Writer, in termGuardInputs) (
+func newTermGuardDecide(in termGuardInputs) (
 	decide func(context.Context, string) (string, bool),
 	onDecision func(cmd, reason string, denied bool),
 ) {
@@ -85,8 +81,8 @@ func newTermGuardDecide(notify io.Writer, in termGuardInputs) (
 
 	decide = func(ctx context.Context, cmd string) (string, bool) {
 		policyErrDetail = ""
-		_, decisions, derr := cmdgate.AssessTargets(ctx, in.Enforcer, in.Guardrails, cmd, "sh",
-			[]cmdgate.TargetInput{{Name: in.Record.Name, PolicyInput: cmdgate.CommandPolicyInput(in.Actor, in.Record, cmd), Attrs: cmdgate.RecordAttrs(in.Record)}}, false)
+		_, decisions, derr := cmdgate.AssessTargets(ctx, in.Enforcer, cmd, "sh",
+			[]cmdgate.TargetInput{{Name: in.Record.Name, PolicyInput: cmdgate.CommandPolicyInput(in.Actor, in.Record, cmd)}}, false)
 		if derr != nil {
 			policyErrDetail = "policy error: " + derr.Error()
 			return "blocked by policy", in.Mode == termguard.ModeEnforce
@@ -96,12 +92,6 @@ func newTermGuardDecide(notify io.Writer, in termGuardInputs) (
 		}
 		if decisions[0].Denied {
 			return decisions[0].Reason, true
-		}
-		// Guardrail warn (not denied): surface a yellow notice and audit each
-		// rule message, same as the gateway's interactive decide closure.
-		for _, w := range decisions[0].Warnings {
-			_, _ = io.WriteString(notify, "\r\n\x1b[33m[guardrail: "+w+"]\x1b[0m\r\n")
-			logAudit(cmd, "warn", w)
 		}
 		return "", false
 	}

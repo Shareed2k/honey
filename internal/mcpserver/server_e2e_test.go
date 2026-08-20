@@ -18,7 +18,7 @@ import (
 func newE2ESession(t *testing.T, enf *policy.Enforcer) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	srv := NewServer(&config.File{}, enf, nil, searchrun.NewRegistry(nil), nil)
+	srv := NewServer(&config.File{}, enf, searchrun.NewRegistry(nil), nil)
 	serverT, clientT := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(ctx, serverT, nil); err != nil {
 		t.Fatalf("server connect: %v", err)
@@ -54,19 +54,46 @@ func resultText(r *mcp.CallToolResult) string {
 	return b.String()
 }
 
-func TestE2E_criticalCommandBlocked(t *testing.T) {
+// TestE2E_criticalCommandDeniedByDefault proves that with no OPA enforcer
+// configured, exec_on_host's deny-by-default still refuses execution (an
+// unrelated, deliberate MCP-specific gate — not commandrisk's old critical
+// floor, which no longer exists).
+func TestE2E_criticalCommandDeniedByDefault(t *testing.T) {
 	called := withFakeExec(t)
-	cs := newE2ESession(t, nil) // no enforcer: only built-in critical denies
+	cs := newE2ESession(t, nil) // no enforcer, no HONEY_EXEC_ALLOW_UNVERIFIED
 
 	res := callExec(t, cs, "mkfs.ext4 /dev/sda")
 	if !res.IsError {
-		t.Fatalf("critical command must be refused: %+v", res)
+		t.Fatalf("must be refused by deny-by-default: %+v", res)
 	}
-	if !strings.Contains(resultText(res), "command risk") {
+	if !strings.Contains(resultText(res), "requires a policy enforcer") {
 		t.Fatalf("text=%q", resultText(res))
 	}
 	if *called {
 		t.Fatal("SSH must NOT be reached for a blocked command")
+	}
+}
+
+// TestE2E_criticalCommandAllowedByPolicy proves commandrisk severity is data,
+// not a gate: once an OPA policy explicitly allows (and HONEY_EXEC_ALLOW_UNVERIFIED
+// is moot with a real enforcer configured), a critical command runs.
+func TestE2E_criticalCommandAllowedByPolicy(t *testing.T) {
+	called := withFakeExec(t)
+	enf, err := policy.NewFromSource(context.Background(), "p.rego", `package honey
+import rego.v1
+default allow := true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := newE2ESession(t, enf)
+
+	res := callExec(t, cs, "mkfs.ext4 /dev/sda")
+	if res.IsError {
+		t.Fatalf("OPA-allowed critical command must run: %s", resultText(res))
+	}
+	if !*called {
+		t.Fatal("SSH should be reached once OPA allows, regardless of severity")
 	}
 }
 

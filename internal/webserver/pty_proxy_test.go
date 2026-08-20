@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/termguard"
 )
 
@@ -988,16 +990,79 @@ func TestHandleLiveTerminalAttach_NeverPinsWindowSize(t *testing.T) {
 	require.NotContains(t, string(after), "manual", "a guest attach must never pin window-size to manual")
 }
 
-// TestPtyProxyRunBridge_CollaborateGuardBlocksDeniedCommand is the task-P
+// TestPtyProxyRunBridge_CollaborateGuardBlocksOPADeniedCommand is the task-P
 // regression: the per-command guard sits on the relay's byte stream AFTER
 // the report filter and BEFORE tmuxSendKeysHex (the HIGH-1 mediation seam),
 // gating a collaborate guest exactly like the SSH gateway gates an operator.
-// A nil Enforcer/Guardrails still denies via cmdgate's unconditional
-// critical-risk floor — a collaborate guest is always guarded (enforce),
-// never dependent on OPA being configured. The denied line's trailing Enter
-// must never reach tmux verbatim; the guard replaces it with a Ctrl-U so the
-// pending line is discarded on the target instead of executing.
-func TestPtyProxyRunBridge_CollaborateGuardBlocksDeniedCommand(t *testing.T) {
+// A collaborate guest is always guarded (enforce), never dependent on the
+// OPERATOR's own guard_mode setting — but the decision itself is OPA's alone,
+// so this test wires a command_exec-denying policy. The denied line's
+// trailing Enter must never reach tmux verbatim; the guard replaces it with a
+// Ctrl-U so the pending line is discarded on the target instead of executing.
+func TestPtyProxyRunBridge_CollaborateGuardBlocksOPADeniedCommand(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	enf, err := policy.NewFromSource(context.Background(), "deny.rego", `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if input.action == "command_exec"
+deny_reason := "command_exec blocked by test policy" if input.action == "command_exec"
+`)
+	require.NoError(t, err)
+
+	var gotArgs []string
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		gotArgs = args
+		return nil, nil
+	})
+	defer restore()
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		guard := termGuardInputs{Enforcer: enf, Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_deny_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_guard_deny_test:", GuestGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("rm -rf /\r")))
+
+	require.Eventually(t, func() bool { return gotArgs != nil }, 2*time.Second, 10*time.Millisecond, "expected a send-keys relay call")
+	require.NotContains(t, gotArgs, "0d", "a denied command's Enter (0x0d) must never reach tmux")
+	require.Contains(t, gotArgs, "15", "a denied command's Enter must be replaced with Ctrl-U (0x15)")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}
+
+// TestPtyProxyRunBridge_CollaborateGuardNilEnforcerAllowsCritical is the
+// RM-GUARD consequence regression: OPA is honey's only command-authorization
+// gate, so a collaborate guest's forced enforce mode blocks nothing at all
+// without a configured OPA policy — even a commandrisk-critical line relays
+// through to tmux unchanged. For an untrusted guest, the real control is a
+// watch (read-only) share, not this guard.
+func TestPtyProxyRunBridge_CollaborateGuardNilEnforcerAllowsCritical(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
 	var gotArgs []string
@@ -1020,8 +1085,8 @@ func TestPtyProxyRunBridge_CollaborateGuardBlocksDeniedCommand(t *testing.T) {
 		closeTabKill := make(chan struct{}, 1)
 		hello := WSHello{Cols: 80, Rows: 24}
 		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
-		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_deny_test", closeTabKill,
-			ptyProxyStdinPolicy{RelayTarget: "honey_guard_deny_test:", GuestGuard: &guard})
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_nilenf_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_guard_nilenf_test:", GuestGuard: &guard})
 		close(done)
 	}))
 	defer ts.Close()
@@ -1033,8 +1098,8 @@ func TestPtyProxyRunBridge_CollaborateGuardBlocksDeniedCommand(t *testing.T) {
 	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("rm -rf /\r")))
 
 	require.Eventually(t, func() bool { return gotArgs != nil }, 2*time.Second, 10*time.Millisecond, "expected a send-keys relay call")
-	require.NotContains(t, gotArgs, "0d", "a denied command's Enter (0x0d) must never reach tmux")
-	require.Contains(t, gotArgs, "15", "a denied command's Enter must be replaced with Ctrl-U (0x15)")
+	require.Contains(t, gotArgs, "0d", "with no OPA enforcer, the command's Enter must reach tmux unmodified")
+	require.NotContains(t, gotArgs, "15", "with no OPA enforcer, nothing is gated — no Ctrl-U substitution")
 
 	_ = ptmx.Close()
 	_ = conn.Close()

@@ -20,7 +20,7 @@ import (
 func newMCPSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := NewServer(nil, nil, nil, searchrun.NewRegistry(nil), nil)
+	server := NewServer(nil, nil, searchrun.NewRegistry(nil), nil)
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, st, nil); err != nil {
 		t.Fatalf("server.Connect: %v", err)
@@ -79,22 +79,23 @@ func TestMCPE2E_PlanCommand_safeAllow(t *testing.T) {
 	}
 }
 
-// TestMCPE2E_PlanCommand_criticalDeny tests that rm -rf / returns deny + critical
-// risk through the full MCP JSON round-trip.
-func TestMCPE2E_PlanCommand_criticalDeny(t *testing.T) {
+// TestMCPE2E_PlanCommand_criticalSeverityIsDataOnly tests that rm -rf / returns
+// critical risk + signals through the full MCP JSON round-trip, but allow: with
+// no OPA enforcer configured, commandrisk severity never denies by itself.
+func TestMCPE2E_PlanCommand_criticalSeverityIsDataOnly(t *testing.T) {
 	session := newMCPSession(t)
 
 	isErr, text := callTool(t, session, "plan_command", map[string]any{"command": "rm -rf /"})
 	if isErr {
-		t.Fatal("expected success result (deny), got IsError=true")
+		t.Fatal("expected success result, got IsError=true")
 	}
 
 	var out planCommandOutput
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Decision != "deny" {
-		t.Errorf("Decision = %q, want deny", out.Decision)
+	if out.Decision != "allow" {
+		t.Errorf("Decision = %q, want allow (no OPA policy configured)", out.Decision)
 	}
 	if out.Risk != commandrisk.SeverityCritical {
 		t.Errorf("Risk = %q, want critical", out.Risk)
@@ -132,8 +133,8 @@ func TestMCPE2E_PlanCommand_pythonInterpreter(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if out.Decision != "deny" {
-		t.Errorf("Decision = %q, want deny", out.Decision)
+	if out.Decision != "allow" {
+		t.Errorf("Decision = %q, want allow (no OPA policy configured)", out.Decision)
 	}
 	if out.Risk != commandrisk.SeverityCritical {
 		t.Errorf("Risk = %q, want critical", out.Risk)
@@ -266,7 +267,7 @@ func TestMCPE2E_GetHostDetails_notFound(t *testing.T) {
 func newMCPSessionWithExecReg(t *testing.T, execReg hostexec.Registry) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := NewServer(nil, nil, nil, searchrun.NewRegistry(nil), execReg)
+	server := NewServer(nil, nil, searchrun.NewRegistry(nil), execReg)
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, st, nil); err != nil {
 		t.Fatalf("server.Connect: %v", err)

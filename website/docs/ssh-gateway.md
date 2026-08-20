@@ -151,14 +151,16 @@ The gateway reuses honey's shared gate, so one policy governs the web UI, MCP, t
 recipe engine, and the gateway:
 
 - **`interactive_session`** — opening an interactive shell (`{actor, target}`).
-- **`command_exec`** — an ad-hoc command (`{actor, command, target}`), combined
-  with the deterministic [command-risk](./command-risk.md) floor (a `critical`
-  signal denies even with no policy).
+- **`command_exec`** — an ad-hoc command (`{actor, command, target}`); the
+  [command-risk](./command-risk.md) analysis is included as data
+  (`input.command.max_severity`, signals) for the policy to act on, but never
+  denies by itself.
 - **`tunnel`** — a `ssh -L` destination (`{actor, target:{scheme,host,port}}`).
 
 Point the gateway at a policy directory with `ssh_gateway.policy_dir` (or the
-shared `HONEY_POLICY_DIR`). A nil policy allows (subject to the command-risk
-floor).
+shared `HONEY_POLICY_DIR`). OPA is the gateway's only command-authorization
+gate: a nil policy allows unconditionally, and with no policy configured
+nothing here is ever denied, regardless of command risk.
 
 ## Data masking
 
@@ -182,7 +184,7 @@ buffer cap on an adversarial infinite stream, is best-effort.
 ## Interactive guardrails
 
 Opt-in per-command gating of an interactive shell. Each typed command line is run
-through the same risk+policy assessment as `command_exec`:
+through the same OPA `command_exec` decision as an ad-hoc command:
 
 ```yaml
 ssh_gateway:
@@ -192,14 +194,21 @@ ssh_gateway:
 
 - **off** — no interception (zero overhead).
 - **audit** — the command runs; the verdict is recorded (`interactive_command`).
-- **enforce** — a denied command is discarded before it runs (its Enter is
+- **enforce** — a command OPA denies is discarded before it runs (its Enter is
   replaced with a kill-line) and the client sees a policy notice.
 
-**Best-effort by design:** a PTY does its own line editing (readline history,
-arrow/escape sequences, bracketed paste), so command reconstruction can desync.
-Enforce is a speed-bump layered on the **authoritative** target-side
-command-risk gate that fires when the command actually executes — not a security
-boundary. Use it for guidance/audit, not as your only control.
+**This is a best-effort speed bump, not a security boundary.** It reconstructs
+command lines from raw PTY bytes; a PTY does its own line editing (readline
+history, arrow/escape sequences, bracketed paste), so reconstruction can
+desync — and nothing stops a determined user from reaching a shell it never
+sees into: `base64 ... | sh`, opening `vi` and running `:!sh`, dropping into a
+Python REPL, or a multi-line here-doc all defeat line-level inspection. Treat
+`enforce` as guidance and an audit trail, never as the reason a dangerous
+command couldn't run.
+
+Because it calls the same OPA `command_exec` decision as everything else,
+**with no `ssh_gateway.policy_dir` (or `HONEY_POLICY_DIR`) configured, `enforce`
+blocks nothing at all** — a nil policy allows unconditionally.
 
 ## Bastion / ProxyJump
 
@@ -248,9 +257,11 @@ Flags on `honey ssh-server` (`--listen`, `--host-key`, `--trusted-ca`,
 - **Deny-by-default** — no trusted CA ⇒ the gateway will not start (except
   `--no-auth` for dev). Certificate signature, type, expiry, and principal are all
   enforced by `ssh.CertChecker`.
-- **Authoritative gates** — `interactive_session` / `command_exec` / `tunnel` OPA
-  actions plus the deterministic command-risk floor apply to every session; these
-  are the real controls.
-- **Best-effort layers** — output masking (pattern/value based) and interactive
-  guardrails (PTY line reconstruction) are defense-in-depth with the documented
-  limits above, not substitutes for policy.
+- **OPA is the only command-authorization gate** — `interactive_session` /
+  `command_exec` / `tunnel` are all decided by policy; command-risk severity is
+  data the policy can act on, never a gate on its own. With no policy
+  configured, every action allows.
+- **Best-effort layers** — output masking (pattern/value based) and the
+  interactive guardrail (PTY line reconstruction, see above) are a speed bump
+  and an audit trail with the documented limits above, never a substitute for
+  policy.

@@ -125,11 +125,6 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	guardrailRules, err := buildGuardrailRuleset(cfg)
-	if err != nil {
-		return err
-	}
-
 	sink := gatewayAuditSink(cfg)
 	defer func() { _ = sink.Close() }()
 
@@ -160,7 +155,6 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 		CertAttr:       certAttr,
 		DefaultSSHUser: defaultSSHUser,
 		Enforcer:       enforcer,
-		Guardrails:     guardrailRules,
 		AuditSink:      sink,
 		RecordDir:      recordDir,
 		Records:        provider,

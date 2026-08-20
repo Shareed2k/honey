@@ -176,8 +176,8 @@ func (s *Server) handleWebIntercept(w http.ResponseWriter, r *http.Request) {
 
 	// Same per-command interactive guardrail as /ws/ssh (internal/termguard):
 	// off (the config default) makes NewReader return stdinR unchanged.
-	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
-	decide, onDecision := newTermGuardDecide(wsOut, guard)
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+	decide, onDecision := newTermGuardDecide(guard)
 	stdin := termguard.NewReader(sessionCtx, stdinR, wsOut, guard.Mode, decide, onDecision)
 
 	runner := &wsPtyRunner{inner: s.interceptInnerRunner, stdin: stdin, stdout: stdout, resize: winCh}
@@ -339,7 +339,7 @@ func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsIntercep
 	// FIX-2: guard the operator's ptmx writes here too — handleWebIntercept's
 	// resume path is a mux path exactly like the SSH terminal's, so
 	// web.guard_mode must reach it the same way.
-	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
 	closeTabKill := make(chan struct{}, 1)
 	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill, ptyProxyStdinPolicy{OperatorGuard: &guard})
 	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, interceptResumeCloseTabKill(muxName), false)

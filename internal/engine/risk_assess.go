@@ -7,7 +7,6 @@ import (
 	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/safepath"
 )
@@ -21,7 +20,6 @@ type StepRisk struct {
 	Interpreter string               `json:"interpreter,omitempty"`
 	Analysis    commandrisk.Analysis `json:"analysis"`
 	Decision    *policy.Decision     `json:"decision,omitempty"`
-	Warnings    []string             `json:"warnings,omitempty"`
 }
 
 // AssessCommandRisk analyzes every command/script step in the request's recipe
@@ -48,9 +46,8 @@ func (r *RecipeRunner) AssessCommandRisk(ctx context.Context, req RunRequest) []
 			Interpreter: interpreter,
 			Analysis:    analysis,
 		}
-		if d, warnings := r.assessStepDecision(ctx, command, interpreter, req); d != nil || len(warnings) > 0 {
+		if d := r.assessStepDecision(ctx, command, interpreter, req); d != nil {
 			sr.Decision = d
-			sr.Warnings = warnings
 		}
 		out = append(out, sr)
 	}
@@ -58,17 +55,16 @@ func (r *RecipeRunner) AssessCommandRisk(ctx context.Context, req RunRequest) []
 }
 
 // assessStepDecision evaluates the command_exec gate for a dry-run review via
-// cmdgate.AssessTargets (summaryOnly=true, first record as representative).
-// This ensures critical-signal hard-denies and guardrail-deny rules are applied
-// even in preview mode, giving the same verdict the runtime gate would produce.
-// It returns the deny decision (nil when allowed) and any guardrail warnings.
-func (r *RecipeRunner) assessStepDecision(ctx context.Context, command, interpreter string, req RunRequest) (*policy.Decision, []string) {
+// cmdgate.AssessTargets (summaryOnly=true, first record as representative), so
+// the preview shows the same OPA verdict the runtime gate would produce. It
+// returns the deny decision, or nil when allowed (including when no OPA
+// enforcer is configured — OPA is honey's only command-authorization gate).
+func (r *RecipeRunner) assessStepDecision(ctx context.Context, command, interpreter string, req RunRequest) *policy.Decision {
 	var inputs []cmdgate.TargetInput
 	if len(req.Records) > 0 {
 		t := req.Records[0]
 		inputs = []cmdgate.TargetInput{{
-			Name:  t.Name,
-			Attrs: guardrails.Attrs{Provider: t.Provider, Groups: t.Groups, Name: t.Name},
+			Name: t.Name,
 			PolicyInput: map[string]any{
 				"action": "command_exec",
 				"actor":  actorOrAPI(req.ActorID),
@@ -80,16 +76,15 @@ func (r *RecipeRunner) assessStepDecision(ctx context.Context, command, interpre
 			},
 		}}
 	}
-	_, decisions, err := cmdgate.AssessTargets(ctx, r.opts.Enforcer, r.opts.Guardrails, command, interpreter, inputs, true)
+	_, decisions, err := cmdgate.AssessTargets(ctx, r.opts.Enforcer, command, interpreter, inputs, true)
 	if err != nil || len(decisions) == 0 {
-		return nil, nil
+		return nil
 	}
 	d := decisions[0]
 	if !d.Denied {
-		return nil, d.Warnings
+		return nil
 	}
-	dec := policy.Decision{Allow: false, DenyReason: d.Reason, Decision: "deny"}
-	return &dec, d.Warnings
+	return &policy.Decision{Allow: false, DenyReason: d.Reason, Decision: "deny"}
 }
 
 // commandTextForRisk returns the text to analyze for a step, its interpreter,

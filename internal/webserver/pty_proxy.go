@@ -674,7 +674,7 @@ func ptyProxyRunBridge(
 		// mirrors the OPERATOR's pane, so writing policy text straight into
 		// it would desync that mirror until the next redraw.
 		notify := guestNoticeWriter{wsOut: wsOut}
-		decide, onDecision := newTermGuardDecide(notify, *stdin.GuestGuard)
+		decide, onDecision := newTermGuardDecide(*stdin.GuestGuard)
 		// Mode is read from the struct, never re-hardcoded here (a prior
 		// review nit): handleLiveTerminalAttach is the one place that pins a
 		// collaborate guest to ModeEnforce.
@@ -684,7 +684,7 @@ func ptyProxyRunBridge(
 		// The operator's own terminal: notices go straight into wsOut, same
 		// as termguard does for the SSH gateway's peer — this IS the
 		// operator's own pane, so no desync risk.
-		decide, onDecision := newTermGuardDecide(wsOut, *stdin.OperatorGuard)
+		decide, onDecision := newTermGuardDecide(*stdin.OperatorGuard)
 		operatorGuardRelay, _ = newGuardRelay(bridgeCtx, wsOut, stdin.OperatorGuard.Mode, decide, onDecision)
 	}
 

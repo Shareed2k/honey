@@ -22,7 +22,6 @@ import (
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/engine"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -92,12 +91,10 @@ type Options struct {
 	// the X-Honey-User header. nil disables the trusted-header path.
 	TrustedProxyNets []*net.IPNet
 	// Enforcer, when non-nil, gates every authenticated API request through OPA.
-	// nil disables the API policy gate.
+	// nil disables the API policy gate — OPA is honey's only
+	// command-authorization gate, so a nil Enforcer also means recipe
+	// command/script steps and the interactive guard below allow unconditionally.
 	Enforcer *policy.Enforcer
-	// Guardrails is the deterministic operator-defined guardrail floor threaded
-	// into the recipe engine (runner + scheduler) so recipe command/script steps
-	// are gated by it before OPA. nil (or empty) is a no-op.
-	Guardrails *guardrails.Ruleset
 	// GuardMode selects the best-effort per-command interactive guardrail
 	// (internal/termguard) for a NORMAL OPERATOR web terminal (/ws/ssh,
 	// /ws/intercept, and a plain JIT shell-grant redeem): "off" (default),
@@ -360,7 +357,6 @@ func NewServer(opts Options) (*Server, error) {
 			Pools:          pgPools,
 			Cache:          s.fileClientCache,
 			Enforcer:       opts.Enforcer,
-			Guardrails:     opts.Guardrails,
 		})
 		if err != nil {
 			zap.L().Warn("scheduler init failed, schedules disabled", zap.Error(err))

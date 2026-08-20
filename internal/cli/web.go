@@ -121,11 +121,6 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("web auth config: %w", err)
 	}
 
-	guardrailRules, err := buildGuardrailRuleset(cfg)
-	if err != nil {
-		return err
-	}
-
 	// One audit sink, shared by the web server and the k8s access proxy so both
 	// append to the same log. Closed on return (mirrors the gateway command).
 	auditSink := gatewayAuditSink(cfg)
@@ -230,7 +225,6 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		AllowLogsCommand:        webAllowLogsCommand,
 		OnReady:                 onReady,
 		Enforcer:                authCfg.enforcer,
-		Guardrails:              guardrailRules,
 		GuardMode:               webGuardMode(cfg),
 		JWTPubKey:               authCfg.jwtPubKey,
 		TrustedProxyNets:        authCfg.trustedNets,

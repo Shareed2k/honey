@@ -71,8 +71,8 @@ deny_reason := "command_exec blocked by test policy" if input.action == "command
 	rec := hosts.Record{Provider: "local", Name: "web1", PrimaryIP: "127.0.0.1"}
 
 	decide := func(ctx context.Context, cmd string) (string, bool) {
-		_, decisions, derr := cmdgate.AssessTargets(ctx, enf, nil, cmd, "sh",
-			[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: cmdgate.CommandPolicyInput("alice", rec, cmd), Attrs: cmdgate.RecordAttrs(rec)}}, false)
+		_, decisions, derr := cmdgate.AssessTargets(ctx, enf, cmd, "sh",
+			[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: cmdgate.CommandPolicyInput("alice", rec, cmd)}}, false)
 		if derr != nil {
 			return "policy error: " + derr.Error(), true
 		}

@@ -194,23 +194,51 @@ deny_reason := "biometric required" if { input.action == "recipe_execute"; not i
 
 // --- Command risk gate ----------------------------------------------------
 
-func TestGateCommandRisk_BuiltinCritical(t *testing.T) {
+// TestGateCommandRisk_NilEnforcerAllowsCritical proves commandrisk severity is
+// data fed to OPA, never a gate by itself: with no enforcer configured, even a
+// critical built-in pattern (rm -rf /) is allowed through — OPA is honey's
+// only command-authorization gate.
+func TestGateCommandRisk_NilEnforcerAllowsCritical(t *testing.T) {
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice"}} // no enforcer
 	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 
-	// Critical built-in pattern is denied even without an OPA enforcer.
+	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "rm -rf /", "", targets)
+	require.NoError(t, err)
+	require.Len(t, allowed, 1)
+	require.Empty(t, skipped)
+
+	// Safe command passes through untouched too.
+	allowed, skipped, err = gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "uptime", "", targets)
+	require.NoError(t, err)
+	require.Len(t, allowed, 1)
+	require.Empty(t, skipped)
+}
+
+// TestGateCommandRisk_OPADeniesCritical proves a configured OPA policy can act
+// on the severity commandrisk hands it (input.command.max_severity) and deny a
+// critical command explicitly.
+func TestGateCommandRisk_OPADeniesCritical(t *testing.T) {
+	enf := mustPolicy(t, `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if {
+	input.action == "command_exec"
+	input.command.max_severity == "critical"
+}
+deny_reason := "critical commands are blocked" if {
+	input.action == "command_exec"
+	input.command.max_severity == "critical"
+}`)
+	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice", Enforcer: enf}}
+	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
+
 	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "rm -rf /", "", targets)
 	require.NoError(t, err)
 	require.Empty(t, allowed)
 	require.Len(t, skipped, 1)
 	require.True(t, skipped[0].Skipped)
-	require.Contains(t, skipped[0].Output, "command risk")
-
-	// Safe command passes through untouched.
-	allowed, skipped, err = gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "uptime", "", targets)
-	require.NoError(t, err)
-	require.Len(t, allowed, 1)
-	require.Empty(t, skipped)
+	require.Contains(t, skipped[0].Output, "critical commands are blocked")
 }
 
 func TestGateCommandRisk_OPAContextual(t *testing.T) {
@@ -244,13 +272,20 @@ deny_reason := "high-risk command on prod" if {
 	require.Contains(t, skipped[0].Output, "high-risk command on prod")
 }
 
+// TestGateCommandRisk_Disabled proves HONEY_RISK_DISABLE bypasses the gate
+// entirely — including a configured OPA policy that would otherwise deny.
 func TestGateCommandRisk_Disabled(t *testing.T) {
 	t.Setenv("HONEY_RISK_DISABLE", "1")
-	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice"}}
+	enf := mustPolicy(t, `package honey
+import rego.v1
+default allow := false
+default deny_reason := "denied in test"
+`)
+	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice", Enforcer: enf}}
 	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "rm -rf /", "", targets)
 	require.NoError(t, err)
-	require.Len(t, allowed, 1, "disable env bypasses even critical deny")
+	require.Len(t, allowed, 1, "disable env bypasses the gate entirely, even an OPA policy that would deny")
 	require.Empty(t, skipped)
 }
 
@@ -258,13 +293,13 @@ func TestGateCommandRisk_PythonInterpreter(t *testing.T) {
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "alice"}} // no enforcer
 	targets := []TargetContext{{Record: hosts.Record{Provider: "static", Name: "h1", PrimaryIP: "1.1.1.1"}}}
 
-	// A python step shelling out to a critical command is denied via the
-	// gpython analyzer recursing into the shell detectors.
+	// A python step shelling out to a critical command is analyzed via the
+	// gpython analyzer recursing into the shell detectors, but with no OPA
+	// enforcer configured it is allowed through — severity is data, not a gate.
 	allowed, skipped, err := gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", `os.system("rm -rf /")`, "python3", targets)
 	require.NoError(t, err)
-	require.Empty(t, allowed)
-	require.Len(t, skipped, 1)
-	require.Contains(t, skipped[0].Output, "command risk")
+	require.Len(t, allowed, 1)
+	require.Empty(t, skipped)
 
 	// Benign python is not shell-parsed (no bogus UNPARSEABLE_COMMAND) → allowed.
 	allowed, skipped, err = gateCommandRisk(context.Background(), ExecutionOptions{Recipe: run.Params.Recipe, ActorID: run.Params.ActorID, Enforcer: run.Params.Enforcer}, "command", "print(\"hi\")", "python3", targets)

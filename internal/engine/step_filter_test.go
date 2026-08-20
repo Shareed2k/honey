@@ -164,9 +164,38 @@ func TestRiskStepFilter_safeCommand_allowsAll(t *testing.T) {
 	assert.Empty(t, skipped)
 }
 
-func TestRiskStepFilter_criticalCommand_skipsAll(t *testing.T) {
+// TestRiskStepFilter_criticalCommand_nilEnforcerAllows proves commandrisk
+// severity is data, not a gate: a critical command runs through when no OPA
+// enforcer is configured — OPA is honey's only command-authorization gate.
+func TestRiskStepFilter_criticalCommand_nilEnforcerAllows(t *testing.T) {
 	t.Parallel()
 	run := &CueRun{Params: CueRecipeRunParams{ActorID: "test"}}
+	targets := []TargetContext{{Record: hosts.Record{Name: "h1"}}, {Record: hosts.Record{Name: "h2"}}}
+	opts := ExecutionOptions{
+		Execute:   true,
+		Enforcer:  run.Params.Enforcer,
+		ActorID:   run.Params.ActorID,
+		Inventory: run.Params.Inventory,
+		Recipe:    run.Params.Recipe,
+	}
+	f := NewRiskStepFilter(opts, "command", "rm -rf /", "")
+	allowed, skipped, err := f.Filter(context.Background(), targets)
+	require.NoError(t, err)
+	assert.Equal(t, targets, allowed)
+	assert.Empty(t, skipped)
+}
+
+// TestRiskStepFilter_criticalCommand_OPADeniesSkipsAll proves a configured OPA
+// policy can still deny a critical command for every target, acting on the
+// severity commandrisk hands it as data.
+func TestRiskStepFilter_criticalCommand_OPADeniesSkipsAll(t *testing.T) {
+	t.Parallel()
+	enf := mustPolicy(t, `package honey
+import rego.v1
+default allow := false
+default deny_reason := "denied in test"
+`)
+	run := &CueRun{Params: CueRecipeRunParams{ActorID: "test", Enforcer: enf}}
 	targets := []TargetContext{{Record: hosts.Record{Name: "h1"}}, {Record: hosts.Record{Name: "h2"}}}
 	opts := ExecutionOptions{
 		Execute:   true,

@@ -256,7 +256,6 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		RecipeKV:          run.RecipeKV,
 		ConfigPath:        run.Params.ConfigPath,
 		Enforcer:          run.Params.Enforcer,
-		Guardrails:        run.Params.Guardrails,
 		Inventory:         run.Params.Inventory,
 		CmdTimeout:        run.Params.CmdTimeout,
 		Reg:               run.Params.Reg,

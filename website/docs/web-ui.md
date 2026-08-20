@@ -102,8 +102,8 @@ Docker search, Honey SSH backends, and **auto-discover on cloud VMs** are docume
 #### Interactive guardrails
 
 Like the [SSH gateway](./ssh-gateway.md#interactive-guardrails), a browser
-terminal can gate each typed command line through the same risk+policy
-assessment as `command_exec`:
+terminal can gate each typed command line through the same OPA `command_exec`
+decision an ad-hoc command gets:
 
 ```yaml
 web:
@@ -113,7 +113,7 @@ web:
 - **off** — no interception (zero overhead; this is the default for a normal
   operator terminal).
 - **audit** — the command runs; the verdict is recorded (`interactive_command`).
-- **enforce** — a denied command is discarded before it runs (its Enter is
+- **enforce** — a command OPA denies is discarded before it runs (its Enter is
   replaced with a kill-line) and the browser sees a policy notice.
 
 A share link's **collaborate** live-terminal guest (see
@@ -122,12 +122,16 @@ A share link's **collaborate** live-terminal guest (see
 never gets a weaker mode. A **watch** guest has no input at all (read-only),
 so there is nothing to guard.
 
-**Best-effort by design** (same caveat as the SSH gateway): a PTY does its own
-line editing — readline history, arrow/escape sequences, bracketed paste — so
-command reconstruction can desync. Enforce is a speed-bump layered on top of
-whatever gate the target itself enforces, not a security boundary on its own.
-For an untrusted guest, the real boundary is **watch** (read-only) or keeping
-them off **collaborate** entirely.
+**This is a best-effort speed bump, not a security boundary** (same caveat as
+the SSH gateway): it reconstructs command lines from raw PTY bytes, and a PTY
+does its own line editing — readline history, arrow/escape sequences,
+bracketed paste — so reconstruction can desync, and nothing stops
+`base64 ... | sh`, a text editor's shell-out, or a REPL from reaching code the
+guard never inspects. And because it calls the same OPA `command_exec`
+decision as everything else, **with no OPA policy configured `enforce` blocks
+nothing at all**. For an untrusted collaborate guest, the real control is
+sharing **watch** (read-only) access, or exec-only access — not relying on
+this guard.
 
 ### Files and transfer
 

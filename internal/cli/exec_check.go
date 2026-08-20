@@ -16,9 +16,10 @@ import (
 )
 
 // runExecCheck analyzes a command's risk and prints the decision without
-// executing. With HONEY_POLICY_DIR set it also runs the OPA command_exec policy
-// per target. Returns a non-nil error (non-zero exit) when the command is a
-// built-in critical pattern or any target is denied by policy.
+// executing. With HONEY_POLICY_DIR set it also runs the OPA command_exec
+// policy per target — honey's only command-authorization gate. Returns a
+// non-nil error (non-zero exit) when any target is denied by policy; risk
+// severity alone never denies.
 func runExecCheck(ctx context.Context, command string, jobs []hosts.Record) error {
 	a := commandrisk.Analyze(command)
 
@@ -41,15 +42,11 @@ func runExecCheck(ctx context.Context, command string, jobs []hosts.Record) erro
 
 	printLLMAdvice(ctx, command, a)
 
-	denied := a.Critical
-	if a.Critical {
-		fmt.Fprintf(os.Stdout, "Decision: DENY (built-in critical: %s)\n", a.FirstCritical().Reason)
-	}
-
+	var denied bool
 	if enf := checkEnforcer(ctx); enf != nil {
-		denied = evalCheckPolicy(ctx, enf, command, a, jobs) || denied
-	} else if !a.Critical {
-		fmt.Fprintln(os.Stdout, "Decision: allow (no policy configured; only built-in critical patterns deny)")
+		denied = evalCheckPolicy(ctx, enf, command, a, jobs)
+	} else {
+		fmt.Fprintln(os.Stdout, "Decision: allow (no policy configured; risk severity is informational only)")
 	}
 
 	if denied {

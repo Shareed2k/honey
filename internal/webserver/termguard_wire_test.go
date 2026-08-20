@@ -15,6 +15,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/policy"
 	"github.com/shareed2k/honey/internal/termguard"
 )
 
@@ -77,16 +78,34 @@ func TestHandleWebInteractiveStreams_GuardOffByteIdentical(t *testing.T) {
 	require.Equal(t, payload, fake.gotStdin, "guard mode off must forward stdin byte-identical")
 }
 
-// TestHandleWebInteractiveStreams_GuardEnforceBlocksDenied proves the
-// operator wrap point actually gates: with Mode enforce, a critical-risk
-// command line's Enter is replaced with a Ctrl-U before it ever reaches the
-// InteractiveStreamer — the nil Enforcer/Guardrails here still deny via
-// cmdgate's unconditional critical-risk floor.
-func TestHandleWebInteractiveStreams_GuardEnforceBlocksDenied(t *testing.T) {
+// TestHandleWebInteractiveStreams_GuardEnforceBlocksOPADeny proves the
+// operator wrap point actually gates when OPA denies: with Mode enforce and a
+// command_exec-denying policy, the command line's Enter is replaced with a
+// Ctrl-U before it ever reaches the InteractiveStreamer.
+func TestHandleWebInteractiveStreams_GuardEnforceBlocksOPADeny(t *testing.T) {
 	t.Parallel()
-	fake := runHandleWebInteractiveStreams(t, termGuardInputs{Actor: "alice", Mode: termguard.ModeEnforce}, []byte("rm -rf /\r"))
+	enf, err := policy.NewFromSource(context.Background(), "deny.rego", `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if input.action == "command_exec"
+deny_reason := "command_exec blocked by test policy" if input.action == "command_exec"
+`)
+	require.NoError(t, err)
+	fake := runHandleWebInteractiveStreams(t, termGuardInputs{Enforcer: enf, Actor: "alice", Mode: termguard.ModeEnforce}, []byte("rm -rf /\r"))
 	require.NotContains(t, string(fake.gotStdin), "\r", "a denied command's Enter must never reach the target")
 	require.Contains(t, fake.gotStdin, byte(0x15), "a denied command's Enter must be replaced with Ctrl-U")
+}
+
+// TestHandleWebInteractiveStreams_GuardEnforceNilEnforcerAllowsCritical is the
+// RM-GUARD consequence regression: OPA is honey's only command-authorization
+// gate, so with no enforcer configured, enforce mode blocks nothing at all —
+// even a commandrisk-critical line forwards byte-identical to the target.
+func TestHandleWebInteractiveStreams_GuardEnforceNilEnforcerAllowsCritical(t *testing.T) {
+	t.Parallel()
+	payload := []byte("rm -rf /\r")
+	fake := runHandleWebInteractiveStreams(t, termGuardInputs{Actor: "alice", Mode: termguard.ModeEnforce}, payload)
+	require.Equal(t, payload, fake.gotStdin, "with no OPA enforcer, enforce mode must not block a critical command")
 }
 
 // TestHandleWebInteractiveStreams_GuardEnforceAllowsBenign is the allow-path

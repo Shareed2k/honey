@@ -150,7 +150,11 @@ Be aware of what this feature does and does not protect against:
   mode via config. A **watch** guest has no input at all (read-only), so
   there is nothing to gate. Like the SSH gateway's guardrail, this is a
   best-effort speed-bump (PTY line reconstruction can desync on readline
-  history or pasted input) — not a security boundary on its own.
+  history, pasted input, or a shell reached through an editor/REPL) — never a
+  security boundary. It calls the same OPA `command_exec` decision as every
+  other command path, so **with no OPA policy configured it blocks nothing**:
+  for an untrusted collaborate guest, the actual control is sharing **watch**
+  (read-only) access, not this guard.
 - There is no `honey jit` CLI. Manage grants from the web UI's Share button or
   directly against the API.
 

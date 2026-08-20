@@ -131,7 +131,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	// helper.
 	rec := hello.Record
 	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
-	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
 
 	if shouldUseWebPtyProxy(hello) {
 		zap.L().Debug("web ssh: session ID provided, attempting pty proxy", zap.String("session_id", hello.SessionID))
@@ -258,7 +258,7 @@ func handleWebInteractiveStreams(ctx context.Context, conn *websocket.Conn, is h
 	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
 	stdout := engine.WrapRecordingWriter(wsOut, recorder, "stdout")
 
-	decide, onDecision := newTermGuardDecide(wsOut, guard)
+	decide, onDecision := newTermGuardDecide(guard)
 	stdin := termguard.NewReader(ctx, stdinPipeR, wsOut, guard.Mode, decide, onDecision)
 
 	waitDone := make(chan error, 1)

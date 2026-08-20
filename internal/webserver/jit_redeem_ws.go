@@ -212,7 +212,7 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 	// Mode comes from web.guard_mode. For a live_terminal collaborate guest,
 	// handleLiveTerminalAttach overrides Mode to always-enforce (untrusted
 	// party); a watch guest ignores it entirely (no stdin to guard).
-	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
 
 	if isLive {
 		mode := attachReadonly
