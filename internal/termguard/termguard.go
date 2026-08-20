@@ -212,14 +212,32 @@ func (m *reader) notifyBlocked(reason string) {
 	_, _ = io.WriteString(m.notify, "\r\n\x1b[31m[blocked by policy: "+reason+"]\x1b[0m\r\n")
 }
 
-// ResetLine forgets the reconstructed current input line, leaving everything
-// else (the carry buffer, any pending error) untouched. Exported so a caller
-// that drives Read from discrete, already-delivered messages rather than a
-// continuous stream — e.g. a relay that hands one WebSocket frame at a time
-// to Read — can forget bytes it already fed in that ultimately never reached
-// the target (a downstream size cap, a transport error): without this, the
-// next completed line would decide on text spliced from bytes the target
-// never actually received. A plain io.Reader consumer never needs this.
-func (m *reader) ResetLine() {
-	m.line = m.line[:0]
+// Snapshot returns a copy of the reconstructed line's current state, for a
+// caller to later Restore if bytes it fed to Read via a message-oriented
+// relay (rather than a continuous stream) ultimately failed to reach the
+// target — see Restore.
+func (m *reader) Snapshot() []byte {
+	return append([]byte(nil), m.line...)
+}
+
+// Restore rolls the reconstructed line back to a snapshot taken by Snapshot,
+// undoing everything process() did to it since — appended characters, and a
+// completed line's Enter, which unconditionally clears the line whether it
+// was forwarded or replaced with a Ctrl-U. Exported so a caller that drives
+// Read from discrete, already-delivered messages — e.g. a relay that hands
+// one WebSocket frame at a time to Read — can undo a frame's effect on the
+// reconstruction when that frame's bytes ultimately never reached the target
+// (a downstream size cap, a transport error).
+//
+// Restore, not a blind clear, is required: the target's own input-line
+// buffer didn't change either when a frame failed to arrive, so the guard's
+// reconstruction must roll back to match it exactly. A blind clear desyncs
+// the guard from the target in BOTH directions — it can forget a still-live
+// dangerous line that never actually got the deny it needed (the substituted
+// Ctrl-U never arrived either, so the target's real buffer is untouched),
+// or drop a line the target still has pending, letting a later bare Enter
+// run it with no decide call and no audit trail at all. A plain io.Reader
+// consumer never needs this.
+func (m *reader) Restore(snapshot []byte) {
+	m.line = append(m.line[:0], snapshot...)
 }

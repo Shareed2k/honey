@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"regexp"
 	"strings"
@@ -106,13 +107,18 @@ func newTermGuardDecide(notify io.Writer, in termGuardInputs) (
 	}
 	onDecision = func(cmd, reason string, denied bool) {
 		decision := "allow"
-		if !denied {
-			reason = ""
-		} else {
+		if denied {
 			decision = "deny"
-			if policyErrDetail != "" {
-				reason = policyErrDetail
-			}
+		}
+		// A policy-evaluation error must be audited with its real detail
+		// regardless of whether it ended up denied (enforce) or merely
+		// allowed through (audit/off) — otherwise an OPA failure in audit
+		// mode is recorded as a bare "allow" with no reason at all.
+		switch {
+		case policyErrDetail != "":
+			reason = policyErrDetail
+		case !denied:
+			reason = ""
 		}
 		logAudit(cmd, decision, reason)
 	}
@@ -138,9 +144,21 @@ type guestNoticeWriter struct{ wsOut *wsWriter }
 
 func (g guestNoticeWriter) Write(p []byte) (int, error) {
 	if msg := strings.TrimSpace(ansiSGR.ReplaceAllString(string(p), "")); msg != "" {
-		_ = g.wsOut.writeText(`{"notice":"` + escapeJSON(msg) + `"}`)
+		// json.Marshal (not manual string concatenation) so a deny reason
+		// carrying any control byte other than \ " \n \r — which escapeJSON
+		// does not handle — never produces a frame the client's JSON.parse
+		// throws on, silently losing the notice.
+		if b, err := json.Marshal(noticeFrame{Notice: msg}); err == nil {
+			_ = g.wsOut.writeText(string(b))
+		}
 	}
 	return len(p), nil
+}
+
+// noticeFrame is the {"notice":...} text-frame shape guest notices use — see
+// guestNoticeWriter and the NEW-17 drop notice in ptyProxyRunBridge.
+type noticeFrame struct {
+	Notice string `json:"notice"`
 }
 
 // relayChunkReader drives a termguard.Reader synchronously, one already-read
@@ -156,11 +174,14 @@ func (r *relayChunkReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// lineResetter is optionally implemented by the io.Reader termguard.NewReader
-// returns (never for ModeOff, which returns the inner reader unchanged) so a
-// message-oriented caller can forget an in-progress reconstructed line — see
-// newGuardRelay's reset.
-type lineResetter interface{ ResetLine() }
+// lineSnapshotter is optionally implemented by the io.Reader
+// termguard.NewReader returns (never for ModeOff, which returns the inner
+// reader unchanged) so a message-oriented caller can undo a frame's effect
+// on the in-progress reconstructed line — see newGuardRelay's rollback.
+type lineSnapshotter interface {
+	Snapshot() []byte
+	Restore([]byte)
+}
 
 // newGuardRelay adapts termguard.NewReader — an io.Reader built for a
 // continuous stdin stream — to a relay's message-oriented shape: a caller
@@ -179,34 +200,42 @@ type lineResetter interface{ ResetLine() }
 // byte to exactly one output byte, so total output always equals total
 // input, which is what bounds the loop.
 //
-// reset forgets the guard's in-progress reconstructed line without affecting
-// anything else. Call it when bytes already passed through relay ultimately
-// FAILED to reach the target (FIX-1): without it, a frame that never arrived
-// (e.g. rejected by a downstream size cap, or a transport error) still left
-// its bytes in the guard's line, so a LATER frame's Enter could decide on
-// text spliced from bytes the target never received — laundering anything
-// past whatever check dropped the earlier frame (including the commandrisk
-// critical floor). The frame-cap check itself must still run BEFORE relay is
-// even called (see ptyProxyRunBridge), since by the time relay runs the guard
-// has already consumed the frame.
+// rollback undoes the LAST relay call's effect on the guard's in-progress
+// reconstructed line, restoring exactly the snapshot taken right before that
+// call. Call it when the bytes relay just processed ultimately FAILED to
+// reach the target (FIX-1): the target's own input-line buffer didn't
+// change either, so the guard must roll back to match it — never a blind
+// clear, which desyncs the guard from the target in both directions (see
+// termguard.Reader.Restore's doc for the full failure mode: a still-live
+// dangerous line forgotten with no deny ever delivered, or a denied line's
+// Enter-triggered clear left standing even though neither the original text
+// nor the substituted Ctrl-U ever arrived). The frame-cap check itself must
+// still run BEFORE relay is even called on a per-connection byte budget
+// (see ptyProxyRunBridge) — rollback only covers a frame that passed the cap
+// but still failed to relay for some other reason (a transport/exec error).
 //
 // mode == termguard.ModeOff (the operator's off default) makes both relay
-// and reset no-ops — termguard.NewReader returns the inner reader unchanged,
-// so this never touches the guard machinery at all, byte-identical to no
-// wrap. One instance is built per connection (like terminalReportFilter) so
-// a command line split across frames still reconstructs correctly.
+// and rollback no-ops — termguard.NewReader returns the inner reader
+// unchanged, so this never touches the guard machinery at all, byte-identical
+// to no wrap. One instance is built per connection (like terminalReportFilter)
+// so a command line split across frames still reconstructs correctly.
 func newGuardRelay(ctx context.Context, notify io.Writer, mode termguard.Mode,
 	decide func(context.Context, string) (string, bool),
 	onDecision func(cmd, reason string, denied bool),
-) (relay func([]byte) []byte, reset func()) {
+) (relay func([]byte) []byte, rollback func()) {
 	if mode == termguard.ModeOff {
 		return func(chunk []byte) []byte { return chunk }, func() {}
 	}
 	feeder := &relayChunkReader{}
 	guarded := termguard.NewReader(ctx, feeder, notify, mode, decide, onDecision)
+	snapshotter, _ := guarded.(lineSnapshotter)
+	var lastSnapshot []byte
 	relay = func(chunk []byte) []byte {
 		if len(chunk) == 0 {
 			return chunk
+		}
+		if snapshotter != nil {
+			lastSnapshot = snapshotter.Snapshot()
 		}
 		feeder.chunk = chunk
 		out := make([]byte, 0, len(chunk))
@@ -222,10 +251,10 @@ func newGuardRelay(ctx context.Context, notify io.Writer, mode termguard.Mode,
 		}
 		return out
 	}
-	reset = func() {
-		if r, ok := guarded.(lineResetter); ok {
-			r.ResetLine()
+	rollback = func() {
+		if snapshotter != nil {
+			snapshotter.Restore(lastSnapshot)
 		}
 	}
-	return relay, reset
+	return relay, rollback
 }

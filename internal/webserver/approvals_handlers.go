@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/shareed2k/honey/internal/audit"
+	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -39,12 +40,7 @@ func (s *Server) evalInteractiveSession(ctx context.Context, actor string, rec h
 	input := map[string]any{
 		"action": "interactive_session",
 		"actor":  actor,
-		"target": map[string]any{
-			"name":     rec.Name,
-			"provider": rec.Provider,
-			"env":      rec.Meta["env"],
-			"groups":   rec.Groups,
-		},
+		"target": cmdgate.TargetPolicyInput(rec),
 	}
 	if capability != "" {
 		input["capability"] = capability

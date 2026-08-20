@@ -159,12 +159,13 @@ func TestNewGuardRelay_multiFrameReconstruction(t *testing.T) {
 	require.Equal(t, []string{"echo hi"}, seen, "the line split across two frames must decide exactly once, reconstructed whole")
 }
 
-// TestNewGuardRelay_resetForgetsInProgressLine is the FIX-1 regression for
-// the reset half of the fix: bytes already fed to relay that never reached
-// their destination must not survive into the NEXT decide call once reset
-// is invoked — otherwise a later frame's Enter decides on text spliced from
-// bytes the target never received.
-func TestNewGuardRelay_resetForgetsInProgressLine(t *testing.T) {
+// TestNewGuardRelay_rollbackRestoresPriorSnapshot is the FIX-1(B) regression:
+// rollback must restore the guard's line to what it was BEFORE the failed
+// frame — never a blind clear. A blind clear discriminates the same as
+// rollback ONLY when nothing preceded the failed frame (line was already
+// empty); this test establishes REAL, already-relayed content first, so a
+// blind clear and a proper rollback produce different, observable results.
+func TestNewGuardRelay_rollbackRestoresPriorSnapshot(t *testing.T) {
 	t.Parallel()
 	var seen []string
 	decide := func(_ context.Context, cmd string) (string, bool) {
@@ -173,39 +174,48 @@ func TestNewGuardRelay_resetForgetsInProgressLine(t *testing.T) {
 	}
 	onDecision := func(string, string, bool) {}
 
-	relay, reset := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
-	_ = relay([]byte("poison"))
-	reset()
-	out := relay([]byte("safe\r"))
+	relay, rollback := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
+	_ = relay([]byte("rm -rf ")) // already "relayed" — this is live content
+	_ = relay([]byte("poison"))  // this frame is about to fail to relay
+	rollback()                   // undo ONLY "poison", not the prior live content
+	out := relay([]byte("/\r"))
 
-	require.Equal(t, "safe\r", string(out))
-	require.Equal(t, []string{"safe"}, seen, "reset must forget bytes fed before it, not splice them into the next decide")
+	require.Equal(t, "/\r", string(out))
+	require.Equal(t, []string{"rm -rf /"}, seen, "rollback must restore the PRIOR snapshot (\"rm -rf \"), not wipe the line to empty")
 }
 
-// TestNewGuardRelay_withoutResetSplicesAcrossChunks is the sanity companion:
-// without an explicit reset, the guard DOES splice bytes across relay calls,
-// same as it would for a continuous stream — proving reset is load-bearing,
-// not a no-op, for the failure case above.
-func TestNewGuardRelay_withoutResetSplicesAcrossChunks(t *testing.T) {
+// TestNewGuardRelay_rollbackUndoesEnterClear is the denied-Enter variant:
+// process() unconditionally clears the line the instant it sees a completed
+// line's Enter — BEFORE the caller learns whether the relay carrying that
+// Enter will actually succeed. If that frame's relay fails, rollback must
+// undo the clear too (not just any appended characters), or a later bare
+// Enter decides on an empty line instead of the still-pending denied one —
+// exactly the "no decide, no audit, command runs" bug named in review.
+func TestNewGuardRelay_rollbackUndoesEnterClear(t *testing.T) {
 	t.Parallel()
 	var seen []string
 	decide := func(_ context.Context, cmd string) (string, bool) {
 		seen = append(seen, cmd)
-		return "", false
+		return "denied by test", true
 	}
 	onDecision := func(string, string, bool) {}
 
-	relay, _ := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
-	_ = relay([]byte("poison"))
-	_ = relay([]byte("safe\r"))
+	relay, rollback := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
+	_ = relay([]byte("danger"))
+	out1 := relay([]byte("\r")) // denied: Enter -> Ctrl-U, line cleared by process()
+	rollback()                  // this whole frame (the Ctrl-U) failed to relay
+	out2 := relay([]byte("\r")) // a later bare Enter
 
-	require.Equal(t, []string{"poisonsafe"}, seen, "sanity: without reset the guard splices across calls — this is why a failed relay must call reset")
+	require.Contains(t, out1, byte(0x15), "sanity: the denied Enter must have been replaced with Ctrl-U")
+	require.Equal(t, []string{"danger", "danger"}, seen,
+		"rollback must restore the pending denied line so a later Enter decides on it again")
+	require.Contains(t, out2, byte(0x15), "the later Enter must still be denied, never pass through unaudited")
 }
 
 // TestNewGuardRelay_modeOffIsIdentity proves ModeOff is a true, allocation-free
 // pass-through (mirrors termguard.NewReader's own contract): decide/onDecision
-// must never be invoked, and reset must be safe to call even though nothing
-// was ever built.
+// must never be invoked, and rollback must be safe to call even though
+// nothing was ever built.
 func TestNewGuardRelay_modeOffIsIdentity(t *testing.T) {
 	t.Parallel()
 	decide := func(context.Context, string) (string, bool) {
@@ -214,12 +224,12 @@ func TestNewGuardRelay_modeOffIsIdentity(t *testing.T) {
 	}
 	onDecision := func(string, string, bool) { t.Fatal("onDecision must never be called when mode is off") }
 
-	relay, reset := newGuardRelay(context.Background(), io.Discard, termguard.ModeOff, decide, onDecision)
+	relay, rollback := newGuardRelay(context.Background(), io.Discard, termguard.ModeOff, decide, onDecision)
 	in := []byte("rm -rf /\r")
 	out := relay(in)
 
 	require.Equal(t, in, out)
-	require.NotPanics(t, reset)
+	require.NotPanics(t, rollback)
 }
 
 // TestGuestNoticeWriter_routesThroughNoticeLane is the FIX-4 regression: a

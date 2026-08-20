@@ -667,7 +667,7 @@ func ptyProxyRunBridge(
 	// for GuestGuard) leaves the matching relay func nil, so that branch
 	// stays byte-identical to pre-fix behavior.
 	var guardRelay, operatorGuardRelay func([]byte) []byte
-	var guardReset func()
+	var guardRollback func()
 	if stdin.RelayTarget != "" && stdin.GuestGuard != nil {
 		// FIX-4: this guard's notices go through the guest's separate
 		// {"notice":...} lane, never raw into wsOut — a guest's terminal
@@ -678,7 +678,7 @@ func ptyProxyRunBridge(
 		// Mode is read from the struct, never re-hardcoded here (a prior
 		// review nit): handleLiveTerminalAttach is the one place that pins a
 		// collaborate guest to ModeEnforce.
-		guardRelay, guardReset = newGuardRelay(bridgeCtx, notify, stdin.GuestGuard.Mode, decide, onDecision)
+		guardRelay, guardRollback = newGuardRelay(bridgeCtx, notify, stdin.GuestGuard.Mode, decide, onDecision)
 	}
 	if stdin.OperatorGuard != nil {
 		// The operator's own terminal: notices go straight into wsOut, same
@@ -703,22 +703,6 @@ func ptyProxyRunBridge(
 					// A watch guest: never deliver its bytes anywhere.
 					continue
 				case stdin.RelayTarget != "":
-					// FIX-1: reject an over-cap frame OUTRIGHT, before it
-					// ever reaches reportFilter or the guard's
-					// reconstructed-line state. Checking only inside
-					// tmuxSendKeysHex (as before) let an oversized, rejected
-					// frame still advance the guard's in-progress line — a
-					// later, small Enter frame would then decide() on text
-					// spliced from bytes the pane never received, laundering
-					// anything past the cap (and the commandrisk critical
-					// floor the guard is supposed to enforce) around it.
-					if len(payload) > maxRelayFrameBytes {
-						capErr := fmt.Errorf("relay frame of %d bytes exceeds the %d-byte cap", len(payload), maxRelayFrameBytes)
-						zap.L().Warn("ptyProxyRunBridge: relay guest keystrokes failed", zap.Error(capErr))
-						recorder.RecordError(fmt.Errorf("dropped %d guest keystroke byte(s): %w", len(payload), capErr))
-						_ = wsOut.writeText(`{"notice":"your last input could not be delivered and was dropped — please retype"}`)
-						continue
-					}
 					// A collaborate guest: relay out-of-band via send-keys,
 					// never write to this connection's (read-only) ptmx.
 					// NEW-2: strip terminal-report replies (the browser's own
@@ -727,6 +711,26 @@ func ptyProxyRunBridge(
 					// pane — see terminalReportFilter.
 					filtered := reportFilter.filter(payload)
 					if len(filtered) == 0 {
+						continue
+					}
+					// FIX-1(A): the cap check must run on len(filtered), not
+					// len(payload) — filter PREPENDS any carried
+					// maxPendingReportBytes-bounded "pending" prefix from a
+					// PRIOR frame, so a payload sized exactly at the cap can
+					// still filter out over it (a held incomplete CSI prefix
+					// plus a new payload that never resolves it, e.g. a
+					// literal '[' followed by ordinary bytes, stays as
+					// pending+payload verbatim). Checking len(payload) let
+					// such a frame pass this gate, get fed to the guard
+					// below, and only THEN get rejected by tmuxSendKeysHex's
+					// own cap — by which point the guard had already
+					// consumed it. This check must run BEFORE the guard, on
+					// the length the guard will actually see.
+					if len(filtered) > maxRelayFrameBytes {
+						capErr := fmt.Errorf("relay frame of %d bytes exceeds the %d-byte cap", len(filtered), maxRelayFrameBytes)
+						zap.L().Warn("ptyProxyRunBridge: relay guest keystrokes failed", zap.Error(capErr))
+						recorder.RecordError(fmt.Errorf("dropped %d guest keystroke byte(s): %w", len(filtered), capErr))
+						_ = wsOut.writeText(`{"notice":"your last input could not be delivered and was dropped — please retype"}`)
 						continue
 					}
 					// Per-command guard (this task): gates the relayed bytes
@@ -753,12 +757,15 @@ func ptyProxyRunBridge(
 					if err := tmuxSendKeysHex(stdin.RelayTarget, filtered); err != nil {
 						zap.L().Warn("ptyProxyRunBridge: relay guest keystrokes failed", zap.Error(err))
 						recorder.RecordError(fmt.Errorf("dropped %d guest keystroke byte(s): %w", len(filtered), err))
-						// FIX-1: these bytes never reached the pane — forget
-						// them from the guard's in-progress line so a later
-						// Enter can never decide on text spliced from what
-						// just failed to relay.
-						if guardReset != nil {
-							guardReset()
+						// FIX-1(B): these bytes never reached the pane — roll
+						// the guard's line back to what it was BEFORE this
+						// frame (never a blind clear): the pane's own input
+						// buffer didn't change either, so the guard must
+						// stay in sync with it, not forget a still-live
+						// dangerous line (or a denied line's Ctrl-U that
+						// never actually arrived) with no audit trail.
+						if guardRollback != nil {
+							guardRollback()
 						}
 						_ = wsOut.writeText(`{"notice":"your last input could not be delivered and was dropped — please retype"}`)
 						continue

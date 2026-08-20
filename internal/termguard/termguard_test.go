@@ -276,18 +276,23 @@ func TestGuardReader_lineCap(t *testing.T) {
 	}
 }
 
-// TestReader_ResetLine proves ResetLine forgets an in-progress reconstructed
-// line without touching anything else: a caller that drives Read from
-// discrete, already-delivered messages rather than a continuous stream (see
-// internal/webserver's guest relay guard) needs this when bytes it already
-// fed in ultimately never reached the target — otherwise a later completed
-// line would decide on text spliced from those stale bytes.
-func TestReader_ResetLine(t *testing.T) {
+// TestReader_SnapshotRestore proves Restore rolls the reconstructed line
+// back to exactly what Snapshot captured — not a blind clear — undoing
+// whatever process() did since, including a completed line's Enter (which
+// unconditionally clears the line, whether forwarded or replaced with a
+// Ctrl-U). A caller that drives Read from discrete, already-delivered
+// messages rather than a continuous stream (see internal/webserver's guest
+// relay guard) needs this when bytes it already fed in ultimately never
+// reached the target: the target's own line buffer didn't change either, so
+// rolling back to the pre-frame snapshot is what keeps guard state in sync
+// with it — a blind clear would instead forget a still-live line the target
+// actually has pending.
+func TestReader_SnapshotRestore(t *testing.T) {
 	t.Parallel()
 	var seen []string
 	decide := func(_ context.Context, cmd string) (string, bool) {
 		seen = append(seen, cmd)
-		return "", false
+		return "denied by test", true
 	}
 	onDecision := func(string, string, bool) {}
 
@@ -297,22 +302,34 @@ func TestReader_ResetLine(t *testing.T) {
 		t.Fatal("NewReader must return *reader for a non-off mode")
 	}
 
-	// Feed a partial line directly via process (the same transform Read
-	// drives), bypassing the wrapped src so this test controls the input
-	// precisely.
-	rr.process([]byte("poison"))
-	if string(rr.line) != "poison" {
-		t.Fatalf("line = %q, want %q before reset", rr.line, "poison")
-	}
+	// Establish live, already-relayed content, mirroring what a target
+	// really has pending — the snapshot below must capture exactly this.
+	rr.process([]byte("rm -rf "))
+	snap := rr.Snapshot()
 
-	rr.ResetLine()
+	// This "frame" completes a DENIED line: process() replaces the Enter
+	// with a Ctrl-U and unconditionally clears the line, before the caller
+	// even knows whether the relay carrying these bytes will succeed.
+	chunk := []byte("poison\n")
+	rr.process(chunk)
 	if len(rr.line) != 0 {
-		t.Fatalf("line = %q, want empty after ResetLine", rr.line)
+		t.Fatalf("line = %q, want empty right after a completed Enter (process's own unconditional clear)", rr.line)
+	}
+	if len(seen) != 1 || seen[0] != "rm -rf poison" {
+		t.Fatalf("seen = %v, want exactly one decide on the spliced line before rollback", seen)
 	}
 
-	rr.process([]byte("safe\n"))
-	if len(seen) != 1 || seen[0] != "safe" {
-		t.Fatalf("seen = %v, want exactly [\"safe\"] (poison must not have survived the reset)", seen)
+	// The frame carrying "poison\n" (now "poison"+Ctrl-U) never reached the
+	// target — restore to the pre-frame snapshot, not an empty line.
+	rr.Restore(snap)
+	if string(rr.line) != "rm -rf " {
+		t.Fatalf("line = %q, want %q restored from the snapshot", rr.line, "rm -rf ")
+	}
+
+	// A later bare Enter must decide on the RESTORED line, not an empty one.
+	rr.process([]byte("/\n"))
+	if len(seen) != 2 || seen[1] != "rm -rf /" {
+		t.Fatalf("seen = %v, want the second decide on the restored+completed line \"rm -rf /\"", seen)
 	}
 }
 

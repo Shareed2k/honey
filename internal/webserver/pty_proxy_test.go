@@ -1245,20 +1245,109 @@ func TestPtyProxyRunBridge_CollaborateGuardCapBypassClosed(t *testing.T) {
 	}
 }
 
-// TestPtyProxyRunBridge_CollaborateGuardResetsLineAfterRelayFailure is the
-// other half of FIX-1: a frame the guard already consumed can still fail to
-// reach the pane for a reason OTHER than the cap (a genuine relay error) —
-// the guard must forget it, or a later Enter would decide on text spliced
-// from bytes the pane never received.
-func TestPtyProxyRunBridge_CollaborateGuardResetsLineAfterRelayFailure(t *testing.T) {
+// TestPtyProxyRunBridge_CollaborateGuardCapBypassClosed_PendingGrowth is the
+// FIX-1(A) regression using the EXACT frame shape from review: the report
+// filter PREPENDS its carried "pending" bytes (up to maxPendingReportBytes)
+// to the NEXT frame before anything else runs, so a frame whose raw payload
+// is exactly at maxRelayFrameBytes can still filter out OVER the cap.
+// Checking len(payload) (the original, insufficient fix) missed this: such
+// a frame passed that check, reached the guard, and was only THEN rejected
+// by tmuxSendKeysHex's own cap — by which point the guard had already
+// consumed it.
+//
+//  1. A root-path recursive delete (no Enter) relays fine; guard line = it.
+//  2. "\x1b[" alone is held entirely in the report filter's pending buffer —
+//     nothing relayed, the guard never sees it.
+//  3. 4096 'X's — exactly maxRelayFrameBytes as a raw payload — but the
+//     filter prepends F2's 2 pending bytes first: filtered is 4098 bytes,
+//     over the cap. This must be rejected BEFORE the guard ever runs.
+//  4. A lone Enter must still decide on the untainted root-path delete (and
+//     be denied), never an empty or laundered line.
+func TestPtyProxyRunBridge_CollaborateGuardCapBypassClosed_PendingGrowth(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
 	var calls [][]string
-	failFirst := true
 	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
 		calls = append(calls, args)
-		if failFirst {
-			failFirst = false
+		return nil, nil
+	})
+	defer restore()
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_pending_growth_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_guard_pending_growth_test:", GuestGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	// F1: reaches the pane, no Enter.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte(dangerousDeletePath())))
+	require.Eventually(t, func() bool { return len(calls) == 1 }, 2*time.Second, 10*time.Millisecond)
+
+	// F2: a bare, incomplete CSI prefix — wholly absorbed into the report
+	// filter's pending buffer; nothing relayed, the guard never sees it.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("\x1b[")))
+	time.Sleep(50 * time.Millisecond)
+	require.Len(t, calls, 1, "an incomplete CSI prefix must never itself relay anything")
+
+	// F3: exactly maxRelayFrameBytes of raw payload, but the filter
+	// prepends F2's 2 pending bytes first — filtered is 4098 bytes, over
+	// the cap.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, bytes.Repeat([]byte("X"), maxRelayFrameBytes)))
+	time.Sleep(100 * time.Millisecond)
+	require.Len(t, calls, 1, "a frame that only exceeds the cap AFTER the filter prepends pending bytes must still be rejected before the guard runs")
+
+	// F4: Enter alone. If F3 had reached the guard, the reconstructed line
+	// would either be laundered (no longer a root-path delete, ALLOWED —
+	// 0d) or wiped by a naive reset (cmd == "", ALSO unaudited-allowed).
+	// Either way, the fix must still see the untainted command and deny it.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("\r")))
+	require.Eventually(t, func() bool { return len(calls) == 2 }, 2*time.Second, 10*time.Millisecond)
+
+	require.Contains(t, calls[1], "15", "the guard must still deny the untainted command — the pending-growth frame must not have touched it")
+	require.NotContains(t, calls[1], "0d", "an allowed (laundered or wiped) Enter must never reach tmux")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}
+
+// TestPtyProxyRunBridge_CollaborateGuardRollsBackOnRelayFailure is FIX-1(B):
+// a frame the guard already consumed (it passed the cap check) can still
+// fail to reach the pane for an unrelated reason (a genuine relay/exec
+// error). Rolling back to the pre-frame snapshot — not a blind clear — is
+// what a later Enter needs to still decide on the still-pending command,
+// including the denied-Enter variant: process() unconditionally clears the
+// line the instant it sees a completed line's Enter, before the caller
+// learns whether that frame's relay will succeed, so rollback must undo
+// that clear too.
+func TestPtyProxyRunBridge_CollaborateGuardRollsBackOnRelayFailure(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	var calls [][]string
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		if len(calls) == 2 {
 			return nil, errors.New("simulated transient relay failure")
 		}
 		return nil, nil
@@ -1278,8 +1367,8 @@ func TestPtyProxyRunBridge_CollaborateGuardResetsLineAfterRelayFailure(t *testin
 		closeTabKill := make(chan struct{}, 1)
 		hello := WSHello{Cols: 80, Rows: 24}
 		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
-		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_reset_test", closeTabKill,
-			ptyProxyStdinPolicy{RelayTarget: "honey_guard_reset_test:", GuestGuard: &guard})
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_rollback_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_guard_rollback_test:", GuestGuard: &guard})
 		close(done)
 	}))
 	defer ts.Close()
@@ -1288,21 +1377,28 @@ func TestPtyProxyRunBridge_CollaborateGuardResetsLineAfterRelayFailure(t *testin
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
 
-	// F1: a critical-risk line with no Enter yet; the relay itself fails
-	// (simulated), so it never reaches the pane. The guard must forget it —
-	// not carry the command forward into whatever the guest types next.
+	// F1: reaches the pane successfully — the guard's line and the pane's
+	// real input buffer are now both the dangerous command.
 	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte(dangerousDeletePath())))
 	require.Eventually(t, func() bool { return len(calls) == 1 }, 2*time.Second, 10*time.Millisecond)
 
-	// F2: Enter alone. Without the reset, the guard would still think the
-	// dangerous command is the pending line and deny (Ctrl-U) on it — even
-	// though that text never reached the pane. With the reset, there is no
-	// pending line, so Enter passes through unchanged.
+	// F2: a bare Enter. The guard denies it (Ctrl-U substituted, line
+	// cleared by process()), but this WHOLE FRAME fails to relay (simulated)
+	// — neither the substitute Ctrl-U nor anything else reaches the pane,
+	// which still has the dangerous command pending, unchanged.
 	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("\r")))
 	require.Eventually(t, func() bool { return len(calls) == 2 }, 2*time.Second, 10*time.Millisecond)
 
-	require.Equal(t, []string{"send-keys", "-H", "-t", "honey_guard_reset_test:", "0d"}, calls[1],
-		"the guard must have forgotten the failed-to-relay line, not decided on it")
+	// F3: another bare Enter. A blind clear on F2's failure would have left
+	// the guard thinking there is no pending line — this would decide on ""
+	// and pass through unaudited, the exact bug named in review. With a
+	// proper rollback, the guard still has the dangerous command live and
+	// must deny it again.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("\r")))
+	require.Eventually(t, func() bool { return len(calls) == 3 }, 2*time.Second, 10*time.Millisecond)
+
+	require.Contains(t, calls[2], "15", "the guard must still deny the pending command after the failed relay — it must not have forgotten it")
+	require.NotContains(t, calls[2], "0d", "an unaudited bare Enter must never reach tmux")
 
 	_ = ptmx.Close()
 	_ = conn.Close()
