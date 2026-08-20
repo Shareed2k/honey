@@ -28,6 +28,7 @@ import (
 
 var (
 	webListen             string
+	webPublicURL          string
 	webFilesRoot          string
 	webAgentBin           string
 	webAgentBuildCacheDir string
@@ -46,6 +47,7 @@ var webCmd = &cobra.Command{
 
 func init() {
 	webCmd.Flags().StringVar(&webListen, "listen", "localhost:8765", "Listen address (host:port)")
+	webCmd.Flags().StringVar(&webPublicURL, "public-url", "", "Reachable base URL for share links/QR codes (e.g. https://honey.example.com); default: auto-derive from --listen, resolving a LAN IP if it binds to a loopback/wildcard address")
 	webCmd.Flags().StringVar(&webFilesRoot, "files-root", "", "Local filesystem root for the web file browser (default: $HONEY_FILES_ROOT or $HOME)")
 	webCmd.Flags().StringVar(&webAgentBin, "agent-bin", "", "Explicit path to honey-transfer-agent binary (optional)")
 	webCmd.Flags().StringVar(&webAgentBuildCacheDir, "agent-build-cache-dir", "", "Directory used to cache auto-built honey-transfer-agent binary")
@@ -202,6 +204,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:              webListen,
+		PublicURL:               strings.TrimSpace(webPublicURL),
 		Token:                   token,
 		DisableAuth:             disableAuth,
 		ConfigPath:              cfgPath,

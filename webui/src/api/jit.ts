@@ -26,6 +26,8 @@ export interface CreateGrantResponse {
   id: string;
   code: string;
   link_path: string;
+  /** Absolute, reachable share link (server-derived); falls back to link_path + window origin when absent. */
+  link?: string;
   status: string;
   expires_at?: string;
   require_approval: boolean;

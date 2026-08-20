@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/jit"
@@ -192,6 +193,17 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 		"link_path":        "/?access=" + code,
 		"status":           string(stored.Status),
 		"require_approval": stored.RequireApproval,
+	}
+	// "link" is the absolute, reachable form of link_path — computed
+	// server-side because the browser's own origin (e.g. localhost:8765) is
+	// useless to a remote recipient such as a phone scanning the QR code. On
+	// failure (no usable listen host and no resolvable LAN IP) it is simply
+	// omitted; the web UI then falls back to window.location.origin +
+	// link_path, same as before this existed.
+	if base, err := shareBaseURL(s.opts.PublicURL, s.opts.ListenAddr, defaultLANResolver); err != nil {
+		zap.L().Debug("jit: could not compute absolute share link, client will fall back to browser origin", zap.Error(err))
+	} else {
+		resp["link"] = base + "/?access=" + code
 	}
 	if !stored.ExpiresAt.IsZero() {
 		resp["expires_at"] = stored.ExpiresAt.Format(time.RFC3339)

@@ -47,7 +47,12 @@ import (
 
 // Options configures the embedded web server.
 type Options struct {
-	ListenAddr         string // e.g. 127.0.0.1:8765
+	ListenAddr string // e.g. 127.0.0.1:8765
+	// PublicURL, when set, is the reachable origin (scheme://host[:port])
+	// used for share links/QR codes instead of one derived from ListenAddr —
+	// how an operator behind a TLS reverse proxy or NAT supplies the address
+	// a remote recipient can actually reach. See shareBaseURL.
+	PublicURL          string
 	Token              string
 	DisableAuth        bool   // when true, skip token auth entirely (trusted networks / authenticating proxy)
 	ConfigPath         string // optional explicit --config
