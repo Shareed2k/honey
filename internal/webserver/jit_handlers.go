@@ -81,17 +81,7 @@ type jitResourceRequest struct {
 }
 
 // jitCreateGrantRequest is the POST /jit/grants body.
-//
-// Kind/MuxSession/Capability are the live-terminal share extension: when Kind
-// is "live_terminal", Capability ("watch" or "collaborate") replaces
-// Capabilities, Delivery is forced to web, and MuxSession is validated here
-// (this package, unlike internal/jit, can import both mux-name validators)
-// before it lands in the grant's ResourceRef.Meta. Every other field keeps its
-// normal meaning and is unaffected by Kind.
 type jitCreateGrantRequest struct {
-	Kind            string             `json:"kind,omitempty"`
-	MuxSession      string             `json:"mux_session,omitempty"`
-	Capability      jit.Capability     `json:"capability,omitempty"`
 	Resource        jitResourceRequest `json:"resource"`
 	Capabilities    []jit.Capability   `json:"capabilities"`
 	Delivery        jit.Delivery       `json:"delivery"`
@@ -100,99 +90,6 @@ type jitCreateGrantRequest struct {
 	RequireApproval bool               `json:"require_approval,omitempty"`
 	MaxRedemptions  int                `json:"max_redemptions,omitempty"`
 	Recipient       string             `json:"recipient,omitempty"`
-}
-
-// jitKindLiveTerminal marks a grant request that attaches the redeemer to an
-// operator's EXISTING tmux-backed session instead of a brand-new shell.
-const jitKindLiveTerminal = "live_terminal"
-
-// applyLiveTerminalShare validates a live_terminal share request and rewrites
-// resource + body in place for the rest of grant creation: the mux session
-// name is validated HERE — internal/jit cannot import validHoneyMuxSessionName
-// / validInterceptMuxName without an import cycle, so this is the one place
-// that gates a session name before it is ever handed to a guest to attach to
-// — then Capability replaces Capabilities and Delivery is forced to web (a
-// live-terminal attach only exists over the browser terminal, never the SSH
-// certificate path).
-//
-// The caller (handleCreateJITGrant) must invoke this whenever EITHER the
-// top-level Kind or body.Resource.Meta["kind"] equals jitKindLiveTerminal
-// (MED-2): Meta is copied into resource verbatim before this ever runs, so a
-// request that set the kind only inside Meta used to skip this entire gate —
-// an unvalidated mux_session reaching a guest's attach untouched.
-//
-// requester is the actor creating the grant (handleCreateJITGrant's
-// actorFromCtx). For the honey-int-* (intercept resume) family it is
-// cross-checked (MED-3) against the HONEY_INT_ACTOR interceptResumeSetMeta
-// recorded for that session, refusing a live share whose actor doesn't
-// match. Unlike round 1, an UNKNOWN owner now fails closed for this family
-// (interceptSessionActorRetry bounds a short retry against
-// interceptResumeSetMeta's own write race first): those names are derivable
-// cross-tenant and the intercept list is visible to any authenticated user,
-// so "we couldn't determine the owner" must mean "deny", not "allow". honey_*
-// (plain SSH/docker/k8s web-terminal) sessions carry no such recorded owner
-// at all — that gap is real, stays "unknown ⇒ allow", and is left as a
-// follow-up, not invented here as a new store.
-func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantRequest, requester string) error {
-	mux := strings.TrimSpace(body.MuxSession)
-	if mux == "" {
-		return errors.New("mux_session is required for a live_terminal share")
-	}
-	if !validHoneyMuxSessionName(mux) && !validInterceptMuxName(mux) {
-		return fmt.Errorf("invalid mux_session %q", mux)
-	}
-	// MED-4: grant creation must not succeed for a tab with no live tmux
-	// session (zellij preferred, no-mux fallback, pve-serial/truenas tabs never
-	// have one) — otherwise the guest only discovers the broken link after
-	// burning a redemption. A live-share grant is only ever redeemable on the
-	// honey node that actually holds this tmux session — it does not follow
-	// the session elsewhere.
-	//
-	// NEW-16 (round 3): checked BEFORE the ownership block below, not after —
-	// round 2 had it last, so a dead honey-int-* session paid for the
-	// ownership retry's full cost (6 execs, ~500ms) before returning "owner
-	// could not be determined" instead of this friendlier, cheaper message.
-	if !tmuxGuestSessionAlive(mux) {
-		return errors.New("this terminal is not shareable — no live tmux session")
-	}
-	if validInterceptMuxName(mux) {
-		owner := interceptSessionActorRetry(mux)
-		if owner == "" {
-			return fmt.Errorf("refusing to share session %q: owner could not be determined", mux)
-		}
-		if owner != requester {
-			return fmt.Errorf("refusing to share session %q: not owned by %q", mux, requester)
-		}
-	}
-	switch body.Capability {
-	case jit.CapWatch, jit.CapCollab:
-	default:
-		return fmt.Errorf("capability must be %q or %q for a live_terminal share", jit.CapWatch, jit.CapCollab)
-	}
-	// NEW-3: tmux matches a `-t` target by PREFIX ("honey-int-abc" resolves to
-	// a real "honey-int-abcdef"), so a request naming a unique prefix would
-	// otherwise pass every check above and attach to the REAL session while
-	// this stores (and later, policy/audit see) the ALIAS — an exact-match
-	// policy rule is evadable and the audit trail would name a session that
-	// does not exist. Resolve the actual tmux session name now and refuse
-	// anything but an exact match; only the canonical name is ever stored.
-	canonicalMux, err := tmuxCanonicalSessionName(mux)
-	if err != nil {
-		return fmt.Errorf("resolve mux_session: %w", err)
-	}
-	mux = canonicalMux
-
-	meta := make(map[string]string, len(resource.Meta)+2)
-	for k, v := range resource.Meta {
-		meta[k] = v
-	}
-	meta["kind"] = jitKindLiveTerminal
-	meta["mux_session"] = mux
-	resource.Meta = meta
-
-	body.Capabilities = []jit.Capability{body.Capability}
-	body.Delivery = jit.DeliveryWeb
-	return nil
 }
 
 // jitGrantView is the redacted, wire-safe view of a jit.Grant. It deliberately
@@ -285,15 +182,6 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 		Provider:  body.Resource.Provider,
 		PrimaryIP: body.Resource.PrimaryIP,
 		Meta:      body.Resource.Meta,
-	}
-
-	// MED-2: trigger on either the top-level Kind or a meta-only kind — see
-	// applyLiveTerminalShare's doc comment for why both must be checked.
-	if body.Kind == jitKindLiveTerminal || body.Resource.Meta["kind"] == jitKindLiveTerminal {
-		if err := applyLiveTerminalShare(&resource, &body, actor); err != nil {
-			httpError(w, err, http.StatusBadRequest)
-			return
-		}
 	}
 
 	if err := s.gateJITGrant(r, actor, resource, body.Capabilities, body.Delivery, body.RequireApproval); err != nil {
@@ -414,15 +302,6 @@ func (s *Server) gateJITGrant(r *http.Request, actor string, resource jit.Resour
 		"provider": resource.Provider,
 		"env":      resource.Meta["env"],
 		"groups":   groups,
-	}
-	// MED-3: a live_terminal grant's mux_session — the exact (now-canonical,
-	// see applyLiveTerminalShare's NEW-3 fix) session a redeemer will be
-	// attached to — so policy can see (and gate on) which live session is
-	// being shared, not just the target host. Omitted entirely when empty
-	// (every non-live grant), so an existing "jit_grant" policy sees the same
-	// input shape it always has, key absent rather than an empty string.
-	if mux := resource.Meta["mux_session"]; mux != "" {
-		target["mux_session"] = mux
 	}
 	d, err := s.opts.Enforcer.Evaluate(r.Context(), map[string]any{
 		"action":           "jit_grant",

@@ -2,21 +2,13 @@ import { useEffect, useState } from 'react';
 import { Alert, Button, Checkbox, Input, InputNumber, Modal, Radio, Space, Tag, Typography } from 'antd';
 import { QRCodeSVG } from 'qrcode.react';
 import { createGrant } from '../api/jit';
-import type { CreateGrantResponse, JitCapability, JitDelivery, LiveTerminalCapability } from '../api/jit';
+import type { CreateGrantResponse, JitCapability, JitDelivery } from '../api/jit';
 import type { HostRecord } from '../HostPicker';
 
 export type ShareAccessModalProps = {
   record: HostRecord | null;
   open: boolean;
   onClose: () => void;
-  /**
-   * When set, this modal shares the CALLER's live terminal session (a
-   * `mux_session` name, e.g. `honey_<uuid>` for SSH web-tty or
-   * `honey-int-<hex>` for an intercept resume pane) instead of a brand-new
-   * shell: the form swaps Capabilities/Delivery for a watch/collaborate
-   * radio, and the resulting grant attaches a redeemer to that EXACT session.
-   */
-  liveSession?: { muxSession: string } | null;
 };
 
 const CAPABILITY_OPTIONS: { label: string; value: JitCapability }[] = [
@@ -25,35 +17,23 @@ const CAPABILITY_OPTIONS: { label: string; value: JitCapability }[] = [
   { label: 'Tunnel', value: 'tunnel' },
 ];
 
-const LIVE_CAPABILITY_OPTIONS: { label: string; value: LiveTerminalCapability }[] = [
-  { label: 'Watch (read-only)', value: 'watch' },
-  { label: 'Collaborate (read-write)', value: 'collaborate' },
-];
-
 const DEFAULT_CAPABILITIES: JitCapability[] = ['shell'];
 const DEFAULT_DELIVERY: JitDelivery = 'both';
 const DEFAULT_DURATION = '2h';
-const DEFAULT_LIVE_CAPABILITY: LiveTerminalCapability = 'watch';
 
-export function ShareAccessModal({ record, open, onClose, liveSession = null }: ShareAccessModalProps) {
+export function ShareAccessModal({ record, open, onClose }: ShareAccessModalProps) {
   const [duration, setDuration] = useState(DEFAULT_DURATION);
   const [capabilities, setCapabilities] = useState<JitCapability[]>(DEFAULT_CAPABILITIES);
   const [delivery, setDelivery] = useState<JitDelivery>(DEFAULT_DELIVERY);
-  const [liveCapability, setLiveCapability] = useState<LiveTerminalCapability>(DEFAULT_LIVE_CAPABILITY);
   const [requireApproval, setRequireApproval] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [reason, setReason] = useState('');
-  // A live share defaults to 1 redemption: 0 (unlimited concurrent guests on
-  // a live, running shell) is a poor default for that case, even though it
-  // stays the right default for a brand-new-shell share.
-  const [maxRedemptions, setMaxRedemptions] = useState(() => (liveSession ? 1 : 0));
+  const [maxRedemptions, setMaxRedemptions] = useState(0);
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<CreateGrantResponse | null>(null);
   const [copied, setCopied] = useState(false);
-
-  const isLiveShare = !!liveSession;
 
   // Reset to a blank form every time the modal is opened (fresh target, or the
   // same one re-opened) so a previous grant's result/code never lingers.
@@ -62,26 +42,16 @@ export function ShareAccessModal({ record, open, onClose, liveSession = null }: 
       setDuration(DEFAULT_DURATION);
       setCapabilities(DEFAULT_CAPABILITIES);
       setDelivery(DEFAULT_DELIVERY);
-      setLiveCapability(DEFAULT_LIVE_CAPABILITY);
       setRequireApproval(false);
       setRecipient('');
       setReason('');
-      setMaxRedemptions(liveSession ? 1 : 0);
+      setMaxRedemptions(0);
       setBusy(false);
       setErr(null);
       setResult(null);
       setCopied(false);
     }
-    // NEW-4: depend on the PRIMITIVE muxSession, not the liveSession object —
-    // the parent (TerminalContext.tsx) passes a fresh `{ muxSession }`
-    // literal every render, and it re-renders every 3s from its intercept
-    // poll. Depending on the object itself reset this form (setResult(null)
-    // included) every 3s while it was open, erasing an already-created share
-    // link/code before the operator could copy it. This is deliberate, not a
-    // missed dependency — the object identity is exactly what must NOT be
-    // depended on.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, record, liveSession?.muxSession]);
+  }, [open, record]);
 
   const onSubmit = async () => {
     if (!record) {
@@ -104,9 +74,6 @@ export function ShareAccessModal({ record, open, onClose, liveSession = null }: 
         require_approval: requireApproval,
         max_redemptions: maxRedemptions,
         recipient: recipient.trim() || undefined,
-        ...(liveSession
-          ? { kind: 'live_terminal' as const, mux_session: liveSession.muxSession, capability: liveCapability }
-          : {}),
       });
       setResult(resp);
     } catch (e) {
@@ -119,9 +86,8 @@ export function ShareAccessModal({ record, open, onClose, liveSession = null }: 
   const link = result?.link || (result ? window.location.origin + result.link_path : '');
   // Tunnel access is redeemed as an SSH certificate (for `ssh -L`), so a
   // web-terminal-only delivery would produce a dead link — block that combo.
-  // Not applicable to a live-terminal share, which is always web/watch-or-collaborate.
-  const tunnelNeedsCert = !isLiveShare && capabilities.includes('tunnel') && delivery === 'web';
-  const canSubmit = !!record && (isLiveShare || (capabilities.length > 0 && !tunnelNeedsCert));
+  const tunnelNeedsCert = capabilities.includes('tunnel') && delivery === 'web';
+  const canSubmit = !!record && capabilities.length > 0 && !tunnelNeedsCert;
 
   const copyLink = () => {
     if (!link) {
@@ -140,7 +106,7 @@ export function ShareAccessModal({ record, open, onClose, liveSession = null }: 
     <Modal
       open={open}
       onCancel={onClose}
-      title={record ? `${isLiveShare ? 'Share this terminal' : 'Share access'} — ${record.name}` : 'Share access'}
+      title={record ? `Share access — ${record.name}` : 'Share access'}
       width={480}
       destroyOnHidden
       footer={
@@ -185,57 +151,37 @@ export function ShareAccessModal({ record, open, onClose, liveSession = null }: 
             />
           </div>
 
-          {isLiveShare ? (
-            <div>
-              <Typography.Text id="jit-live-capability-label" style={{ display: 'block', marginBottom: 4 }}>
-                Access
-              </Typography.Text>
-              <Radio.Group
-                aria-labelledby="jit-live-capability-label"
-                options={LIVE_CAPABILITY_OPTIONS}
-                value={liveCapability}
-                onChange={(e) => setLiveCapability(e.target.value as LiveTerminalCapability)}
-              />
-              <Typography.Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
-                The guest joins this exact terminal session — not a new shell. Delivered over the browser
-                terminal only.
-              </Typography.Text>
-            </div>
-          ) : (
-            <>
-              <div>
-                <Typography.Text id="jit-capabilities-label" style={{ display: 'block', marginBottom: 4 }}>
-                  Capabilities
-                </Typography.Text>
-                <Checkbox.Group
-                  aria-labelledby="jit-capabilities-label"
-                  options={CAPABILITY_OPTIONS}
-                  value={capabilities}
-                  onChange={(vals) => setCapabilities(vals)}
-                />
-              </div>
+          <div>
+            <Typography.Text id="jit-capabilities-label" style={{ display: 'block', marginBottom: 4 }}>
+              Capabilities
+            </Typography.Text>
+            <Checkbox.Group
+              aria-labelledby="jit-capabilities-label"
+              options={CAPABILITY_OPTIONS}
+              value={capabilities}
+              onChange={(vals) => setCapabilities(vals)}
+            />
+          </div>
 
-              <div>
-                <Typography.Text id="jit-delivery-label" style={{ display: 'block', marginBottom: 4 }}>
-                  Delivery
-                </Typography.Text>
-                <Radio.Group
-                  aria-labelledby="jit-delivery-label"
-                  value={delivery}
-                  onChange={(e) => setDelivery(e.target.value as JitDelivery)}
-                >
-                  <Radio value="web">Browser terminal</Radio>
-                  <Radio value="cert">SSH certificate</Radio>
-                  <Radio value="both">Both</Radio>
-                </Radio.Group>
-                {tunnelNeedsCert ? (
-                  <Typography.Text type="warning" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
-                    Tunnel access is delivered via an SSH certificate — pick SSH certificate or Both.
-                  </Typography.Text>
-                ) : null}
-              </div>
-            </>
-          )}
+          <div>
+            <Typography.Text id="jit-delivery-label" style={{ display: 'block', marginBottom: 4 }}>
+              Delivery
+            </Typography.Text>
+            <Radio.Group
+              aria-labelledby="jit-delivery-label"
+              value={delivery}
+              onChange={(e) => setDelivery(e.target.value as JitDelivery)}
+            >
+              <Radio value="web">Browser terminal</Radio>
+              <Radio value="cert">SSH certificate</Radio>
+              <Radio value="both">Both</Radio>
+            </Radio.Group>
+            {tunnelNeedsCert ? (
+              <Typography.Text type="warning" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+                Tunnel access is delivered via an SSH certificate — pick SSH certificate or Both.
+              </Typography.Text>
+            ) : null}
+          </div>
 
           <div>
             <Typography.Text id="jit-access-label" style={{ display: 'block', marginBottom: 4 }}>

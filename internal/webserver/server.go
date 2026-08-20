@@ -672,6 +672,11 @@ func (s *Server) routes() error {
 	s.router.Get("/ws/ssh", s.handleWebSSH)
 	s.router.Get("/ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
 
+	// Operator-only, authed, read-only live view of an access-request guest's
+	// session (Part 2 of the share/watch feature): authenticated the same way
+	// as /ws/ssh (session token), never by a share-link code.
+	s.router.Get("/ws/share/watch", s.handleShareWatch)
+
 	// Browser interception terminal: runs a direct intercept.Session on the
 	// honey-web host and bridges the injected shell's PTY to the WebSocket.
 	// Registered only when the session factory is wired (intercept enabled with a

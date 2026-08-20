@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -262,37 +261,4 @@ func TestNewGuardRelay_modeOffIsIdentity(t *testing.T) {
 
 	require.Equal(t, in, out)
 	require.NotPanics(t, rollback)
-}
-
-// TestGuestNoticeWriter_routesThroughNoticeLane is the FIX-4 regression: a
-// guard notice destined for a collaborate guest must arrive as a
-// {"notice":...} text frame — never as raw ANSI-colored bytes in the
-// terminal stream, which would desync the guest's mirror of the operator's
-// pane.
-func TestGuestNoticeWriter_routesThroughNoticeLane(t *testing.T) {
-	t.Parallel()
-	upgrader := websocket.Upgrader{}
-	done := make(chan struct{})
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		require.NoError(t, err)
-		defer conn.Close()
-		notify := guestNoticeWriter{wsOut: &wsWriter{conn: conn, mu: &sync.Mutex{}}}
-		_, _ = io.WriteString(notify, "\r\n\x1b[31m[blocked by policy: dangerous]\x1b[0m\r\n")
-		close(done)
-	}))
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	<-done
-	mt, raw, rerr := conn.ReadMessage()
-	require.NoError(t, rerr)
-	require.Equal(t, websocket.TextMessage, mt, "a guest guard notice must be a text frame, never raw terminal bytes")
-	require.Contains(t, string(raw), `"notice"`)
-	require.Contains(t, string(raw), "blocked by policy: dangerous")
-	require.NotContains(t, string(raw), "\x1b[", "ANSI escape codes must not leak into the notice text")
 }

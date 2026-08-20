@@ -2,10 +2,7 @@ package webserver
 
 import (
 	"context"
-	"encoding/json"
 	"io"
-	"regexp"
-	"strings"
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cmdgate"
@@ -15,12 +12,11 @@ import (
 	"github.com/shareed2k/honey/internal/termguard"
 )
 
-// termGuardInputs carries the risk+policy inputs for the per-command web/
-// share terminal guard (internal/termguard) — the SAME shape whether the
-// caller is a normal operator terminal (Mode from web.guard_mode, off by
-// default) or a share-link collaborate guest (Mode always
-// termguard.ModeEnforce, set by the caller — an untrusted party never gets a
-// weaker mode via config).
+// termGuardInputs carries the risk+policy inputs for the per-command web
+// terminal guard (internal/termguard): Mode comes from web.guard_mode, off by
+// default. The same shape is used for the OPERATOR's own web terminal and for
+// an access-request guest's own redeemed shell — both are gated by the same
+// config value, never a caller-forced mode.
 type termGuardInputs struct {
 	Enforcer  *policy.Enforcer
 	Actor     string
@@ -46,8 +42,7 @@ func (s *Server) webGuardMode() termguard.Mode {
 //
 // A policy-evaluation error fails closed only when in.Mode is
 // termguard.ModeEnforce — audit mode records but never blocks, matching the
-// gateway's behavior. A share collaborate guest always passes Mode enforce,
-// so it always fails closed; a config-off/audit operator terminal does not.
+// gateway's behavior.
 func newTermGuardDecide(in termGuardInputs) (
 	decide func(context.Context, string) (string, bool),
 	onDecision func(cmd, reason string, denied bool),
@@ -115,42 +110,6 @@ func newTermGuardDecide(in termGuardInputs) (
 	return decide, onDecision
 }
 
-// ansiSGR matches the SGR (color) escape sequences termguard and
-// newTermGuardDecide use to color their policy notices for a peer that owns
-// the terminal they land in (an operator, or the SSH gateway's authenticated
-// peer) — see guestNoticeWriter.
-var ansiSGR = regexp.MustCompile("\x1b\\[[0-9;]*m")
-
-// guestNoticeWriter adapts termguard's raw, ANSI-colored policy notices to a
-// collaborate guest's distinct {"notice":...} text-frame lane (FIX-4). A
-// guest's terminal MIRRORS the OPERATOR's pane, so writing policy text
-// straight into its buffer — as termguard normally does for a peer that owns
-// its own session (the SSH gateway's peer, or the operator's own web
-// terminal) — would desync that mirror until the next redraw; round 3
-// already moved the relay drop notice out of the terminal buffer for
-// exactly this reason (see tmuxSendKeysHex's caller). Shares wsOut's write
-// mutex (never a second, independent writer over the same *websocket.Conn).
-type guestNoticeWriter struct{ wsOut *wsWriter }
-
-func (g guestNoticeWriter) Write(p []byte) (int, error) {
-	if msg := strings.TrimSpace(ansiSGR.ReplaceAllString(string(p), "")); msg != "" {
-		// json.Marshal (not manual string concatenation) so a deny reason
-		// carrying any control byte other than \ " \n \r — which escapeJSON
-		// does not handle — never produces a frame the client's JSON.parse
-		// throws on, silently losing the notice.
-		if b, err := json.Marshal(noticeFrame{Notice: msg}); err == nil {
-			_ = g.wsOut.writeText(string(b))
-		}
-	}
-	return len(p), nil
-}
-
-// noticeFrame is the {"notice":...} text-frame shape guest notices use — see
-// guestNoticeWriter and the NEW-17 drop notice in ptyProxyRunBridge.
-type noticeFrame struct {
-	Notice string `json:"notice"`
-}
-
 // relayChunkReader drives a termguard.Reader synchronously, one already-read
 // WS frame at a time — see newGuardRelay.
 type relayChunkReader struct{ chunk []byte }
@@ -176,11 +135,10 @@ type lineSnapshotter interface {
 // newGuardRelay adapts termguard.NewReader — an io.Reader built for a
 // continuous stdin stream — to a relay's message-oriented shape: a caller
 // that already has one WS frame at a time in hand, with no io.Reader
-// upstream of it to plug termguard into directly (the collaborate-guest
-// relay, and the operator mux path's ptmx writes — see FIX-2). mode comes
-// straight from the caller (never re-decided here), so it is the single
-// source of truth for both the block/allow behavior AND the fail-closed
-// check in newTermGuardDecide.
+// upstream of it to plug termguard into directly (the operator mux path's
+// ptmx writes — see FIX-2). mode comes straight from the caller (never
+// re-decided here), so it is the single source of truth for both the
+// block/allow behavior AND the fail-closed check in newTermGuardDecide.
 //
 // relay gates one frame per call and is driven from the SAME goroutine that
 // read the frame — no io.Pipe, no extra goroutine. relayChunkReader hands
@@ -207,8 +165,8 @@ type lineSnapshotter interface {
 // mode == termguard.ModeOff (the operator's off default) makes both relay
 // and rollback no-ops — termguard.NewReader returns the inner reader
 // unchanged, so this never touches the guard machinery at all, byte-identical
-// to no wrap. One instance is built per connection (like terminalReportFilter)
-// so a command line split across frames still reconstructs correctly.
+// to no wrap. One instance is built per connection so a command line split
+// across frames still reconstructs correctly.
 func newGuardRelay(ctx context.Context, notify io.Writer, mode termguard.Mode,
 	decide func(context.Context, string) (string, bool),
 	onDecision func(cmd, reason string, denied bool),

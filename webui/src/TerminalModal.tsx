@@ -58,15 +58,6 @@ type TabsProps = {
   onSetActive: (id: string) => void;
   onCloseTerminal: (id: string) => void;
   onCloseModal: () => void;
-  /** Opens the "Share this terminal" flow (watch/collaborate live-session grant) for one open tab. */
-  onShareTerminal?: (t: TerminalSessionConfig) => void;
-  /**
-   * Whether a tab's live mux_session has resolved yet (LOW-8): an intercept
-   * tab's name comes from the polled session list and can lag briefly after
-   * opening. Omitted (or returning true) means always shareable — the
-   * pre-existing behavior for a tab type this never needed to gate.
-   */
-  canShareTerminal?: (t: TerminalSessionConfig) => boolean;
 };
 
 /** Split-screen layouts for the terminal modal (Rundeck-style tiling). */
@@ -715,8 +706,6 @@ export function TerminalTabsModal({
   onSetActive,
   onCloseTerminal,
   onCloseModal,
-  onShareTerminal,
-  canShareTerminal,
 }: TabsProps) {
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -1075,23 +1064,6 @@ export function TerminalTabsModal({
                     {t.record.name}
                     {t.intercept ? <span className="terminal-tab-badge"> intercept</span> : null}
                   </span>
-                  {onShareTerminal && t.pve !== 'vnc' && t.truenasConsole !== 'api' ? (() => {
-                    const shareable = canShareTerminal ? canShareTerminal(t) : true;
-                    return (
-                      <button
-                        type="button"
-                        className="terminal-tab-share"
-                        disabled={!shareable}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (shareable) onShareTerminal(t);
-                        }}
-                        title={shareable ? 'Share this terminal (watch or collaborate)' : 'This terminal is not shareable yet'}
-                      >
-                        Share…
-                      </button>
-                    );
-                  })() : null}
                   <button
                     type="button"
                     className="terminal-tab-close"

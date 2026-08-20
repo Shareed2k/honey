@@ -1,11 +1,8 @@
-import { apiDelete, apiGet, apiPost } from './core';
+import { apiDelete, apiGet, apiPost, getToken } from './core';
 
-export type JitCapability = 'shell' | 'exec' | 'tunnel' | 'watch' | 'collaborate';
+export type JitCapability = 'shell' | 'exec' | 'tunnel';
 export type JitDelivery = 'web' | 'cert' | 'both';
 export type JitGrantDecision = 'approve' | 'deny' | 'revoke';
-
-/** watch = read-only attach, collaborate = read-write attach to an existing live terminal. */
-export type LiveTerminalCapability = 'watch' | 'collaborate';
 
 export interface JitResourceRef {
   name: string;
@@ -23,16 +20,6 @@ export interface CreateGrantRequest {
   require_approval: boolean;
   max_redemptions: number;
   recipient?: string;
-  /**
-   * live_terminal share extension: set kind to attach the redeemer to an
-   * operator's EXISTING tmux-backed session instead of a brand-new shell.
-   * mux_session/capability replace `capabilities` (which is ignored server-side
-   * when kind is set); delivery is forced to "web" server-side regardless of
-   * what is sent.
-   */
-  kind?: 'live_terminal';
-  mux_session?: string;
-  capability?: LiveTerminalCapability;
 }
 
 export interface CreateGrantResponse {
@@ -78,17 +65,20 @@ export interface ListGrantsResponse extends PageMeta {
 
 export interface ShareSessionView {
   grant_id: string;
-  capability: LiveTerminalCapability;
-  mux_session: string;
+  resource: JitResourceRef;
   actor: string;
+  recipient?: string;
+  capabilities: JitCapability[];
   created_at: string;
   expires_at?: string;
   redemptions: number;
   max_redemptions: number;
-  /** How many read-only (guest) tmux clients are attached right now — the whole point of this panel. */
-  attached_guests: number;
-  /** Whether the underlying tmux session is still alive (false when tmux/the session is gone). */
+  /** Whether the guest's session is currently live. */
   session_alive: boolean;
+  /** How many operators are currently watching this guest session read-only. */
+  observers: number;
+  /** False when this host has no multiplexer at all, so no guest session redeemed here (past or future) can ever be watched or killed via tmux. */
+  observable: boolean;
 }
 
 export interface ListShareSessionsResponse extends PageMeta {
@@ -97,10 +87,8 @@ export interface ListShareSessionsResponse extends PageMeta {
 
 export interface KillShareSessionResponse {
   grant_id: string;
-  /** How many guest clients were detached by this call. */
-  detached: number;
-  /** How many guest clients remain attached afterward (normally 0). */
-  attached_guests: number;
+  /** Whether the guest's session was actually alive (and just terminated) by this call. */
+  session_killed: boolean;
 }
 
 export interface RedeemStatus {
@@ -169,7 +157,7 @@ export async function purgeGrants(): Promise<number> {
   return j.deleted ?? 0;
 }
 
-/** Lists the live-terminal shares that are currently redeemable/active, each with its live attachment state. */
+/** Lists access-request grants that have, or could have, a guest session, each with its live attachment state. */
 export async function listShareSessions(page = 1, perPage = 50): Promise<ListShareSessionsResponse> {
   const res = await apiGet(`/api/v1/share/sessions?page=${page}&per_page=${perPage}`);
   const j = (await res.json().catch(() => ({}))) as Partial<ListShareSessionsResponse> & { error?: string };
@@ -180,10 +168,11 @@ export async function listShareSessions(page = 1, perPage = 50): Promise<ListSha
 }
 
 /**
- * Kills a live-terminal share: revokes the grant (the link can never be
- * redeemed again) and disconnects every guest currently attached — the
- * operator's own terminal session is never touched. Idempotent: killing an
- * already-revoked or already-ended share is a no-op 200, not an error.
+ * Kills an access-request guest session: revokes the grant (the link can
+ * never be redeemed again) and terminates the guest's own session — any
+ * operator currently watching is disconnected as a side effect. Idempotent:
+ * killing an already-revoked or already-ended share is a no-op 200, not an
+ * error.
  */
 export async function killShareSession(grantId: string): Promise<KillShareSessionResponse> {
   const res = await apiPost(`/api/v1/share/sessions/${encodeURIComponent(grantId)}/kill`, {});
@@ -192,6 +181,20 @@ export async function killShareSession(grantId: string): Promise<KillShareSessio
     throw new Error(j.error || res.statusText);
   }
   return j;
+}
+
+/**
+ * Builds the authed, operator-only WebSocket URL for the read-only live view
+ * of a guest's access-request session (`/ws/share/watch`). Authenticated the
+ * same way as the rest of the web UI (the session token), never by a
+ * share-link code.
+ */
+export function shareWatchWebSocketURL(grantId: string): string {
+  const token = getToken();
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const u = new URL(`/ws/share/watch?grant=${encodeURIComponent(grantId)}&token=${encodeURIComponent(token)}`, window.location.href);
+  u.protocol = proto;
+  return u.toString();
 }
 
 export async function getRedeemStatus(code: string): Promise<RedeemStatus> {

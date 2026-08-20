@@ -11,17 +11,13 @@ import {
   type JitGrantView,
   type ShareSessionView,
 } from '../api/jit';
+import { ShareWatchModal } from './ShareWatchModal';
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'orange',
   approved: 'green',
   denied: 'red',
   revoked: 'default',
-};
-
-const CAPABILITY_COLORS: Record<string, string> = {
-  watch: 'blue',
-  collaborate: 'orange',
 };
 
 const REFRESH_INTERVAL_MS = 10_000;
@@ -58,6 +54,7 @@ export function AccessRequestsTab() {
   const [sessionsPageSize, setSessionsPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
+  const [watchTarget, setWatchTarget] = useState<ShareSessionView | null>(null);
 
   const [err, setErr] = useState<string | null>(null);
 
@@ -196,41 +193,65 @@ export function AccessRequestsTab() {
 
   const confirmKill = (session: ShareSessionView) => {
     Modal.confirm({
-      title: `Kill this share?`,
+      title: `Kill this session?`,
       content:
-        'This revokes the share link and disconnects every guest attached to it right now. Your own terminal session is not affected.',
+        'This revokes the access link and terminates the guest\'s session right now. Anyone watching it is disconnected too.',
       okText: 'Kill',
       okButtonProps: { danger: true },
       onOk: () => doKill(session),
     });
   };
 
+  /** "live" once redeemed and still running, "ended" once redeemed and gone, "not redeemed" beforehand. */
+  function sessionStatus(r: ShareSessionView): { label: string; color: string } {
+    if (r.session_alive) {
+      return { label: 'live', color: 'green' };
+    }
+    if (r.redemptions > 0) {
+      return { label: 'ended', color: 'default' };
+    }
+    return { label: 'not redeemed', color: 'orange' };
+  }
+
+  /** Reason a disabled Watch button is disabled, or '' when it's enabled. */
+  function watchDisabledReason(r: ShareSessionView): string {
+    if (!r.observable) {
+      return 'This host has no multiplexer, so this session can never be watched';
+    }
+    if (!r.session_alive) {
+      return 'No guest session is currently running';
+    }
+    return '';
+  }
+
   const sessionColumns = [
     {
-      title: 'Capability',
-      key: 'capability',
-      render: (_: unknown, r: ShareSessionView) => <Tag color={CAPABILITY_COLORS[r.capability] ?? 'default'}>{r.capability}</Tag>,
-    },
-    {
-      title: 'Session',
-      key: 'mux_session',
-      render: (_: unknown, r: ShareSessionView) => <Typography.Text code>{r.mux_session}</Typography.Text>,
-    },
-    { title: 'Actor', dataIndex: 'actor', key: 'actor' },
-    {
-      title: 'Attached guests',
-      key: 'attached_guests',
+      title: 'Resource',
+      key: 'resource',
       render: (_: unknown, r: ShareSessionView) => (
-        <Tag color={r.attached_guests > 0 ? 'red' : 'default'} style={{ fontSize: 14, fontWeight: r.attached_guests > 0 ? 700 : 400 }}>
-          {r.attached_guests}
-        </Tag>
+        <span>
+          {r.resource.name} <Typography.Text type="secondary">({r.resource.provider})</Typography.Text>
+        </span>
       ),
     },
     {
-      title: 'Terminal',
-      key: 'session_alive',
+      title: 'Guest',
+      key: 'recipient',
+      render: (_: unknown, r: ShareSessionView) => r.recipient || <Typography.Text type="secondary">anyone with the link</Typography.Text>,
+    },
+    {
+      title: 'Status',
+      key: 'status',
+      render: (_: unknown, r: ShareSessionView) => {
+        const s = sessionStatus(r);
+        return <Tag color={s.color}>{s.label}</Tag>;
+      },
+    },
+    {
+      title: 'Observers',
+      key: 'observers',
       render: (_: unknown, r: ShareSessionView) => (
-        <Tag color={r.session_alive ? 'green' : 'default'}>{r.session_alive ? 'live' : 'ended'}</Tag>
+        <Tag color={r.observers > 0 ? 'blue' : 'default'}>{r.observers}</Tag>
       ),
     },
     {
@@ -241,17 +262,28 @@ export function AccessRequestsTab() {
     {
       title: 'Actions',
       key: 'actions',
-      render: (_: unknown, r: ShareSessionView) => (
-        <Button
-          size="small"
-          danger
-          loading={busySessionId === r.grant_id}
-          disabled={busySessionId !== null && busySessionId !== r.grant_id}
-          onClick={() => confirmKill(r)}
-        >
-          Kill
-        </Button>
-      ),
+      render: (_: unknown, r: ShareSessionView) => {
+        const watchReason = watchDisabledReason(r);
+        const watchButton = (
+          <Button size="small" disabled={!!watchReason} onClick={() => setWatchTarget(r)}>
+            Watch
+          </Button>
+        );
+        return (
+          <Space size={8}>
+            {watchReason ? <Tooltip title={watchReason}>{watchButton}</Tooltip> : watchButton}
+            <Button
+              size="small"
+              danger
+              loading={busySessionId === r.grant_id}
+              disabled={busySessionId !== null && busySessionId !== r.grant_id}
+              onClick={() => confirmKill(r)}
+            >
+              Kill
+            </Button>
+          </Space>
+        );
+      },
     },
   ];
 
@@ -349,12 +381,12 @@ export function AccessRequestsTab() {
 
       <Card
         size="small"
-        title={<Space><span>Live shares</span><Button size="small" onClick={() => fetchSessions(sessionsPage, sessionsPageSize)}>Refresh</Button></Space>}
+        title={<Space><span>Guest sessions</span><Button size="small" onClick={() => fetchSessions(sessionsPage, sessionsPageSize)}>Refresh</Button></Space>}
         style={{ marginBottom: 16 }}
       >
         <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          Live-terminal share links that are currently active, with a count of guests attached right
-          now. Kill revokes the link and disconnects its guests — your own terminal keeps running.
+          Working sessions redeemed from an access link. Watch opens a read-only live view of what the
+          guest is doing right now; Kill revokes the link and terminates the guest's session.
         </Typography.Paragraph>
         <Table
           rowKey={(r) => r.grant_id}
@@ -363,7 +395,7 @@ export function AccessRequestsTab() {
           columns={sessionColumns}
           dataSource={sessions}
           scroll={{ x: 'max-content' }}
-          locale={{ emptyText: 'No live shares right now' }}
+          locale={{ emptyText: 'No guest has redeemed an access request yet' }}
           pagination={{
             current: sessionsPage,
             pageSize: sessionsPageSize,
@@ -401,6 +433,12 @@ export function AccessRequestsTab() {
           }}
         />
       </Card>
+
+      <ShareWatchModal
+        grantId={watchTarget?.grant_id ?? null}
+        resourceName={watchTarget?.resource.name}
+        onClose={() => setWatchTarget(null)}
+      />
     </div>
   );
 }

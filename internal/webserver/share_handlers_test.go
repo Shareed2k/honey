@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,82 +13,48 @@ import (
 	"github.com/shareed2k/honey/internal/jit"
 )
 
-// createLiveTerminalGrantDirect creates a live_terminal grant directly via
-// the store (bypassing the HTTP create handler's tmux-liveness/ownership
-// plumbing — already covered by TestHandleCreateJITGrant_LiveTerminalShare)
-// so the sessions-list/kill tests can set up fixtures without a fake tmux
-// server for grant creation itself.
-func createLiveTerminalGrantDirect(t *testing.T, store *jit.Store, mux string, capability jit.Capability) jit.Grant {
-	t.Helper()
-	stored, _, err := store.Create(jit.Grant{
-		Actor: "operator1",
-		Resource: jit.ResourceRef{
-			Name:     "op-terminal",
-			Provider: "ssh",
-			Meta:     map[string]string{"kind": jitKindLiveTerminal, "mux_session": mux},
-		},
-		Capabilities: []jit.Capability{capability},
-		Delivery:     jit.DeliveryWeb,
-		Duration:     time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("create live_terminal grant: %v", err)
-	}
-	return stored
-}
-
 // fakeTmuxClient is one simulated tmux client attached to a session.
 type fakeTmuxClient struct {
 	tty      string
 	readonly bool
 }
 
-// fakeShareTmux simulates the two verbs share_handlers.go issues against a
-// single session's client list (list-clients, detach-client) and records
-// every argv it was called with, so a test can assert both the resulting
-// behavior (who got detached) and the exact shape of every issued command
-// (e.g. that kill-session never appears). detach-client actually removes the
-// matching tty from the simulated client set, so a later list-clients call
-// (the kill handler's post-detach recount) reflects the real drop. Safe for
-// sequential use only, matching every other fake-tmux seam in this package.
+// fakeShareTmux simulates the verbs share_handlers.go issues against a
+// single session (list-clients, kill-session) and records every argv it was
+// called with, so a test can assert both the resulting behavior and the
+// exact shape of every issued command. Safe for sequential use only,
+// matching every other fake-tmux seam in this package.
 type fakeShareTmux struct {
-	mu      sync.Mutex
 	clients []fakeTmuxClient
+	alive   bool
 	calls   [][]string
 }
 
 func (f *fakeShareTmux) run(args ...string) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.calls = append(f.calls, append([]string(nil), args...))
 	if len(args) == 0 {
 		return nil, fmt.Errorf("empty tmux call")
 	}
 	switch args[0] {
 	case "list-clients":
-		format := args[len(args)-1]
+		if !f.alive {
+			return nil, fmt.Errorf("can't find session")
+		}
 		var lines []string
 		for _, c := range f.clients {
 			ro := "0"
 			if c.readonly {
 				ro = "1"
 			}
-			if format == "#{client_readonly}" {
-				lines = append(lines, ro)
-			} else {
-				lines = append(lines, c.tty+" "+ro)
-			}
+			lines = append(lines, ro)
 		}
 		return []byte(strings.Join(lines, "\n")), nil
-	case "detach-client":
-		target := args[len(args)-1]
-		kept := f.clients[:0:0]
-		for _, c := range f.clients {
-			if c.tty != target {
-				kept = append(kept, c)
-			}
+	case "kill-session":
+		if !f.alive {
+			return nil, fmt.Errorf("can't find session")
 		}
-		f.clients = kept
+		f.alive = false
+		f.clients = nil
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("fakeShareTmux: unexpected verb %q", args[0])
@@ -99,6 +64,15 @@ func (f *fakeShareTmux) run(args ...string) ([]byte, error) {
 // tmuxAbsent simulates "no tmux server" / "session gone" for every call.
 func tmuxAbsent(_ ...string) ([]byte, error) {
 	return nil, fmt.Errorf("no server running")
+}
+
+// withShareMuxAvailable overrides the shareMuxAvailable seam for the
+// duration of the calling test, restoring the original on cleanup.
+func withShareMuxAvailable(t *testing.T, available bool) {
+	t.Helper()
+	orig := shareMuxAvailable
+	shareMuxAvailable = func() bool { return available }
+	t.Cleanup(func() { shareMuxAvailable = orig })
 }
 
 func TestHandleListShareSessions_NilStore(t *testing.T) {
@@ -111,16 +85,28 @@ func TestHandleListShareSessions_NilStore(t *testing.T) {
 	}
 }
 
-// TestHandleListShareSessions_FiltersToLiveApprovedOnly proves the listing
-// keeps a live_terminal grant that is Approved, but excludes: a plain
-// (non-live_terminal) grant, and a live_terminal grant that has been revoked.
-func TestHandleListShareSessions_FiltersToLiveApprovedOnly(t *testing.T) {
+// TestHandleListShareSessions_FiltersToWebShellApprovedOnly proves the
+// listing keeps an approved web/shell grant (the only kind that can ever
+// redeem into a guest session), but excludes: a cert-only grant, and a
+// web/shell grant that has been revoked.
+func TestHandleListShareSessions_FiltersToWebShellApprovedOnly(t *testing.T) {
 	defer swapTmuxRunGuest(tmuxAbsent)()
+	withShareMuxAvailable(t, true)
 
 	s, store := newJitTestServer(t, Options{})
-	live := createLiveTerminalGrantDirect(t, store, "honey_keepme", jit.CapWatch)
-	createJITGrantDirect(t, store, "plain-host") // non-live_terminal, must be excluded
-	revoked := createLiveTerminalGrantDirect(t, store, "honey_gonebye", jit.CapCollab)
+	keep := createJITGrantDirect(t, store, "keepme")
+	certOnly, _, err := store.Create(jit.Grant{
+		Actor:        "alice",
+		Resource:     jit.ResourceRef{Name: "cert-host", Provider: "ssh"},
+		Capabilities: []jit.Capability{jit.CapExec},
+		Delivery:     jit.DeliveryCert,
+		Duration:     time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("create cert-only grant: %v", err)
+	}
+	_ = certOnly
+	revoked := createJITGrantDirect(t, store, "gonebye")
 	if _, err := store.Revoke(revoked.ID, "dave"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
@@ -137,45 +123,45 @@ func TestHandleListShareSessions_FiltersToLiveApprovedOnly(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Total != 1 || len(resp.Sessions) != 1 {
-		t.Fatalf("sessions = %+v, want exactly the one approved live_terminal grant", resp.Sessions)
+		t.Fatalf("sessions = %+v, want exactly the one approved web/shell grant", resp.Sessions)
 	}
-	if resp.Sessions[0].GrantID != live.ID {
-		t.Fatalf("grant_id = %q, want %q", resp.Sessions[0].GrantID, live.ID)
+	if resp.Sessions[0].GrantID != keep.ID {
+		t.Fatalf("grant_id = %q, want %q", resp.Sessions[0].GrantID, keep.ID)
 	}
 }
 
-// TestHandleListShareSessions_AttachedGuestsAndSessionAlive covers both the
-// happy path (tmux reachable, readonly clients counted, non-readonly ones
-// excluded) and the tmux-absent path (session_alive:false, attached_guests:0,
-// never a 500).
-func TestHandleListShareSessions_AttachedGuestsAndSessionAlive(t *testing.T) {
+// TestHandleListShareSessions_ObserversAndSessionAlive covers both the happy
+// path (tmux reachable, readonly clients counted as observers, the guest's
+// own read-write client excluded) and the tmux-absent path (session_alive:
+// false, observers:0, never a 500).
+func TestHandleListShareSessions_ObserversAndSessionAlive(t *testing.T) {
 	tests := []struct {
-		name       string
-		runner     func(...string) ([]byte, error)
-		wantGuests int
-		wantAlive  bool
+		name          string
+		runner        func(...string) ([]byte, error)
+		wantObservers int
+		wantAlive     bool
 	}{
 		{
-			name: "two readonly guests, one operator client",
-			runner: (&fakeShareTmux{clients: []fakeTmuxClient{
+			name: "two observers, one guest client",
+			runner: (&fakeShareTmux{alive: true, clients: []fakeTmuxClient{
 				{tty: "/dev/pts/1", readonly: true},
 				{tty: "/dev/pts/2", readonly: true},
 				{tty: "/dev/pts/0", readonly: false},
 			}}).run,
-			wantGuests: 2,
-			wantAlive:  true,
+			wantObservers: 2,
+			wantAlive:     true,
 		},
 		{
-			name:       "no clients at all, session still alive",
-			runner:     (&fakeShareTmux{}).run,
-			wantGuests: 0,
-			wantAlive:  true,
+			name:          "no clients at all, session still alive",
+			runner:        (&fakeShareTmux{alive: true}).run,
+			wantObservers: 0,
+			wantAlive:     true,
 		},
 		{
-			name:       "tmux absent -> session_alive false, not a 500",
-			runner:     tmuxAbsent,
-			wantGuests: 0,
-			wantAlive:  false,
+			name:          "tmux absent -> session_alive false, not a 500",
+			runner:        tmuxAbsent,
+			wantObservers: 0,
+			wantAlive:     false,
 		},
 	}
 	for _, tc := range tests {
@@ -183,7 +169,7 @@ func TestHandleListShareSessions_AttachedGuestsAndSessionAlive(t *testing.T) {
 			defer swapTmuxRunGuest(tc.runner)()
 
 			s, store := newJitTestServer(t, Options{})
-			createLiveTerminalGrantDirect(t, store, "honey_livecheck", jit.CapWatch)
+			createJITGrantDirect(t, store, "livecheck")
 
 			w := doJSON(t, s, http.MethodGet, "/api/v1/share/sessions", nil)
 			if w.Code != http.StatusOK {
@@ -199,8 +185,34 @@ func TestHandleListShareSessions_AttachedGuestsAndSessionAlive(t *testing.T) {
 				t.Fatalf("expected 1 session, got %d", len(resp.Sessions))
 			}
 			got := resp.Sessions[0]
-			if got.AttachedGuests != tc.wantGuests || got.SessionAlive != tc.wantAlive {
-				t.Fatalf("attached_guests/session_alive = %d/%v, want %d/%v", got.AttachedGuests, got.SessionAlive, tc.wantGuests, tc.wantAlive)
+			if got.Observers != tc.wantObservers || got.SessionAlive != tc.wantAlive {
+				t.Fatalf("observers/session_alive = %d/%v, want %d/%v", got.Observers, got.SessionAlive, tc.wantObservers, tc.wantAlive)
+			}
+		})
+	}
+}
+
+// TestHandleListShareSessions_Observable proves the observable field tracks
+// the host-wide shareMuxAvailable seam, independent of any one grant's own
+// state.
+func TestHandleListShareSessions_Observable(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		t.Run(fmt.Sprintf("observable=%v", want), func(t *testing.T) {
+			defer swapTmuxRunGuest(tmuxAbsent)()
+			withShareMuxAvailable(t, want)
+
+			s, store := newJitTestServer(t, Options{})
+			createJITGrantDirect(t, store, "obscheck")
+
+			w := doJSON(t, s, http.MethodGet, "/api/v1/share/sessions", nil)
+			var resp struct {
+				Sessions []shareSessionView `json:"sessions"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(resp.Sessions) != 1 || resp.Sessions[0].Observable != want {
+				t.Fatalf("sessions = %+v, want observable=%v", resp.Sessions, want)
 			}
 		})
 	}
@@ -214,7 +226,7 @@ func TestHandleListShareSessions_Pagination(t *testing.T) {
 
 	s, store := newJitTestServer(t, Options{})
 	for i := 0; i < 3; i++ {
-		createLiveTerminalGrantDirect(t, store, fmt.Sprintf("honey_page%d", i), jit.CapWatch)
+		createJITGrantDirect(t, store, fmt.Sprintf("page%d", i))
 	}
 
 	w := doJSON(t, s, http.MethodGet, "/api/v1/share/sessions?page=2&per_page=2", nil)
@@ -253,9 +265,18 @@ func TestHandleKillShareSession_UnknownGrant(t *testing.T) {
 	}
 }
 
-func TestHandleKillShareSession_RefusesNonLiveTerminalGrant(t *testing.T) {
+func TestHandleKillShareSession_RefusesNonWebGrant(t *testing.T) {
 	s, store := newJitTestServer(t, Options{})
-	g := createJITGrantDirect(t, store, "plain-host")
+	g, _, err := store.Create(jit.Grant{
+		Actor:        "alice",
+		Resource:     jit.ResourceRef{Name: "cert-host", Provider: "ssh"},
+		Capabilities: []jit.Capability{jit.CapExec},
+		Delivery:     jit.DeliveryCert,
+		Duration:     time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("create cert-only grant: %v", err)
+	}
 
 	w := doJSON(t, s, http.MethodPost, "/api/v1/share/sessions/"+g.ID+"/kill", nil)
 	if w.Code != http.StatusBadRequest {
@@ -263,28 +284,25 @@ func TestHandleKillShareSession_RefusesNonLiveTerminalGrant(t *testing.T) {
 	}
 	got, ok := store.Get(g.ID)
 	if !ok || got.Status != jit.StatusApproved {
-		t.Fatal("kill on a non-live_terminal grant must not revoke it")
+		t.Fatal("kill on a non-web grant must not revoke it")
 	}
 }
 
-// TestHandleKillShareSession_RevokesAndDetachesOnlyGuests is the load-bearing
-// safety test: it proves (1) the grant is revoked, (2) every read-only
-// (guest) client is detached by tty, (3) the operator's non-read-only client
-// is NEVER detached (its tty never appears in any detach-client call and it
-// remains in the simulated client set afterward), and (4) no call in the
-// entire sequence is ever "kill-session" — the one command that would also
-// drop the operator.
-func TestHandleKillShareSession_RevokesAndDetachesOnlyGuests(t *testing.T) {
-	const mux = "honey_killme"
-	fake := &fakeShareTmux{clients: []fakeTmuxClient{
-		{tty: "/dev/pts/1", readonly: true},  // guest 1
-		{tty: "/dev/pts/2", readonly: true},  // guest 2
-		{tty: "/dev/pts/0", readonly: false}, // the OPERATOR — must survive
+// TestHandleKillShareSession_RevokesAndKillsGuestSession is the load-bearing
+// safety test: it proves (1) the grant is revoked, (2) the tmux argv issued
+// is exactly `kill-session -t <the guest's own mux name>` — never anything
+// else (no detach-client, no targeting a different session) — and (3) the
+// response reports the session was alive and is now killed.
+func TestHandleKillShareSession_RevokesAndKillsGuestSession(t *testing.T) {
+	fake := &fakeShareTmux{alive: true, clients: []fakeTmuxClient{
+		{tty: "/dev/pts/1", readonly: true},  // an observer
+		{tty: "/dev/pts/0", readonly: false}, // the guest's own client
 	}}
 	defer swapTmuxRunGuest(fake.run)()
 
 	s, store := newJitTestServer(t, Options{})
-	g := createLiveTerminalGrantDirect(t, store, mux, jit.CapCollab)
+	g := createJITGrantDirect(t, store, "killme")
+	wantMux := shareGuestMuxName(g.ID)
 
 	w := doJSON(t, s, http.MethodPost, "/api/v1/share/sessions/"+g.ID+"/kill", nil)
 	if w.Code != http.StatusOK {
@@ -294,11 +312,8 @@ func TestHandleKillShareSession_RevokesAndDetachesOnlyGuests(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Detached != 2 {
-		t.Fatalf("detached = %d, want 2", resp.Detached)
-	}
-	if resp.AttachedGuests != 0 {
-		t.Fatalf("attached_guests after kill = %d, want 0", resp.AttachedGuests)
+	if !resp.SessionKilled {
+		t.Fatalf("session_killed = %v, want true", resp.SessionKilled)
 	}
 
 	// (1) the grant itself is revoked.
@@ -307,43 +322,28 @@ func TestHandleKillShareSession_RevokesAndDetachesOnlyGuests(t *testing.T) {
 		t.Fatalf("grant status = %v, want revoked", got.Status)
 	}
 
-	// (2)+(3) the operator's client must still be attached; only the two
-	// guest ttys were ever removed.
-	fake.mu.Lock()
-	remaining := append([]fakeTmuxClient(nil), fake.clients...)
-	calls := append([][]string(nil), fake.calls...)
-	fake.mu.Unlock()
-	if len(remaining) != 1 || remaining[0].tty != "/dev/pts/0" {
-		t.Fatalf("remaining simulated clients = %+v, want only the operator's /dev/pts/0", remaining)
+	// (2) exactly one tmux call, kill-session against the guest's own mux name.
+	if len(fake.calls) != 1 {
+		t.Fatalf("tmux calls = %v, want exactly one kill-session call", fake.calls)
 	}
-
-	// (4) no call anywhere in the sequence is kill-session, and no
-	// detach-client call ever names the operator's tty or the session itself.
-	for _, call := range calls {
-		if call[0] == "kill-session" {
-			t.Fatalf("kill-session must NEVER be issued by a share kill; calls=%v", calls)
-		}
-		if call[0] == "detach-client" {
-			target := call[len(call)-1]
-			if target == "/dev/pts/0" {
-				t.Fatalf("detach-client must never target the operator's tty; calls=%v", calls)
-			}
-			if target == mux {
-				t.Fatalf("detach-client must never target the session name (that would drop every client including the operator); calls=%v", calls)
-			}
-		}
+	call := fake.calls[0]
+	if call[0] != "kill-session" {
+		t.Fatalf("call = %v, want kill-session", call)
+	}
+	if got := call[len(call)-1]; got != wantMux {
+		t.Fatalf("kill-session target = %q, want the guest's own session %q", got, wantMux)
 	}
 }
 
 // TestHandleKillShareSession_IdempotentOnAlreadyRevoked proves killing a
 // share that was already revoked (e.g. a retried/double-clicked kill, or one
 // revoked earlier via the plain jit "Revoke" action) is a 200 with
-// attached_guests:0, never an error.
+// session_killed:false, never an error.
 func TestHandleKillShareSession_IdempotentOnAlreadyRevoked(t *testing.T) {
 	defer swapTmuxRunGuest(tmuxAbsent)()
 
 	s, store := newJitTestServer(t, Options{})
-	g := createLiveTerminalGrantDirect(t, store, "honey_alreadydead", jit.CapWatch)
+	g := createJITGrantDirect(t, store, "alreadydead")
 	if _, err := store.Revoke(g.ID, "dave"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
@@ -356,19 +356,19 @@ func TestHandleKillShareSession_IdempotentOnAlreadyRevoked(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.AttachedGuests != 0 || resp.Detached != 0 {
-		t.Fatalf("resp = %+v, want a no-op 0/0 kill on an already-dead share", resp)
+	if resp.SessionKilled {
+		t.Fatalf("resp = %+v, want a no-op (session_killed=false) kill on an already-dead share", resp)
 	}
 }
 
 // TestHandleKillShareSession_TmuxAbsentStillRevokesAndReturns200 covers the
 // "no live tmux server at all" idempotent case on a still-approved grant:
-// the revoke must still happen even though nothing can be detached.
+// the revoke must still happen even though nothing can be killed.
 func TestHandleKillShareSession_TmuxAbsentStillRevokesAndReturns200(t *testing.T) {
 	defer swapTmuxRunGuest(tmuxAbsent)()
 
 	s, store := newJitTestServer(t, Options{})
-	g := createLiveTerminalGrantDirect(t, store, "honey_notmux", jit.CapWatch)
+	g := createJITGrantDirect(t, store, "notmux")
 
 	w := doJSON(t, s, http.MethodPost, "/api/v1/share/sessions/"+g.ID+"/kill", nil)
 	if w.Code != http.StatusOK {
@@ -378,8 +378,8 @@ func TestHandleKillShareSession_TmuxAbsentStillRevokesAndReturns200(t *testing.T
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.AttachedGuests != 0 || resp.Detached != 0 {
-		t.Fatalf("resp = %+v, want 0/0 when tmux is unreachable", resp)
+	if resp.SessionKilled {
+		t.Fatalf("resp = %+v, want session_killed=false when tmux is unreachable", resp)
 	}
 	got, ok := store.Get(g.ID)
 	if !ok || got.Status != jit.StatusRevoked {

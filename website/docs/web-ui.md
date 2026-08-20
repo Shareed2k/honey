@@ -116,11 +116,11 @@ web:
 - **enforce** — a command OPA denies is discarded before it runs (its Enter is
   replaced with a kill-line) and the browser sees a policy notice.
 
-A share link's **collaborate** live-terminal guest (see
-[JIT Access & Share Links](./jit-access.md#security-model-and-limits)) is
-**always `enforce`**, regardless of `web.guard_mode` — an untrusted recipient
-never gets a weaker mode. A **watch** guest has no input at all (read-only),
-so there is nothing to guard.
+A guest's redeemed [access-request session](./jit-access.md#security-model-and-limits)
+goes through this same gate, at whatever `web.guard_mode` the operator has
+configured — there is no forced or weaker mode for it. The operator's
+read-only **watch** view of that session has no input at all, so there is
+nothing to guard there.
 
 **This is a best-effort speed bump, not a security boundary** (same caveat as
 the SSH gateway): it reconstructs command lines from raw PTY bytes, and a PTY
@@ -129,9 +129,8 @@ bracketed paste — so reconstruction can desync, and nothing stops
 `base64 ... | sh`, a text editor's shell-out, or a REPL from reaching code the
 guard never inspects. And because it calls the same OPA `command_exec`
 decision as everything else, **with no OPA policy configured `enforce` blocks
-nothing at all**. For an untrusted collaborate guest, the real control is
-sharing **watch** (read-only) access, or exec-only access — not relying on
-this guard.
+nothing at all** — for an untrusted guest, the real controls are the grant's
+own capabilities/expiry/redemption cap and OPA policy, not this guard.
 
 ### Files and transfer
 
