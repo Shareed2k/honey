@@ -39,3 +39,13 @@ func buildGuardrailRuleset(cfg *config.File) (*guardrails.Ruleset, error) {
 	}
 	return rs, nil
 }
+
+// webGuardMode reads web.guard_mode (config.WebConfig.GuardMode), the
+// operator-terminal counterpart to ssh_gateway.guardrail.mode. Empty/unset
+// resolves to "off" downstream (termguard.ParseMode's fail-safe default).
+func webGuardMode(cfg *config.File) string {
+	if cfg == nil || cfg.Web == nil {
+		return ""
+	}
+	return cfg.Web.GuardMode
+}

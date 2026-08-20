@@ -98,6 +98,36 @@ scrape_configs:
 
 Docker search, Honey SSH backends, and **auto-discover on cloud VMs** are documented in [Docker auto-discover](./docker-auto-discover.md) and the [GitHub README Docker provider](https://github.com/shareed2k/honey#docker-provider) section.
 
+#### Interactive guardrails
+
+Like the [SSH gateway](./ssh-gateway.md#interactive-guardrails), a browser
+terminal can gate each typed command line through the same risk+policy
+assessment as `command_exec`:
+
+```yaml
+web:
+  guard_mode: enforce        # off (default) | audit | enforce
+```
+
+- **off** — no interception (zero overhead; this is the default for a normal
+  operator terminal).
+- **audit** — the command runs; the verdict is recorded (`interactive_command`).
+- **enforce** — a denied command is discarded before it runs (its Enter is
+  replaced with a kill-line) and the browser sees a policy notice.
+
+A share link's **collaborate** live-terminal guest (see
+[JIT Access & Share Links](./jit-access.md#security-model-and-limits)) is
+**always `enforce`**, regardless of `web.guard_mode` — an untrusted recipient
+never gets a weaker mode. A **watch** guest has no input at all (read-only),
+so there is nothing to guard.
+
+**Best-effort by design** (same caveat as the SSH gateway): a PTY does its own
+line editing — readline history, arrow/escape sequences, bracketed paste — so
+command reconstruction can desync. Enforce is a speed-bump layered on top of
+whatever gate the target itself enforces, not a security boundary on its own.
+For an untrusted guest, the real boundary is **watch** (read-only) or keeping
+them off **collaborate** entirely.
+
 ### Files and transfer
 
 - Browse **local** paths under `--files-root` and **remote** paths on connected hosts.

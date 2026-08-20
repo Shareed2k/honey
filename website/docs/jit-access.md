@@ -143,6 +143,14 @@ Be aware of what this feature does and does not protect against:
   mesh-routed records. Proxmox-serial and TrueNAS-console records are not
   supported over a share link (those are console-only targets handled by a
   separate part of the web-terminal dispatch).
+- A live-terminal share's **collaborate** guest has every keystroke gated by
+  the [web terminal's interactive guardrail](./web-ui.md#interactive-guardrails)
+  in `enforce` mode, always — regardless of the operator's own
+  `web.guard_mode` setting, since an untrusted recipient never gets a weaker
+  mode via config. A **watch** guest has no input at all (read-only), so
+  there is nothing to gate. Like the SSH gateway's guardrail, this is a
+  best-effort speed-bump (PTY line reconstruction can desync on readline
+  history or pasted input) — not a security boundary on its own.
 - There is no `honey jit` CLI. Manage grants from the web UI's Share button or
   directly against the API.
 

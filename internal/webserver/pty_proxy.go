@@ -18,6 +18,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/termguard"
 	"go.uber.org/zap"
 )
 
@@ -536,6 +537,17 @@ type ptyProxyStdinPolicy struct {
 	// operator reattaches (measured on tmux 3.5a: 200x50 -> 80x23 -> 200x49),
 	// so this hello-size skip alone is the fix that actually stuck.
 	IgnoreResize bool
+	// GuestGuard, set only for a collaborate guest, supplies the risk+policy
+	// inputs for the per-command guard (internal/termguard) that gates
+	// RelayTarget's bytes AFTER the terminal-report filter and BEFORE
+	// tmuxSendKeysHex — the mediation seam HIGH-1 built. Always
+	// termguard.ModeEnforce (an untrusted party never gets a weaker mode via
+	// config) — built here, not by the caller, because its block/warn
+	// notices must share THIS bridge's wsOut and its write mutex with the
+	// stdout pump (see newGuardRelay). nil (every pre-existing caller, and a
+	// watch guest, which never sets RelayTarget) disables guarding entirely:
+	// byte-identical to pre-task behavior.
+	GuestGuard *termGuardInputs
 }
 
 // ptyProxyRunBridge pipes ptmx<->conn until either side closes. stdin
@@ -635,6 +647,19 @@ func ptyProxyRunBridge(
 	// cannot be a fresh, stateless call per frame.
 	var reportFilter terminalReportFilter
 
+	// The per-command guard (see GuestGuard's doc) also lives for the LIFE of
+	// this bridge, same reason as reportFilter: a command line reconstructed
+	// by termguard can straddle two WS frames. Built here (not by the
+	// caller) so its block/warn notices share wsOut's write mutex with the
+	// stdout pump above. nil GuestGuard (every non-collaborate caller)
+	// leaves guardRelay nil, so the relay branch below is byte-identical to
+	// pre-task behavior.
+	var guardRelay func([]byte) []byte
+	if stdin.RelayTarget != "" && stdin.GuestGuard != nil {
+		decide, onDecision := newTermGuardDecide(wsOut, *stdin.GuestGuard)
+		guardRelay = newGuardRelay(bridgeCtx, wsOut, termguard.ModeEnforce, decide, onDecision)
+	}
+
 	go func() {
 		defer wg.Done()
 		defer bridgeCancel()
@@ -659,6 +684,15 @@ func ptyProxyRunBridge(
 					filtered := reportFilter.filter(payload)
 					if len(filtered) == 0 {
 						continue
+					}
+					// Per-command guard (this task): gates the relayed bytes
+					// AFTER the report filter, BEFORE tmuxSendKeysHex — see
+					// GuestGuard's doc. A denied line's Enter is replaced with
+					// a Ctrl-U by the guard itself, so filtered below may
+					// differ from what was typed; the ptmx write path (the
+					// default branch, operator-only) is never touched.
+					if guardRelay != nil {
+						filtered = guardRelay(filtered)
 					}
 					// NEW-6: record only what the pane actually received. A
 					// failed relay (timeout, oversized frame, tmux error)
@@ -831,11 +865,16 @@ const guestReadLimitBytes = 64 * 1024
 // ptyMuxTmuxCommand errors out instead, because a guest must never conjure a
 // session it was not actually granted a LIVE counterpart for.
 //
+// guard supplies the risk+policy inputs for a collaborate guest's per-command
+// guard (internal/termguard, always enforce — see GuestGuard's doc on
+// ptyProxyStdinPolicy); it is ignored for attachReadonly, which has no stdin
+// at all to guard.
+//
 // Guest teardown never kills the operator's session: close_tab reaps only the
 // guest's own tmux client process (ptyProxyTeardown's killSession is a no-op
 // here), and tmux itself keeps a session alive as long as it exists,
 // independent of how many clients are attached.
-func handleLiveTerminalAttach(conn *websocket.Conn, muxSession string, mode attachMode, cols, rows int, recorder *engine.SessionRecorder) error {
+func handleLiveTerminalAttach(conn *websocket.Conn, muxSession string, mode attachMode, cols, rows int, recorder *engine.SessionRecorder, guard termGuardInputs) error {
 	// NEW-7: fail closed on any mode this function doesn't know, BEFORE
 	// starting any process — the stdin-policy switch below has no default of
 	// its own, and its zero value (DropStdin=false, RelayTarget="") is the
@@ -876,6 +915,10 @@ func handleLiveTerminalAttach(conn *websocket.Conn, muxSession string, mode atta
 		// target string.
 		stdin.DropStdin = false
 		stdin.RelayTarget = muxSession + ":"
+		// A collaborate guest is untrusted by definition: always enforce,
+		// never the caller's config mode.
+		guard.Mode = termguard.ModeEnforce
+		stdin.GuestGuard = &guard
 	}
 	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxSession, closeTabKill, stdin)
 	ptyProxyTeardown(ptmx, cmd, muxSession, false, closeTabKill, ptyExited, func() {}, true)

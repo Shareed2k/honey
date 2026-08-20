@@ -15,6 +15,7 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/termguard"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 	"go.uber.org/zap"
@@ -146,10 +147,15 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	// the seam declares "I forward this elsewhere", so the webserver never names a
 	// provider or strips routing metadata to make resolution work.
 	rec := hello.Record
+	// actor is the per-command guard's policy/audit identity (the
+	// authenticated session), distinct from user (the target host's login
+	// account) — see gateInteractiveSession's own use of the same helper.
+	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
 	ex := s.opts.ExecRegistry.ForRecord(rec)
 	if hostexec.IsProxy(ex) {
 		defer s.trackWSConnection("honey_upstream")()
-		serveWebInteractive(conn, ex, user, rec, cols, rows, recorder)
+		serveWebInteractive(conn, ex, user, rec, cols, rows, recorder, guard)
 		return
 	}
 
@@ -170,7 +176,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	// seam; a non-cancelled context is used so a post-hijack request-context
 	// cancel cannot abort a SPDY/exec stream immediately.
 	defer s.trackWSConnection(interactiveWSKind(rec))()
-	serveWebInteractive(conn, ex, user, rec, cols, rows, recorder)
+	serveWebInteractive(conn, ex, user, rec, cols, rows, recorder, guard)
 }
 
 // shouldUseWebPtyProxy reports whether to wrap the session in local tmux/zellij so a
@@ -190,7 +196,9 @@ func benignDockerWSExit(err error) bool {
 // serveWebInteractive runs the browser terminal for rec through ex when it
 // supports interactive streaming (docker/k8s/ssh locally, or the honey proxy for
 // a mesh-routed record), or reports a clear error when no such path exists.
-func serveWebInteractive(conn *websocket.Conn, ex hostexec.Executor, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
+// guard carries the per-command guard's risk+policy inputs — see
+// handleWebInteractiveStreams.
+func serveWebInteractive(conn *websocket.Conn, ex hostexec.Executor, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder, guard termGuardInputs) {
 	is, ok := ex.(hostexec.InteractiveStreamer)
 	if !ok {
 		// The resolved executor can't stream a terminal — e.g. a registry that
@@ -200,7 +208,7 @@ func serveWebInteractive(conn *websocket.Conn, ex hostexec.Executor, user string
 		// the exec registry).
 		is = sshFallbackStreamer{}
 	}
-	handleWebInteractiveStreams(context.Background(), conn, is, user, rec, cols, rows, recorder)
+	handleWebInteractiveStreams(context.Background(), conn, is, user, rec, cols, rows, recorder, guard)
 }
 
 // sshFallbackStreamer is the universal SSH terminal: it dials the record's leaf
@@ -233,15 +241,24 @@ func interactiveWSKind(rec hosts.Record) string {
 // out, forward resizes as [cols,rows], report closure. This one lifecycle covers
 // docker, k8s, ssh, and the honey upstream proxy (which forwards to the server
 // that owns the record and dispatches to the right native shell there).
-func handleWebInteractiveStreams(ctx context.Context, conn *websocket.Conn, is hostexec.InteractiveStreamer, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
+//
+// guard wraps stdinPipeR with the shared per-command interactive guardrail
+// (internal/termguard) before it ever reaches the target: guard.Mode ==
+// termguard.ModeOff (the config default) makes NewReader return stdinPipeR
+// unchanged, so this is a zero-overhead, byte-identical pass-through for the
+// common case.
+func handleWebInteractiveStreams(ctx context.Context, conn *websocket.Conn, is hostexec.InteractiveStreamer, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder, guard termGuardInputs) {
 	stdinPipeR, stdinPipeW := io.Pipe()
 	resizeCh := make(chan [2]int, 32)
 	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
 	stdout := engine.WrapRecordingWriter(wsOut, recorder, "stdout")
 
+	decide, onDecision := newTermGuardDecide(wsOut, guard)
+	stdin := termguard.NewReader(ctx, stdinPipeR, wsOut, guard.Mode, decide, onDecision)
+
 	waitDone := make(chan error, 1)
 	go func() {
-		waitDone <- is.RunInteractiveStreams(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh)
+		waitDone <- is.RunInteractiveStreams(ctx, user, rec, stdin, stdout, cols, rows, resizeCh)
 	}()
 
 	go pumpWebSocketToStreams(conn, stdinPipeW, resizeCh, recorder)

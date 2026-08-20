@@ -1,4 +1,9 @@
-package sshgateway
+// Package termguard implements a best-effort, per-command interactive
+// guardrail shared by honey's SSH gateway and its web/share terminals: it
+// reconstructs the client's current input line from raw keystrokes and
+// consults a caller-supplied policy decision on Enter. See Reader for the
+// important caveats — this is a speed-bump, not a security boundary.
+package termguard
 
 import (
 	"context"
@@ -6,80 +11,86 @@ import (
 	"strings"
 )
 
-// guardMode selects the per-command interactive guardrail behavior. See
-// guardReader for the important best-effort caveats.
-type guardMode string
+// Mode selects the per-command interactive guardrail behavior. See NewReader
+// for the important best-effort caveats.
+type Mode string
 
 const (
-	guardOff     guardMode = "off"
-	guardAudit   guardMode = "audit"
-	guardEnforce guardMode = "enforce"
+	// ModeOff disables interception entirely (NewReader returns the inner
+	// reader unchanged: zero overhead).
+	ModeOff Mode = "off"
+	// ModeAudit runs the same reconstruction and decision as ModeEnforce but
+	// never blocks: every line's verdict is recorded via onDecision.
+	ModeAudit Mode = "audit"
+	// ModeEnforce discards a denied line before it reaches the target (its
+	// Enter is replaced with a Ctrl-U) and writes a policy notice to notify.
+	ModeEnforce Mode = "enforce"
 )
 
-// parseGuardMode maps a config string to a guardMode, defaulting to guardOff for
-// the empty string or any unrecognized value (fail safe: no interception).
-func parseGuardMode(s string) guardMode {
-	switch guardMode(strings.ToLower(strings.TrimSpace(s))) {
-	case guardAudit:
-		return guardAudit
-	case guardEnforce:
-		return guardEnforce
+// ParseMode maps a config string to a Mode, defaulting to ModeOff for the
+// empty string or any unrecognized value (fail safe: no interception).
+func ParseMode(s string) Mode {
+	switch Mode(strings.ToLower(strings.TrimSpace(s))) {
+	case ModeAudit:
+		return ModeAudit
+	case ModeEnforce:
+		return ModeEnforce
 	default:
-		return guardOff
+		return ModeOff
 	}
 }
 
-// guardReadChunk is how many bytes are read from src per Read. Output is always
+// readChunk is how many bytes are read from src per Read. Output is always
 // the same length as the chunk consumed (each keystroke maps to exactly one
 // forwarded byte), so a chunk larger than the caller's buffer is delivered
 // across several Reads via the carry (out).
-const guardReadChunk = 4096
+const readChunk = 4096
 
-// guardLineMax bounds the reconstructed input line so a client that never sends
-// a newline cannot grow the buffer without limit. Bytes past the cap are still
+// lineMax bounds the reconstructed input line so a client that never sends a
+// newline cannot grow the buffer without limit. Bytes past the cap are still
 // forwarded to the target; they are only dropped from the reconstruction.
-const guardLineMax = 4096
+const lineMax = 4096
 
 // Control bytes handled while reconstructing the current input line.
 const (
-	ctrlC       = 0x03 // Ctrl-C: abort the current line
-	ctrlU       = 0x15 // Ctrl-U: kill (discard) the current line
-	ctrlH       = 0x08 // Ctrl-H / backspace
-	ctrlDEL     = 0x7f // DEL: backspace on most terminals
-	guardEnter1 = '\r'
-	guardEnter2 = '\n'
+	ctrlC   = 0x03 // Ctrl-C: abort the current line
+	ctrlU   = 0x15 // Ctrl-U: kill (discard) the current line
+	ctrlH   = 0x08 // Ctrl-H / backspace
+	ctrlDEL = 0x7f // DEL: backspace on most terminals
+	enter1  = '\r'
+	enter2  = '\n'
 )
 
-// guardReader is an io.Reader on the interactive stdin path (client keystrokes →
+// reader is an io.Reader on the interactive stdin path (client keystrokes →
 // target). It forwards every byte immediately so the target keeps echoing
 // (interactivity is preserved) while reconstructing the current input line as
 // bytes flow. On Enter it evaluates the reconstructed command through the SAME
 // risk+policy gate exec uses:
 //
-//   - guardAudit:   the Enter is always forwarded (the command runs); the
+//   - ModeAudit:   the Enter is always forwarded (the command runs); the
 //     decision is recorded via onDecision.
-//   - guardEnforce: a denied command's Enter is replaced with a Ctrl-U
+//   - ModeEnforce: a denied command's Enter is replaced with a Ctrl-U
 //     (kill-line) so the pending line is discarded on the target and never
 //     executed, a one-line policy notice is written to notify, and the deny is
 //     recorded. Allowed commands forward the Enter unchanged.
-//   - guardOff:     newGuardReader returns src unchanged (no reconstruction,
-//     no overhead).
+//   - ModeOff:     NewReader returns src unchanged (no reconstruction, no
+//     overhead).
 //
 // BEST-EFFORT ONLY. A PTY does its own line editing: readline history, arrow
 // keys and other escape sequences, and bracketed paste can all desync this
 // reconstruction from what the target's shell actually parses. Enforce mode is
 // a speed-bump, not a security boundary — the target-side command-risk gate
 // (cmdgate, applied by the record's own honey backend) remains authoritative.
-// There are no goroutines and the line buffer is bounded by guardLineMax.
-type guardReader struct {
+// There are no goroutines and the line buffer is bounded by lineMax.
+type reader struct {
 	ctx        context.Context
 	src        io.Reader
 	notify     io.Writer
-	mode       guardMode
+	mode       Mode
 	decide     func(ctx context.Context, command string) (reason string, denied bool)
 	onDecision func(command, reason string, denied bool)
 
-	line []byte // reconstructed current input line (bounded by guardLineMax)
+	line []byte // reconstructed current input line (bounded by lineMax)
 
 	// readBuf is the reusable source buffer; out is the carry of already
 	// processed bytes that did not fit the caller's p. src is never read again
@@ -90,22 +101,25 @@ type guardReader struct {
 	pendErr error
 }
 
-// newGuardReader wraps src. When mode is guardOff it returns src unchanged so
-// the interactive path stays a transparent, zero-overhead pass-through.
-func newGuardReader(
+// NewReader wraps inner, an interactive stdin path, reconstructing each
+// command line and consulting decide on Enter. decide returns (denyReason,
+// denied). onDecision is called for every completed line (allow or deny) for
+// audit. When mode is ModeOff it returns inner unchanged so the interactive
+// path stays a transparent, zero-overhead pass-through.
+func NewReader(
 	ctx context.Context,
-	src io.Reader,
+	inner io.Reader,
 	notify io.Writer,
-	mode guardMode,
+	mode Mode,
 	decide func(ctx context.Context, command string) (reason string, denied bool),
 	onDecision func(command, reason string, denied bool),
 ) io.Reader {
-	if mode == guardOff {
-		return src
+	if mode == ModeOff {
+		return inner
 	}
-	return &guardReader{
+	return &reader{
 		ctx:        ctx,
-		src:        src,
+		src:        inner,
 		notify:     notify,
 		mode:       mode,
 		decide:     decide,
@@ -114,7 +128,7 @@ func newGuardReader(
 }
 
 // Read forwards keystrokes to the target, transforming them per the guard mode.
-func (m *guardReader) Read(p []byte) (int, error) {
+func (m *reader) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -138,7 +152,7 @@ func (m *guardReader) Read(p []byte) (int, error) {
 	}
 
 	if m.readBuf == nil {
-		m.readBuf = make([]byte, guardReadChunk)
+		m.readBuf = make([]byte, readChunk)
 	}
 	n, err := m.src.Read(m.readBuf)
 	if n == 0 {
@@ -158,15 +172,15 @@ func (m *guardReader) Read(p []byte) (int, error) {
 // process transforms one chunk of client keystrokes in place (each input byte
 // maps to exactly one output byte, so the chunk length never changes) while
 // reconstructing the current input line and gating whole commands on Enter.
-func (m *guardReader) process(chunk []byte) {
+func (m *reader) process(chunk []byte) {
 	for i := range chunk {
 		switch b := chunk[i]; b {
-		case guardEnter1, guardEnter2:
+		case enter1, enter2:
 			cmd := strings.TrimSpace(string(m.line))
 			if cmd != "" {
 				reason, denied := m.decide(m.ctx, cmd)
 				m.onDecision(cmd, reason, denied)
-				if m.mode == guardEnforce && denied {
+				if m.mode == ModeEnforce && denied {
 					// Replace Enter with Ctrl-U so the target discards the
 					// pending line instead of executing it.
 					chunk[i] = ctrlU
@@ -182,7 +196,7 @@ func (m *guardReader) process(chunk []byte) {
 			m.line = m.line[:0]
 		default:
 			// Drop from reconstruction past the cap, but still forward the byte.
-			if len(m.line) < guardLineMax {
+			if len(m.line) < lineMax {
 				m.line = append(m.line, b)
 			}
 		}
@@ -191,7 +205,7 @@ func (m *guardReader) process(chunk []byte) {
 
 // notifyBlocked writes a one-line policy notice to the client (best-effort; any
 // write error is ignored — the deny is still enforced and audited).
-func (m *guardReader) notifyBlocked(reason string) {
+func (m *reader) notifyBlocked(reason string) {
 	if m.notify == nil {
 		return
 	}

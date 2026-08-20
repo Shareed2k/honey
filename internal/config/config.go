@@ -45,7 +45,21 @@ type File struct {
 	// short lifetime is the mitigation.
 	DeviceCertTTL string          `yaml:"device_cert_ttl,omitempty" json:"device_cert_ttl,omitempty" honey:"label=Device/SSO certificate TTL (e.g. 12h; default 12h)" mod:"trim"`
 	Jit           *JitConfig      `yaml:"jit,omitempty" json:"jit,omitempty"`
+	Web           *WebConfig      `yaml:"web,omitempty" json:"web,omitempty"`
 	Guardrails    []GuardrailRule `yaml:"guardrails,omitempty" json:"guardrails,omitempty" validate:"dive" mod:"dive"`
+}
+
+// WebConfig configures the embedded web server (honey web) and its share
+// terminals.
+type WebConfig struct {
+	// GuardMode selects the best-effort per-command interactive guardrail for
+	// a normal operator web terminal — the same mechanism (internal/termguard)
+	// and semantics as SSHGatewayGuardrail: "off" (default), "audit", or
+	// "enforce". A share-link **collaborate** guest's terminal is ALWAYS
+	// enforce regardless of this setting (an untrusted party never gets a
+	// weaker mode via config); a **watch** guest has no input at all, so
+	// nothing to guard.
+	GuardMode string `yaml:"guard_mode,omitempty" json:"guard_mode,omitempty" honey:"label=Interactive guardrail mode (off/audit/enforce)" mod:"trim"`
 }
 
 // GuardrailRule is one operator-defined guardrail as authored in config. It

@@ -10,6 +10,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/guardrails"
+	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
 )
 
@@ -125,4 +126,32 @@ func Decide(ctx context.Context, enforcer *policy.Enforcer, rules *guardrails.Ru
 		reason += " (requires: " + strings.Join(d.Requires, ", ") + ")"
 	}
 	return Result{Denied: true, Reason: reason, Warnings: warnings}, nil
+}
+
+// CommandPolicyInput builds the OPA input for a command_exec decision, shared
+// by the SSH gateway's per-command interactive guard and the web/share
+// terminal guard so one rego policy shape serves both. Do not change these
+// keys: existing policies depend on
+// input.action/actor/command/target.{name,provider,env,groups}.
+func CommandPolicyInput(actor string, rec hosts.Record, command string) map[string]any {
+	return map[string]any{
+		"action":  "command_exec",
+		"actor":   actor,
+		"command": command,
+		"target":  targetInput(rec),
+	}
+}
+
+func targetInput(rec hosts.Record) map[string]any {
+	return map[string]any{
+		"name":     rec.Name,
+		"provider": rec.Provider,
+		"env":      rec.Meta["env"],
+		"groups":   rec.Groups,
+	}
+}
+
+// RecordAttrs builds the guardrail Targets-scoping attributes from a record.
+func RecordAttrs(rec hosts.Record) guardrails.Attrs {
+	return guardrails.Attrs{Provider: rec.Provider, Groups: rec.Groups, Name: rec.Name}
 }

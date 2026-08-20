@@ -76,7 +76,7 @@ type Options struct {
 	// same risk+policy assessment exec uses against each command line the user
 	// types; enforce blocks a denied line locally. This is defense-in-depth
 	// layered on top of the authoritative target-side command-risk gate, not a
-	// replacement for it — see guardReader for the caveats. Empty/unknown = off.
+	// replacement for it — see internal/termguard for the caveats. Empty/unknown = off.
 	GuardMode string
 	// DisableAuth accepts any client without a certificate (dev only).
 	DisableAuth bool

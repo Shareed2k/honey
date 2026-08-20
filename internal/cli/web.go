@@ -226,6 +226,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		OnReady:                 onReady,
 		Enforcer:                authCfg.enforcer,
 		Guardrails:              guardrailRules,
+		GuardMode:               webGuardMode(cfg),
 		JWTPubKey:               authCfg.jwtPubKey,
 		TrustedProxyNets:        authCfg.trustedNets,
 		WebAuthn:                authCfg.webauthn,

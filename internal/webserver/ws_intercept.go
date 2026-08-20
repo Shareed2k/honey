@@ -23,6 +23,7 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/intercept"
+	"github.com/shareed2k/honey/internal/termguard"
 )
 
 // wsInterceptHello is the first frame a browser sends on /ws/intercept. It names
@@ -173,7 +174,13 @@ func (s *Server) handleWebIntercept(w http.ResponseWriter, r *http.Request) {
 	// Seed the initial size so the pty starts correctly before the first resize.
 	winCh <- clampWinsize(cols, rows)
 
-	runner := &wsPtyRunner{inner: s.interceptInnerRunner, stdin: stdinR, stdout: stdout, resize: winCh}
+	// Same per-command interactive guardrail as /ws/ssh (internal/termguard):
+	// off (the config default) makes NewReader return stdinR unchanged.
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+	decide, onDecision := newTermGuardDecide(wsOut, guard)
+	stdin := termguard.NewReader(sessionCtx, stdinR, wsOut, guard.Mode, decide, onDecision)
+
+	runner := &wsPtyRunner{inner: s.interceptInnerRunner, stdin: stdin, stdout: stdout, resize: winCh}
 	session, err := s.opts.InterceptSessionFactory(rec, opts, runner)
 	if err != nil {
 		_ = wsOut.writeText(`{"error":"` + escapeJSON(err.Error()) + `"}`)

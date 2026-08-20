@@ -196,12 +196,19 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 		Extra:      auditExtra,
 	})
 
+	// guard carries the per-command guard's risk+policy inputs. For a plain
+	// shell grant (below) it behaves like any other operator web terminal —
+	// Mode comes from web.guard_mode. For a live_terminal collaborate guest,
+	// handleLiveTerminalAttach overrides Mode to always-enforce (untrusted
+	// party); a watch guest ignores it entirely (no stdin to guard).
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+
 	if isLive {
 		mode := attachReadonly
 		if liveCapability == jit.CapCollab {
 			mode = attachShared
 		}
-		if err := handleLiveTerminalAttach(conn, muxSession, mode, cols, rows, recorder); err != nil {
+		if err := handleLiveTerminalAttach(conn, muxSession, mode, cols, rows, recorder, guard); err != nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
 		}
 		return
@@ -213,5 +220,5 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 	// terminal goroutines are owned by handleWebInteractiveStreams and exit on
 	// conn close / stdin EOF, so returning here lets the deferred Close run.
 	ex := s.opts.ExecRegistry.ForRecord(rec)
-	serveWebInteractive(conn, ex, user, rec, cols, rows, recorder)
+	serveWebInteractive(conn, ex, user, rec, cols, rows, recorder, guard)
 }

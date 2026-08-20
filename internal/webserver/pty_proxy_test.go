@@ -21,6 +21,8 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/shareed2k/honey/internal/engine"
+	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/termguard"
 )
 
 // TestInterceptPaneMuxName_Stable proves the resume-path mux name is a pure,
@@ -945,7 +947,7 @@ func TestHandleLiveTerminalAttach_UnsupportedModeFailsClosed(t *testing.T) {
 		require.NoError(t, err)
 		defer conn.Close()
 
-		err = handleLiveTerminalAttach(conn, "honey_unsupported_mode_test", attachExclusive, 80, 24, nil)
+		err = handleLiveTerminalAttach(conn, "honey_unsupported_mode_test", attachExclusive, 80, 24, nil, termGuardInputs{})
 		require.Error(t, err, "attachExclusive (or any mode besides shared/readonly) must be rejected here")
 	}))
 	defer ts.Close()
@@ -984,4 +986,171 @@ func TestHandleLiveTerminalAttach_NeverPinsWindowSize(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(before), string(after), "a guest attach must never change window-size")
 	require.NotContains(t, string(after), "manual", "a guest attach must never pin window-size to manual")
+}
+
+// TestPtyProxyRunBridge_CollaborateGuardBlocksDeniedCommand is the task-P
+// regression: the per-command guard sits on the relay's byte stream AFTER
+// the report filter and BEFORE tmuxSendKeysHex (the HIGH-1 mediation seam),
+// gating a collaborate guest exactly like the SSH gateway gates an operator.
+// A nil Enforcer/Guardrails still denies via cmdgate's unconditional
+// critical-risk floor — a collaborate guest is always guarded (enforce),
+// never dependent on OPA being configured. The denied line's trailing Enter
+// must never reach tmux verbatim; the guard replaces it with a Ctrl-U so the
+// pending line is discarded on the target instead of executing.
+func TestPtyProxyRunBridge_CollaborateGuardBlocksDeniedCommand(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	var gotArgs []string
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		gotArgs = args
+		return nil, nil
+	})
+	defer restore()
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_deny_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_guard_deny_test:", GuestGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("rm -rf /\r")))
+
+	require.Eventually(t, func() bool { return gotArgs != nil }, 2*time.Second, 10*time.Millisecond, "expected a send-keys relay call")
+	require.NotContains(t, gotArgs, "0d", "a denied command's Enter (0x0d) must never reach tmux")
+	require.Contains(t, gotArgs, "15", "a denied command's Enter must be replaced with Ctrl-U (0x15)")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}
+
+// TestPtyProxyRunBridge_CollaborateGuardAllowsBenignCommand is the allow-path
+// counterpart: a benign command line relays through the guard byte-for-byte
+// unchanged, proving the guard only mutates what it actually denies.
+func TestPtyProxyRunBridge_CollaborateGuardAllowsBenignCommand(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	var gotArgs []string
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		gotArgs = args
+		return nil, nil
+	})
+	defer restore()
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_allow_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_guard_allow_test:", GuestGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("ls\r")))
+
+	require.Eventually(t, func() bool { return gotArgs != nil }, 2*time.Second, 10*time.Millisecond, "expected a send-keys relay call")
+	require.Equal(t, []string{"send-keys", "-H", "-t", "honey_guard_allow_test:", "6c", "73", "0d"}, gotArgs,
+		"an allowed command must relay byte-for-byte unchanged")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}
+
+// TestPtyProxyRunBridge_WatchGuestNeverConsultsGuard proves a watch guest has
+// no guard/stdin path at all: DropStdin's continue happens before the relay
+// branch (and thus before the guard) is ever reached, so even a caller
+// mistake that sets GuestGuard alongside DropStdin can never cause a tmux
+// exec — asserted here by failing the test outright if tmuxRunGuest is ever
+// invoked, and by the pre-existing HIGH-1 assertion that nothing reaches
+// ptmx either.
+func TestPtyProxyRunBridge_WatchGuestNeverConsultsGuard(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		t.Errorf("tmux must never be exec'd for a watch guest, got args %v", args)
+		return nil, nil
+	})
+	defer restore()
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		// A GuestGuard set here (mirroring a careless future caller) must
+		// still never be consulted for a watch guest: RelayTarget stays
+		// empty, so the guard-build gate (stdin.RelayTarget != "") excludes
+		// it structurally, on top of tmux's own read-only attach.
+		guard := termGuardInputs{Mode: termguard.ModeEnforce}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_watch_guard_test", closeTabKill,
+			ptyProxyStdinPolicy{DropStdin: true, GuestGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("rm -rf /\r")))
+
+	_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 8)
+	_, rerr := peer.Read(buf)
+	require.Error(t, rerr, "a watch guest's bytes must never reach ptmx")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
 }

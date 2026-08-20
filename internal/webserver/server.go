@@ -98,6 +98,14 @@ type Options struct {
 	// into the recipe engine (runner + scheduler) so recipe command/script steps
 	// are gated by it before OPA. nil (or empty) is a no-op.
 	Guardrails *guardrails.Ruleset
+	// GuardMode selects the best-effort per-command interactive guardrail
+	// (internal/termguard) for a NORMAL OPERATOR web terminal (/ws/ssh,
+	// /ws/intercept, and a plain JIT shell-grant redeem): "off" (default),
+	// "audit", or "enforce". Empty/unknown = off. A share-link collaborate
+	// guest's terminal is always enforce regardless of this setting — see
+	// termguard_wire.go's termGuardInputs and pty_proxy.go's GuestGuard —
+	// and a watch guest has no input at all, so nothing to guard.
+	GuardMode string
 	// Approvals holds pending require_approval runs. When nil, NewServer creates a
 	// default in-memory store so the approval endpoints and recipe gate share one.
 	Approvals *approval.Store
