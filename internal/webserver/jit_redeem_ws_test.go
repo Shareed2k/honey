@@ -528,3 +528,30 @@ func TestHandleJITRedeemTerminal_LiveTerminalOversizedFrameRejected(t *testing.T
 	_, _, rerr := conn.ReadMessage()
 	require.Error(t, rerr, "a frame over guestReadLimitBytes must close the connection, never reach tmuxSendKeysHex")
 }
+
+// TestGrantCapabilityMismatchesKind is the FIX-6 regression: a grant carrying
+// a watch/collaborate capability without meta.kind=="live_terminal" (e.g. a
+// persisted grant whose meta was lost — Store.load() does not re-run
+// validateGrant) must be treated as a mismatch and fail closed, never fall
+// through to a brand-new interactive shell.
+func TestGrantCapabilityMismatchesKind(t *testing.T) {
+	tests := []struct {
+		name   string
+		caps   []jit.Capability
+		isLive bool
+		want   bool
+	}{
+		{name: "watch without live_terminal kind fails closed", caps: []jit.Capability{jit.CapWatch}, isLive: false, want: true},
+		{name: "collaborate without live_terminal kind fails closed", caps: []jit.Capability{jit.CapCollab}, isLive: false, want: true},
+		{name: "watch WITH live_terminal kind is fine", caps: []jit.Capability{jit.CapWatch}, isLive: true, want: false},
+		{name: "collaborate WITH live_terminal kind is fine", caps: []jit.Capability{jit.CapCollab}, isLive: true, want: false},
+		{name: "plain shell grant is never a mismatch", caps: []jit.Capability{jit.CapShell}, isLive: false, want: false},
+		{name: "no capabilities is never a mismatch", caps: nil, isLive: false, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := jit.Grant{Capabilities: tt.caps}
+			require.Equal(t, tt.want, grantCapabilityMismatchesKind(g, tt.isLive))
+		})
+	}
+}

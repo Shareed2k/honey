@@ -541,7 +541,7 @@ func (s *Server) gateInteractive(ctx context.Context, actor string, rec hosts.Re
 	d, err := s.opts.Enforcer.Evaluate(ctx, map[string]any{
 		"action": "interactive_session",
 		"actor":  actor,
-		"target": targetInput(rec),
+		"target": cmdgate.TargetPolicyInput(rec),
 	})
 	if err != nil {
 		return fmt.Errorf("policy: %w", err)
@@ -569,19 +569,6 @@ func (s *Server) targetUser(rec hosts.Record, actor string) string {
 		return u
 	}
 	return actor
-}
-
-// targetInput builds the OPA target sub-input for the interactive_session
-// gate. Unlike the command_exec shape (cmdgate.CommandPolicyInput), this one
-// has no per-command counterpart in the web server to share, so it stays
-// local.
-func targetInput(rec hosts.Record) map[string]any {
-	return map[string]any{
-		"name":     rec.Name,
-		"provider": rec.Provider,
-		"env":      rec.Meta["env"],
-		"groups":   rec.Groups,
-	}
 }
 
 // newRecorder creates a session recorder under RecordDir, or returns nil when

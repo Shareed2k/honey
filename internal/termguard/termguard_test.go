@@ -276,6 +276,46 @@ func TestGuardReader_lineCap(t *testing.T) {
 	}
 }
 
+// TestReader_ResetLine proves ResetLine forgets an in-progress reconstructed
+// line without touching anything else: a caller that drives Read from
+// discrete, already-delivered messages rather than a continuous stream (see
+// internal/webserver's guest relay guard) needs this when bytes it already
+// fed in ultimately never reached the target — otherwise a later completed
+// line would decide on text spliced from those stale bytes.
+func TestReader_ResetLine(t *testing.T) {
+	t.Parallel()
+	var seen []string
+	decide := func(_ context.Context, cmd string) (string, bool) {
+		seen = append(seen, cmd)
+		return "", false
+	}
+	onDecision := func(string, string, bool) {}
+
+	r := NewReader(context.Background(), strings.NewReader("unused"), io.Discard, ModeEnforce, decide, onDecision)
+	rr, ok := r.(*reader)
+	if !ok {
+		t.Fatal("NewReader must return *reader for a non-off mode")
+	}
+
+	// Feed a partial line directly via process (the same transform Read
+	// drives), bypassing the wrapped src so this test controls the input
+	// precisely.
+	rr.process([]byte("poison"))
+	if string(rr.line) != "poison" {
+		t.Fatalf("line = %q, want %q before reset", rr.line, "poison")
+	}
+
+	rr.ResetLine()
+	if len(rr.line) != 0 {
+		t.Fatalf("line = %q, want empty after ResetLine", rr.line)
+	}
+
+	rr.process([]byte("safe\n"))
+	if len(seen) != 1 || seen[0] != "safe" {
+		t.Fatalf("seen = %v, want exactly [\"safe\"] (poison must not have survived the reset)", seen)
+	}
+}
+
 // TestReader_realGateWiring wires the reader to a decide function that mirrors
 // the shape both consumers (sshgateway, webserver) build in production —
 // reconstruct, assess, inject Ctrl-U, notify — proving the whole enforce path

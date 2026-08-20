@@ -60,6 +60,10 @@ type WebConfig struct {
 	// weaker mode via config); a **watch** guest has no input at all, so
 	// nothing to guard.
 	GuardMode string `yaml:"guard_mode,omitempty" json:"guard_mode,omitempty" honey:"label=Interactive guardrail mode (off/audit/enforce)" mod:"trim"`
+	// PublicURL is the reachable origin (scheme://host[:port]) used for share
+	// links/QR codes, e.g. when honey sits behind a TLS reverse proxy or NAT.
+	// The `--public-url` flag wins when both are set.
+	PublicURL string `yaml:"public_url,omitempty" json:"public_url,omitempty" honey:"label=Public URL for share links (e.g. https://honey.example.com)" mod:"trim"`
 }
 
 // GuardrailRule is one operator-defined guardrail as authored in config. It

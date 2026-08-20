@@ -336,8 +336,12 @@ func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsIntercep
 		defer recorder.Close()
 	}
 
+	// FIX-2: guard the operator's ptmx writes here too — handleWebIntercept's
+	// resume path is a mux path exactly like the SSH terminal's, so
+	// web.guard_mode must reach it the same way.
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
 	closeTabKill := make(chan struct{}, 1)
-	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill, ptyProxyStdinPolicy{})
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill, ptyProxyStdinPolicy{OperatorGuard: &guard})
 	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, interceptResumeCloseTabKill(muxName), false)
 }
 

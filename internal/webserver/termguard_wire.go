@@ -3,6 +3,8 @@ package webserver
 import (
 	"context"
 	"io"
+	"regexp"
+	"strings"
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/cmdgate"
@@ -70,11 +72,23 @@ func newTermGuardDecide(notify io.Writer, in termGuardInputs) (
 		})
 	}
 
+	// policyErrDetail carries the full policy-evaluation error from decide to
+	// onDecision for ONE line (FIX-5): decide must return a generic,
+	// client-safe reason (a share guest is untrusted, unlike the SSH
+	// gateway's authenticated operator peer), but the audit event should
+	// still record the real error for an investigator. termguard.Reader.
+	// process calls decide then onDecision synchronously for the same line
+	// (never concurrently, never interleaved with another line), so a single
+	// variable shared by the two closures is safe without a lock.
+	var policyErrDetail string
+
 	decide = func(ctx context.Context, cmd string) (string, bool) {
+		policyErrDetail = ""
 		_, decisions, derr := cmdgate.AssessTargets(ctx, in.Enforcer, in.Guardrails, cmd, "sh",
 			[]cmdgate.TargetInput{{Name: in.Record.Name, PolicyInput: cmdgate.CommandPolicyInput(in.Actor, in.Record, cmd), Attrs: cmdgate.RecordAttrs(in.Record)}}, false)
 		if derr != nil {
-			return "policy error: " + derr.Error(), in.Mode == termguard.ModeEnforce
+			policyErrDetail = "policy error: " + derr.Error()
+			return "blocked by policy", in.Mode == termguard.ModeEnforce
 		}
 		if len(decisions) == 0 {
 			return "", false
@@ -96,10 +110,37 @@ func newTermGuardDecide(notify io.Writer, in termGuardInputs) (
 			reason = ""
 		} else {
 			decision = "deny"
+			if policyErrDetail != "" {
+				reason = policyErrDetail
+			}
 		}
 		logAudit(cmd, decision, reason)
 	}
 	return decide, onDecision
+}
+
+// ansiSGR matches the SGR (color) escape sequences termguard and
+// newTermGuardDecide use to color their policy notices for a peer that owns
+// the terminal they land in (an operator, or the SSH gateway's authenticated
+// peer) — see guestNoticeWriter.
+var ansiSGR = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// guestNoticeWriter adapts termguard's raw, ANSI-colored policy notices to a
+// collaborate guest's distinct {"notice":...} text-frame lane (FIX-4). A
+// guest's terminal MIRRORS the OPERATOR's pane, so writing policy text
+// straight into its buffer — as termguard normally does for a peer that owns
+// its own session (the SSH gateway's peer, or the operator's own web
+// terminal) — would desync that mirror until the next redraw; round 3
+// already moved the relay drop notice out of the terminal buffer for
+// exactly this reason (see tmuxSendKeysHex's caller). Shares wsOut's write
+// mutex (never a second, independent writer over the same *websocket.Conn).
+type guestNoticeWriter struct{ wsOut *wsWriter }
+
+func (g guestNoticeWriter) Write(p []byte) (int, error) {
+	if msg := strings.TrimSpace(ansiSGR.ReplaceAllString(string(p), "")); msg != "" {
+		_ = g.wsOut.writeText(`{"notice":"` + escapeJSON(msg) + `"}`)
+	}
+	return len(p), nil
 }
 
 // relayChunkReader drives a termguard.Reader synchronously, one already-read
@@ -115,27 +156,55 @@ func (r *relayChunkReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// lineResetter is optionally implemented by the io.Reader termguard.NewReader
+// returns (never for ModeOff, which returns the inner reader unchanged) so a
+// message-oriented caller can forget an in-progress reconstructed line — see
+// newGuardRelay's reset.
+type lineResetter interface{ ResetLine() }
+
 // newGuardRelay adapts termguard.NewReader — an io.Reader built for a
-// continuous stdin stream — to the collaborate-guest relay's message-oriented
-// shape: ptyProxyRunBridge's WS read pump already has one already-read frame
-// at a time, with no io.Reader anywhere upstream of it to plug termguard into
-// directly. The returned func gates one frame per call and is driven from the
-// SAME goroutine that read the frame — no io.Pipe, no extra goroutine.
-// relayChunkReader hands termguard exactly the bytes of the current frame;
-// termguard's own internal buffer (4096 bytes) can be smaller than a frame,
-// so the loop below may call Read more than once to drain it completely —
-// process() maps each input byte to exactly one output byte, so total output
-// always equals total input, which is what bounds the loop.
+// continuous stdin stream — to a relay's message-oriented shape: a caller
+// that already has one WS frame at a time in hand, with no io.Reader
+// upstream of it to plug termguard into directly (the collaborate-guest
+// relay, and the operator mux path's ptmx writes — see FIX-2). mode comes
+// straight from the caller (never re-decided here), so it is the single
+// source of truth for both the block/allow behavior AND the fail-closed
+// check in newTermGuardDecide.
 //
-// One instance is built per connection (like terminalReportFilter) so a
-// command line split across frames still reconstructs correctly.
+// relay gates one frame per call and is driven from the SAME goroutine that
+// read the frame — no io.Pipe, no extra goroutine. relayChunkReader hands
+// termguard exactly the bytes of the current frame; termguard's own internal
+// buffer (4096 bytes) can be smaller than a frame, so the loop below may call
+// Read more than once to drain it completely — process() maps each input
+// byte to exactly one output byte, so total output always equals total
+// input, which is what bounds the loop.
+//
+// reset forgets the guard's in-progress reconstructed line without affecting
+// anything else. Call it when bytes already passed through relay ultimately
+// FAILED to reach the target (FIX-1): without it, a frame that never arrived
+// (e.g. rejected by a downstream size cap, or a transport error) still left
+// its bytes in the guard's line, so a LATER frame's Enter could decide on
+// text spliced from bytes the target never received — laundering anything
+// past whatever check dropped the earlier frame (including the commandrisk
+// critical floor). The frame-cap check itself must still run BEFORE relay is
+// even called (see ptyProxyRunBridge), since by the time relay runs the guard
+// has already consumed the frame.
+//
+// mode == termguard.ModeOff (the operator's off default) makes both relay
+// and reset no-ops — termguard.NewReader returns the inner reader unchanged,
+// so this never touches the guard machinery at all, byte-identical to no
+// wrap. One instance is built per connection (like terminalReportFilter) so
+// a command line split across frames still reconstructs correctly.
 func newGuardRelay(ctx context.Context, notify io.Writer, mode termguard.Mode,
 	decide func(context.Context, string) (string, bool),
 	onDecision func(cmd, reason string, denied bool),
-) func([]byte) []byte {
+) (relay func([]byte) []byte, reset func()) {
+	if mode == termguard.ModeOff {
+		return func(chunk []byte) []byte { return chunk }, func() {}
+	}
 	feeder := &relayChunkReader{}
 	guarded := termguard.NewReader(ctx, feeder, notify, mode, decide, onDecision)
-	return func(chunk []byte) []byte {
+	relay = func(chunk []byte) []byte {
 		if len(chunk) == 0 {
 			return chunk
 		}
@@ -153,4 +222,10 @@ func newGuardRelay(ctx context.Context, notify io.Writer, mode termguard.Mode,
 		}
 		return out
 	}
+	reset = func() {
+		if r, ok := guarded.(lineResetter); ok {
+			r.ResetLine()
+		}
+	}
+	return relay, reset
 }

@@ -49,3 +49,12 @@ func webGuardMode(cfg *config.File) string {
 	}
 	return cfg.Web.GuardMode
 }
+
+// configWebPublicURL reads web.public_url (config.WebConfig.PublicURL); the
+// --public-url flag wins over it (see runWeb).
+func configWebPublicURL(cfg *config.File) string {
+	if cfg == nil || cfg.Web == nil {
+		return ""
+	}
+	return cfg.Web.PublicURL
+}

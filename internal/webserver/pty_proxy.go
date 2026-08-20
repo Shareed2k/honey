@@ -548,6 +548,17 @@ type ptyProxyStdinPolicy struct {
 	// watch guest, which never sets RelayTarget) disables guarding entirely:
 	// byte-identical to pre-task behavior.
 	GuestGuard *termGuardInputs
+	// OperatorGuard (FIX-2) supplies the risk+policy inputs for the SAME
+	// per-command guard, applied to the OPERATOR's own ptmx writes (the
+	// default branch below) instead of a guest relay: web.guard_mode is a
+	// config value that must actually gate the operator's normal browser
+	// terminal, and for the common case (tmux/zellij present) that terminal
+	// takes THIS mux path, not handleWebInteractiveStreams's stdinPipeR.
+	// Mode comes straight from config, never forced — newGuardRelay's own
+	// ModeOff fast path keeps the default (off) byte-identical to no wrap at
+	// all. nil (every guest caller, and any caller predating this fix)
+	// disables it entirely.
+	OperatorGuard *termGuardInputs
 }
 
 // ptyProxyRunBridge pipes ptmx<->conn until either side closes. stdin
@@ -647,17 +658,34 @@ func ptyProxyRunBridge(
 	// cannot be a fresh, stateless call per frame.
 	var reportFilter terminalReportFilter
 
-	// The per-command guard (see GuestGuard's doc) also lives for the LIFE of
-	// this bridge, same reason as reportFilter: a command line reconstructed
-	// by termguard can straddle two WS frames. Built here (not by the
-	// caller) so its block/warn notices share wsOut's write mutex with the
-	// stdout pump above. nil GuestGuard (every non-collaborate caller)
-	// leaves guardRelay nil, so the relay branch below is byte-identical to
-	// pre-task behavior.
-	var guardRelay func([]byte) []byte
+	// The per-command guards (see GuestGuard's/OperatorGuard's docs) also
+	// live for the LIFE of this bridge, same reason as reportFilter: a
+	// command line reconstructed by termguard can straddle two WS frames.
+	// Built here (not by the caller) so their block/warn notices share
+	// wsOut's write mutex with the stdout pump above. nil (every
+	// pre-existing caller for OperatorGuard; every non-collaborate caller
+	// for GuestGuard) leaves the matching relay func nil, so that branch
+	// stays byte-identical to pre-fix behavior.
+	var guardRelay, operatorGuardRelay func([]byte) []byte
+	var guardReset func()
 	if stdin.RelayTarget != "" && stdin.GuestGuard != nil {
-		decide, onDecision := newTermGuardDecide(wsOut, *stdin.GuestGuard)
-		guardRelay = newGuardRelay(bridgeCtx, wsOut, termguard.ModeEnforce, decide, onDecision)
+		// FIX-4: this guard's notices go through the guest's separate
+		// {"notice":...} lane, never raw into wsOut — a guest's terminal
+		// mirrors the OPERATOR's pane, so writing policy text straight into
+		// it would desync that mirror until the next redraw.
+		notify := guestNoticeWriter{wsOut: wsOut}
+		decide, onDecision := newTermGuardDecide(notify, *stdin.GuestGuard)
+		// Mode is read from the struct, never re-hardcoded here (a prior
+		// review nit): handleLiveTerminalAttach is the one place that pins a
+		// collaborate guest to ModeEnforce.
+		guardRelay, guardReset = newGuardRelay(bridgeCtx, notify, stdin.GuestGuard.Mode, decide, onDecision)
+	}
+	if stdin.OperatorGuard != nil {
+		// The operator's own terminal: notices go straight into wsOut, same
+		// as termguard does for the SSH gateway's peer — this IS the
+		// operator's own pane, so no desync risk.
+		decide, onDecision := newTermGuardDecide(wsOut, *stdin.OperatorGuard)
+		operatorGuardRelay, _ = newGuardRelay(bridgeCtx, wsOut, stdin.OperatorGuard.Mode, decide, onDecision)
 	}
 
 	go func() {
@@ -675,6 +703,22 @@ func ptyProxyRunBridge(
 					// A watch guest: never deliver its bytes anywhere.
 					continue
 				case stdin.RelayTarget != "":
+					// FIX-1: reject an over-cap frame OUTRIGHT, before it
+					// ever reaches reportFilter or the guard's
+					// reconstructed-line state. Checking only inside
+					// tmuxSendKeysHex (as before) let an oversized, rejected
+					// frame still advance the guard's in-progress line — a
+					// later, small Enter frame would then decide() on text
+					// spliced from bytes the pane never received, laundering
+					// anything past the cap (and the commandrisk critical
+					// floor the guard is supposed to enforce) around it.
+					if len(payload) > maxRelayFrameBytes {
+						capErr := fmt.Errorf("relay frame of %d bytes exceeds the %d-byte cap", len(payload), maxRelayFrameBytes)
+						zap.L().Warn("ptyProxyRunBridge: relay guest keystrokes failed", zap.Error(capErr))
+						recorder.RecordError(fmt.Errorf("dropped %d guest keystroke byte(s): %w", len(payload), capErr))
+						_ = wsOut.writeText(`{"notice":"your last input could not be delivered and was dropped — please retype"}`)
+						continue
+					}
 					// A collaborate guest: relay out-of-band via send-keys,
 					// never write to this connection's (read-only) ptmx.
 					// NEW-2: strip terminal-report replies (the browser's own
@@ -695,12 +739,12 @@ func ptyProxyRunBridge(
 						filtered = guardRelay(filtered)
 					}
 					// NEW-6: record only what the pane actually received. A
-					// failed relay (timeout, oversized frame, tmux error)
-					// records the DROP instead of falsely claiming the bytes
-					// arrived, and — per the round-2 judgment that a guest
-					// typing into a void will blindly retype, possibly a
-					// destructive command — tells the guest over the socket so
-					// they know to retype rather than assume it landed.
+					// failed relay (timeout, tmux error) records the DROP
+					// instead of falsely claiming the bytes arrived, and —
+					// per the round-2 judgment that a guest typing into a
+					// void will blindly retype, possibly a destructive
+					// command — tells the guest over the socket so they know
+					// to retype rather than assume it landed.
 					// NEW-17 (round 3): a distinct "notice" field, never
 					// "error" — the client renders this out-of-band instead of
 					// writing it into the terminal buffer (which would desync
@@ -709,11 +753,26 @@ func ptyProxyRunBridge(
 					if err := tmuxSendKeysHex(stdin.RelayTarget, filtered); err != nil {
 						zap.L().Warn("ptyProxyRunBridge: relay guest keystrokes failed", zap.Error(err))
 						recorder.RecordError(fmt.Errorf("dropped %d guest keystroke byte(s): %w", len(filtered), err))
+						// FIX-1: these bytes never reached the pane — forget
+						// them from the guard's in-progress line so a later
+						// Enter can never decide on text spliced from what
+						// just failed to relay.
+						if guardReset != nil {
+							guardReset()
+						}
 						_ = wsOut.writeText(`{"notice":"your last input could not be delivered and was dropped — please retype"}`)
 						continue
 					}
 					recorder.RecordData("stdin", filtered)
 				default:
+					// FIX-2: gate the operator's own ptmx writes too — the
+					// common case for a normal browser terminal (tmux/zellij
+					// present), which web.guard_mode must actually reach.
+					// nil operatorGuardRelay (every pre-existing caller)
+					// keeps this branch untouched.
+					if operatorGuardRelay != nil {
+						payload = operatorGuardRelay(payload)
+					}
 					recorder.RecordData("stdin", payload)
 					if _, werr := ptmx.Write(payload); werr != nil {
 						return
@@ -813,7 +872,9 @@ func reapPtyProxyCmd(cmd *exec.Cmd) {
 	_, _ = cmd.Process.Wait()
 }
 
-func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, recorder *engine.SessionRecorder, configPath string) error {
+// guard (FIX-2) carries the operator's per-command guard inputs (web.guard_mode);
+// see ptyProxyStdinPolicy.OperatorGuard.
+func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, recorder *engine.SessionRecorder, configPath string, guard termGuardInputs) error {
 	zap.L().Debug("handleWebPtyProxy: starting local multiplexer", zap.String("session_id", hello.SessionID))
 
 	bin, err := os.Executable()
@@ -835,7 +896,7 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 	}
 
 	closeTabKill := make(chan struct{}, 1)
-	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxName, closeTabKill, ptyProxyStdinPolicy{})
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, hello, muxName, closeTabKill, ptyProxyStdinPolicy{OperatorGuard: &guard})
 	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, func() { ptyMuxKillSession(muxName, useZellij) }, false)
 	return nil
 }

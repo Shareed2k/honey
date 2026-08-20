@@ -22,6 +22,7 @@ Optional flags:
 | Flag | Purpose |
 |------|---------|
 | `--listen` | Host:port (must be loopback; default `127.0.0.1:8765`) |
+| `--public-url` | Reachable base URL for share links/QR codes (e.g. `https://honey.example.com`) when honey sits behind a TLS reverse proxy or NAT; default: auto-derive from `--listen`. Also settable via `web.public_url` in config (the flag wins). |
 | `--config` | Honey YAML path (same resolution as `honey search`) |
 | `--record-dir` | Directory to store **SSH/K8s terminal session recordings** (enables replay in the UI when set) |
 | `--files-root` | Local filesystem root for the file browser (default: `$HONEY_FILES_ROOT` or `$HOME`) |

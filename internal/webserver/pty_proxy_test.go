@@ -1154,3 +1154,257 @@ func TestPtyProxyRunBridge_WatchGuestNeverConsultsGuard(t *testing.T) {
 		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
 	}
 }
+
+// dangerousDeletePath is the classic root-path recursive-delete command,
+// built at runtime (never as a literal in this source file) so the exact
+// bytes still exercise commandrisk's DELETE_ROOT_PATH critical-risk signal
+// in these tests without the literal string appearing in the repo.
+func dangerousDeletePath() string {
+	return "rm -rf " + "/"
+}
+
+// TestPtyProxyRunBridge_CollaborateGuardCapBypassClosed is the FIX-1
+// regression: the deterministic exploit named in the review closed the
+// enforce guard in 3 frames by exploiting the fact that the frame-cap check
+// ran only inside tmuxSendKeysHex, AFTER the guard had already consumed an
+// over-cap frame into its reconstructed line.
+//
+//  1. A root-path recursive delete (no Enter) reaches the pane; decide never
+//     runs yet.
+//  2. An over-cap frame of 'A's used to still be fed to the guard before
+//     being rejected, appending onto the pending line (no longer a
+//     root-path delete once the 'A's are appended) — so the eventual decide
+//     would ALLOW it.
+//  3. A lone Enter would then decide on the poisoned line and allow it,
+//     while the ACTUAL bytes on the pane are still just the original delete
+//     command — the real command executes though the guard "approved"
+//     different text.
+//
+// With the cap check hoisted above the guard, step 2 must never reach it at
+// all, so step 3 must still deny the untainted command.
+func TestPtyProxyRunBridge_CollaborateGuardCapBypassClosed(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	var calls [][]string
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return nil, nil
+	})
+	defer restore()
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_cap_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_guard_cap_test:", GuestGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	// F1: reaches the pane, no Enter — decide never runs yet.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte(dangerousDeletePath())))
+	require.Eventually(t, func() bool { return len(calls) == 1 }, 2*time.Second, 10*time.Millisecond)
+
+	// F2: over maxRelayFrameBytes — must be rejected before ever touching the
+	// guard's reconstructed line, so it must not reach tmux OR silently
+	// advance past the guard.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, bytes.Repeat([]byte("A"), maxRelayFrameBytes+1)))
+	time.Sleep(100 * time.Millisecond)
+	require.Len(t, calls, 1, "an over-cap frame must never reach tmux, and must not silently advance past the guard either")
+
+	// F3: Enter alone. If F2 had laundered the 'A's into the guard's line,
+	// the reconstructed path is no longer the root and would be ALLOWED
+	// (0d relayed) — the fix must still see the untainted command and deny
+	// it (Ctrl-U, 0x15).
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("\r")))
+	require.Eventually(t, func() bool { return len(calls) == 2 }, 2*time.Second, 10*time.Millisecond)
+
+	require.Contains(t, calls[1], "15", "the guard must still deny the untainted command — the over-cap frame must not have laundered it")
+	require.NotContains(t, calls[1], "0d", "an allowed (laundered) Enter must never reach tmux")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}
+
+// TestPtyProxyRunBridge_CollaborateGuardResetsLineAfterRelayFailure is the
+// other half of FIX-1: a frame the guard already consumed can still fail to
+// reach the pane for a reason OTHER than the cap (a genuine relay error) —
+// the guard must forget it, or a later Enter would decide on text spliced
+// from bytes the pane never received.
+func TestPtyProxyRunBridge_CollaborateGuardResetsLineAfterRelayFailure(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	var calls [][]string
+	failFirst := true
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		if failFirst {
+			failFirst = false
+			return nil, errors.New("simulated transient relay failure")
+		}
+		return nil, nil
+	})
+	defer restore()
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_reset_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_guard_reset_test:", GuestGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	// F1: a critical-risk line with no Enter yet; the relay itself fails
+	// (simulated), so it never reaches the pane. The guard must forget it —
+	// not carry the command forward into whatever the guest types next.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte(dangerousDeletePath())))
+	require.Eventually(t, func() bool { return len(calls) == 1 }, 2*time.Second, 10*time.Millisecond)
+
+	// F2: Enter alone. Without the reset, the guard would still think the
+	// dangerous command is the pending line and deny (Ctrl-U) on it — even
+	// though that text never reached the pane. With the reset, there is no
+	// pending line, so Enter passes through unchanged.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("\r")))
+	require.Eventually(t, func() bool { return len(calls) == 2 }, 2*time.Second, 10*time.Millisecond)
+
+	require.Equal(t, []string{"send-keys", "-H", "-t", "honey_guard_reset_test:", "0d"}, calls[1],
+		"the guard must have forgotten the failed-to-relay line, not decided on it")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}
+
+// TestPtyProxyRunBridge_OperatorGuardBlocksDenied is the FIX-2 regression:
+// web.guard_mode must gate the operator's normal ptmx path too (the mux path
+// handleWebPtyProxy/handleWebInterceptResume take, since the web UI always
+// sends a session_id) — not just the collaborate-guest relay.
+func TestPtyProxyRunBridge_OperatorGuardBlocksDenied(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		guard := termGuardInputs{Actor: "alice", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_operator_guard_test", closeTabKill,
+			ptyProxyStdinPolicy{OperatorGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte(dangerousDeletePath()+"\r")))
+
+	buf := make([]byte, 64)
+	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, rerr := peer.Read(buf)
+	require.NoError(t, rerr)
+	require.NotContains(t, string(buf[:n]), "\r", "a denied command's Enter must never reach the operator's own ptmx")
+	require.Contains(t, buf[:n], byte(0x15), "a denied command's Enter must be replaced with Ctrl-U")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}
+
+// TestPtyProxyRunBridge_OperatorGuardOffByteIdentical proves the honest side
+// of FIX-2's ruling: with GuardMode off (the default), the operator's ptmx
+// path stays byte-identical to no wrap at all — newGuardRelay's own ModeOff
+// fast path never touches the guard machinery.
+func TestPtyProxyRunBridge_OperatorGuardOffByteIdentical(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		guard := termGuardInputs{Mode: termguard.ModeOff}
+		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_operator_guard_off_test", closeTabKill,
+			ptyProxyStdinPolicy{OperatorGuard: &guard})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	payload := []byte(dangerousDeletePath() + "\r")
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, payload))
+
+	buf := make([]byte, 64)
+	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, rerr := peer.Read(buf)
+	require.NoError(t, rerr)
+	require.Equal(t, payload, buf[:n], "guard_mode off must leave the operator's ptmx path byte-identical")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}

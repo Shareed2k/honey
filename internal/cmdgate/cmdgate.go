@@ -138,11 +138,14 @@ func CommandPolicyInput(actor string, rec hosts.Record, command string) map[stri
 		"action":  "command_exec",
 		"actor":   actor,
 		"command": command,
-		"target":  targetInput(rec),
+		"target":  TargetPolicyInput(rec),
 	}
 }
 
-func targetInput(rec hosts.Record) map[string]any {
+// TargetPolicyInput builds the OPA target sub-input shared by CommandPolicyInput
+// and any other action needing the same target shape (e.g. the SSH gateway's
+// and web server's interactive_session gate).
+func TargetPolicyInput(rec hosts.Record) map[string]any {
 	return map[string]any{
 		"name":     rec.Name,
 		"provider": rec.Provider,

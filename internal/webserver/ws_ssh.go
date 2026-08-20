@@ -122,9 +122,20 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		defer recorder.Close()
 	}
 
+	// rec/actor/guard are needed by BOTH the mux path below (FIX-2: the
+	// common case, since the web UI always sends a session_id) and the
+	// direct InteractiveStreamer path further down — computed once, here,
+	// ahead of both. actor is the per-command guard's policy/audit identity
+	// (the authenticated session), distinct from user (the target host's
+	// login account) — see gateInteractiveSession's own use of the same
+	// helper.
+	rec := hello.Record
+	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+
 	if shouldUseWebPtyProxy(hello) {
 		zap.L().Debug("web ssh: session ID provided, attempting pty proxy", zap.String("session_id", hello.SessionID))
-		err := handleWebPtyProxy(conn, helloRaw, hello, recorder, s.opts.ConfigPath)
+		err := handleWebPtyProxy(conn, helloRaw, hello, recorder, s.opts.ConfigPath, guard)
 		if err == nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true}`))
 			return
@@ -146,12 +157,6 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	// dispatches to the right native shell/console. hostexec.ProxyExecutor is how
 	// the seam declares "I forward this elsewhere", so the webserver never names a
 	// provider or strips routing metadata to make resolution work.
-	rec := hello.Record
-	// actor is the per-command guard's policy/audit identity (the
-	// authenticated session), distinct from user (the target host's login
-	// account) — see gateInteractiveSession's own use of the same helper.
-	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
-	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Guardrails: s.opts.Guardrails, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
 	ex := s.opts.ExecRegistry.ForRecord(rec)
 	if hostexec.IsProxy(ex) {
 		defer s.trackWSConnection("honey_upstream")()

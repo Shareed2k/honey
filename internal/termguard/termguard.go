@@ -211,3 +211,15 @@ func (m *reader) notifyBlocked(reason string) {
 	}
 	_, _ = io.WriteString(m.notify, "\r\n\x1b[31m[blocked by policy: "+reason+"]\x1b[0m\r\n")
 }
+
+// ResetLine forgets the reconstructed current input line, leaving everything
+// else (the carry buffer, any pending error) untouched. Exported so a caller
+// that drives Read from discrete, already-delivered messages rather than a
+// continuous stream — e.g. a relay that hands one WebSocket frame at a time
+// to Read — can forget bytes it already fed in that ultimately never reached
+// the target (a downstream size cap, a transport error): without this, the
+// next completed line would decide on text spliced from bytes the target
+// never actually received. A plain io.Reader consumer never needs this.
+func (m *reader) ResetLine() {
+	m.line = m.line[:0]
+}

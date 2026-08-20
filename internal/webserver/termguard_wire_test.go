@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,7 +122,7 @@ func TestNewGuardRelay_deniedAndAllowed(t *testing.T) {
 			}
 			onDecision := func(_, _ string, denied bool) { decisions = append(decisions, denied) }
 
-			relay := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
+			relay, _ := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
 			out := relay([]byte(tt.input))
 
 			require.Len(t, out, len(tt.input), "the guard must never change the byte length")
@@ -149,11 +150,107 @@ func TestNewGuardRelay_multiFrameReconstruction(t *testing.T) {
 	}
 	onDecision := func(string, string, bool) {}
 
-	relay := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
+	relay, _ := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
 	first := relay([]byte("ec"))
 	second := relay([]byte("ho hi\r"))
 
 	require.Equal(t, "ec", string(first))
 	require.Equal(t, "ho hi\r", string(second))
 	require.Equal(t, []string{"echo hi"}, seen, "the line split across two frames must decide exactly once, reconstructed whole")
+}
+
+// TestNewGuardRelay_resetForgetsInProgressLine is the FIX-1 regression for
+// the reset half of the fix: bytes already fed to relay that never reached
+// their destination must not survive into the NEXT decide call once reset
+// is invoked — otherwise a later frame's Enter decides on text spliced from
+// bytes the target never received.
+func TestNewGuardRelay_resetForgetsInProgressLine(t *testing.T) {
+	t.Parallel()
+	var seen []string
+	decide := func(_ context.Context, cmd string) (string, bool) {
+		seen = append(seen, cmd)
+		return "", false
+	}
+	onDecision := func(string, string, bool) {}
+
+	relay, reset := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
+	_ = relay([]byte("poison"))
+	reset()
+	out := relay([]byte("safe\r"))
+
+	require.Equal(t, "safe\r", string(out))
+	require.Equal(t, []string{"safe"}, seen, "reset must forget bytes fed before it, not splice them into the next decide")
+}
+
+// TestNewGuardRelay_withoutResetSplicesAcrossChunks is the sanity companion:
+// without an explicit reset, the guard DOES splice bytes across relay calls,
+// same as it would for a continuous stream — proving reset is load-bearing,
+// not a no-op, for the failure case above.
+func TestNewGuardRelay_withoutResetSplicesAcrossChunks(t *testing.T) {
+	t.Parallel()
+	var seen []string
+	decide := func(_ context.Context, cmd string) (string, bool) {
+		seen = append(seen, cmd)
+		return "", false
+	}
+	onDecision := func(string, string, bool) {}
+
+	relay, _ := newGuardRelay(context.Background(), io.Discard, termguard.ModeEnforce, decide, onDecision)
+	_ = relay([]byte("poison"))
+	_ = relay([]byte("safe\r"))
+
+	require.Equal(t, []string{"poisonsafe"}, seen, "sanity: without reset the guard splices across calls — this is why a failed relay must call reset")
+}
+
+// TestNewGuardRelay_modeOffIsIdentity proves ModeOff is a true, allocation-free
+// pass-through (mirrors termguard.NewReader's own contract): decide/onDecision
+// must never be invoked, and reset must be safe to call even though nothing
+// was ever built.
+func TestNewGuardRelay_modeOffIsIdentity(t *testing.T) {
+	t.Parallel()
+	decide := func(context.Context, string) (string, bool) {
+		t.Fatal("decide must never be called when mode is off")
+		return "", false
+	}
+	onDecision := func(string, string, bool) { t.Fatal("onDecision must never be called when mode is off") }
+
+	relay, reset := newGuardRelay(context.Background(), io.Discard, termguard.ModeOff, decide, onDecision)
+	in := []byte("rm -rf /\r")
+	out := relay(in)
+
+	require.Equal(t, in, out)
+	require.NotPanics(t, reset)
+}
+
+// TestGuestNoticeWriter_routesThroughNoticeLane is the FIX-4 regression: a
+// guard notice destined for a collaborate guest must arrive as a
+// {"notice":...} text frame — never as raw ANSI-colored bytes in the
+// terminal stream, which would desync the guest's mirror of the operator's
+// pane.
+func TestGuestNoticeWriter_routesThroughNoticeLane(t *testing.T) {
+	t.Parallel()
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+		notify := guestNoticeWriter{wsOut: &wsWriter{conn: conn, mu: &sync.Mutex{}}}
+		_, _ = io.WriteString(notify, "\r\n\x1b[31m[blocked by policy: dangerous]\x1b[0m\r\n")
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	<-done
+	mt, raw, rerr := conn.ReadMessage()
+	require.NoError(t, rerr)
+	require.Equal(t, websocket.TextMessage, mt, "a guest guard notice must be a text frame, never raw terminal bytes")
+	require.Contains(t, string(raw), `"notice"`)
+	require.Contains(t, string(raw), "blocked by policy: dangerous")
+	require.NotContains(t, string(raw), "\x1b[", "ANSI escape codes must not leak into the notice text")
 }

@@ -68,6 +68,17 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 	// neither watch nor collaborate, collapses to the same generic 404 as any
 	// other bad code — never a distinguishable error a probe could use.
 	isLive := g.Resource.Meta["kind"] == "live_terminal"
+	// FIX-6: a watch/collaborate capability is only ever meaningful on a
+	// live_terminal grant (Store.load() does not re-run validateGrant, so a
+	// persisted grant whose meta lost "kind" would otherwise fall through
+	// below and redeem as a brand-new, full read-write shell via
+	// serveWebInteractive — a read-only or attach-only capability failing
+	// OPEN into an interactive shell). Collapse to the same generic 404 as
+	// any other bad code.
+	if grantCapabilityMismatchesKind(g, isLive) {
+		httpError(w, fmt.Errorf("invalid or expired link"), http.StatusNotFound)
+		return
+	}
 	muxSession := g.Resource.Meta["mux_session"]
 	var liveCapability jit.Capability
 	if isLive {
@@ -221,4 +232,16 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 	// conn close / stdin EOF, so returning here lets the deferred Close run.
 	ex := s.opts.ExecRegistry.ForRecord(rec)
 	serveWebInteractive(conn, ex, user, rec, cols, rows, recorder, guard)
+}
+
+// grantCapabilityMismatchesKind reports whether g carries a watch/collaborate
+// capability without being a live_terminal grant (FIX-6). Grant.Create's own
+// validateGrant rejects this combination at creation time, but Store.load()
+// does not re-run it on a persisted grant — so a grant whose meta lost "kind"
+// (corruption, or one written before this feature existed) would otherwise
+// fall through to a brand-new, full read-write shell via serveWebInteractive:
+// a read-only or attach-only capability failing OPEN into an interactive
+// shell. This must fail CLOSED instead.
+func grantCapabilityMismatchesKind(g jit.Grant, isLive bool) bool {
+	return !isLive && (hasCapability(g.Capabilities, jit.CapWatch) || hasCapability(g.Capabilities, jit.CapCollab))
 }

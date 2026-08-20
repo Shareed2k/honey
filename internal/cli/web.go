@@ -202,9 +202,13 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// --public-url wins over web.public_url (flag-over-config, same precedence
+	// as every other flag/config pair in this command).
+	publicURL := firstNonEmptyString(strings.TrimSpace(webPublicURL), configWebPublicURL(cfg))
+
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:              webListen,
-		PublicURL:               strings.TrimSpace(webPublicURL),
+		PublicURL:               publicURL,
 		Token:                   token,
 		DisableAuth:             disableAuth,
 		ConfigPath:              cfgPath,
