@@ -238,10 +238,6 @@ func ptyMuxTmuxGuestAttach(muxName string, mode attachMode) (*exec.Cmd, string, 
 	if !tmuxGuestSessionAlive(muxName) {
 		return nil, muxName, false, fmt.Errorf("shared session %q has ended", muxName)
 	}
-	// LOW-5 (round-2 residual): pin the shared window's size BEFORE the guest
-	// attaches, so its own (possibly small, possibly hello-lied) terminal size
-	// can never shrink the operator's real window — see pinGuestWindowSize.
-	pinGuestWindowSize(muxName)
 	// HIGH-1: BOTH guest modes attach -r (read-only). A collaborate guest's
 	// keystrokes still reach the pane, but never through this client — see
 	// tmuxSendKeysHex and the HIGH-1 comment on the attachMode consts above.
@@ -258,22 +254,6 @@ func guestAttachModeLabel(mode attachMode) string {
 	return "watch"
 }
 
-// pinGuestWindowSize sets tmux's window-size option to "manual" on the
-// target session before a guest attaches (LOW-5, round-2 residual): tmux's
-// default sizing shrinks a session's shared window to fit the SMALLEST
-// attached client's terminal, so a guest attaching at a small size (or one
-// that simply lies in its hello frame) would otherwise reshape the
-// operator's real window even though resize CONTROL FRAMES are already
-// dropped for guests (measured: a 40x10 guest shrank a detached operator's
-// 200x50 window to 40x9, and it stayed that way). Best-effort: a failure
-// here still leaves the -r attach itself safe, just not pinned, so it never
-// blocks the attach.
-func pinGuestWindowSize(muxName string) {
-	if _, err := tmuxRun("set-option", "-t", muxName, "window-size", "manual"); err != nil {
-		zap.L().Debug("pty_proxy: could not pin window-size for guest attach", zap.String("session", muxName), zap.Error(err))
-	}
-}
-
 // tmuxCanonicalSessionName resolves name to tmux's OWN idea of the target
 // session's name via `tmux display-message -p -t <name> '#{session_name}'`,
 // and rejects anything but an exact match (NEW-3). tmux matches a `-t`
@@ -286,8 +266,13 @@ func pinGuestWindowSize(muxName string) {
 // name would never find this grant. name must already be format-validated
 // (validHoneyMuxSessionName / validInterceptMuxName) before this runs, same
 // invariant as everywhere else a name reaches a tmux argv.
+//
+// NEW-15 (round 3): this runs through tmuxRunGuest, NOT the shared unbounded
+// tmuxRun — it is called pre-upgrade from the redeem handler, a path an
+// unauthenticated share-code holder triggers, so a wedged tmux server must
+// not be able to hang that handler goroutine forever.
 func tmuxCanonicalSessionName(name string) (string, error) {
-	out, err := tmuxRun("display-message", "-p", "-t", name, "#{session_name}")
+	out, err := tmuxRunGuest("display-message", "-p", "-t", name, "#{session_name}")
 	if err != nil {
 		return "", fmt.Errorf("resolve session %q: %w", name, err)
 	}
@@ -306,7 +291,17 @@ func tmuxCanonicalSessionName(name string) (string, error) {
 // tmux server hosting every operator session. A frame over the cap is
 // rejected whole (see the Judgment note on tmuxSendKeysHex below) rather
 // than relayed in bounded pieces.
-const maxRelayFrameBytes = 512
+//
+// NEW-13 (round 3): raised from round 2's 512 — the fork-storm rationale
+// above doesn't scale with frame size now that one frame is exactly one
+// exec (never chunked), so 512 was needlessly rejecting an ordinary
+// multi-line paste. The real ceiling is tmux's own command buffer: measured
+// on tmux 3.5a, `send-keys -H` accepts up to 5446 hex args before returning
+// "command too long". 4096 stays comfortably under that with headroom,
+// still one fork per frame, still all-or-nothing — guestReadLimitBytes
+// (jit_redeem_ws.go) is the actual DoS backstop now that this cap is sized
+// for legitimate use rather than for defense.
+const maxRelayFrameBytes = 4096
 
 // tmuxSendKeysRunTimeout bounds one tmuxSendKeysHex exec (NEW-1, round 2): a
 // guest-delivered byte can map to a `command-prompt` binding in the target
@@ -317,15 +312,18 @@ const maxRelayFrameBytes = 512
 // without a multi-second sleep.
 var tmuxSendKeysRunTimeout = 2 * time.Second
 
-// tmuxRunBounded is tmuxSendKeysHex's relay-local exec seam: unlike the
-// shared tmuxRun (intercept_mux.go — no timeout, and used by cheap,
-// synchronous, never-guest-triggered calls where a hang would itself be a
-// loud bug worth surfacing), this ALWAYS bounds tmux with a context
-// deadline, because a guest-controlled byte is the trigger here (NEW-1). It
-// is a package var so tests can fake it without a real tmux server or a
-// real multi-second wait. exec.CommandContext kills the child the instant
-// the deadline fires, so no tmux process is left to leak.
-var tmuxRunBounded = func(args ...string) ([]byte, error) {
+// tmuxRunGuest is the bounded exec seam for any tmux call on a path a
+// share-link guest (or a request racing one) can trigger — originally just
+// tmuxSendKeysHex's relay, now also tmuxCanonicalSessionName's resolution
+// (NEW-15, round 3). Unlike the shared tmuxRun (intercept_mux.go — no
+// timeout, used by cheap, synchronous, operator/system-triggered calls
+// where a hang would itself be a loud bug worth surfacing), this ALWAYS
+// bounds tmux with a context deadline, because a guest-controlled byte or
+// an unauthenticated redeem request is the trigger here (NEW-1). It is a
+// package var so tests can fake it without a real tmux server or a real
+// multi-second wait. exec.CommandContext kills the child the instant the
+// deadline fires, so no tmux process is left to leak.
+var tmuxRunGuest = func(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxSendKeysRunTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "tmux", args...).CombinedOutput() // #nosec G204 -- fixed verbs; target/hex args validated/generated, never raw guest bytes
@@ -365,7 +363,7 @@ func tmuxSendKeysHex(target string, payload []byte) error {
 	for _, b := range payload {
 		args = append(args, fmt.Sprintf("%02x", b))
 	}
-	if _, err := tmuxRunBounded(args...); err != nil {
+	if _, err := tmuxRunGuest(args...); err != nil {
 		return fmt.Errorf("relay keystrokes to %q: %w", target, err)
 	}
 	return nil
@@ -385,14 +383,53 @@ func tmuxSendKeysHex(target string, payload []byte) error {
 // Ordinary typed bytes — letters, editing control chars, arrow/function-key
 // CSI sequences like "\x1b[A" — are untouched; only the specific reply
 // SHAPES below are recognized and dropped.
-func filterTerminalReports(payload []byte) []byte {
-	out := make([]byte, 0, len(payload))
-	for i := 0; i < len(payload); {
-		if n := terminalReportLen(payload[i:]); n > 0 {
+//
+// NEW-14 (round 3): one instance per guest connection, never shared — see
+// terminalReportFilter.filter for the frame-straddling fix; a bare,
+// stateless call is no longer offered because it silently regressed to the
+// round-2 leak.
+type terminalReportFilter struct {
+	// pending holds an incomplete trailing CSI/OSC/DCS sequence from the
+	// previous frame, carried forward to be retried against the next one.
+	pending []byte
+}
+
+// maxPendingReportBytes bounds how long an incomplete CSI/OSC/DCS prefix may
+// be held across frames waiting for its terminator: a real report reply is a
+// handful of bytes, so anything longer is either ordinary data that merely
+// starts with ESC, or an attempt to make this buffer grow unboundedly across
+// tiny frames — either way, stop waiting and flush it as ordinary bytes.
+const maxPendingReportBytes = 64
+
+// filter strips terminal-report escape sequences from payload (see the type
+// doc above), carrying an incomplete trailing sequence over to the NEXT call
+// on this same instance instead of leaking it through mid-sequence (NEW-14):
+// round 2's stateless version passed a reply split across two WS frames (or
+// a lone trailing "\x1b[") straight into the pane, and a frame with
+// "\x1b]"..."\x07" spread far apart would otherwise eat everything between
+// them as one giant "reply" — bounding the carried prefix's length keeps
+// that risk bounded too.
+func (f *terminalReportFilter) filter(payload []byte) []byte {
+	buf := payload
+	if len(f.pending) > 0 {
+		// A fresh backing array, never f.pending's own — avoids aliasing a
+		// slice we are about to null out (and that any caller might still
+		// reference) with the one built here.
+		buf = append(append([]byte(nil), f.pending...), payload...)
+		f.pending = nil
+	}
+	out := make([]byte, 0, len(buf))
+	for i := 0; i < len(buf); {
+		rest := buf[i:]
+		if n := terminalReportLen(rest); n > 0 {
 			i += n
 			continue
 		}
-		out = append(out, payload[i])
+		if incompleteReportPrefix(rest) {
+			f.pending = append([]byte(nil), rest...)
+			break
+		}
+		out = append(out, buf[i])
 		i++
 	}
 	return out
@@ -435,6 +472,37 @@ func terminalReportLen(b []byte) int {
 	}
 }
 
+// incompleteReportPrefix reports whether b (for which terminalReportLen
+// already returned 0) looks like the START of a report sequence that simply
+// hasn't reached its terminator yet WITHIN b — i.e. it might still complete
+// once the next frame's bytes are appended — bounded by
+// maxPendingReportBytes so this can never grow unboundedly.
+func incompleteReportPrefix(b []byte) bool {
+	if len(b) == 0 || len(b) > maxPendingReportBytes {
+		return false
+	}
+	switch {
+	case len(b) == 1 && b[0] == 0x1b:
+		return true // a lone trailing ESC could start any sequence below
+	case bytes.HasPrefix(b, []byte("\x1b[")):
+		for i := 2; i < len(b); i++ {
+			if c := b[i]; c >= 0x40 && c <= 0x7e {
+				return false // has a final byte; terminalReportLen already ruled this NOT a report
+			}
+		}
+		return true
+	case bytes.HasPrefix(b, []byte("\x1b]")), bytes.HasPrefix(b, []byte("\x1bP")):
+		for i := 2; i < len(b); i++ {
+			if b[i] == 0x07 || (b[i] == 0x1b && i+1 < len(b) && b[i+1] == '\\') {
+				return false // has a terminator; terminalReportLen already ruled this NOT a report
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // ptyProxyStdinPolicy controls how ptyProxyRunBridge handles inbound
 // WebSocket stdin/control traffic. The zero value is the pre-existing
 // operator/non-guest behavior — stdin forwarded straight to ptmx, resize
@@ -457,10 +525,16 @@ type ptyProxyStdinPolicy struct {
 	// pty.Setsize even though resize FRAMES were already dropped; measured: a
 	// 40x10 guest shrank a detached operator's 200x50 window to 40x9 and it
 	// stayed). Set for both guest modes — the operator alone drives sizing,
-	// full stop. pinGuestWindowSize (tmux `window-size manual`, set before the
-	// guest's tmux client even attaches) is the belt to this brace: it pins
-	// the SHARED window server-side regardless of what any client's local pty
-	// size claims to be.
+	// full stop.
+	//
+	// Round 2 also pinned tmux's window-size option to "manual" on guest
+	// attach as a server-side belt to this brace. Round 3 (NEW-10) removed
+	// that: it mutated the OPERATOR's session permanently (nothing ever
+	// unpinned it), so any single share broke the operator's own browser
+	// resize for the rest of that session's life. The default window-size
+	// ("latest") already self-heals a guest-induced shrink the instant the
+	// operator reattaches (measured on tmux 3.5a: 200x50 -> 80x23 -> 200x49),
+	// so this hello-size skip alone is the fix that actually stuck.
 	IgnoreResize bool
 }
 
@@ -538,6 +612,11 @@ func ptyProxyRunBridge(
 		}
 	}()
 
+	// One filter instance for the LIFE of this bridge/connection (NEW-14): it
+	// must carry an incomplete trailing report sequence across frames, so it
+	// cannot be a fresh, stateless call per frame.
+	var reportFilter terminalReportFilter
+
 	go func() {
 		defer wg.Done()
 		defer bridgeCancel()
@@ -558,8 +637,8 @@ func ptyProxyRunBridge(
 					// NEW-2: strip terminal-report replies (the browser's own
 					// xterm.js answering DA1/DA2/CPR/OSC-color queries exactly
 					// like a real terminal would) before they ever reach the
-					// pane — see filterTerminalReports.
-					filtered := filterTerminalReports(payload)
+					// pane — see terminalReportFilter.
+					filtered := reportFilter.filter(payload)
 					if len(filtered) == 0 {
 						continue
 					}
@@ -570,10 +649,15 @@ func ptyProxyRunBridge(
 					// typing into a void will blindly retype, possibly a
 					// destructive command — tells the guest over the socket so
 					// they know to retype rather than assume it landed.
+					// NEW-17 (round 3): a distinct "notice" field, never
+					// "error" — the client renders this out-of-band instead of
+					// writing it into the terminal buffer (which would desync
+					// the guest's own mirror of the pane) and must not latch
+					// its "saw a fatal error" state on a merely-transient drop.
 					if err := tmuxSendKeysHex(stdin.RelayTarget, filtered); err != nil {
 						zap.L().Warn("ptyProxyRunBridge: relay guest keystrokes failed", zap.Error(err))
 						recorder.RecordError(fmt.Errorf("dropped %d guest keystroke byte(s): %w", len(filtered), err))
-						_ = wsOut.writeText(`{"error":"your last input could not be delivered and was dropped — please retype"}`)
+						_ = wsOut.writeText(`{"notice":"your last input could not be delivered and was dropped — please retype"}`)
 						continue
 					}
 					recorder.RecordData("stdin", filtered)
@@ -712,6 +796,14 @@ func handleWebPtyProxy(conn *websocket.Conn, helloRaw []byte, hello WSHello, rec
 // this large is rejected long before any tmux exec. 64KiB comfortably covers
 // a real paste while keeping a worst-case frame nowhere near the measured
 // 10 MiB / ~20 480-fork scenario.
+//
+// NEW-11 (round 3): set via conn.SetReadLimit in jit_redeem_ws.go
+// immediately after the WebSocket upgrade — round 2 set it here instead,
+// AFTER the hello frame had already been read unbounded, and only on the
+// live-terminal branch, leaving the shell-grant branch
+// (serveWebInteractive) with no limit at all. Both gaps are closed by
+// moving this to the one place both branches pass through before their
+// first read.
 const guestReadLimitBytes = 64 * 1024
 
 // handleLiveTerminalAttach bridges conn to muxSession — an operator's EXISTING
@@ -749,10 +841,6 @@ func handleLiveTerminalAttach(conn *websocket.Conn, muxSession string, mode atta
 	if err != nil {
 		return fmt.Errorf("start guest attach pty: %w", err)
 	}
-
-	// NEW-5: bound every subsequent frame from this guest connection before
-	// the bridge starts reading any of them.
-	conn.SetReadLimit(guestReadLimitBytes)
 
 	hello := WSHello{Cols: cols, Rows: rows}
 	closeTabKill := make(chan struct{}, 1)

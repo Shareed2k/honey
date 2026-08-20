@@ -105,6 +105,13 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		return
 	}
+	// NEW-11: bound every frame from this share-code holder BEFORE the very
+	// first read (the hello frame, right below) — covers both branches
+	// (live-terminal attach and the plain shell grant via
+	// serveWebInteractive), unlike round 2's guestReadLimitBytes call inside
+	// handleLiveTerminalAttach, which ran after an unbounded hello read and
+	// never ran at all for a shell grant.
+	conn.SetReadLimit(guestReadLimitBytes)
 	defer func() {
 		if rec := recover(); rec != nil {
 			zap.L().Error("web terminal panic", zap.Any("recover", rec))

@@ -1,6 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+
+// noticeDisplayMs is how long a transient server notice (e.g. a dropped
+// collaborate keystroke, NEW-17) stays visible before auto-clearing.
+const noticeDisplayMs = 4000;
 
 export type JitTerminalProps = {
   code: string;
@@ -23,6 +27,11 @@ export type JitTerminalProps = {
 // needs no token: the code itself is the credential.
 export function JitTerminal({ code, readOnly = false }: JitTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // A transient, non-fatal delivery notice (NEW-17) — rendered as a banner
+  // OUTSIDE the terminal buffer, never via term.writeln: writing it into the
+  // pane would desync the guest's own mirror of the operator's real content
+  // until the next redraw painted over it.
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -66,7 +75,16 @@ export function JitTerminal({ code, readOnly = false }: JitTerminalProps) {
     ws.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
         try {
-          const j = JSON.parse(ev.data) as { closed?: boolean; error?: string };
+          const j = JSON.parse(ev.data) as { closed?: boolean; error?: string; notice?: string };
+          if (j.notice) {
+            // NEW-17: a transient notice (e.g. a dropped keystroke) is NOT a
+            // fatal error — render it out-of-band and, critically, do NOT
+            // set sawServerError: a real disconnect reason arriving later
+            // must still be shown, not silently suppressed by an earlier
+            // notice.
+            setNotice(j.notice);
+            window.setTimeout(() => setNotice((cur) => (cur === j.notice ? null : cur)), noticeDisplayMs);
+          }
           if (j.error) {
             sawServerError = true;
             term.writeln(`\r\n\x1b[31m${j.error}\x1b[0m`);
@@ -109,7 +127,7 @@ export function JitTerminal({ code, readOnly = false }: JitTerminalProps) {
       // automatically, through this SAME callback, whenever the mirrored
       // pane output contains one — there is no client-side hook to suppress
       // just those replies. The server-side relay is what filters them out
-      // before they ever reach the pane (see filterTerminalReports in
+      // before they ever reach the pane (see terminalReportFilter in
       // internal/webserver/pty_proxy.go); this client never needs to (and,
       // being guest-controlled, could not be trusted to).
       if (readOnly || ws.readyState !== WebSocket.OPEN) {
@@ -140,5 +158,30 @@ export function JitTerminal({ code, readOnly = false }: JitTerminalProps) {
 
   // Fill the parent so callers control the size (a small card box or the full
   // viewport); the ResizeObserver above keeps xterm fitted to whatever that is.
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
+  // The notice banner is a SIBLING of the xterm container, not a child of it —
+  // xterm.js owns containerRef's contents exclusively.
+  return (
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {notice ? (
+        <div
+          role="status"
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            maxWidth: '70%',
+            padding: '6px 10px',
+            borderRadius: 4,
+            fontSize: 12,
+            background: 'rgba(120, 53, 15, 0.92)',
+            color: '#fde68a',
+            pointerEvents: 'none',
+          }}
+        >
+          {notice}
+        </div>
+      ) : null}
+    </div>
+  );
 }

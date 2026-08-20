@@ -237,6 +237,38 @@ func TestHandleJITRedeemTerminal_HappyPath(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
+// TestHandleJITRedeemTerminal_ShellGrantOversizedFrameRejected is the NEW-11
+// regression: round 2 set conn.SetReadLimit only inside
+// handleLiveTerminalAttach, so a plain shell grant (this branch,
+// serveWebInteractive) had NO read limit at all — a share-code holder could
+// still make honey-web buffer one arbitrarily large frame in its heap, the
+// exact DoS NEW-5 named. The limit must now be set once, right after the
+// upgrade, covering this branch too.
+func TestHandleJITRedeemTerminal_ShellGrantOversizedFrameRejected(t *testing.T) {
+	store, _, wsBase := newJitWSTestServer(t, "banner", Options{})
+	_, code := createWebGrant(t, store, jit.Grant{Resource: jit.ResourceRef{Name: "web-host", Provider: "ssh"}})
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/jit/redeem/"+code+"/terminal", nil)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+
+	require.NoError(t, conn.WriteJSON(map[string]int{"cols": 80, "rows": 24}))
+
+	// Drain the banner so the shell branch is confirmed up before probing the
+	// limit.
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, _, err = conn.ReadMessage()
+	require.NoError(t, err)
+
+	oversized := bytes.Repeat([]byte{'A'}, guestReadLimitBytes+4096)
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, oversized))
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, _, rerr := conn.ReadMessage()
+	require.Error(t, rerr, "a frame over guestReadLimitBytes must close the connection on the plain shell-grant branch too")
+}
+
 func TestHandleJITRedeemTerminal_OPADeniedOverWS(t *testing.T) {
 	const src = `package honey
 import rego.v1

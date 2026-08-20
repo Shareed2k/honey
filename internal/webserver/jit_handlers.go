@@ -99,6 +99,20 @@ func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantReque
 	if !validHoneyMuxSessionName(mux) && !validInterceptMuxName(mux) {
 		return fmt.Errorf("invalid mux_session %q", mux)
 	}
+	// MED-4: grant creation must not succeed for a tab with no live tmux
+	// session (zellij preferred, no-mux fallback, pve-serial/truenas tabs never
+	// have one) — otherwise the guest only discovers the broken link after
+	// burning a redemption. A live-share grant is only ever redeemable on the
+	// honey node that actually holds this tmux session — it does not follow
+	// the session elsewhere.
+	//
+	// NEW-16 (round 3): checked BEFORE the ownership block below, not after —
+	// round 2 had it last, so a dead honey-int-* session paid for the
+	// ownership retry's full cost (6 execs, ~500ms) before returning "owner
+	// could not be determined" instead of this friendlier, cheaper message.
+	if !tmuxGuestSessionAlive(mux) {
+		return errors.New("this terminal is not shareable — no live tmux session")
+	}
 	if validInterceptMuxName(mux) {
 		owner := interceptSessionActorRetry(mux)
 		if owner == "" {
@@ -112,19 +126,6 @@ func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantReque
 	case jit.CapWatch, jit.CapCollab:
 	default:
 		return fmt.Errorf("capability must be %q or %q for a live_terminal share", jit.CapWatch, jit.CapCollab)
-	}
-	// MED-4: grant creation must not succeed for a tab with no live tmux
-	// session (zellij preferred, no-mux fallback, pve-serial/truenas tabs never
-	// have one) — otherwise the guest only discovers the broken link after
-	// burning a redemption. Checked after every static validation above, using
-	// the same liveness seam the attach path itself uses — giving a dead
-	// session the friendly message below, rather than whatever raw tmux error
-	// the NEW-3 canonicalization check right after it would otherwise surface
-	// for a name tmux can't find at all. A live-share grant is only ever
-	// redeemable on the honey node that actually holds this tmux session — it
-	// does not follow the session elsewhere.
-	if !tmuxGuestSessionAlive(mux) {
-		return errors.New("this terminal is not shareable — no live tmux session")
 	}
 	// NEW-3: tmux matches a `-t` target by PREFIX ("honey-int-abc" resolves to
 	// a real "honey-int-abcdef"), so a request naming a unique prefix would

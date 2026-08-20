@@ -455,14 +455,14 @@ func TestPtyProxyRunBridge_IgnoreResizeSkipsInitialHelloSize(t *testing.T) {
 	require.EqualValues(t, 24, ws.Rows, "a guest's hello size must never reach the initial pty.Setsize")
 }
 
-// swapTmuxRunBounded installs a fake tmuxRunBounded (tmuxSendKeysHex's
+// swapTmuxRunGuest installs a fake tmuxRunGuest (tmuxSendKeysHex's
 // relay-local, timeout-bounded exec seam — distinct from the shared tmuxRun)
 // and returns a restore func. Tests using it must not run in parallel, same
 // caveat as swapTmuxRun.
-func swapTmuxRunBounded(fn func(...string) ([]byte, error)) func() {
-	orig := tmuxRunBounded
-	tmuxRunBounded = fn
-	return func() { tmuxRunBounded = orig }
+func swapTmuxRunGuest(fn func(...string) ([]byte, error)) func() {
+	orig := tmuxRunGuest
+	tmuxRunGuest = fn
+	return func() { tmuxRunGuest = orig }
 }
 
 // TestTmuxSendKeysHex_ArgvNeverContainsRawBytes is the HIGH-1 unit-level
@@ -492,7 +492,7 @@ func TestTmuxSendKeysHex_ArgvNeverContainsRawBytes(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotArgs []string
-			restore := swapTmuxRunBounded(func(args ...string) ([]byte, error) {
+			restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
 				gotArgs = args
 				return nil, nil
 			})
@@ -509,11 +509,11 @@ func TestTmuxSendKeysHex_ArgvNeverContainsRawBytes(t *testing.T) {
 
 // TestTmuxSendKeysHex_RejectsOversizedFrameWithoutExec is the NEW-5
 // regression: a payload over maxRelayFrameBytes is refused OUTRIGHT — the
-// fake tmuxRunBounded here fails the test if it is ever called at all, so
+// fake tmuxRunGuest here fails the test if it is ever called at all, so
 // this also proves the round-2 "all-or-nothing per frame" judgment: no
 // partial relay is even attempted for an oversized frame.
 func TestTmuxSendKeysHex_RejectsOversizedFrameWithoutExec(t *testing.T) {
-	restore := swapTmuxRunBounded(func(args ...string) ([]byte, error) {
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
 		t.Fatalf("tmux must never be exec'd for an oversized frame, got args %v", args)
 		return nil, nil
 	})
@@ -528,7 +528,7 @@ func TestTmuxSendKeysHex_RejectsOversizedFrameWithoutExec(t *testing.T) {
 // TestTmuxSendKeysHex_PropagatesRunError proves a tmux failure surfaces as a
 // wrapped error instead of being silently swallowed.
 func TestTmuxSendKeysHex_PropagatesRunError(t *testing.T) {
-	restore := swapTmuxRunBounded(func(...string) ([]byte, error) {
+	restore := swapTmuxRunGuest(func(...string) ([]byte, error) {
 		return []byte("can't find pane"), errors.New("exit status 1")
 	})
 	defer restore()
@@ -576,7 +576,7 @@ func TestPtyProxyRunBridge_CollaborateRelaysViaSendKeys(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
 	var gotArgs []string
-	restore := swapTmuxRunBounded(func(args ...string) ([]byte, error) {
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
 		gotArgs = args
 		return nil, nil
 	})
@@ -659,10 +659,64 @@ func TestFilterTerminalReports(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := filterTerminalReports(tc.payload)
+			var f terminalReportFilter
+			got := f.filter(tc.payload)
 			require.Equal(t, tc.want, got)
 		})
 	}
+}
+
+// TestTerminalReportFilter_StraddlesFrames is the NEW-14 regression: round
+// 2's filter was stateless per WS frame, so a reply (or a trailing
+// incomplete escape sequence) split across two frames leaked through
+// untouched. One filter instance fed both frames in sequence must strip the
+// reply completely, and must still pass ordinary typing that follows once
+// the held sequence is resolved.
+func TestTerminalReportFilter_StraddlesFrames(t *testing.T) {
+	t.Run("CPR reply split mid-CSI", func(t *testing.T) {
+		var f terminalReportFilter
+		require.Equal(t, []byte{}, f.filter([]byte("\x1b[24")))
+		require.Equal(t, []byte{}, f.filter([]byte(";80R")))
+	})
+
+	t.Run("OSC color reply split before its terminator", func(t *testing.T) {
+		var f terminalReportFilter
+		require.Equal(t, []byte{}, f.filter([]byte("\x1b]11;rgb:0000/0000")))
+		require.Equal(t, []byte{}, f.filter([]byte("/0000\x07")))
+	})
+
+	t.Run("a lone trailing ESC is held then resolves into a dropped report", func(t *testing.T) {
+		var f terminalReportFilter
+		require.Equal(t, []byte{}, f.filter([]byte("\x1b")))
+		require.Equal(t, []byte{}, f.filter([]byte("[6n")))
+	})
+
+	t.Run("held sequence does not swallow ordinary typing that follows in the SAME next frame", func(t *testing.T) {
+		var f terminalReportFilter
+		require.Equal(t, []byte{}, f.filter([]byte("\x1b[24")))
+		require.Equal(t, []byte("hi\r"), f.filter([]byte(";80Rhi\r")))
+	})
+
+	t.Run("a held prefix that never resolves is eventually flushed, not held forever", func(t *testing.T) {
+		var f terminalReportFilter
+		require.Equal(t, []byte{}, f.filter([]byte("\x1b[")))
+		// A very long parameter string with no final byte anywhere: once the
+		// combined pending+new bytes exceed maxPendingReportBytes, this is no
+		// longer treated as "possibly a report" and is flushed as literal
+		// data instead of buffered forever.
+		garbage := bytes.Repeat([]byte("9"), maxPendingReportBytes+16)
+		got := f.filter(garbage)
+		require.NotEmpty(t, got, "an unbounded non-terminating prefix must eventually flush, not buffer forever")
+	})
+
+	t.Run("independent filter instances never share state", func(t *testing.T) {
+		var f1, f2 terminalReportFilter
+		require.Equal(t, []byte{}, f1.filter([]byte("\x1b[24")))
+		// f2 never saw the first half, so this looks like ordinary (odd)
+		// input to it, not a completion of anything.
+		got := f2.filter([]byte(";80R"))
+		require.Equal(t, []byte(";80R"), got)
+	})
 }
 
 // TestPtyProxyRunBridge_CollaborateFiltersTerminalReports proves the filter
@@ -674,7 +728,7 @@ func TestPtyProxyRunBridge_CollaborateFiltersTerminalReports(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
 	var gotArgs []string
-	restore := swapTmuxRunBounded(func(args ...string) ([]byte, error) {
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
 		gotArgs = args
 		return nil, nil
 	})
@@ -730,7 +784,7 @@ func TestPtyProxyRunBridge_CollaborateFiltersTerminalReports(t *testing.T) {
 func TestPtyProxyRunBridge_RelayFailureRecordsDropAndNotifiesGuest(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
-	restore := swapTmuxRunBounded(func(...string) ([]byte, error) {
+	restore := swapTmuxRunGuest(func(...string) ([]byte, error) {
 		return nil, errors.New("simulated relay failure")
 	})
 	defer restore()
@@ -765,10 +819,22 @@ func TestPtyProxyRunBridge_RelayFailureRecordsDropAndNotifiesGuest(t *testing.T)
 	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("rm -rf /\r")))
 
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	mt, notice, rerr := conn.ReadMessage()
+	mt, raw, rerr := conn.ReadMessage()
 	require.NoError(t, rerr)
 	require.Equal(t, websocket.TextMessage, mt)
-	require.Contains(t, string(notice), "dropped", "the guest must be told its input never landed")
+	require.Contains(t, string(raw), "dropped", "the guest must be told its input never landed")
+
+	// NEW-17: the drop notice must use a distinct "notice" field, never
+	// "error" — the client renders "error" into the terminal buffer and
+	// latches it as a fatal condition, neither of which is right for a
+	// merely-transient delivery failure.
+	var parsed struct {
+		Notice string `json:"notice"`
+		Error  string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &parsed))
+	require.NotEmpty(t, parsed.Notice, "drop notice must be carried in the \"notice\" field")
+	require.Empty(t, parsed.Error, "drop notice must NOT use the \"error\" field")
 
 	_ = ptmx.Close()
 	_ = conn.Close()
@@ -779,10 +845,10 @@ func TestPtyProxyRunBridge_RelayFailureRecordsDropAndNotifiesGuest(t *testing.T)
 	}
 	require.NoError(t, rec.Close())
 
-	raw, err := os.ReadFile(rec.Path())
+	recorded, err := os.ReadFile(rec.Path())
 	require.NoError(t, err)
 	var sawDropError, sawFalseStdinSuccess bool
-	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+	for _, line := range bytes.Split(bytes.TrimSpace(recorded), []byte("\n")) {
 		if len(line) == 0 {
 			continue
 		}
@@ -828,26 +894,32 @@ func TestHandleLiveTerminalAttach_UnsupportedModeFailsClosed(t *testing.T) {
 	_ = conn.Close()
 }
 
-// TestHandleLiveTerminalAttach_PinsWindowSize proves the LOW-5 round-2
-// residual fix end to end against a real tmux session: attaching a guest
-// pins window-size to "manual" BEFORE the client attaches, so the shared
-// window can never be reshaped by a small (or hello-lying) guest client.
-// Skips cleanly when tmux is not on PATH.
-func TestHandleLiveTerminalAttach_PinsWindowSize(t *testing.T) {
+// TestHandleLiveTerminalAttach_NeverPinsWindowSize is the NEW-10 regression:
+// round 2's guest attach used to set tmux's window-size option to "manual"
+// on the OPERATOR's session and never restore it, permanently breaking the
+// operator's own browser resize for the life of that session. A guest
+// attach must leave window-size at whatever it already was (here, the tmux
+// default "latest") — never touch it at all. Skips cleanly when tmux is not
+// on PATH.
+func TestHandleLiveTerminalAttach_NeverPinsWindowSize(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not on PATH")
 	}
-	name := fmt.Sprintf("honey_winsize_pin_%d", time.Now().UnixNano())
+	name := fmt.Sprintf("honey_winsize_nopin_%d", time.Now().UnixNano())
 	require.True(t, validHoneyMuxSessionName(name))
 	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
 	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-x", "200", "-y", "50", "-s", name, "--", "cat").Run())
+
+	before, err := exec.Command("tmux", "show-options", "-t", name, "window-size").Output()
+	require.NoError(t, err)
 
 	cmd, _, _, err := ptyMuxTmuxCommand(name, nil, attachReadonly)
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
 
-	out, err := exec.Command("tmux", "show-options", "-t", name, "window-size").Output()
+	after, err := exec.Command("tmux", "show-options", "-t", name, "window-size").Output()
 	require.NoError(t, err)
-	require.Contains(t, string(out), "manual", "window-size must be pinned before/at guest attach")
+	require.Equal(t, string(before), string(after), "a guest attach must never change window-size")
+	require.NotContains(t, string(after), "manual", "a guest attach must never pin window-size to manual")
 }

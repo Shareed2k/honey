@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/shareed2k/honey/internal/engine"
@@ -290,6 +291,25 @@ func pumpWebSocketToStreams(conn *websocket.Conn, stdinPipeW *io.PipeWriter, res
 	}
 }
 
+// wsWriteTimeout bounds every write through wsWriter (NEW-12, round 3): with
+// no deadline, a peer that stops reading its socket (never closes it, just
+// never calls ReadMessage again) blocks WriteMessage forever while holding
+// wsWriter's mutex — for a share-link guest that wedges the ptmx-reading
+// goroutine, which never reaches bridgeCancel, so ptyProxyTeardown never
+// runs and the guest's tmux client stays attached to the operator's session
+// indefinitely. Round 2's NEW-6 drop notice gave the READER goroutine a
+// second way to block on the same mutex (writeText from within the guest's
+// own input-handling goroutine). TCP keepalive does not catch this: a peer
+// that ACKs but never reads still looks healthy at the transport level.
+//
+// wsWriter is SHARED with the operator's own terminals (ws_ssh.go,
+// ws_intercept.go, pty_proxy.go's operator path all construct one), so this
+// must be generous enough that a slow-but-alive operator client is never
+// killed — 10s comfortably covers real network jitter while still bounding
+// the wedge. A var, not a const, so a test can shrink it without a
+// multi-second wait.
+var wsWriteTimeout = 10 * time.Second
+
 type wsWriter struct {
 	conn *websocket.Conn
 	mu   *sync.Mutex
@@ -298,6 +318,7 @@ type wsWriter struct {
 func (w *wsWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	_ = w.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 	if err := w.conn.WriteMessage(websocket.BinaryMessage, p); err != nil {
 		return 0, err
 	}
@@ -307,6 +328,7 @@ func (w *wsWriter) Write(p []byte) (int, error) {
 func (w *wsWriter) writeText(payload string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	_ = w.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 	return w.conn.WriteMessage(websocket.TextMessage, []byte(payload))
 }
 

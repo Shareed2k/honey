@@ -463,9 +463,9 @@ func withFakeInterceptSessionActorRetry(t *testing.T, fn func(string) string) {
 // fails the test loudly rather than silently returning a zero value.
 func fakeTmuxCanonical(t *testing.T, wantCanonical, actor string) func() {
 	t.Helper()
-	return swapTmuxRun(func(args ...string) ([]byte, error) {
+	fake := func(args ...string) ([]byte, error) {
 		if len(args) == 0 {
-			t.Fatalf("unexpected empty tmuxRun call")
+			t.Fatalf("unexpected empty tmux call")
 		}
 		switch args[0] {
 		case "display-message":
@@ -473,10 +473,19 @@ func fakeTmuxCanonical(t *testing.T, wantCanonical, actor string) func() {
 		case "show-environment":
 			return []byte("HONEY_INT_ACTOR=" + actor + "\n"), nil
 		default:
-			t.Fatalf("unexpected tmuxRun args %v", args)
+			t.Fatalf("unexpected tmux args %v", args)
 			return nil, nil
 		}
-	})
+	}
+	// show-environment (ownership) still goes through the shared tmuxRun;
+	// display-message (canonicalization, NEW-15) now goes through the
+	// bounded tmuxRunGuest — fake both so either call resolves the same way.
+	restoreRun := swapTmuxRun(fake)
+	restoreGuest := swapTmuxRunGuest(fake)
+	return func() {
+		restoreRun()
+		restoreGuest()
+	}
 }
 
 // TestHandleCreateJITGrant_LiveTerminalShare table-drives the grant-create
@@ -639,6 +648,33 @@ func TestHandleCreateJITGrant_LiveTerminalShare_InterceptUnknownOwnerFailsClosed
 	}
 	if len(store.List()) != 0 {
 		t.Fatal("a honey-int-* share with an undetermined owner must never be stored")
+	}
+}
+
+// TestHandleCreateJITGrant_LiveTerminalShare_DeadSessionSkipsOwnershipCheck
+// is the NEW-16 regression: round 2 ran the ownership retry BEFORE the
+// liveness check, so a dead honey-int-* session paid for the retry's full
+// cost (6 execs, ~500ms) and returned "owner could not be determined"
+// instead of the friendlier, cheaper "no live tmux session" message.
+// interceptSessionActorRetry is faked to fail the test outright if it is
+// ever called, proving liveness now short-circuits first.
+func TestHandleCreateJITGrant_LiveTerminalShare_DeadSessionSkipsOwnershipCheck(t *testing.T) {
+	withFakeGuestSessionAlive(t, false)
+	withFakeInterceptSessionActorRetry(t, func(name string) string {
+		t.Fatalf("ownership retry must not run before the liveness check (got name %q)", name)
+		return ""
+	})
+
+	s, store := newJitTestServer(t, Options{})
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", jitLiveTerminalBody("honey-int-deadsession", "watch"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body=%s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "not shareable") {
+		t.Fatalf("body = %s, want the friendly \"not shareable\" liveness message, not an ownership error", w.Body)
+	}
+	if len(store.List()) != 0 {
+		t.Fatal("a dead session must never be stored")
 	}
 }
 
