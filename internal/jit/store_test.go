@@ -542,5 +542,134 @@ func TestPeek_DoesNotConsumeRedemption(t *testing.T) {
 func TestErrors_AreSentinelsNotJustStrings(t *testing.T) {
 	require.True(t, errors.Is(ErrGrantNotFound, ErrGrantNotFound))
 	require.True(t, errors.Is(ErrGrantNotActive, ErrGrantNotActive))
+	require.True(t, errors.Is(ErrGrantNotTerminal, ErrGrantNotTerminal))
 	require.True(t, errors.Is(ErrInvalidGrant, ErrInvalidGrant))
+}
+
+// TestDelete_RefusesActiveGrant is the load-bearing Delete invariant: an
+// ACTIVE grant (pending, or approved and still within its window) must never
+// be deletable directly — the operator has to revoke (or kill, for a
+// live-terminal share) it first, so a delete can never silently drop a live
+// share's audit trail before it actually ends.
+func TestDelete_RefusesActiveGrant(t *testing.T) {
+	tests := []struct {
+		name            string
+		requireApproval bool
+	}{
+		{name: "approved and within window", requireApproval: false},
+		{name: "pending", requireApproval: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			g := validGrant()
+			g.RequireApproval = tc.requireApproval
+			stored, _, err := s.Create(g)
+			require.NoError(t, err)
+
+			err = s.Delete(stored.ID)
+			require.ErrorIs(t, err, ErrGrantNotTerminal)
+
+			_, ok := s.Get(stored.ID)
+			require.True(t, ok, "an active grant must survive a refused delete")
+		})
+	}
+}
+
+// TestDelete_RemovesTerminalGrant covers every terminal status: denied,
+// revoked, and approved-but-expired all become deletable, and Delete makes
+// them actually disappear (not just report success).
+func TestDelete_RemovesTerminalGrant(t *testing.T) {
+	tests := []struct {
+		name    string
+		makeErr func(s *Store, c *clock, id string) error
+	}{
+		{
+			name: "revoked",
+			makeErr: func(s *Store, _ *clock, id string) error {
+				_, err := s.Revoke(id, "dave")
+				return err
+			},
+		},
+		{
+			name: "denied",
+			makeErr: func(s *Store, _ *clock, id string) error {
+				_, err := s.Decide(id, "dave", false)
+				return err
+			},
+		},
+		{
+			name: "expired",
+			makeErr: func(_ *Store, c *clock, _ string) error {
+				c.advance(2 * time.Hour) // past the 1h Duration in validGrant
+				return nil
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, c := newTestStore(t)
+			g := validGrant()
+			if tc.name == "denied" {
+				g.RequireApproval = true
+			}
+			stored, _, err := s.Create(g)
+			require.NoError(t, err)
+			require.NoError(t, tc.makeErr(s, c, stored.ID))
+
+			require.NoError(t, s.Delete(stored.ID))
+			_, ok := s.Get(stored.ID)
+			require.False(t, ok, "deleted grant must be gone")
+		})
+	}
+}
+
+func TestDelete_MissingGrant(t *testing.T) {
+	s, _ := newTestStore(t)
+	err := s.Delete("jit_nope")
+	require.ErrorIs(t, err, ErrGrantNotFound)
+}
+
+// TestPurge_DeletesOnlyTerminalGrants is the bulk "delete all finished
+// grants" path: it must remove every terminal grant, return their count, and
+// leave every active grant untouched.
+func TestPurge_DeletesOnlyTerminalGrants(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	active, _, err := s.Create(validGrant())
+	require.NoError(t, err)
+
+	revoked, _, err := s.Create(validGrant())
+	require.NoError(t, err)
+	_, err = s.Revoke(revoked.ID, "dave")
+	require.NoError(t, err)
+
+	denied := validGrant()
+	denied.RequireApproval = true
+	deniedGrant, _, err := s.Create(denied)
+	require.NoError(t, err)
+	_, err = s.Decide(deniedGrant.ID, "dave", false)
+	require.NoError(t, err)
+
+	n, err := s.Purge()
+	require.NoError(t, err)
+	require.Equal(t, 2, n, "expected exactly the revoked and denied grants purged")
+
+	_, ok := s.Get(active.ID)
+	require.True(t, ok, "an active grant must survive Purge")
+	_, ok = s.Get(revoked.ID)
+	require.False(t, ok)
+	_, ok = s.Get(deniedGrant.ID)
+	require.False(t, ok)
+}
+
+func TestPurge_NoTerminalGrantsReturnsZero(t *testing.T) {
+	s, _ := newTestStore(t)
+	_, _, err := s.Create(validGrant())
+	require.NoError(t, err)
+
+	n, err := s.Purge()
+	require.NoError(t, err)
+	require.Equal(t, 0, n)
+	require.Len(t, s.List(), 1)
 }
