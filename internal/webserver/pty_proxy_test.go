@@ -1002,14 +1002,7 @@ func TestHandleLiveTerminalAttach_NeverPinsWindowSize(t *testing.T) {
 func TestPtyProxyRunBridge_CollaborateGuardBlocksOPADeniedCommand(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
-	enf, err := policy.NewFromSource(context.Background(), "deny.rego", `package honey
-import rego.v1
-default allow := true
-default deny_reason := ""
-allow := false if input.action == "command_exec"
-deny_reason := "command_exec blocked by test policy" if input.action == "command_exec"
-`)
-	require.NoError(t, err)
+	enf := denyCommandExecPolicy(t)
 
 	var gotArgs []string
 	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
@@ -1228,6 +1221,24 @@ func dangerousDeletePath() string {
 	return "rm -rf " + "/"
 }
 
+// denyCommandExecPolicy returns an OPA enforcer that denies every
+// command_exec decision. OPA is honey's only command-authorization gate
+// (commandrisk severity is data fed to it, never a gate by itself), so every
+// guard test below that needs a "deny" wires this in rather than relying on
+// a nil enforcer.
+func denyCommandExecPolicy(t *testing.T) *policy.Enforcer {
+	t.Helper()
+	enf, err := policy.NewFromSource(context.Background(), "deny.rego", `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if input.action == "command_exec"
+deny_reason := "command_exec blocked by test policy" if input.action == "command_exec"
+`)
+	require.NoError(t, err)
+	return enf
+}
+
 // TestPtyProxyRunBridge_CollaborateGuardCapBypassClosed is the FIX-1
 // regression: the deterministic exploit named in the review closed the
 // enforce guard in 3 frames by exploiting the fact that the frame-cap check
@@ -1269,7 +1280,7 @@ func TestPtyProxyRunBridge_CollaborateGuardCapBypassClosed(t *testing.T) {
 
 		closeTabKill := make(chan struct{}, 1)
 		hello := WSHello{Cols: 80, Rows: 24}
-		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		guard := termGuardInputs{Enforcer: denyCommandExecPolicy(t), Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
 		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_cap_test", closeTabKill,
 			ptyProxyStdinPolicy{RelayTarget: "honey_guard_cap_test:", GuestGuard: &guard})
 		close(done)
@@ -1350,7 +1361,7 @@ func TestPtyProxyRunBridge_CollaborateGuardCapBypassClosed_PendingGrowth(t *test
 
 		closeTabKill := make(chan struct{}, 1)
 		hello := WSHello{Cols: 80, Rows: 24}
-		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		guard := termGuardInputs{Enforcer: denyCommandExecPolicy(t), Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
 		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_pending_growth_test", closeTabKill,
 			ptyProxyStdinPolicy{RelayTarget: "honey_guard_pending_growth_test:", GuestGuard: &guard})
 		close(done)
@@ -1431,7 +1442,7 @@ func TestPtyProxyRunBridge_CollaborateGuardRollsBackOnRelayFailure(t *testing.T)
 
 		closeTabKill := make(chan struct{}, 1)
 		hello := WSHello{Cols: 80, Rows: 24}
-		guard := termGuardInputs{Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		guard := termGuardInputs{Enforcer: denyCommandExecPolicy(t), Actor: "share:test", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
 		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_guard_rollback_test", closeTabKill,
 			ptyProxyStdinPolicy{RelayTarget: "honey_guard_rollback_test:", GuestGuard: &guard})
 		close(done)
@@ -1493,7 +1504,7 @@ func TestPtyProxyRunBridge_OperatorGuardBlocksDenied(t *testing.T) {
 
 		closeTabKill := make(chan struct{}, 1)
 		hello := WSHello{Cols: 80, Rows: 24}
-		guard := termGuardInputs{Actor: "alice", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
+		guard := termGuardInputs{Enforcer: denyCommandExecPolicy(t), Actor: "alice", Record: hosts.Record{Name: "target1"}, Mode: termguard.ModeEnforce}
 		<-ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_operator_guard_test", closeTabKill,
 			ptyProxyStdinPolicy{OperatorGuard: &guard})
 		close(done)

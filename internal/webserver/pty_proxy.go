@@ -586,6 +586,14 @@ func ptyProxyRunBridge(
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+	// The two cancellation watchers below block until bridgeCtx is done, so they
+	// CANNOT join wg: wg.Wait() runs before this function's deferred
+	// bridgeCancel, and waiting on them there would deadlock. They get their own
+	// group, waited after an explicit cancel, so this function only returns once
+	// every goroutine it started has exited (otherwise a caller — and goleak —
+	// observes them still running).
+	var watchWg sync.WaitGroup
+	watchWg.Add(2)
 
 	ptyExited := make(chan struct{})
 
@@ -598,6 +606,7 @@ func ptyProxyRunBridge(
 	// indefinitely. This watcher force-expires that blocked Read the instant
 	// the bridge is cancelled, so the guest's client detaches promptly.
 	go func() {
+		defer watchWg.Done()
 		<-bridgeCtx.Done()
 		_ = ptmx.SetReadDeadline(time.Now())
 	}()
@@ -616,6 +625,7 @@ func ptyProxyRunBridge(
 	// against the caller's own deferred conn.Close(): gorilla's Close is
 	// idempotent, and nothing else here assumes single ownership of conn.
 	go func() {
+		defer watchWg.Done()
 		<-bridgeCtx.Done()
 		_ = conn.Close()
 	}()
@@ -794,6 +804,11 @@ func ptyProxyRunBridge(
 	}()
 
 	wg.Wait()
+	// Cancel here rather than leaving it to the deferred call, so the two
+	// watchers unblock and can be waited for before this function returns.
+	// bridgeCancel is idempotent, so the defer above stays harmless.
+	bridgeCancel()
+	watchWg.Wait()
 	_ = ptmx.SetReadDeadline(time.Now())
 	return ptyExited
 }

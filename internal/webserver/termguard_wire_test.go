@@ -36,7 +36,20 @@ func (f *fakeInteractiveStreamer) RunInteractiveStreams(_ context.Context, _ str
 // for the fake streamer's io.ReadAll), and waits for the handler to return.
 func runHandleWebInteractiveStreams(t *testing.T, guard termGuardInputs, payload []byte) *fakeInteractiveStreamer {
 	t.Helper()
-	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	// IgnoreCurrent only snapshots goroutines alive at this call — it cannot
+	// see a sibling t.Parallel() test elsewhere in this package spinning up
+	// webserver.NewServer (and so NewRecipesAPI's webhook rate limiter/dedup
+	// cache) mid-run. Neither has a Shutdown path today, so their pool
+	// maintenance loops legitimately outlive any one test; ignore those two
+	// known, unrelated background loops by name rather than the whole
+	// goroutine set, so a real leak in this test's own code (e.g.
+	// termguard/ptyProxyRunBridge goroutines, which are named after their own
+	// functions, not ants/ttlcache) still fails it.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent(),
+		goleak.IgnoreTopFunction("github.com/panjf2000/ants/v2.(*poolCommon).ticktock"),
+		goleak.IgnoreTopFunction("github.com/panjf2000/ants/v2.(*poolCommon).purgeStaleWorkers"),
+		goleak.IgnoreTopFunction("github.com/jellydator/ttlcache/v3.(*Cache[...]).Start"),
+	)
 
 	fake := &fakeInteractiveStreamer{}
 	upgrader := websocket.Upgrader{}
