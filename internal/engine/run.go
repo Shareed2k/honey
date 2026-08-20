@@ -267,6 +267,7 @@ func (run *CueRun) ExecuteStep(ctx context.Context, i int, kind string, step cue
 		Facts:             run.Facts,
 		TriggeredHandlers: run.TriggeredHandlers,
 		TunnelCoord:       run.TunnelCoord,
+		InterceptCoord:    run.InterceptCoord,
 		DockerPluginSess:  run.DockerPluginSess,
 	}
 
@@ -459,6 +460,8 @@ func StreamCueRecipeSteps(ctx context.Context, p CueRecipeRunParams, out chan<- 
 	defer run.RecipeKV.Close()
 	run.TunnelCoord = NewRecipeTunnelCoordinator(nil)
 	defer run.TunnelCoord.Close()
+	run.InterceptCoord = NewRecipeInterceptCoordinator()
+	defer run.InterceptCoord.Close()
 	if p.PluginMgr != nil && p.PluginMgr.Enabled() {
 		run.DockerPluginSess = p.PluginMgr.NewDockerHostSession()
 		defer func() { _ = run.DockerPluginSess.Close(context.Background()) }()
@@ -776,6 +779,7 @@ func StreamCueLoopStep(ctx context.Context, run *CueRun, i int, step cuetry.Step
 				Cache:             run.Cache,
 				RecipeKV:          run.RecipeKV,
 				TunnelCoord:       run.TunnelCoord,
+				InterceptCoord:    run.InterceptCoord,
 				DockerPluginSess:  run.DockerPluginSess,
 				OutputStore:       run.OutputStore,
 				OutputCapture:     run.OutputCapture,
@@ -823,7 +827,7 @@ func RecordGraphStepStdout(recipe cuetry.Recipe, step cuetry.Step, kind string, 
 		return
 	}
 	switch kind {
-	case cuetry.KindCommand, cuetry.KindScript, cuetry.KindPlugin, cuetry.KindTunnel, cuetry.KindHTTP:
+	case cuetry.KindCommand, cuetry.KindScript, cuetry.KindPlugin, cuetry.KindTunnel, cuetry.KindHTTP, cuetry.KindIntercept:
 		for _, row := range rows {
 			if row.Success && !row.Skipped {
 				store.Record(id, HostNameFromExecResult(row.Name), stdoutForRecord(row))

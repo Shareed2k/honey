@@ -18,6 +18,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/intercept"
+	"github.com/shareed2k/honey/internal/interceptwire"
 	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -180,8 +181,8 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 				return nil, fmt.Errorf("intercept: build kubernetes client: %w", cerr)
 			}
 			deps := intercept.Deps{
-				PortForwarder: &interceptPortForwarder{cfg: restCfg},
-				PodExecer:     &interceptPodExecer{cfg: restCfg, clientset: clientset, namespace: opts.Namespace, pod: opts.Pod},
+				PortForwarder: &interceptwire.PortForwarder{Cfg: restCfg},
+				PodExecer:     &interceptwire.PodExecer{Cfg: restCfg, Clientset: clientset, Namespace: opts.Namespace, Pod: opts.Pod},
 				K8sClient:     clientset,
 				Enforcer:      enforcer,
 				Sink:          auditSink,

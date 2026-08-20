@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -187,75 +189,108 @@ func New(deps Deps, opts Options) *Session {
 	return &Session{deps: deps, opts: opts}
 }
 
-// Run executes the interception lifecycle and blocks until the injected command
-// exits or ctx is cancelled. It gates and audits the request, deploys and waits
-// for the agent, delivers the token, opens the two port-forwards, and runs the
-// command under a bounded-drain group. On return it drains the group within
-// shutdownGrace, then force-closes the port-forwards, removes the session
-// directory, and records the stop audit event. A gate denial short-circuits
-// before any deploy and is not audited.
-func (s *Session) Run(ctx context.Context) (err error) {
+// Live is a deployed interception agent ready to serve local commands: the
+// port-forwards are open, the token is delivered, and the per-command
+// local.Config template is resolved. It is produced by Establish and torn
+// down by Close; between those two calls Run may be invoked any number of
+// times, each running one command through the same deployed agent.
+type Live struct {
+	// session owns the Deps and Options this Live was established from, and
+	// is what Close reports the stop audit event through (s.deps.Sink,
+	// s.stopEvent).
+	session *Session
+
+	// cfg is the per-command local.Config template: everything Establish
+	// resolved once (addresses, token file, injector paths, mode/env
+	// settings) except Socket, which Run sets fresh per call.
+	cfg local.Config
+
+	// dir is the session's temporary directory (token file, injector,
+	// per-command relay sockets).
+	dir string
+
+	// cleanups accumulates teardown steps in acquisition order; Close runs
+	// them in reverse.
+	cleanups []func()
+
+	// socketSeq is an atomic counter giving each Run call's relay socket a
+	// unique name under dir, so serial reuse of one Live never collides with
+	// mogate's per-run create/remove of the socket file.
+	socketSeq atomic.Uint64
+
+	// start is when Establish began, used by Close to compute the audited
+	// session duration.
+	start time.Time
+
+	// closeOnce guards teardown so a double Close (for example the
+	// back-compat Run's defer racing an Establish-error path) runs the
+	// cleanups and the stop audit exactly once.
+	closeOnce sync.Once
+}
+
+// Establish gates and audits the interception request, deploys the agent
+// (ephemeral container or standalone pod), delivers the session token, and
+// opens the port-forward(s), returning a Live ready for repeated Run calls.
+// It does not run any command and does not drain or tear anything down on
+// success. A gate denial short-circuits before any deploy and is not
+// audited. If any later step fails, Establish runs the cleanups it has
+// accumulated so far and records the stop audit event before returning the
+// error, so a failed Establish leaves nothing deployed behind.
+func (s *Session) Establish(ctx context.Context) (live *Live, err error) {
 	if gateErr := gate(ctx, s.deps.Enforcer, s.gateInput()); gateErr != nil {
-		return gateErr
+		return nil, gateErr
 	}
 
 	start := time.Now()
 	auditStart(ctx, s.deps.Sink, s.startEvent())
 
-	// Capacity 4 covers the targeted path's worst case: the session dir, the
-	// in-agent SIGTERM cleanup, and the two port-forward stops. The targetless
-	// path uses fewer (dir, pod deletion, one port-forward).
-	cleanups := make([]func(), 0, 4)
+	l := &Live{session: s, start: start}
 	defer func() {
-		// Teardown runs in reverse acquisition order: stop the port-forwards,
-		// then remove the session directory, then record the stop event. The
-		// group drain (below) has already completed by the time we get here.
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			cleanups[i]()
+		if err != nil {
+			l.Close(stopReason(err))
 		}
-		auditStop(ctx, s.deps.Sink, s.stopEvent(time.Since(start), stopReason(err)))
 	}()
 
 	dir, err := s.newSessionDir()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	cleanups = append(cleanups, func() { _ = os.RemoveAll(dir) })
+	l.dir = dir
+	l.cleanups = append(l.cleanups, func() { _ = os.RemoveAll(dir) })
 
 	injectorLib, err := s.resolveInjector(dir)
 	if err != nil {
-		return fmt.Errorf("intercept: resolve injector: %w", err)
+		return nil, fmt.Errorf("intercept: resolve injector: %w", err)
 	}
 	rosettaLib, err := s.resolveRosettaInjector(dir)
 	if err != nil {
-		return fmt.Errorf("intercept: resolve x86_64 injector: %w", err)
+		return nil, fmt.Errorf("intercept: resolve x86_64 injector: %w", err)
 	}
 
 	token, err := mintToken()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tokenFile, err := writeTokenFile(dir, token)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var controlAddr, egressAddr string
 	if s.opts.Targetless {
-		egressAddr, err = s.provisionTargetless(ctx, token, &cleanups)
+		egressAddr, err = s.provisionTargetless(ctx, token, &l.cleanups)
 	} else {
-		controlAddr, egressAddr, err = s.provisionTargeted(ctx, token, &cleanups)
+		controlAddr, egressAddr, err = s.provisionTargeted(ctx, token, &l.cleanups)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	cfg := local.Config{
+	l.cfg = local.Config{
 		ControlAddr:        controlAddr,
 		EgressAddr:         egressAddr,
 		Target:             s.opts.Target,
 		TokenFile:          tokenFile,
-		Socket:             filepath.Join(dir, RelaySocketName),
 		InjectorLib:        injectorLib,
 		InjectorLibRosetta: rosettaLib,
 		Root:               s.fileRoot(),
@@ -265,15 +300,79 @@ func (s *Session) Run(ctx context.Context) (err error) {
 		EnvExclude:         s.opts.EnvExclude,
 	}
 
+	return l, nil
+}
+
+// Run runs one command through the already-deployed agent, blocking until it
+// exits or ctx is cancelled. Each call gets its own relay socket path under
+// l.dir so sequential Run calls on one Live never collide over mogate's
+// per-run create/remove of the socket file. The runner's error is returned
+// verbatim (wrapped only with %w where wrapped at all) so callers can
+// errors.As into it, for example to recover an *exec.ExitError.
+//
+// Run is sequential-only: it does not guard against concurrent invocation, so
+// callers must not overlap Run calls on one Live — always wait for one call
+// to return before starting the next (a per-Live relay socket, not a lock,
+// is what keeps sequential calls from colliding; a concurrent pair would
+// race on l.socketSeq's ordering guarantee and on the shared l.cfg copy).
+func (l *Live) Run(ctx context.Context, runner LocalRunner, command []string) error {
+	cfg := l.cfg
+	cfg.Socket = l.socketPath()
+
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	eg, egCtx := errgroup.WithContext(runCtx)
 	eg.Go(func() error {
-		return s.deps.LocalRunner.Run(egCtx, cfg, s.opts.Command)
+		return runner.Run(egCtx, cfg, command)
 	})
 
-	err = drain(ctx, eg, cancel)
-	return err
+	return drain(ctx, eg, cancel)
+}
+
+// socketPath returns a fresh relay socket path under l.dir for one Run call.
+// The first call uses the well-known RelaySocketName, matching the single
+// command every existing caller runs through the back-compat Run(ctx); each
+// later call on the same Live appends an incrementing counter so it never
+// collides with mogate's per-run create+remove of the socket file.
+func (l *Live) socketPath() string {
+	n := l.socketSeq.Add(1) - 1
+	if n == 0 {
+		return filepath.Join(l.dir, RelaySocketName)
+	}
+	return filepath.Join(l.dir, fmt.Sprintf("relay-%d.sock", n))
+}
+
+// Close tears the Live down: it runs the accumulated cleanups in reverse
+// acquisition order (stopping the port-forwards, best-effort agent
+// teardown, then removing the session directory) and records the stop audit
+// event with reason and the elapsed duration since Establish. It is
+// idempotent — a second Close (for example from the back-compat Run's defer
+// after Establish already closed on its own error path) is a no-op.
+func (l *Live) Close(reason string) {
+	l.closeOnce.Do(func() {
+		for i := len(l.cleanups) - 1; i >= 0; i-- {
+			l.cleanups[i]()
+		}
+		auditStop(context.Background(), l.session.deps.Sink, l.session.stopEvent(time.Since(l.start), reason))
+	})
+}
+
+// Run executes the interception lifecycle and blocks until the injected
+// command exits or ctx is cancelled. It is the back-compat composition of
+// Establish, Live.Run, and Live.Close for callers that only ever run one
+// command per session (the CLI and web callers): it gates and audits the
+// request, deploys and waits for the agent, delivers the token, opens the
+// port-forward(s), and runs the command under a bounded-drain group. On
+// return it drains the group within shutdownGrace, then force-closes the
+// port-forwards, removes the session directory, and records the stop audit
+// event. A gate denial short-circuits before any deploy and is not audited.
+func (s *Session) Run(ctx context.Context) (err error) {
+	live, err := s.Establish(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { live.Close(stopReason(err)) }()
+	return live.Run(ctx, s.deps.LocalRunner, s.opts.Command)
 }
 
 // provisionTargeted deploys the interception agent as an ephemeral container

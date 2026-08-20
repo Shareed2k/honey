@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"k8s.io/client-go/rest"
+
+	"github.com/shareed2k/honey/internal/interceptwire"
 )
 
 // Server-brokered interception endpoints (see
@@ -153,5 +155,5 @@ type brokerPodExecer struct {
 // ExecInPod runs cmd in the broker's known container, wiring the provided
 // streams.
 func (e *brokerPodExecer) ExecInPod(ctx context.Context, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	return execInPodContainer(ctx, e.cfg, e.ns, e.pod, e.container, cmd, stdin, stdout, stderr)
+	return interceptwire.ExecInPodContainer(ctx, e.cfg, e.ns, e.pod, e.container, cmd, stdin, stdout, stderr)
 }

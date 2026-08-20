@@ -80,7 +80,7 @@ const (
 	// env_overlay subtest) needs an agent that answers OpEnvGet, which landed in
 	// v0.1.8.
 	mogateRepo = "https://github.com/shareed2k/mogate"
-	mogateTag  = "v0.1.9"
+	mogateTag  = "v0.1.10"
 	// agentBaseImage is the genuine mogate agent image, built from the module's
 	// own (unmodified) Dockerfile. The honey agent images layer only a thin
 	// timing-flag entrypoint on top of it (no token wait — kube-agent waits
@@ -247,8 +247,8 @@ func testTargetlessEgress(t *testing.T, env *e2eEnv) {
 		// The standalone Pod's single container has a known, fixed name
 		// (AgentContainerName) — unlike the targeted path there is no
 		// ephemeral container to resolve at exec time, so the execer is told
-		// the container directly (mirrors interceptPodExecer's targetless
-		// wiring in internal/cli/intercept.go).
+		// the container directly (mirrors interceptwire.PodExecer's
+		// targetless Container-field wiring).
 		PodExecer:   &agentExecer{cfg: env.rest, clientset: env.admin, namespace: ns, pod: pod, container: AgentContainerName},
 		K8sClient:   env.admin,
 		Enforcer:    buildAllowEnforcer(t),
@@ -942,7 +942,7 @@ type agentExecer struct {
 	// standalone pod's single container has a known, fixed name
 	// (AgentContainerName). Left empty for the targeted subtests, which fall
 	// back to resolving the most recently added ephemeral container — mirrors
-	// interceptPodExecer's container field (internal/cli/intercept.go).
+	// interceptwire.PodExecer's Container field.
 	container string
 }
 

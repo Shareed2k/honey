@@ -313,7 +313,7 @@ func TestRunIntercept_Targetless(t *testing.T) {
 		cmd := newInterceptCmd()
 		// A cluster name absent from k8s_proxy.clusters forces a fast,
 		// deterministic failure past the targetless/mode validation (inside
-		// interceptRestConfig, before any real cluster or policy work), so this
+		// interceptwire.RestConfigForCluster, before any real cluster or policy work), so this
 		// assertion doesn't depend on the host's kubeconfig or network.
 		err := runIntercept(cmd, nil, enabled, interceptFlags{namespace: "apps", cluster: "does-not-exist", modes: []string{"egress"}})
 		require.Error(t, err)
@@ -404,19 +404,6 @@ func TestRunIntercept_BrokeredDispatchPrecedesLocalValidation(t *testing.T) {
 	// the local "incoming" default.
 	assert.Contains(t, err.Error(), "oidc login")
 	assert.NotContains(t, err.Error(), "--target is required")
-}
-
-func TestInterceptRestConfig_UnknownClusterErrors(t *testing.T) {
-	// A --cluster name not present in k8s_proxy.clusters must error, not silently
-	// fall back to the current kubeconfig context (gate/audit integrity).
-	cfg := &config.File{K8sProxy: &config.K8sProxyConfig{Clusters: []config.K8sProxyCluster{{Name: "prod"}}}}
-	_, err := interceptRestConfig(cfg, "staging")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not defined in k8s_proxy.clusters")
-
-	// Nil k8s_proxy with a named cluster also errors.
-	_, err = interceptRestConfig(&config.File{}, "prod")
-	require.Error(t, err)
 }
 
 // writeNSKubeconfig writes a kubeconfig whose current context selects namespace

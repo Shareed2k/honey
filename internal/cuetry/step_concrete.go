@@ -783,6 +783,34 @@ func (s *ServiceStep) Validate(vc StepValidateCtx) error {
 var _ RemoteStep = (*ServiceStep)(nil)
 
 // ---------------------------------------------------------------------------
+// intercept
+// ---------------------------------------------------------------------------
+
+// InterceptStep runs a local command/script under a Kubernetes interception.
+// Unlike most kinds it has no RemoteExec: interception runs locally against an
+// in-cluster agent, not over SSH fan-out.
+type InterceptStep struct {
+	StepBase
+	Intercept *RecipeStepIntercept `json:"intercept,omitempty"`
+}
+
+// Kind returns the step kind identifier.
+func (s *InterceptStep) Kind() string { return KindIntercept }
+
+// Clone returns a deep copy of the step (safe for loop fan-out mutation).
+func (s *InterceptStep) Clone() Step { cp := *s; cp.StepBase = s.cloned(); return &cp }
+
+// Validate checks this step's kind-specific fields; shared rules run separately.
+func (s *InterceptStep) Validate(vc StepValidateCtx) error {
+	if s.Intercept == nil {
+		return fmt.Errorf("intercept step requires an intercept block")
+	}
+	return validateInterceptStep(vc, s.Intercept)
+}
+
+var _ Step = (*InterceptStep)(nil)
+
+// ---------------------------------------------------------------------------
 // registration
 // ---------------------------------------------------------------------------
 
@@ -806,4 +834,5 @@ func init() {
 	RegisterStep(KindAI, []string{"ai"}, func() Step { return &AIStep{} })
 	RegisterStep(KindOPA, []string{"opa"}, func() Step { return &OPAStep{} })
 	RegisterStep(KindHTTP, []string{"http"}, func() Step { return &HTTPStep{} })
+	RegisterStep(KindIntercept, []string{"intercept"}, func() Step { return &InterceptStep{} })
 }

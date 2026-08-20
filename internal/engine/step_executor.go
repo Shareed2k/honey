@@ -67,6 +67,7 @@ type ExecutionOptions struct {
 	Facts             map[string]map[string]any
 	TriggeredHandlers map[string]bool
 	TunnelCoord       *RecipeTunnelCoordinator
+	InterceptCoord    *RecipeInterceptCoordinator
 	// DockerPluginSess scopes remote runtime:docker plugin containers to the
 	// run (one shim-container per plugin+host, torn down at run end). nil on
 	// paths that never run remote docker plugins.
