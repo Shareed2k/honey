@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -402,6 +403,68 @@ func TestPtyProxyHandleCtrl_IgnoreResize(t *testing.T) {
 	require.EqualValues(t, 60, ws.Rows, "an operator/non-guest resize frame must still resize (unchanged)")
 }
 
+// TestPtyProxyRunBridge_IgnoreResizeSkipsInitialHelloSize is the LOW-5
+// round-2 residual: resize control FRAMES were already dropped for guests
+// (above), but the guest's initial hello cols/rows still reached
+// pty.Setsize at bridge start (measured: a 40x10 guest shrank a detached
+// operator's 200x50 window to 40x9, and it stayed). IgnoreResize must now
+// skip that initial Setsize too, for both guest modes; the zero-value
+// operator/non-guest path is unaffected.
+func TestPtyProxyRunBridge_IgnoreResizeSkipsInitialHelloSize(t *testing.T) {
+	// A real pty (not the fake AF_UNIX pair used elsewhere) is needed to call
+	// pty.GetsizeFull — but a real, empty `cat` pty's Read blocks in a way
+	// SetReadDeadline cannot interrupt on darwin (see newFakePtyPair's own
+	// comment), so this test does not wait for the bridge to fully tear
+	// down — only for the SYNCHRONOUS size setup at the very top of
+	// ptyProxyRunBridge to have run, which is all this fix touches. t.Cleanup
+	// killing the process/closing ptmx is what eventually lets the bridge's
+	// goroutines unwind.
+	cmd := exec.Command("cat")
+	ptmx, err := pty.Start(cmd)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = ptmx.Close()
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	require.NoError(t, pty.Setsize(ptmx, &pty.Winsize{Cols: 80, Rows: 24}))
+
+	upgrader := websocket.Upgrader{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, uerr := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, uerr)
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 40, Rows: 10}
+		go ptyProxyRunBridge(ptmx, c, (*engine.SessionRecorder)(nil), hello, "honey_ignoreresize_hello_test", closeTabKill,
+			ptyProxyStdinPolicy{IgnoreResize: true, DropStdin: true})
+	}))
+	t.Cleanup(ts.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	wsConn, _, dialErr := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, dialErr)
+	t.Cleanup(func() { _ = wsConn.Close() })
+
+	// Give the bridge a moment to run its (skipped) initial Setsize, then
+	// assert the pty's size is still what it was BEFORE the guest ever
+	// attached — never the guest's 40x10 hello.
+	time.Sleep(100 * time.Millisecond)
+	ws, gerr := pty.GetsizeFull(ptmx)
+	require.NoError(t, gerr)
+	require.EqualValues(t, 80, ws.Cols, "a guest's hello size must never reach the initial pty.Setsize")
+	require.EqualValues(t, 24, ws.Rows, "a guest's hello size must never reach the initial pty.Setsize")
+}
+
+// swapTmuxRunBounded installs a fake tmuxRunBounded (tmuxSendKeysHex's
+// relay-local, timeout-bounded exec seam — distinct from the shared tmuxRun)
+// and returns a restore func. Tests using it must not run in parallel, same
+// caveat as swapTmuxRun.
+func swapTmuxRunBounded(fn func(...string) ([]byte, error)) func() {
+	orig := tmuxRunBounded
+	tmuxRunBounded = fn
+	return func() { tmuxRunBounded = orig }
+}
+
 // TestTmuxSendKeysHex_ArgvNeverContainsRawBytes is the HIGH-1 unit-level
 // proof, via a fake tmux runner: tmuxSendKeysHex builds a send-keys -H argv
 // out of self-generated two-digit hex per byte, and the guest's raw bytes
@@ -429,7 +492,7 @@ func TestTmuxSendKeysHex_ArgvNeverContainsRawBytes(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotArgs []string
-			restore := swapTmuxRun(func(args ...string) ([]byte, error) {
+			restore := swapTmuxRunBounded(func(args ...string) ([]byte, error) {
 				gotArgs = args
 				return nil, nil
 			})
@@ -444,35 +507,62 @@ func TestTmuxSendKeysHex_ArgvNeverContainsRawBytes(t *testing.T) {
 	}
 }
 
-// TestTmuxSendKeysHex_ChunksLargePayload proves a burst larger than
-// maxSendKeysHexArgsPerExec is chunked into multiple bounded execs instead of
-// one unbounded argv/subprocess.
-func TestTmuxSendKeysHex_ChunksLargePayload(t *testing.T) {
-	payload := bytes.Repeat([]byte{0x41}, maxSendKeysHexArgsPerExec+10)
-
-	var calls [][]string
-	restore := swapTmuxRun(func(args ...string) ([]byte, error) {
-		calls = append(calls, append([]string(nil), args...))
+// TestTmuxSendKeysHex_RejectsOversizedFrameWithoutExec is the NEW-5
+// regression: a payload over maxRelayFrameBytes is refused OUTRIGHT — the
+// fake tmuxRunBounded here fails the test if it is ever called at all, so
+// this also proves the round-2 "all-or-nothing per frame" judgment: no
+// partial relay is even attempted for an oversized frame.
+func TestTmuxSendKeysHex_RejectsOversizedFrameWithoutExec(t *testing.T) {
+	restore := swapTmuxRunBounded(func(args ...string) ([]byte, error) {
+		t.Fatalf("tmux must never be exec'd for an oversized frame, got args %v", args)
 		return nil, nil
 	})
 	defer restore()
 
-	require.NoError(t, tmuxSendKeysHex("honey_target:", payload))
-	require.Len(t, calls, 2, "a payload over the per-exec bound must chunk into multiple execs")
-	require.Len(t, calls[0], 4+maxSendKeysHexArgsPerExec)
-	require.Len(t, calls[1], 4+10)
+	payload := bytes.Repeat([]byte{0x41}, maxRelayFrameBytes+1)
+	err := tmuxSendKeysHex("honey_target:", payload)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds")
 }
 
 // TestTmuxSendKeysHex_PropagatesRunError proves a tmux failure surfaces as a
 // wrapped error instead of being silently swallowed.
 func TestTmuxSendKeysHex_PropagatesRunError(t *testing.T) {
-	restore := swapTmuxRun(func(...string) ([]byte, error) {
+	restore := swapTmuxRunBounded(func(...string) ([]byte, error) {
 		return []byte("can't find pane"), errors.New("exit status 1")
 	})
 	defer restore()
 
 	err := tmuxSendKeysHex("honey_target:", []byte("x"))
 	require.Error(t, err)
+}
+
+// TestTmuxSendKeysHex_TimesOutOnRealHang is the NEW-1 regression against a
+// REAL (fake) tmux binary that hangs — proving the actual
+// exec.CommandContext + tmuxSendKeysRunTimeout mechanism works, not just
+// that a faked error propagates. A tiny shell script named "tmux" is put
+// first on PATH and sleeps far longer than a shrunk timeout; the exec must
+// still return within a small bounded wall-clock window (well under the
+// script's sleep), proving the child was actually killed on deadline, not
+// merely that the call eventually returned on its own.
+func TestTmuxSendKeysHex_TimesOutOnRealHang(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\nsleep 5\n"
+	fakeTmux := dir + "/tmux"
+	require.NoError(t, os.WriteFile(fakeTmux, []byte(script), 0o755)) // #nosec G306 -- test fixture, must be executable
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	origTimeout := tmuxSendKeysRunTimeout
+	tmuxSendKeysRunTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { tmuxSendKeysRunTimeout = origTimeout })
+
+	start := time.Now()
+	err := tmuxSendKeysHex("honey_target:", []byte("g"))
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "a hung tmux must surface as an error, never block forever")
+	require.Less(t, elapsed, 3*time.Second, "the call must return near the shrunk timeout, not wait out the fake tmux's 5s sleep")
 }
 
 // TestPtyProxyRunBridge_CollaborateRelaysViaSendKeys proves the bridge wiring
@@ -486,7 +576,7 @@ func TestPtyProxyRunBridge_CollaborateRelaysViaSendKeys(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
 	var gotArgs []string
-	restore := swapTmuxRun(func(args ...string) ([]byte, error) {
+	restore := swapTmuxRunBounded(func(args ...string) ([]byte, error) {
 		gotArgs = args
 		return nil, nil
 	})
@@ -534,4 +624,230 @@ func TestPtyProxyRunBridge_CollaborateRelaysViaSendKeys(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
 	}
+}
+
+// TestFilterTerminalReports is the NEW-2 regression: a real terminal (and the
+// guest's own xterm.js) answers Device Attributes / Cursor Position / OSC
+// color queries automatically, and — because every guest byte is relayed
+// into the pane — an unfiltered reply would land as literal text at the
+// operator's shell prompt or duplicate a genuine reply an app is waiting on.
+// Table-drives the reply shapes named in the brief (CSI .../c, /R, /n,
+// OSC/DCS) as dropped, and proves ordinary typing (letters, control chars,
+// arrow/function-key CSI sequences) passes through byte-for-byte.
+func TestFilterTerminalReports(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload []byte
+		want    []byte
+	}{
+		{name: "DA1 reply dropped", payload: []byte("\x1b[?1;2c"), want: []byte{}},
+		{name: "DA2 reply dropped", payload: []byte("\x1b[>1;95;0c"), want: []byte{}},
+		{name: "CPR reply dropped", payload: []byte("\x1b[24;80R"), want: []byte{}},
+		{name: "device status report dropped", payload: []byte("\x1b[0n"), want: []byte{}},
+		{name: "OSC color reply dropped (BEL-terminated)", payload: []byte("\x1b]11;rgb:0000/0000/0000\x07"), want: []byte{}},
+		{name: "OSC color reply dropped (ST-terminated)", payload: []byte("\x1b]10;rgb:ffff/ffff/ffff\x1b\\"), want: []byte{}},
+		{name: "DCS reply dropped", payload: []byte("\x1bP1$r0\x1b\\"), want: []byte{}},
+		{
+			name:    "a report reply mixed into ordinary output is stripped, typing survives",
+			payload: []byte("ls\x1b[?1;2c\r"), want: []byte("ls\r"),
+		},
+		{name: "ordinary typing untouched", payload: []byte("hello world\r"), want: []byte("hello world\r")},
+		{name: "arrow key CSI untouched (ends in A, not a report final byte)", payload: []byte("\x1b[A"), want: []byte("\x1b[A")},
+		{name: "Home key CSI untouched (ends in ~)", payload: []byte("\x1b[1~"), want: []byte("\x1b[1~")},
+		{name: "the HIGH-1 prefix byte (not an ESC sequence at all) untouched", payload: []byte("\x02c"), want: []byte("\x02c")},
+		{name: "empty payload", payload: []byte{}, want: []byte{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterTerminalReports(tc.payload)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestPtyProxyRunBridge_CollaborateFiltersTerminalReports proves the filter
+// is actually wired into the relay path: a DA1 reply byte string is dropped
+// before it ever reaches tmuxSendKeysHex (no exec at all — the fake here
+// fails the test if called), while ordinary typing sent in the SAME
+// connection still reaches it normally.
+func TestPtyProxyRunBridge_CollaborateFiltersTerminalReports(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	var gotArgs []string
+	restore := swapTmuxRunBounded(func(args ...string) ([]byte, error) {
+		gotArgs = args
+		return nil, nil
+	})
+	defer restore()
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, "honey_filter_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_filter_test:"})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	// A pure DA1 reply: fully filtered, so nothing should ever reach tmux.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("\x1b[?1;2c")))
+	time.Sleep(100 * time.Millisecond)
+	require.Nil(t, gotArgs, "a pure terminal-report reply must never reach tmuxSendKeysHex")
+
+	// Ordinary typing in the same connection still relays normally.
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("hi\r")))
+	require.Eventually(t, func() bool { return gotArgs != nil }, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, []string{"send-keys", "-H", "-t", "honey_filter_test:", "68", "69", "0d"}, gotArgs)
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+}
+
+// TestPtyProxyRunBridge_RelayFailureRecordsDropAndNotifiesGuest is the NEW-6
+// regression: a failed relay must record that the bytes were DROPPED (never
+// a false "stdin" success claiming the pane received something it never
+// did), and — per the round-2 judgment that a guest typing into a void will
+// blindly retype, possibly a destructive command — must tell the guest over
+// the socket.
+func TestPtyProxyRunBridge_RelayFailureRecordsDropAndNotifiesGuest(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	restore := swapTmuxRunBounded(func(...string) ([]byte, error) {
+		return nil, errors.New("simulated relay failure")
+	})
+	defer restore()
+
+	rec, err := engine.NewSessionRecorder(engine.SessionRecorderOptions{
+		Dir: t.TempDir(), Trigger: "test", Mode: "ssh", HostName: "guest-relay-fail",
+	})
+	require.NoError(t, err)
+
+	ptmx, peer := newFakePtyPair(t)
+	defer peer.Close()
+
+	upgrader := websocket.Upgrader{}
+	done := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		closeTabKill := make(chan struct{}, 1)
+		hello := WSHello{Cols: 80, Rows: 24}
+		ptyProxyRunBridge(ptmx, conn, rec, hello, "honey_dropnotify_test", closeTabKill,
+			ptyProxyStdinPolicy{RelayTarget: "honey_dropnotify_test:"})
+		close(done)
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("rm -rf /\r")))
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mt, notice, rerr := conn.ReadMessage()
+	require.NoError(t, rerr)
+	require.Equal(t, websocket.TextMessage, mt)
+	require.Contains(t, string(notice), "dropped", "the guest must be told its input never landed")
+
+	_ = ptmx.Close()
+	_ = conn.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyProxyRunBridge did not return after ptmx/conn were closed")
+	}
+	require.NoError(t, rec.Close())
+
+	raw, err := os.ReadFile(rec.Path())
+	require.NoError(t, err)
+	var sawDropError, sawFalseStdinSuccess bool
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var evt struct {
+			Type      string `json:"type"`
+			Direction string `json:"direction"`
+			Message   string `json:"message"`
+		}
+		require.NoError(t, json.Unmarshal(line, &evt))
+		if evt.Type == "error" && strings.Contains(evt.Message, "dropped") {
+			sawDropError = true
+		}
+		if evt.Type == "data" && evt.Direction == "stdin" {
+			sawFalseStdinSuccess = true
+		}
+	}
+	require.True(t, sawDropError, "expected a recorded error event describing the dropped bytes")
+	require.False(t, sawFalseStdinSuccess, "must never record a stdin success for bytes the pane never received")
+}
+
+// TestHandleLiveTerminalAttach_UnsupportedModeFailsClosed is the NEW-7
+// regression: any attachMode other than the two known guest modes must be
+// rejected before starting any process — never fall through to the
+// stdin-policy switch's zero value, which (round 1) forwarded raw guest
+// bytes straight to ptmx, restoring the HIGH-1 hole.
+func TestHandleLiveTerminalAttach_UnsupportedModeFailsClosed(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	upgrader := websocket.Upgrader{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		err = handleLiveTerminalAttach(conn, "honey_unsupported_mode_test", attachExclusive, 80, 24, nil)
+		require.Error(t, err, "attachExclusive (or any mode besides shared/readonly) must be rejected here")
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	_ = conn.Close()
+}
+
+// TestHandleLiveTerminalAttach_PinsWindowSize proves the LOW-5 round-2
+// residual fix end to end against a real tmux session: attaching a guest
+// pins window-size to "manual" BEFORE the client attaches, so the shared
+// window can never be reshaped by a small (or hello-lying) guest client.
+// Skips cleanly when tmux is not on PATH.
+func TestHandleLiveTerminalAttach_PinsWindowSize(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH")
+	}
+	name := fmt.Sprintf("honey_winsize_pin_%d", time.Now().UnixNano())
+	require.True(t, validHoneyMuxSessionName(name))
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-x", "200", "-y", "50", "-s", name, "--", "cat").Run())
+
+	cmd, _, _, err := ptyMuxTmuxCommand(name, nil, attachReadonly)
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	out, err := exec.Command("tmux", "show-options", "-t", name, "window-size").Output()
+	require.NoError(t, err)
+	require.Contains(t, string(out), "manual", "window-size must be pinned before/at guest attach")
 }

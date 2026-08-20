@@ -75,6 +75,21 @@ func (s *Server) handleJITRedeemTerminal(w http.ResponseWriter, r *http.Request)
 			httpError(w, fmt.Errorf("invalid or expired link"), http.StatusNotFound)
 			return
 		}
+		// NEW-3: re-resolve to tmux's canonical session name at redeem time
+		// too, same "re-validate independent of grant-create time" pattern as
+		// the name-format check above (applyLiveTerminalShare already does
+		// this at grant-create, so this is normally a no-op exact match; it
+		// is what catches a grant stored before this fix, or a session
+		// renamed since). Everything from here on — the attach, the OPA
+		// input, and the audit record — uses ONLY this canonical value, never
+		// whatever the grant happened to carry. A non-exact/prefix match
+		// collapses into the same generic 404 as any other bad code.
+		canonicalMux, cerr := tmuxCanonicalSessionName(muxSession)
+		if cerr != nil {
+			httpError(w, fmt.Errorf("invalid or expired link"), http.StatusNotFound)
+			return
+		}
+		muxSession = canonicalMux
 		switch {
 		case hasCapability(g.Capabilities, jit.CapCollab):
 			liveCapability = jit.CapCollab

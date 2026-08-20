@@ -72,7 +72,16 @@ export function ShareAccessModal({ record, open, onClose, liveSession = null }: 
       setResult(null);
       setCopied(false);
     }
-  }, [open, record, liveSession]);
+    // NEW-4: depend on the PRIMITIVE muxSession, not the liveSession object —
+    // the parent (TerminalContext.tsx) passes a fresh `{ muxSession }`
+    // literal every render, and it re-renders every 3s from its intercept
+    // poll. Depending on the object itself reset this form (setResult(null)
+    // included) every 3s while it was open, erasing an already-created share
+    // link/code before the operator could copy it. This is deliberate, not a
+    // missed dependency — the object identity is exactly what must NOT be
+    // depended on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, record, liveSession?.muxSession]);
 
   const onSubmit = async () => {
     if (!record) {

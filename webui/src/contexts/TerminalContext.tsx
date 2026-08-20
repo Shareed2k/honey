@@ -209,9 +209,16 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
             // the target when it resolves: `open` below gates on the same
             // resolution (!!shareMuxSession), so setting the target
             // unconditionally used to pop the modal open later, whenever the
-            // intercept poll happened to land, instead of on click.
+            // intercept poll happened to land, instead of on click. Kept as a
+            // second guard even though canShareTerminal below already
+            // disables the button for this case.
             if (liveMuxSession(t)) setShareTarget(t);
           }}
+          // LOW-8 (round-2 residual): disable the button (with a tooltip)
+          // instead of leaving it enabled-but-silent while the mux name is
+          // still unresolved (a freshly opened intercept tab, before the
+          // first poll lands).
+          canShareTerminal={(t) => !!liveMuxSession(t)}
         />
       ) : null}
       <ShareAccessModal

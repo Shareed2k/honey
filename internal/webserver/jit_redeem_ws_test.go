@@ -1,6 +1,7 @@
 package webserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -425,4 +426,73 @@ func TestHandleJITRedeemTerminal_LiveTerminalCollaborateWritesReachSession(t *te
 		}
 	}
 	require.True(t, sawEcho, "a collaborate guest's stdin must reach the shared session")
+}
+
+// TestHandleJITRedeemTerminal_LiveTerminalPrefixAliasRejected404 is the
+// NEW-3 redeem-time regression: a grant whose mux_session is a real,
+// unambiguous PREFIX of an actual tmux session (not the exact name — as
+// could happen from a grant stored before this fix, or drift since) must be
+// rejected at redeem time too, collapsing to the same generic 404 as any
+// other bad code, never attaching to the real session behind the alias.
+func TestHandleJITRedeemTerminal_LiveTerminalPrefixAliasRejected404(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH; live-terminal attach requires it")
+	}
+
+	fullName := fmt.Sprintf("honey_live_prefixalias_%d_full", time.Now().UnixNano())
+	require.True(t, validHoneyMuxSessionName(fullName))
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", fullName).Run() })
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", fullName, "--", "cat").Run())
+
+	// A unique prefix of the real session name — has-session/show-environment
+	// would both be fooled by this, exactly the NEW-3 finding.
+	alias := fullName[:len(fullName)-5]
+	require.NotEqual(t, fullName, alias)
+	require.NoError(t, exec.Command("tmux", "has-session", "-t", alias).Run(), "sanity: tmux must resolve the alias to the real session")
+
+	store, _, wsBase := newJitWSTestServer(t, "banner", Options{})
+	_, code := createWebGrant(t, store, liveTerminalGrant(alias, jit.CapWatch))
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/jit/redeem/"+code+"/terminal", nil)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// TestHandleJITRedeemTerminal_LiveTerminalOversizedFrameRejected is the
+// NEW-5 regression: handleLiveTerminalAttach must bound every guest frame
+// with conn.SetReadLimit before the bridge starts reading. A frame over that
+// limit must never reach tmuxSendKeysHex (which would otherwise fork tmux
+// once per hex byte) — gorilla enforces the limit by closing the connection,
+// which is exactly the "drop and notify" (via the ensuing close) this test
+// observes from the client side.
+func TestHandleJITRedeemTerminal_LiveTerminalOversizedFrameRejected(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH; live-terminal attach requires it")
+	}
+
+	name := fmt.Sprintf("honey_live_oversize_%d", time.Now().UnixNano())
+	require.True(t, validHoneyMuxSessionName(name))
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", name, "--", "cat").Run())
+
+	store, _, wsBase := newJitWSTestServer(t, "unused-banner", Options{})
+	_, code := createWebGrant(t, store, liveTerminalGrant(name, jit.CapCollab))
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/jit/redeem/"+code+"/terminal", nil)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+
+	require.NoError(t, conn.WriteJSON(map[string]int{"cols": 80, "rows": 24}))
+
+	oversized := bytes.Repeat([]byte{'A'}, guestReadLimitBytes+4096)
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, oversized))
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, _, rerr := conn.ReadMessage()
+	require.Error(t, rerr, "a frame over guestReadLimitBytes must close the connection, never reach tmuxSendKeysHex")
 }

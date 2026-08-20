@@ -202,11 +202,10 @@ func interceptResumeCloseTabKill(name string) func() {
 // interceptSessionActor returns the HONEY_INT_ACTOR recorded for a
 // honey-int-* resume session by interceptResumeSetMeta, or "" when name is
 // invalid, tmux/the session cannot be reached, or no actor was ever recorded.
-// Callers (MED-3: applyLiveTerminalShare's live-share ownership check) treat
-// "" as "unknown" rather than "no owner" — they must not fail closed on it,
-// since a transient tmux hiccup or an in-flight metadata write (see
-// interceptResumeSetMeta's bounded retry) is common and must not block an
-// otherwise legitimate request.
+// A single call cannot tell "no owner ever will be recorded" apart from "the
+// write just hasn't landed yet" (interceptResumeSetMeta's own bounded ~500ms
+// retry) — see interceptSessionActorRetry for the caller-facing seam that
+// accounts for that.
 func interceptSessionActor(name string) string {
 	if !validInterceptMuxName(name) {
 		return ""
@@ -216,6 +215,36 @@ func interceptSessionActor(name string) string {
 		return ""
 	}
 	return parseTmuxEnvironment(string(out))["HONEY_INT_ACTOR"]
+}
+
+// interceptActorRetryAttempts/interceptActorRetryDelay bound
+// interceptSessionActorRetry's poll: interceptResumeSetMeta's own metadata
+// write races a human share happening moments after session start, but it
+// has a hard ~500ms budget of its own — 6 attempts at 100ms comfortably
+// covers it without stalling a request for long on a session that will
+// simply never get an actor (e.g. tmux/honey-web restarted mid-session).
+const (
+	interceptActorRetryAttempts = 6
+	interceptActorRetryDelay    = 100 * time.Millisecond
+)
+
+// interceptSessionActorRetry is the fail-closed-capable seam for the
+// honey-int-* family (MED-3 residual): unlike honey_* (no owner is ever
+// recorded, so "unknown" must mean "allow" — inventing a store here is out
+// of scope), a honey-int-* session's owner is ALWAYS eventually recorded by
+// interceptResumeSetMeta, so "still unknown after a bounded retry" is a real
+// signal a caller may treat as "deny", not a transient hiccup to shrug off.
+// It is a package var so tests can fake it without a real retry/sleep.
+var interceptSessionActorRetry = func(name string) string {
+	for i := 0; i < interceptActorRetryAttempts; i++ {
+		if owner := interceptSessionActor(name); owner != "" {
+			return owner
+		}
+		if i < interceptActorRetryAttempts-1 {
+			time.Sleep(interceptActorRetryDelay)
+		}
+	}
+	return ""
 }
 
 // interceptResumeSetMeta records the secret-free metadata (pod/ns/cluster/actor/

@@ -82,12 +82,15 @@ const jitKindLiveTerminal = "live_terminal"
 // requester is the actor creating the grant (handleCreateJITGrant's
 // actorFromCtx). For the honey-int-* (intercept resume) family it is
 // cross-checked (MED-3) against the HONEY_INT_ACTOR interceptResumeSetMeta
-// recorded for that session, refusing a live share whose actor doesn't match
-// — a best-effort check: interceptSessionActor returns "" (never checked
-// against requester) when the owner can't be determined, rather than failing
-// every request closed on a transient tmux hiccup. honey_* (plain SSH/docker/
-// k8s web-terminal) sessions carry no such recorded owner today; that gap is
-// real and is left as a follow-up, not invented here as a new store.
+// recorded for that session, refusing a live share whose actor doesn't
+// match. Unlike round 1, an UNKNOWN owner now fails closed for this family
+// (interceptSessionActorRetry bounds a short retry against
+// interceptResumeSetMeta's own write race first): those names are derivable
+// cross-tenant and the intercept list is visible to any authenticated user,
+// so "we couldn't determine the owner" must mean "deny", not "allow". honey_*
+// (plain SSH/docker/k8s web-terminal) sessions carry no such recorded owner
+// at all — that gap is real, stays "unknown ⇒ allow", and is left as a
+// follow-up, not invented here as a new store.
 func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantRequest, requester string) error {
 	mux := strings.TrimSpace(body.MuxSession)
 	if mux == "" {
@@ -97,7 +100,11 @@ func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantReque
 		return fmt.Errorf("invalid mux_session %q", mux)
 	}
 	if validInterceptMuxName(mux) {
-		if owner := interceptSessionActor(mux); owner != "" && owner != requester {
+		owner := interceptSessionActorRetry(mux)
+		if owner == "" {
+			return fmt.Errorf("refusing to share session %q: owner could not be determined", mux)
+		}
+		if owner != requester {
 			return fmt.Errorf("refusing to share session %q: not owned by %q", mux, requester)
 		}
 	}
@@ -109,14 +116,28 @@ func applyLiveTerminalShare(resource *jit.ResourceRef, body *jitCreateGrantReque
 	// MED-4: grant creation must not succeed for a tab with no live tmux
 	// session (zellij preferred, no-mux fallback, pve-serial/truenas tabs never
 	// have one) — otherwise the guest only discovers the broken link after
-	// burning a redemption. Checked last (session reality), after every static
-	// validation above, using the same liveness seam the attach path itself
-	// uses. A live-share grant is only ever redeemable on the honey node that
-	// actually holds this tmux session — it does not follow the session
-	// elsewhere.
+	// burning a redemption. Checked after every static validation above, using
+	// the same liveness seam the attach path itself uses — giving a dead
+	// session the friendly message below, rather than whatever raw tmux error
+	// the NEW-3 canonicalization check right after it would otherwise surface
+	// for a name tmux can't find at all. A live-share grant is only ever
+	// redeemable on the honey node that actually holds this tmux session — it
+	// does not follow the session elsewhere.
 	if !tmuxGuestSessionAlive(mux) {
 		return errors.New("this terminal is not shareable — no live tmux session")
 	}
+	// NEW-3: tmux matches a `-t` target by PREFIX ("honey-int-abc" resolves to
+	// a real "honey-int-abcdef"), so a request naming a unique prefix would
+	// otherwise pass every check above and attach to the REAL session while
+	// this stores (and later, policy/audit see) the ALIAS — an exact-match
+	// policy rule is evadable and the audit trail would name a session that
+	// does not exist. Resolve the actual tmux session name now and refuse
+	// anything but an exact match; only the canonical name is ever stored.
+	canonicalMux, err := tmuxCanonicalSessionName(mux)
+	if err != nil {
+		return fmt.Errorf("resolve mux_session: %w", err)
+	}
+	mux = canonicalMux
 
 	meta := make(map[string]string, len(resource.Meta)+2)
 	for k, v := range resource.Meta {
@@ -336,20 +357,25 @@ func (s *Server) gateJITGrant(r *http.Request, actor string, resource jit.Resour
 	if g, ok := resource.Meta["groups"]; ok {
 		groups = g
 	}
+	target := map[string]any{
+		"name":     resource.Name,
+		"provider": resource.Provider,
+		"env":      resource.Meta["env"],
+		"groups":   groups,
+	}
+	// MED-3: a live_terminal grant's mux_session — the exact (now-canonical,
+	// see applyLiveTerminalShare's NEW-3 fix) session a redeemer will be
+	// attached to — so policy can see (and gate on) which live session is
+	// being shared, not just the target host. Omitted entirely when empty
+	// (every non-live grant), so an existing "jit_grant" policy sees the same
+	// input shape it always has, key absent rather than an empty string.
+	if mux := resource.Meta["mux_session"]; mux != "" {
+		target["mux_session"] = mux
+	}
 	d, err := s.opts.Enforcer.Evaluate(r.Context(), map[string]any{
-		"action": "jit_grant",
-		"actor":  actor,
-		"target": map[string]any{
-			"name":     resource.Name,
-			"provider": resource.Provider,
-			"env":      resource.Meta["env"],
-			"groups":   groups,
-			// MED-3: a live_terminal grant's mux_session — the exact session a
-			// redeemer will be attached to — so policy can see (and gate on)
-			// which live session is being shared, not just the target host.
-			// Empty for every non-live grant, same as before this existed.
-			"mux_session": resource.Meta["mux_session"],
-		},
+		"action":           "jit_grant",
+		"actor":            actor,
+		"target":           target,
 		"capabilities":     caps,
 		"delivery":         delivery,
 		"require_approval": requireApproval,

@@ -103,6 +103,15 @@ export function JitTerminal({ code, readOnly = false }: JitTerminalProps) {
       // A watch grant is read-only: the server never wires this frame into
       // the shared session anyway (belt and braces alongside tmux's own `-r`
       // attach), so don't even send it.
+      //
+      // For a collaborate grant, note that xterm answers terminal queries
+      // (Device Attributes, Cursor Position Report, OSC color queries)
+      // automatically, through this SAME callback, whenever the mirrored
+      // pane output contains one — there is no client-side hook to suppress
+      // just those replies. The server-side relay is what filters them out
+      // before they ever reach the pane (see filterTerminalReports in
+      // internal/webserver/pty_proxy.go); this client never needs to (and,
+      // being guest-controlled, could not be trusted to).
       if (readOnly || ws.readyState !== WebSocket.OPEN) {
         return;
       }

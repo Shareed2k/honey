@@ -445,6 +445,40 @@ func jitLiveTerminalBody(muxSession, capability string) map[string]any {
 	}
 }
 
+// withFakeInterceptSessionActorRetry overrides the interceptSessionActorRetry
+// seam for the duration of the calling test, restoring the original on
+// cleanup — lets a test drive the MED-3 fail-closed path (unknown owner)
+// without waiting out the real bounded retry's sleeps.
+func withFakeInterceptSessionActorRetry(t *testing.T, fn func(string) string) {
+	t.Helper()
+	orig := interceptSessionActorRetry
+	interceptSessionActorRetry = fn
+	t.Cleanup(func() { interceptSessionActorRetry = orig })
+}
+
+// fakeTmuxCanonical returns a swapTmuxRun fake that answers `display-message`
+// by echoing back exactly wantCanonical (NEW-3's exact-match resolution) and
+// `show-environment` with a HONEY_INT_ACTOR of actor — the two tmux calls
+// applyLiveTerminalShare makes for a honey-int-* mux_session. Any other verb
+// fails the test loudly rather than silently returning a zero value.
+func fakeTmuxCanonical(t *testing.T, wantCanonical, actor string) func() {
+	t.Helper()
+	return swapTmuxRun(func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			t.Fatalf("unexpected empty tmuxRun call")
+		}
+		switch args[0] {
+		case "display-message":
+			return []byte(wantCanonical + "\n"), nil
+		case "show-environment":
+			return []byte("HONEY_INT_ACTOR=" + actor + "\n"), nil
+		default:
+			t.Fatalf("unexpected tmuxRun args %v", args)
+			return nil, nil
+		}
+	})
+}
+
 // TestHandleCreateJITGrant_LiveTerminalShare table-drives the grant-create
 // side of a live-session share: a valid honey_*/honey-int-* mux_session with
 // watch or collaborate succeeds and rewrites the stored grant's
@@ -454,6 +488,9 @@ func jitLiveTerminalBody(muxSession, capability string) map[string]any {
 // over-privileged attach. Every case fakes tmuxGuestSessionAlive (see
 // pty_proxy_test.go) so this stays hermetic — no real tmux server needed —
 // except the one case that specifically exercises MED-4's "not live" 400.
+// The two success cases also fake tmuxRun so NEW-3's canonicalization (and,
+// for honey-int-*, MED-3's now-fail-closed ownership check) see a real tmux
+// session that resolves EXACTLY to the requested name.
 func TestHandleCreateJITGrant_LiveTerminalShare(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -474,6 +511,11 @@ func TestHandleCreateJITGrant_LiveTerminalShare(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			withFakeGuestSessionAlive(t, !tc.notAlive)
+			// api is actorFromCtx's default identity for an unauthenticated
+			// doJSON request — matches it so the honey-int- case's MED-3
+			// ownership check (now fail-closed) allows.
+			defer fakeTmuxCanonical(t, tc.muxSession, "api")()
+
 			s, store := newJitTestServer(t, Options{})
 			w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", jitLiveTerminalBody(tc.muxSession, tc.capability))
 			if w.Code != tc.wantStatus {
@@ -500,6 +542,27 @@ func TestHandleCreateJITGrant_LiveTerminalShare(t *testing.T) {
 				t.Fatalf("Delivery = %q, want web (a live-terminal attach only exists over the browser terminal)", g.Delivery)
 			}
 		})
+	}
+}
+
+// TestHandleCreateJITGrant_LiveTerminalShare_RejectsPrefixAlias is the NEW-3
+// regression: tmux matches a `-t` target by PREFIX, so a request naming a
+// unique prefix of a real session would otherwise pass name/liveness/
+// ownership checks and attach to the REAL session while the stored grant
+// (and later, policy/audit) only ever saw the alias. display-message
+// resolving to a DIFFERENT name than what was requested must be rejected
+// outright, storing nothing.
+func TestHandleCreateJITGrant_LiveTerminalShare_RejectsPrefixAlias(t *testing.T) {
+	withFakeGuestSessionAlive(t, true)
+	defer fakeTmuxCanonical(t, "honey_alias_the_real_full_session_name", "api")()
+
+	s, store := newJitTestServer(t, Options{})
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", jitLiveTerminalBody("honey_alias", "watch"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body=%s", w.Code, w.Body)
+	}
+	if len(store.List()) != 0 {
+		t.Fatal("a prefix-alias mux_session must never be stored")
 	}
 }
 
@@ -532,10 +595,7 @@ func TestHandleCreateJITGrant_MetaOnlyKindStillValidated(t *testing.T) {
 // resume) session is refused when its recorded HONEY_INT_ACTOR
 // (interceptResumeSetMeta) does not match the requester creating the grant.
 // doJSON's requests carry no auth, so the requester is actorFromCtx's default
-// ("api"). An unrecorded/unknown owner (the plain "collaborate on
-// honey-int-" case in TestHandleCreateJITGrant_LiveTerminalShare, which fakes
-// no tmuxRun at all) must NOT be treated as a mismatch — that is covered
-// there, not here.
+// ("api"). The unknown-owner case is covered separately, below.
 func TestHandleCreateJITGrant_LiveTerminalShare_InterceptActorMismatch(t *testing.T) {
 	const mux = "honey-int-actorcheck01"
 	tests := []struct {
@@ -549,10 +609,7 @@ func TestHandleCreateJITGrant_LiveTerminalShare_InterceptActorMismatch(t *testin
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			withFakeGuestSessionAlive(t, true)
-			restore := swapTmuxRun(func(...string) ([]byte, error) {
-				return []byte("HONEY_INT_ACTOR=" + tc.recordedActor + "\n"), nil
-			})
-			defer restore()
+			defer fakeTmuxCanonical(t, mux, tc.recordedActor)()
 
 			s, _ := newJitTestServer(t, Options{})
 			w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", jitLiveTerminalBody(mux, "collaborate"))
@@ -560,5 +617,61 @@ func TestHandleCreateJITGrant_LiveTerminalShare_InterceptActorMismatch(t *testin
 				t.Fatalf("status = %d, want %d body=%s", w.Code, tc.wantStatus, w.Body)
 			}
 		})
+	}
+}
+
+// TestHandleCreateJITGrant_LiveTerminalShare_InterceptUnknownOwnerFailsClosed
+// is the MED-3 round-2 residual: unlike round 1 (which allowed an unknown
+// honey-int-* owner), a session whose owner STILL cannot be determined after
+// interceptSessionActorRetry's bounded retry must now be refused — those
+// names are derivable cross-tenant and the intercept list is visible to any
+// authenticated user, so "we don't know" must mean "deny" for this family.
+// Fakes the retry seam directly (not tmuxRun) so this test never waits out a
+// real retry budget.
+func TestHandleCreateJITGrant_LiveTerminalShare_InterceptUnknownOwnerFailsClosed(t *testing.T) {
+	withFakeGuestSessionAlive(t, true)
+	withFakeInterceptSessionActorRetry(t, func(string) string { return "" })
+
+	s, store := newJitTestServer(t, Options{})
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", jitLiveTerminalBody("honey-int-unknownowner", "watch"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body=%s", w.Code, w.Body)
+	}
+	if len(store.List()) != 0 {
+		t.Fatal("a honey-int-* share with an undetermined owner must never be stored")
+	}
+}
+
+// TestHandleCreateJITGrant_OmitsEmptyMuxSessionFromPolicyInput is the NEW-8
+// regression: gateJITGrant used to add "mux_session": "" to the OPA target
+// unconditionally, changing the input shape for every existing "jit_grant"
+// policy (not just live-terminal ones). This policy denies whenever
+// mux_session is present in target AT ALL — it must never fire for an
+// ordinary, non-live grant.
+func TestHandleCreateJITGrant_OmitsEmptyMuxSessionFromPolicyInput(t *testing.T) {
+	const src = `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if {
+	input.action == "jit_grant"
+	"mux_session" in object.keys(input.target)
+}
+deny_reason := "mux_session key must be absent when empty" if {
+	input.action == "jit_grant"
+	"mux_session" in object.keys(input.target)
+}`
+	enf := mustEnforcer(t, src)
+	s, _ := newJitTestServer(t, Options{Enforcer: enf})
+
+	body := map[string]any{
+		"resource":     map[string]any{"name": "host1"},
+		"capabilities": []string{"shell"},
+		"delivery":     "web",
+		"duration":     "1h",
+	}
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s (mux_session key must be omitted, not just empty, for a non-live grant)", w.Code, w.Body)
 	}
 }
