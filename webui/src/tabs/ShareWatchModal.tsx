@@ -135,7 +135,15 @@ export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchMo
       open={!!grantId}
       onCancel={onClose}
       destroyOnHidden
-      width={800}
+      // Viewport-relative, not a fixed 800x420 box: the view is locked to the
+      // GUEST's geometry (a real session is routinely ~200x57, which is roughly
+      // 1450x970 CSS px at this font size), so a small dialog forced a ~0.43
+      // downscale — tiny text plus a wide empty margin from the aspect-ratio
+      // mismatch. Giving the dialog the window instead means the scale lands
+      // near 1 for a typical session, and only an unusually large one is
+      // shrunk at all.
+      width="95vw"
+      style={{ top: 24, maxWidth: '100vw', paddingBottom: 0 }}
       title={resourceName ? `Watching ${resourceName} (read-only)` : 'Watching (read-only)'}
       footer={[
         <Button key="close" onClick={onClose}>
@@ -143,7 +151,7 @@ export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchMo
         </Button>,
       ]}
     >
-      <div style={{ height: 420 }} ref={setEl} />
+      <div style={{ height: '78vh' }} ref={setEl} />
     </Modal>
   );
 }
