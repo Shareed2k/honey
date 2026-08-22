@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -61,7 +62,14 @@ func (s *Server) handleShareWatch(w http.ResponseWriter, r *http.Request) {
 	// an operator's xterm.js needs no special-casing to talk to this route —
 	// nothing in it is honored: this is a read-only view of whatever size the
 	// guest's own session already is.
+	//
+	// Bounded, because a viewer that sends no hello at all must still get a
+	// session rather than hang here forever: an unbounded read once turned a
+	// client-side mount bug into an empty modal with no attach, no output and no
+	// error. A missed hello costs nothing — its contents are ignored anyway.
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, _, _ = conn.ReadMessage()
+	_ = conn.SetReadDeadline(time.Time{})
 
 	cmd, err := ptyMuxTmuxWatchAttach(mux)
 	if err != nil {

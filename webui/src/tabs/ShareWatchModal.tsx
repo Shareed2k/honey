@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Modal } from 'antd';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -18,10 +18,16 @@ export type ShareWatchModalProps = {
 // wired in), but the client-side omission means there is no path here that
 // could even try to influence the guest's session.
 export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchModalProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  // A state-backed callback ref, NOT useRef: the Modal below is destroyOnHidden,
+  // so its body (and this container) mounts into antd's portal in a later commit
+  // than the one that sets grantId. An effect keyed on [grantId] alone therefore
+  // ran while containerRef.current was still null, bailed out, and never re-ran
+  // (a ref changing does not re-trigger an effect) — the modal opened empty with
+  // no terminal and no socket. Storing the element in state re-runs the effect
+  // the moment the div actually exists.
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const el = containerRef.current;
     if (!grantId || !el) {
       return undefined;
     }
@@ -78,7 +84,7 @@ export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchMo
       ws.close();
       term.dispose();
     };
-  }, [grantId]);
+  }, [grantId, el]);
 
   return (
     <Modal
@@ -93,7 +99,7 @@ export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchMo
         </Button>,
       ]}
     >
-      <div style={{ height: 420 }} ref={containerRef} />
+      <div style={{ height: 420 }} ref={setEl} />
     </Modal>
   );
 }
