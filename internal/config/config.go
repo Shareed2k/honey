@@ -778,16 +778,26 @@ func DefaultRecordDir(configPath string) string {
 			return filepath.Join(filepath.Dir(abs), "records")
 		}
 	}
-	if base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); base != "" {
-		if p, err := safepath.JoinUnder(base, "honey", "records"); err == nil {
+	// With no config path to anchor to, recordings go to the OS cache directory
+	// (os.UserCacheDir honors XDG_CACHE_HOME on Linux and ~/Library/Caches on
+	// macOS). They used to land under XDG_CONFIG_HOME / ~/.config, which is the
+	// wrong class of directory — a recording is data an operator replays, not
+	// configuration — and, more importantly, this chain used to be able to end in
+	// "", which silently disabled recording altogether. It never returns "" now
+	// unless the OS can report neither a cache nor a home directory.
+	//
+	// Note for operators: a cache directory is conventionally disposable, so an
+	// OS or user cleanup may delete recordings. Set --record-dir (or
+	// defaults.record_dir) to a persistent path when recordings must be kept as
+	// durable audit material.
+	if base, err := os.UserCacheDir(); err == nil {
+		if p, perr := safepath.JoinUnder(base, "honey", "records"); perr == nil {
 			return p
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		if strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")) == "" {
-			if p, err := safepath.JoinUnder(home, ".config", "honey", "records"); err == nil {
-				return p
-			}
+		if p, perr := safepath.JoinUnder(home, ".cache", "honey", "records"); perr == nil {
+			return p
 		}
 	}
 	return ""
