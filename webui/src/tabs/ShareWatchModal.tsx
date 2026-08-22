@@ -11,6 +11,20 @@ export type ShareWatchModalProps = {
   onClose: () => void;
 };
 
+// computeShareWatchScale is the WATCHFIT-1 fill factor: scaling the
+// (unscaled) content box up or down so it fills the container on whichever
+// axis is tighter, never cropping the other axis. Pulled out as a pure
+// function so the math has one direct test instead of only being exercised
+// indirectly through DOM/xterm plumbing. Returns 1 (no-op) for a
+// not-yet-measurable box (zero/negative dimensions) rather than Infinity or
+// NaN.
+export function computeShareWatchScale(containerW: number, containerH: number, contentW: number, contentH: number): number {
+  if (containerW <= 0 || containerH <= 0 || contentW <= 0 || contentH <= 0) {
+    return 1;
+  }
+  return Math.min(containerW / contentW, containerH / contentH);
+}
+
 // ShareWatchModal is the OPERATOR's authed, read-only live view of a guest's
 // access-request session (GET /ws/share/watch). It never wires xterm's onData
 // (or a resize frame) into the socket at all — this is a pure viewer; the
@@ -31,6 +45,8 @@ export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchMo
     if (!grantId || !el) {
       return undefined;
     }
+    el.style.overflow = 'hidden';
+    el.style.position = 'relative';
 
     const term = new Terminal({
       cursorBlink: false,
@@ -46,6 +62,26 @@ export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchMo
     term.open(el);
     fit.fit();
 
+    // WATCHFIT-1: once the server has told us the guest's REAL window size
+    // (a "size" control frame), term.resize() is authoritative — fit() must
+    // never run again, since fit() sizes cols/rows to the CONTAINER, which is
+    // exactly what fought the server's size and drew the guest's session into
+    // a truncated corner of the modal. Instead the terminal's own root
+    // element is CSS-scaled up (or down) to fill the container, so nothing is
+    // cropped and the guest's geometry is never touched.
+    let serverSize: { cols: number; rows: number } | null = null;
+
+    const rescale = () => {
+      if (!serverSize || !term.element) {
+        return;
+      }
+      const root = term.element;
+      root.style.transform = 'none';
+      const k = computeShareWatchScale(el.clientWidth, el.clientHeight, root.offsetWidth, root.offsetHeight);
+      root.style.transformOrigin = 'top left';
+      root.style.transform = `scale(${k})`;
+    };
+
     const ws = new WebSocket(shareWatchWebSocketURL(grantId));
     ws.binaryType = 'arraybuffer';
 
@@ -59,9 +95,13 @@ export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchMo
     ws.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
         try {
-          const j = JSON.parse(ev.data) as { error?: string };
+          const j = JSON.parse(ev.data) as { error?: string; size?: { cols?: number; rows?: number } };
           if (j.error) {
             term.writeln(`\r\n\x1b[31m${j.error}\x1b[0m`);
+          } else if (j.size && j.size.cols && j.size.rows) {
+            serverSize = { cols: j.size.cols, rows: j.size.rows };
+            term.resize(j.size.cols, j.size.rows);
+            requestAnimationFrame(rescale);
           }
         } catch {
           /* ignore malformed control frame */
@@ -75,7 +115,11 @@ export function ShareWatchModal({ grantId, resourceName, onClose }: ShareWatchMo
       term.writeln('\r\n\x1b[33m[watch ended]\x1b[0m');
     };
 
-    const onResize = () => fit.fit();
+    // Before the server's first size frame, behave exactly as before (fit to
+    // container). Afterward, the terminal's cols/rows are fixed to the
+    // guest's real size — a container resize (e.g. the modal's open
+    // transition) only needs a rescale, never a re-fit.
+    const onResize = () => (serverSize ? rescale() : fit.fit());
     const ro = new ResizeObserver(onResize);
     ro.observe(el);
 

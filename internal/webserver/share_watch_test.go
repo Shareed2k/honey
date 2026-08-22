@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,45 @@ import (
 
 	"github.com/shareed2k/honey/internal/jit"
 )
+
+// shareWatchGoleakOpts is the standard goleak allowlist for a handleShareWatch
+// e2e test: httptest.NewServer's own background pool/cache maintenance loops
+// have no Shutdown path and legitimately outlive any one test (see
+// runHandleWebInteractiveStreams's own note in termguard_wire_test.go); only
+// the handler's per-connection goroutines (including WATCHFIT-1's size
+// poller) are checked.
+func shareWatchGoleakOpts(t *testing.T) []goleak.Option {
+	t.Helper()
+	return []goleak.Option{
+		goleak.IgnoreCurrent(),
+		goleak.IgnoreTopFunction("github.com/panjf2000/ants/v2.(*poolCommon).ticktock"),
+		goleak.IgnoreTopFunction("github.com/panjf2000/ants/v2.(*poolCommon).purgeStaleWorkers"),
+		goleak.IgnoreTopFunction("github.com/jellydator/ttlcache/v3.(*Cache[...]).Start"),
+	}
+}
+
+// readShareWatchSizeFrame reads WS messages from conn until it finds a
+// {"size":{...}} control frame, and returns its cols/rows. Fails the test if
+// none arrives before conn's own read deadline.
+func readShareWatchSizeFrame(t *testing.T, conn *websocket.Conn) (cols, rows int) {
+	t.Helper()
+	for {
+		mt, payload, err := conn.ReadMessage()
+		require.NoError(t, err)
+		if mt != websocket.TextMessage {
+			continue
+		}
+		var frame struct {
+			Size struct {
+				Cols int `json:"cols"`
+				Rows int `json:"rows"`
+			} `json:"size"`
+		}
+		if json.Unmarshal(payload, &frame) == nil && frame.Size.Cols > 0 && frame.Size.Rows > 0 {
+			return frame.Size.Cols, frame.Size.Rows
+		}
+	}
+}
 
 func TestHandleShareWatch_Unauthorized(t *testing.T) {
 	s := newTestServer(t, Options{Token: "secret-token"})
@@ -244,4 +284,210 @@ func TestHandleJITRedeemTerminal_MuxPathReadWriteObservableAndKillable(t *testin
 	require.True(t, ok)
 	require.Equal(t, jit.StatusRevoked, gotGrant.Status)
 	require.Error(t, exec.Command("tmux", "has-session", "-t", mux).Run(), "kill must actually terminate the guest's session")
+}
+
+// TestHandleShareWatch_SizesObserverToGuestWindow is the WATCHFIT-1
+// regression: measured on a live session, an observer's pty was left at the
+// creack/pty default (80x24) instead of the guest's actual window size, so
+// tmux drew a truncated 80x24 viewport onto a much larger window. The guest's
+// window here (201x57) is deliberately far from that default, so a
+// regression back to "just use the pty default" can't accidentally pass.
+func TestHandleShareWatch_SizesObserverToGuestWindow(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH; share watch requires it")
+	}
+
+	store, err := jit.NewStore(t.TempDir()+"/jit_grants.jsonl", nil)
+	require.NoError(t, err)
+	g := createJITGrantDirect(t, store, "watch-size-target")
+	mux := shareGuestMuxName(g.ID)
+
+	require.True(t, validHoneyMuxSessionName(mux))
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", mux).Run() })
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", mux, "-x", "201", "-y", "57", "--", "cat").Run())
+
+	s := newTestServer(t, Options{Jit: store})
+	ts := httptest.NewServer(s.router)
+	defer ts.Close()
+	defer goleak.VerifyNone(t, shareWatchGoleakOpts(t)...)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/share/watch?grant=" + g.ID
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	require.NoError(t, conn.WriteJSON(map[string]int{"cols": 80, "rows": 24}))
+
+	// The very first control frame must be the guest's REAL window size —
+	// never the hello's 80x24 the observer's own client claimed (which the
+	// server ignores entirely, per handleShareWatch's own doc).
+	cols, rows := readShareWatchSizeFrame(t, conn)
+	require.Equal(t, 201, cols)
+	require.Equal(t, 57, rows)
+
+	// The observer's OWN tmux client must actually be sized to match — not
+	// just the WS frame the browser received.
+	require.Eventually(t, func() bool {
+		out, cerr := exec.Command("tmux", "list-clients", "-t", mux, "-F", "#{client_width}x#{client_height}").Output()
+		return cerr == nil && strings.TrimSpace(string(out)) == "201x57"
+	}, 3*time.Second, 50*time.Millisecond, "observer's pty must be sized to the guest's window, not left at the pty default")
+
+	require.NoError(t, conn.Close())
+	require.Eventually(t, func() bool {
+		return exec.Command("tmux", "has-session", "-t", mux).Run() == nil
+	}, 3*time.Second, 50*time.Millisecond, "guest's session must survive an observer disconnect")
+}
+
+// TestHandleShareWatch_TracksGuestResizeReadOnly is the WATCHFIT-1 mid-session
+// half: a guest resizing after the observer already attached must reach the
+// observer (both the browser's size frame and the observer's own pty), and
+// the mechanism that makes that happen — the bounded poller — must NEVER
+// issue anything but the read-only window-size query. That second half is the
+// load-bearing security assertion: an observer's size sync can never be the
+// thing that resizes (or otherwise touches) the guest's window.
+func TestHandleShareWatch_TracksGuestResizeReadOnly(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH; share watch requires it")
+	}
+
+	origInterval := shareWatchSizePollInterval
+	shareWatchSizePollInterval = 30 * time.Millisecond
+	t.Cleanup(func() { shareWatchSizePollInterval = origInterval })
+
+	store, err := jit.NewStore(t.TempDir()+"/jit_grants.jsonl", nil)
+	require.NoError(t, err)
+	g := createJITGrantDirect(t, store, "watch-resize-target")
+	mux := shareGuestMuxName(g.ID)
+
+	require.True(t, validHoneyMuxSessionName(mux))
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", mux).Run() })
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", mux, "-x", "80", "-y", "24", "--", "cat").Run())
+
+	// Wrap (never replace) the real bounded runner: the poller must keep
+	// actually working, while every argv it ever issues is captured for the
+	// assertion below.
+	origRunGuest := tmuxRunGuest
+	var mu sync.Mutex
+	var calls [][]string
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		mu.Lock()
+		calls = append(calls, append([]string(nil), args...))
+		mu.Unlock()
+		return origRunGuest(args...)
+	})
+	defer restore()
+
+	s := newTestServer(t, Options{Jit: store})
+	ts := httptest.NewServer(s.router)
+	defer ts.Close()
+	defer goleak.VerifyNone(t, shareWatchGoleakOpts(t)...)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/share/watch?grant=" + g.ID
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	require.NoError(t, conn.WriteJSON(map[string]int{"cols": 80, "rows": 24}))
+
+	cols, rows := readShareWatchSizeFrame(t, conn)
+	require.Equal(t, 80, cols)
+	require.Equal(t, 24, rows)
+
+	// The guest resizes mid-session (e.g. its own terminal window changed).
+	require.NoError(t, exec.Command("tmux", "resize-window", "-t", mux, "-x", "120", "-y", "40").Run())
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	cols, rows = readShareWatchSizeFrame(t, conn)
+	require.Equal(t, 120, cols)
+	require.Equal(t, 40, rows)
+
+	require.Eventually(t, func() bool {
+		out, cerr := exec.Command("tmux", "list-clients", "-t", mux, "-F", "#{client_width}x#{client_height}").Output()
+		return cerr == nil && strings.TrimSpace(string(out)) == "120x40"
+	}, 3*time.Second, 20*time.Millisecond, "observer's pty must track the guest's resize")
+
+	require.NoError(t, conn.Close())
+	require.Eventually(t, func() bool {
+		return exec.Command("tmux", "has-session", "-t", mux).Run() == nil
+	}, 3*time.Second, 50*time.Millisecond, "guest's session must survive an observer disconnect")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, calls, "expected the size sync to have queried tmux at least once")
+	for _, args := range calls {
+		require.NotEmpty(t, args)
+		require.Equal(t, "display", args[0],
+			"an observer's size sync must only ever query, never mutate, the guest's window; got argv %v", args)
+	}
+}
+
+// TestHandleShareWatch_ObserverDisconnectDetachesOwnClientOnly is the
+// WATCHFIT-2 regression: measured live, two read-only clients were still
+// attached from watch sessions the operator had already closed — the
+// panel's Observers count only ever grew. A plain disconnect (the modal
+// closing its WebSocket, no close_tab frame) must make the observer's OWN
+// tmux client go away, while the guest's session survives untouched and no
+// kill-session is ever issued (that would also drop the guest, not just this
+// observer).
+func TestHandleShareWatch_ObserverDisconnectDetachesOwnClientOnly(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH; share watch requires it")
+	}
+
+	store, err := jit.NewStore(t.TempDir()+"/jit_grants.jsonl", nil)
+	require.NoError(t, err)
+	g := createJITGrantDirect(t, store, "watch-detach-target")
+	mux := shareGuestMuxName(g.ID)
+
+	require.True(t, validHoneyMuxSessionName(mux))
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", mux).Run() })
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", mux, "--", "cat").Run())
+
+	origRunGuest := tmuxRunGuest
+	var mu sync.Mutex
+	var calls [][]string
+	restore := swapTmuxRunGuest(func(args ...string) ([]byte, error) {
+		mu.Lock()
+		calls = append(calls, append([]string(nil), args...))
+		mu.Unlock()
+		return origRunGuest(args...)
+	})
+	defer restore()
+
+	s := newTestServer(t, Options{Jit: store})
+	ts := httptest.NewServer(s.router)
+	defer ts.Close()
+	defer goleak.VerifyNone(t, shareWatchGoleakOpts(t)...)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/share/watch?grant=" + g.ID
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	require.NoError(t, conn.WriteJSON(map[string]int{"cols": 80, "rows": 24}))
+	_, _ = readShareWatchSizeFrame(t, conn)
+
+	// The spawned "tmux attach -r" client still needs to finish connecting to
+	// the tmux server after pty.StartWithSize returns (fork+exec is not
+	// "already registered as a client") — eventually, not immediately, same
+	// as every other tmux-external-state check in this file.
+	require.Eventually(t, func() bool {
+		observers, alive := shareObserverCount(mux)
+		return alive && observers == 1
+	}, 3*time.Second, 20*time.Millisecond, "the observer's own client must be attached before the disconnect")
+
+	// A plain disconnect: exactly what the modal's cleanup does (ws.close()),
+	// never an explicit close_tab control frame.
+	require.NoError(t, conn.Close())
+
+	require.Eventually(t, func() bool {
+		observers, alive := shareObserverCount(mux)
+		return alive && observers == 0
+	}, 3*time.Second, 50*time.Millisecond, "the observer's own tmux client must be detached after a plain disconnect")
+
+	require.NoError(t, exec.Command("tmux", "has-session", "-t", mux).Run(), "guest's session must survive an observer disconnect")
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, args := range calls {
+		require.NotEmpty(t, args)
+		require.NotEqual(t, "kill-session", args[0], "an observer's own teardown must never kill-session the guest's session; got argv %v", args)
+	}
 }

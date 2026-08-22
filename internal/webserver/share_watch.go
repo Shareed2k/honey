@@ -3,6 +3,7 @@ package webserver
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -76,10 +77,40 @@ func (s *Server) handleShareWatch(w http.ResponseWriter, r *http.Request) {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
 		return
 	}
-	ptmx, err := pty.Start(cmd)
+
+	// WATCHFIT-1: query the guest's REAL window size and size the observer's
+	// pty to it BEFORE the mux client process ever starts (pty.StartWithSize,
+	// not pty.Setsize after a plain pty.Start), instead of leaving it at the
+	// creack/pty default 80x24 — tmux then draws a full, untruncated view
+	// instead of an 80x24 viewport onto a larger window. Measured: sizing
+	// AFTER Start races the client's own initial size negotiation with the
+	// tmux server (which happens the instant it starts, before our own
+	// Setsize call can land) and can transiently shrink the window despite
+	// `-r`'s ignore-size — sizing the pty before the client ever starts means
+	// its very first report to the server is already correct, no race.
+	// Best-effort: a query failure (tmux briefly unavailable) just falls back
+	// to the old default sizing rather than failing the whole watch.
+	// ptyProxyRunBridge's SizeSync policy below keeps this in sync for the
+	// rest of the connection (a guest resizing mid-session); seeding it with
+	// this same cols/rows means its first poll tick doesn't immediately
+	// resend a redundant duplicate of the frame written below.
+	sizeSync := &ptyObserverSizeSync{MuxName: mux}
+	cols, rows, sizeOK := shareGuestWindowSize(mux)
+
+	var ptmx *os.File
+	if sizeOK {
+		ws := ptyWinsize(cols, rows)
+		ptmx, err = pty.StartWithSize(cmd, &ws)
+	} else {
+		ptmx, err = pty.Start(cmd)
+	}
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+escapeJSON(err.Error())+`"}`))
 		return
+	}
+	if sizeOK {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(shareWatchSizeFrame(cols, rows)))
+		sizeSync.InitialCols, sizeSync.InitialRows = cols, rows
 	}
 
 	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
@@ -91,8 +122,20 @@ func (s *Server) handleShareWatch(w http.ResponseWriter, r *http.Request) {
 	// the symmetric case): an observer's own reap must NEVER kill-session the
 	// guest's session — not on the explicit close_tab (×) branch, and not on
 	// a natural ptyExited either.
+	//
+	// KillOnCancel: cmd.Process is THIS observer's own read-only tmux client
+	// (WATCHFIT-2) — force-killing it the instant the bridge is cancelled is
+	// what actually makes it detach on every disconnect; see the field's doc
+	// for why the pre-existing SetReadDeadline alone isn't enough on every
+	// platform. It can never affect the guest's session or any other
+	// observer, since each bridge owns exactly one mux client process.
 	ptyExited := ptyProxyRunBridge(ptmx, conn, (*engine.SessionRecorder)(nil), hello, mux, closeTabKill,
-		ptyProxyStdinPolicy{DropStdin: true, IgnoreResize: true})
+		ptyProxyStdinPolicy{
+			DropStdin:    true,
+			IgnoreResize: true,
+			KillOnCancel: cmd.Process,
+			SizeSync:     sizeSync,
+		})
 	ptyProxyTeardown(ptmx, cmd, mux, false, closeTabKill, ptyExited, func() {}, true)
 
 	_ = s.opts.AuditSink.Log(r.Context(), audit.Event{Source: "web", Actor: actor, Action: "share_watch_stopped", Target: mux, Decision: "allow", ApprovalID: g.ID})

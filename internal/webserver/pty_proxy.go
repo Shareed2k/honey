@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -293,6 +294,127 @@ type ptyProxyStdinPolicy struct {
 	// all. nil (every guest caller, and any caller predating this fix)
 	// disables it entirely.
 	OperatorGuard *termGuardInputs
+	// KillOnCancel, when set, is force-killed the instant the bridge is
+	// cancelled (either side closing), on top of the existing
+	// ptmx.SetReadDeadline unblock below. That deadline trick only works when
+	// ptmx is a "pollable" *os.File (Go's runtime poller can interrupt an
+	// in-flight blocking Read); a REAL pty master from github.com/creack/pty
+	// is not pollable on darwin, so a plain disconnect left the ptmx-reading
+	// goroutine blocked forever, ptyProxyRunBridge never returned, and
+	// ptyProxyTeardown (which closes ptmx and reaps the mux client) never ran
+	// at all — measured as an observer's read-only tmux client staying
+	// attached indefinitely after the operator closed the watch modal.
+	// Killing this process instead closes ITS end of the pty, which delivers
+	// EOF to our blocked master read on every platform, independent of
+	// pollability. Set to the mux attach client's own *os.Process
+	// (handleShareWatch) — never anything that could affect a different
+	// client or the guest's session, since each bridge owns exactly one mux
+	// client process.
+	KillOnCancel *os.Process
+	// SizeSync, when set, keeps an OBSERVER's pty matched to the mux window
+	// it is attached to for the life of the bridge: polling
+	// SizeSync.MuxName's current size through the bounded tmuxRunGuest
+	// runner and, on change, both pty.Setsize-ing ptmx and sending a
+	// {"size":{"cols":...,"rows":...}} control frame so the browser's
+	// terminal can match it (see ShareWatchModal.tsx). The initial size sync
+	// happens once in handleShareWatch before the bridge starts (so the very
+	// first byte is already drawn at the right size); this only tracks
+	// CHANGES for the rest of the connection (a guest resizing mid-session).
+	// The poller shares wsOut (the same mutex the stdout pump writes
+	// through) and bridgeCtx (so it always exits with the bridge, verified
+	// by goleak) — never a second, unsynchronized conn.WriteMessage caller.
+	SizeSync *ptyObserverSizeSync
+}
+
+// ptyObserverSizeSync is ptyProxyStdinPolicy.SizeSync's config: which mux to
+// poll and how often. Interval<=0 uses shareWatchSizePollInterval.
+// InitialCols/InitialRows should be whatever size the caller already sent the
+// browser before the bridge started (handleShareWatch's own one-time query):
+// seeding the poller's "last known" size with it means the poller's first
+// tick only sends a NEW frame when the guest's window actually changed,
+// instead of always resending a redundant duplicate of the size the browser
+// already has.
+type ptyObserverSizeSync struct {
+	MuxName                  string
+	Interval                 time.Duration
+	InitialCols, InitialRows int
+}
+
+// shareWatchSizePollInterval is how often ptyProxyRunBridge's observer
+// size-sync poller re-checks the guest's window size (WATCHFIT-1: a guest
+// may resize mid-session). A package var, like tmuxBoundedRunTimeout, so a
+// test can shrink it instead of waiting multiple seconds.
+var shareWatchSizePollInterval = 2 * time.Second
+
+// shareGuestWindowSize queries mux's current tmux window size through the
+// package's bounded tmux runner (tmuxRunGuest): a wedged tmux server must
+// not be able to hang this, since it is polled repeatedly for the life of an
+// observer's connection. mux is re-validated here regardless of the caller,
+// same invariant as every other tmux argv in this package.
+func shareGuestWindowSize(mux string) (cols, rows int, ok bool) {
+	if !validHoneyMuxSessionName(mux) {
+		return 0, 0, false
+	}
+	out, err := tmuxRunGuest("display", "-p", "-t", mux, "#{window_width}x#{window_height}")
+	if err != nil {
+		return 0, 0, false
+	}
+	w, h, found := strings.Cut(strings.TrimSpace(string(out)), "x")
+	if !found {
+		return 0, 0, false
+	}
+	cw, err1 := strconv.Atoi(w)
+	ch, err2 := strconv.Atoi(h)
+	if err1 != nil || err2 != nil || cw <= 0 || ch <= 0 {
+		return 0, 0, false
+	}
+	return cw, ch, true
+}
+
+// shareWatchSizeFrame builds the {"size":{"cols":...,"rows":...}} control
+// frame handleShareWatch/ptyProxyRunBridge send an observer so its viewer can
+// match the guest's real window size instead of guessing (WATCHFIT-1). Plain
+// ints need no JSON escaping, unlike the free-text error frames elsewhere in
+// this file.
+func shareWatchSizeFrame(cols, rows int) string {
+	return fmt.Sprintf(`{"size":{"cols":%d,"rows":%d}}`, cols, rows)
+}
+
+// ptyProxyPollObserverSize is ptyProxyStdinPolicy.SizeSync's poller: it never
+// issues anything but the read-only shareGuestWindowSize query above, so it
+// can never itself be the thing that resizes the guest's window — only ever
+// pty.Setsize on the OBSERVER's own ptmx (which tmux's `-r`/ignore-size
+// attach already keeps from feeding back into the shared window, per
+// ptyProxyStdinPolicy.IgnoreResize's doc) plus a control frame the browser
+// consumes. Exits the instant ctx is done; never blocks the caller past
+// that.
+func ptyProxyPollObserverSize(ctx context.Context, ptmx *os.File, wsOut *wsWriter, sync ptyObserverSizeSync) {
+	interval := sync.Interval
+	if interval <= 0 {
+		interval = shareWatchSizePollInterval
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+
+	lastCols, lastRows := sync.InitialCols, sync.InitialRows
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			cols, rows, ok := shareGuestWindowSize(sync.MuxName)
+			if !ok || (cols == lastCols && rows == lastRows) {
+				continue
+			}
+			lastCols, lastRows = cols, rows
+			ws := ptyWinsize(cols, rows)
+			if err := pty.Setsize(ptmx, &ws); err != nil {
+				zap.L().Warn("share watch: failed to resize observer pty", zap.Error(err))
+				continue
+			}
+			_ = wsOut.writeText(shareWatchSizeFrame(cols, rows))
+		}
+	}
 }
 
 // ptyProxyRunBridge pipes ptmx<->conn until either side closes. stdin
@@ -339,10 +461,22 @@ func ptyProxyRunBridge(
 	// leaving a guest's own tmux client attached to the OPERATOR's session
 	// indefinitely. This watcher force-expires that blocked Read the instant
 	// the bridge is cancelled, so the guest's client detaches promptly.
+	//
+	// KillOnCancel (WATCHFIT-2) is the belt to this brace: SetReadDeadline
+	// only unblocks a pending Read when ptmx is a "pollable" *os.File, which
+	// a real creack/pty master is NOT on darwin (measured — see the field's
+	// doc) — on that platform the deadline call above is a silent no-op
+	// against an in-flight blocking read, so ptyProxyRunBridge never returns
+	// and ptyProxyTeardown's ptmx.Close()+reap never runs at all. Killing the
+	// mux client process closes ITS end of the pty, delivering EOF to our
+	// blocked master read regardless of pollability.
 	go func() {
 		defer watchWg.Done()
 		<-bridgeCtx.Done()
 		_ = ptmx.SetReadDeadline(time.Now())
+		if stdin.KillOnCancel != nil {
+			_ = stdin.KillOnCancel.Kill()
+		}
 	}()
 
 	// NEW-12 residual (round 4): the symmetric watcher for the OTHER
@@ -363,6 +497,19 @@ func ptyProxyRunBridge(
 		<-bridgeCtx.Done()
 		_ = conn.Close()
 	}()
+
+	// WATCHFIT-1: an observer's size-sync poller, tied to the SAME bridgeCtx
+	// as everything else here so it always exits with the bridge (verified by
+	// goleak) — never a goroutine that outlives this function. Shares wsOut
+	// (not a second, unsynchronized conn.WriteMessage caller) since the
+	// stdout pump below writes through it too.
+	if stdin.SizeSync != nil {
+		watchWg.Add(1)
+		go func() {
+			defer watchWg.Done()
+			ptyProxyPollObserverSize(bridgeCtx, ptmx, wsOut, *stdin.SizeSync)
+		}()
+	}
 
 	go func() {
 		defer wg.Done()
