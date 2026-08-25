@@ -105,6 +105,34 @@ func interceptPaneMuxName(cluster, namespace, pod string) string {
 	return "honey-int-" + hex.EncodeToString(sum[:])[:16]
 }
 
+// browserTermType is the terminal type honey declares when it spawns a tmux
+// client whose far end is xterm.js in a browser, not the operator's own
+// terminal.
+//
+// It has to be set explicitly: a tmux client inherits TERM from whatever
+// started `honey web`, and a systemd unit, container, or launchd job has none
+// (or TERM=dumb). tmux then refuses the attach outright — "open terminal
+// failed: terminal does not support clear" — which takes down every
+// mux-backed web terminal: the guest's share shell, the operator's read-only
+// watch, and the intercept terminal alike. The browser end is an xterm
+// emulator, so this is also the honest value rather than a guess at the
+// operator's environment.
+//
+// It does assume the host's terminfo database has an xterm-256color entry;
+// that holds on macOS and every mainstream distro image, but a stripped
+// container with no terminfo at all cannot host a tmux client regardless of
+// what TERM says.
+const browserTermType = "xterm-256color"
+
+// withBrowserTerm forces TERM on a tmux client honey spawns for a browser
+// terminal. exec.Cmd resolves duplicate keys to the LAST value, so appending
+// overrides an inherited TERM (including a useless one) without rebuilding
+// the environment.
+func withBrowserTerm(cmd *exec.Cmd) *exec.Cmd {
+	cmd.Env = append(cmd.Environ(), "TERM="+browserTermType)
+	return cmd
+}
+
 // ptyMuxBuildInterceptCommand mirrors ptyMuxBuildCommand for the intercept
 // resume path: it takes an already-computed mux name (interceptPaneMuxName)
 // instead of sanitizing a client-supplied session id, and builds the
@@ -137,7 +165,7 @@ func ptyMuxTmuxCommand(muxName string, proxyArgs []string) (*exec.Cmd, string, b
 	pruneHoneyTmuxSessions(muxName)
 	switch {
 	case tmuxSessionAlive(muxName):
-		cmd := exec.Command("tmux", "attach", "-d", "-t", muxName) // #nosec G204 -- muxName sanitized
+		cmd := withBrowserTerm(exec.Command("tmux", "attach", "-d", "-t", muxName)) // #nosec G204 -- muxName sanitized
 		zap.L().Debug("handleWebPtyProxy: tmux attach reuse", zap.String("session", muxName))
 		return cmd, muxName, false, nil
 	case tmuxHasSession(muxName):
@@ -145,16 +173,16 @@ func ptyMuxTmuxCommand(muxName string, proxyArgs []string) (*exec.Cmd, string, b
 			zap.L().Warn("handleWebPtyProxy: tmux respawn-pane failed, recreating session", zap.String("session", muxName), zap.Error(err))
 			tmuxKillSession(muxName)
 			tmuxArgs := append([]string{"new-session", "-A", "-D", "-s", muxName}, proxyArgs...)
-			cmd := exec.Command("tmux", tmuxArgs...) // #nosec G204 -- see comment above
+			cmd := withBrowserTerm(exec.Command("tmux", tmuxArgs...)) // #nosec G204 -- see comment above
 			zap.L().Debug("handleWebPtyProxy: tmux create", zap.Strings("args", cmd.Args))
 			return cmd, muxName, false, nil
 		}
-		cmd := exec.Command("tmux", "attach", "-d", "-t", muxName) // #nosec G204 -- muxName sanitized
+		cmd := withBrowserTerm(exec.Command("tmux", "attach", "-d", "-t", muxName)) // #nosec G204 -- muxName sanitized
 		zap.L().Debug("handleWebPtyProxy: tmux respawn and attach", zap.String("session", muxName))
 		return cmd, muxName, false, nil
 	default:
 		tmuxArgs := append([]string{"new-session", "-A", "-D", "-s", muxName}, proxyArgs...)
-		cmd := exec.Command("tmux", tmuxArgs...) // #nosec G204 -- see comment above
+		cmd := withBrowserTerm(exec.Command("tmux", tmuxArgs...)) // #nosec G204 -- see comment above
 		zap.L().Debug("handleWebPtyProxy: tmux create", zap.Strings("args", cmd.Args))
 		return cmd, muxName, false, nil
 	}
@@ -224,7 +252,7 @@ func ptyMuxTmuxWatchAttach(name string) (*exec.Cmd, error) {
 	if !tmuxSessionAlive(name) {
 		return nil, fmt.Errorf("share session %q has ended", name)
 	}
-	cmd := exec.Command("tmux", "attach", "-r", "-t", name) // #nosec G204 -- name sanitized
+	cmd := withBrowserTerm(exec.Command("tmux", "attach", "-r", "-t", name)) // #nosec G204 -- name sanitized
 	zap.L().Debug("handleShareWatch: tmux watch attach", zap.String("session", name))
 	return cmd, nil
 }
