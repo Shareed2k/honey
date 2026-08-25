@@ -391,12 +391,17 @@ func shareGuestWindowSize(mux string) (cols, rows int, ok bool) {
 	if !found {
 		return 0, 0, false
 	}
-	cw, err1 := strconv.Atoi(w)
-	ch, err2 := strconv.Atoi(h)
-	if err1 != nil || err2 != nil || cw <= 0 || ch <= 0 {
+	// ParseUint with a 16-bit size, not Atoi: a terminal dimension IS a uint16
+	// (that is what pty.Winsize holds), so anything outside that range is a
+	// nonsense reply and is rejected where it enters rather than silently
+	// clamped further down in ptyWinsize. It also keeps the narrowing conversion
+	// bounded by construction instead of by a later range check.
+	cw, err1 := strconv.ParseUint(w, 10, 16)
+	ch, err2 := strconv.ParseUint(h, 10, 16)
+	if err1 != nil || err2 != nil || cw == 0 || ch == 0 {
 		return 0, 0, false
 	}
-	return cw, ch, true
+	return int(cw), int(ch), true
 }
 
 // shareWatchSizeFrame builds the {"size":{"cols":...,"rows":...}} control
