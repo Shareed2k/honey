@@ -37,6 +37,7 @@ var (
 	webAllowLogsCommand   bool
 	webBrowser            bool
 	webNoAuth             bool
+	webSSHMuxFlag         bool
 )
 
 var webCmd = &cobra.Command{
@@ -56,6 +57,7 @@ func init() {
 	webCmd.Flags().BoolVar(&webAllowLogsCommand, "allow-logs-command", false, "Allow callers to run arbitrary remote commands via the logs streaming endpoint (disabled by default)")
 	webCmd.Flags().BoolVar(&webBrowser, "browser", true, "Open the web UI in the default browser on start")
 	webCmd.Flags().BoolVar(&webNoAuth, "no-auth", false, "Disable web UI token authentication (only for trusted networks / behind an authenticating proxy; also via HONEY_WEB_NO_AUTH)")
+	webCmd.Flags().BoolVar(&webSSHMuxFlag, "ssh-mux", false, "Also serve the inbound SSH gateway (see `honey ssh-server`) on --listen, routing each connection by its first bytes. Requires TCP passthrough: an HTTP-terminating proxy or CDN in front will not pass SSH through")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -202,8 +204,16 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 	// as every other flag/config pair in this command).
 	publicURL := firstNonEmptyString(strings.TrimSpace(webPublicURL), configWebPublicURL(cfg))
 
+	sshMux, err := newWebSSHMux(cmd, webListen)
+	if err != nil {
+		return err
+	}
+	defer sshMux.Close()
+	sshMux.PrintBanner(webListen)
+
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:              webListen,
+		Listener:                sshMux.HTTPListener(),
 		PublicURL:               publicURL,
 		Token:                   token,
 		DisableAuth:             disableAuth,
@@ -253,6 +263,9 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		// ignored here since nothing needs to wait on it.
 		interceptBroker.StartJanitor(ctx)
 	}
+
+	defer sshMux.Serve(ctx)()
+
 	return srv.Start(ctx)
 }
 

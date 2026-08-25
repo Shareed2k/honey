@@ -79,6 +79,7 @@ require (
 	github.com/sashabaranov/go-openai v1.42.0
 	github.com/shareed2k/mogate v0.1.10
 	github.com/shirou/gopsutil/v4 v4.26.7
+	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1

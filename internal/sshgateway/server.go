@@ -89,6 +89,9 @@ type Server struct {
 	mu    sync.Mutex
 	addr  string
 	ready chan struct{}
+	// readyOnce guards close(ready): Start and Serve share one code path, and a
+	// Server whose Serve is called twice must not panic on a double close.
+	readyOnce sync.Once
 }
 
 // New validates opts and builds the server. It requires at least one trusted CA
@@ -136,17 +139,27 @@ func (s *Server) Addr() string {
 	return s.addr
 }
 
-// Start binds the listener and serves connections until ctx is cancelled. All
+// Start binds ListenAddr and serves it until ctx is cancelled. All
 // per-connection and per-session goroutines are drained before it returns.
 func (s *Server) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", s.opts.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("sshgateway: listen %q: %w", s.opts.ListenAddr, err)
 	}
+	return s.Serve(ctx, ln)
+}
+
+// Serve serves an already-bound listener, with the same lifecycle guarantees as
+// Start: connections are drained before it returns, and ln is closed on every
+// return path. It exists so a caller that owns the listener can hand one over —
+// notably `honey web --ssh-mux`, where a single port is demultiplexed by
+// first-bytes and this gateway gets only the SSH connections. Serve is
+// single-use per Server (Ready is closed on the first call).
+func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	s.mu.Lock()
 	s.addr = ln.Addr().String()
 	s.mu.Unlock()
-	close(s.ready)
+	s.readyOnce.Do(func() { close(s.ready) })
 
 	// runCtx is cancelled on every return path (ctx cancel or accept error) so
 	// the listener-closer goroutine and all conns unwind — no goroutine leaks.

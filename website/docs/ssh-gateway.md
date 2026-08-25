@@ -120,6 +120,33 @@ The code is single-use, expires in 10 minutes, and the granted principals come
 from the operator (the redeemer cannot escalate). `/api/v1/ssh/enroll-code` is
 authenticated; `/api/v1/ssh/enroll` is authorized by the code itself.
 
+## Sharing one port with the web UI
+
+`honey web --ssh-mux` serves this gateway on the **same port** as the web UI, so
+a single firewall rule covers both:
+
+```bash
+honey web --ssh-mux --listen 0.0.0.0:8765
+
+curl http://<host>:8765/                       # web UI
+ssh alice@<host> -p 8765 <resource> uptime      # gateway, same port
+```
+
+Each connection is routed by its first bytes: an SSH client opens with
+`SSH-2.0-…`, which no HTTP request can begin with, so the two protocols are
+told apart before either server sees the socket. Authentication is unchanged —
+the SSH half still requires a certificate from a trusted CA, and the gateway is
+built before the port is bound, so a missing CA fails the command outright
+rather than starting a web server with a broken SSH half.
+
+Two limits come with it:
+
+- **TCP passthrough only.** Anything that terminates HTTP in front of the port
+  (an ALB in HTTP mode, a CDN) will not pass SSH through.
+- The client must send its identification string first, which OpenSSH does.
+
+Without the flag nothing changes: run `honey ssh-server` on its own port.
+
 ## Port-forwarding
 
 `ssh -L` reaches a service on a resolved host's loopback — e.g. a database bound

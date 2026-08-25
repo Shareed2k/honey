@@ -47,6 +47,12 @@ import (
 // Options configures the embedded web server.
 type Options struct {
 	ListenAddr string // e.g. 127.0.0.1:8765
+	// Listener, when set, is served instead of binding ListenAddr — for a caller
+	// that owns the socket. `honey web --ssh-mux` passes the HTTP half of a
+	// first-bytes-demultiplexed port here so the SSH gateway can share it.
+	// ListenAddr is still required (share links and logging derive from it) and
+	// must describe the same address this listener is bound to.
+	Listener net.Listener
 	// PublicURL, when set, is the reachable origin (scheme://host[:port])
 	// used for share links/QR codes instead of one derived from ListenAddr —
 	// how an operator behind a TLS reverse proxy or NAT supplies the address
@@ -793,9 +799,13 @@ func (s *Server) Start(ctx context.Context) error {
 		}()
 	}
 
-	ln, err := net.Listen("tcp", s.opts.ListenAddr)
-	if err != nil {
-		return err
+	var err error
+	ln := s.opts.Listener
+	if ln == nil {
+		ln, err = net.Listen("tcp", s.opts.ListenAddr)
+		if err != nil {
+			return err
+		}
 	}
 	if s.opts.OnReady != nil {
 		s.opts.OnReady()
