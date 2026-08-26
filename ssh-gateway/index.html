@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">SSH Gateway | Honey</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:url" content="https://shareed2k.github.io/honey/ssh-gateway"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="SSH Gateway | Honey"><meta data-rh="true" name="description" content="honey ssh-server runs an inbound SSH gateway: users connect with a native"><meta data-rh="true" property="og:description" content="honey ssh-server runs an inbound SSH gateway: users connect with a native"><link data-rh="true" rel="icon" href="/honey/img/logo.svg"><link data-rh="true" rel="canonical" href="https://shareed2k.github.io/honey/ssh-gateway"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/ssh-gateway" hreflang="en"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/ssh-gateway" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"SSH Gateway","item":"https://shareed2k.github.io/honey/ssh-gateway"}]}</script><link rel="stylesheet" href="/honey/assets/css/styles.38bacd89.css">
-<script src="/honey/assets/js/runtime~main.54cacd8f.js" defer="defer"></script>
+<script src="/honey/assets/js/runtime~main.fca77d1f.js" defer="defer"></script>
 <script src="/honey/assets/js/main.31b602cb.js" defer="defer"></script>
 </head>
 <body>
@@ -69,6 +69,23 @@ The endpoints live on <code>honey web</code>:</p>
 <p>The code is single-use, expires in 10 minutes, and the granted principals come
 from the operator (the redeemer cannot escalate). <code>/api/v1/ssh/enroll-code</code> is
 authenticated; <code>/api/v1/ssh/enroll</code> is authorized by the code itself.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="sharing-one-port-with-the-web-ui">Sharing one port with the web UI<a href="#sharing-one-port-with-the-web-ui" class="hash-link" aria-label="Direct link to Sharing one port with the web UI" title="Direct link to Sharing one port with the web UI" translate="no">​</a></h2>
+<p><code>honey web --ssh-mux</code> serves this gateway on the <strong>same port</strong> as the web UI, so
+a single firewall rule covers both:</p>
+<div class="language-bash codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-bash codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#393A34"><span class="token plain">honey web --ssh-mux --listen 0.0.0.0:8765</span><br></div><div class="token-line" style="color:#393A34"><span class="token plain" style="display:inline-block"></span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">curl http://&lt;host&gt;:8765/                       # web UI</span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">ssh alice@&lt;host&gt; -p 8765 &lt;resource&gt; uptime      # gateway, same port</span><br></div></code></pre></div></div>
+<p>Each connection is routed by its first bytes: an SSH client opens with
+<code>SSH-2.0-…</code>, which no HTTP request can begin with, so the two protocols are
+told apart before either server sees the socket. Authentication is unchanged —
+the SSH half still requires a certificate from a trusted CA, and the gateway is
+built before the port is bound, so a missing CA fails the command outright
+rather than starting a web server with a broken SSH half.</p>
+<p>Two limits come with it:</p>
+<ul>
+<li class=""><strong>TCP passthrough only.</strong> Anything that terminates HTTP in front of the port
+(an ALB in HTTP mode, a CDN) will not pass SSH through.</li>
+<li class="">The client must send its identification string first, which OpenSSH does.</li>
+</ul>
+<p>Without the flag nothing changes: run <code>honey ssh-server</code> on its own port.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="port-forwarding">Port-forwarding<a href="#port-forwarding" class="hash-link" aria-label="Direct link to Port-forwarding" title="Direct link to Port-forwarding" translate="no">​</a></h2>
 <p><code>ssh -L</code> reaches a service on a resolved host&#x27;s loopback — e.g. a database bound
 to <code>127.0.0.1</code> on the target:</p>
@@ -90,14 +107,16 @@ Every decision (session open, command, exit, tunnel, denials) is written to the
 recipe engine, and the gateway:</p>
 <ul>
 <li class=""><strong><code>interactive_session</code></strong> — opening an interactive shell (<code>{actor, target}</code>).</li>
-<li class=""><strong><code>command_exec</code></strong> — an ad-hoc command (<code>{actor, command, target}</code>), combined
-with the deterministic <a class="" href="/honey/command-risk">command-risk</a> floor (a <code>critical</code>
-signal denies even with no policy).</li>
+<li class=""><strong><code>command_exec</code></strong> — an ad-hoc command (<code>{actor, command, target}</code>); the
+<a class="" href="/honey/command-risk">command-risk</a> analysis is included as data
+(<code>input.command.max_severity</code>, signals) for the policy to act on, but never
+denies by itself.</li>
 <li class=""><strong><code>tunnel</code></strong> — a <code>ssh -L</code> destination (<code>{actor, target:{scheme,host,port}}</code>).</li>
 </ul>
 <p>Point the gateway at a policy directory with <code>ssh_gateway.policy_dir</code> (or the
-shared <code>HONEY_POLICY_DIR</code>). A nil policy allows (subject to the command-risk
-floor).</p>
+shared <code>HONEY_POLICY_DIR</code>). OPA is the gateway&#x27;s only command-authorization
+gate: a nil policy allows unconditionally, and with no policy configured
+nothing here is ever denied, regardless of command risk.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="data-masking">Data masking<a href="#data-masking" class="hash-link" aria-label="Direct link to Data masking" title="Direct link to Data masking" translate="no">​</a></h2>
 <p>Redact secrets from a session&#x27;s <strong>output</strong> — both the live stream and the
 recording — with literal values and/or regular expressions:</p>
@@ -110,19 +129,25 @@ match longer than the lookback split across two reads, or a secret split at the
 buffer cap on an adversarial infinite stream, is best-effort.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="interactive-guardrails">Interactive guardrails<a href="#interactive-guardrails" class="hash-link" aria-label="Direct link to Interactive guardrails" title="Direct link to Interactive guardrails" translate="no">​</a></h2>
 <p>Opt-in per-command gating of an interactive shell. Each typed command line is run
-through the same risk+policy assessment as <code>command_exec</code>:</p>
+through the same OPA <code>command_exec</code> decision as an ad-hoc command:</p>
 <div class="language-yaml codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-yaml codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#393A34"><span class="token key atrule" style="color:#00a4db">ssh_gateway</span><span class="token punctuation" style="color:#393A34">:</span><span class="token plain"></span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">  </span><span class="token key atrule" style="color:#00a4db">guardrail</span><span class="token punctuation" style="color:#393A34">:</span><span class="token plain"></span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">    </span><span class="token key atrule" style="color:#00a4db">mode</span><span class="token punctuation" style="color:#393A34">:</span><span class="token plain"> enforce        </span><span class="token comment" style="color:#999988;font-style:italic"># off (default) | audit | enforce</span><br></div></code></pre></div></div>
 <ul>
 <li class=""><strong>off</strong> — no interception (zero overhead).</li>
 <li class=""><strong>audit</strong> — the command runs; the verdict is recorded (<code>interactive_command</code>).</li>
-<li class=""><strong>enforce</strong> — a denied command is discarded before it runs (its Enter is
+<li class=""><strong>enforce</strong> — a command OPA denies is discarded before it runs (its Enter is
 replaced with a kill-line) and the client sees a policy notice.</li>
 </ul>
-<p><strong>Best-effort by design:</strong> a PTY does its own line editing (readline history,
-arrow/escape sequences, bracketed paste), so command reconstruction can desync.
-Enforce is a speed-bump layered on the <strong>authoritative</strong> target-side
-command-risk gate that fires when the command actually executes — not a security
-boundary. Use it for guidance/audit, not as your only control.</p>
+<p><strong>This is a best-effort speed bump, not a security boundary.</strong> It reconstructs
+command lines from raw PTY bytes; a PTY does its own line editing (readline
+history, arrow/escape sequences, bracketed paste), so reconstruction can
+desync — and nothing stops a determined user from reaching a shell it never
+sees into: <code>base64 ... | sh</code>, opening <code>vi</code> and running <code>:!sh</code>, dropping into a
+Python REPL, or a multi-line here-doc all defeat line-level inspection. Treat
+<code>enforce</code> as guidance and an audit trail, never as the reason a dangerous
+command couldn&#x27;t run.</p>
+<p>Because it calls the same OPA <code>command_exec</code> decision as everything else,
+<strong>with no <code>ssh_gateway.policy_dir</code> (or <code>HONEY_POLICY_DIR</code>) configured, <code>enforce</code>
+blocks nothing at all</strong> — a nil policy allows unconditionally.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="bastion--proxyjump">Bastion / ProxyJump<a href="#bastion--proxyjump" class="hash-link" aria-label="Direct link to Bastion / ProxyJump" title="Direct link to Bastion / ProxyJump" translate="no">​</a></h2>
 <p>The gateway is a normal SSH server, so it sits behind an existing bastion with
 standard client config — no honey-specific setup:</p>
@@ -140,12 +165,14 @@ only do what the gates allow; the gateway holds the target credentials.</li>
 <li class=""><strong>Deny-by-default</strong> — no trusted CA ⇒ the gateway will not start (except
 <code>--no-auth</code> for dev). Certificate signature, type, expiry, and principal are all
 enforced by <code>ssh.CertChecker</code>.</li>
-<li class=""><strong>Authoritative gates</strong> — <code>interactive_session</code> / <code>command_exec</code> / <code>tunnel</code> OPA
-actions plus the deterministic command-risk floor apply to every session; these
-are the real controls.</li>
-<li class=""><strong>Best-effort layers</strong> — output masking (pattern/value based) and interactive
-guardrails (PTY line reconstruction) are defense-in-depth with the documented
-limits above, not substitutes for policy.</li>
-</ul></div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href="https://github.com/shareed2k/honey/tree/main/website/docs/ssh-gateway.md" target="_blank" rel="noopener noreferrer" class="theme-edit-this-page"><svg fill="currentColor" height="20" width="20" viewBox="0 0 40 40" class="iconEdit_Z9Sw" aria-hidden="true"><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"></path></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/honey/inventory"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Dynamic Inventory Variables</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/honey/jit-access"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">JIT Access &amp; Share Links</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#quick-start" class="table-of-contents__link toc-highlight">Quick start</a></li><li><a href="#target-types" class="table-of-contents__link toc-highlight">Target types</a></li><li><a href="#certificate-authentication" class="table-of-contents__link toc-highlight">Certificate authentication</a><ul><li><a href="#issuing-certificates" class="table-of-contents__link toc-highlight">Issuing certificates</a></li><li><a href="#self-service-enrollment" class="table-of-contents__link toc-highlight">Self-service enrollment</a></li></ul></li><li><a href="#port-forwarding" class="table-of-contents__link toc-highlight">Port-forwarding</a></li><li><a href="#recording--audit" class="table-of-contents__link toc-highlight">Recording &amp; audit</a></li><li><a href="#policy-gates" class="table-of-contents__link toc-highlight">Policy gates</a></li><li><a href="#data-masking" class="table-of-contents__link toc-highlight">Data masking</a></li><li><a href="#interactive-guardrails" class="table-of-contents__link toc-highlight">Interactive guardrails</a></li><li><a href="#bastion--proxyjump" class="table-of-contents__link toc-highlight">Bastion / ProxyJump</a></li><li><a href="#configuration-reference" class="table-of-contents__link toc-highlight">Configuration reference</a></li><li><a href="#security-model" class="table-of-contents__link toc-highlight">Security model</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class="footer__title">Docs</div><ul class="footer__items clean-list"><li class="footer__item"><a class="footer__link-item" href="/honey/">Getting Started</a></li></ul></div></div><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2026 shareed2k. Built with Docusaurus.</div></div></div></footer></div>
+<li class=""><strong>OPA is the only command-authorization gate</strong> — <code>interactive_session</code> /
+<code>command_exec</code> / <code>tunnel</code> are all decided by policy; command-risk severity is
+data the policy can act on, never a gate on its own. With no policy
+configured, every action allows.</li>
+<li class=""><strong>Best-effort layers</strong> — output masking (pattern/value based) and the
+interactive guardrail (PTY line reconstruction, see above) are a speed bump
+and an audit trail with the documented limits above, never a substitute for
+policy.</li>
+</ul></div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href="https://github.com/shareed2k/honey/tree/main/website/docs/ssh-gateway.md" target="_blank" rel="noopener noreferrer" class="theme-edit-this-page"><svg fill="currentColor" height="20" width="20" viewBox="0 0 40 40" class="iconEdit_Z9Sw" aria-hidden="true"><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"></path></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/honey/inventory"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Dynamic Inventory Variables</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/honey/jit-access"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">JIT Access &amp; Share Links</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#quick-start" class="table-of-contents__link toc-highlight">Quick start</a></li><li><a href="#target-types" class="table-of-contents__link toc-highlight">Target types</a></li><li><a href="#certificate-authentication" class="table-of-contents__link toc-highlight">Certificate authentication</a><ul><li><a href="#issuing-certificates" class="table-of-contents__link toc-highlight">Issuing certificates</a></li><li><a href="#self-service-enrollment" class="table-of-contents__link toc-highlight">Self-service enrollment</a></li></ul></li><li><a href="#sharing-one-port-with-the-web-ui" class="table-of-contents__link toc-highlight">Sharing one port with the web UI</a></li><li><a href="#port-forwarding" class="table-of-contents__link toc-highlight">Port-forwarding</a></li><li><a href="#recording--audit" class="table-of-contents__link toc-highlight">Recording &amp; audit</a></li><li><a href="#policy-gates" class="table-of-contents__link toc-highlight">Policy gates</a></li><li><a href="#data-masking" class="table-of-contents__link toc-highlight">Data masking</a></li><li><a href="#interactive-guardrails" class="table-of-contents__link toc-highlight">Interactive guardrails</a></li><li><a href="#bastion--proxyjump" class="table-of-contents__link toc-highlight">Bastion / ProxyJump</a></li><li><a href="#configuration-reference" class="table-of-contents__link toc-highlight">Configuration reference</a></li><li><a href="#security-model" class="table-of-contents__link toc-highlight">Security model</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class="footer__title">Docs</div><ul class="footer__items clean-list"><li class="footer__item"><a class="footer__link-item" href="/honey/">Getting Started</a></li></ul></div></div><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2026 shareed2k. Built with Docusaurus.</div></div></div></footer></div>
 </body>
 </html>

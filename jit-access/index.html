@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">JIT Access &amp; Share Links | Honey</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:url" content="https://shareed2k.github.io/honey/jit-access"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="JIT Access &amp; Share Links | Honey"><meta data-rh="true" name="description" content="From the web UI&#x27;s search results, any connectable record can be"><meta data-rh="true" property="og:description" content="From the web UI&#x27;s search results, any connectable record can be"><link data-rh="true" rel="icon" href="/honey/img/logo.svg"><link data-rh="true" rel="canonical" href="https://shareed2k.github.io/honey/jit-access"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/jit-access" hreflang="en"><link data-rh="true" rel="alternate" href="https://shareed2k.github.io/honey/jit-access" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"JIT Access & Share Links","item":"https://shareed2k.github.io/honey/jit-access"}]}</script><link rel="stylesheet" href="/honey/assets/css/styles.38bacd89.css">
-<script src="/honey/assets/js/runtime~main.54cacd8f.js" defer="defer"></script>
+<script src="/honey/assets/js/runtime~main.fca77d1f.js" defer="defer"></script>
 <script src="/honey/assets/js/main.31b602cb.js" defer="defer"></script>
 </head>
 <body>
@@ -68,10 +68,10 @@ sits Pending until someone reviews the <strong>Access Requests</strong> tab (or
 <code>GET /api/v1/jit/grants</code>).</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="endpoints">Endpoints<a href="#endpoints" class="hash-link" aria-label="Direct link to Endpoints" title="Direct link to Endpoints" translate="no">​</a></h2>
 <p>Authenticated (session token / normal web auth), used by the operator side:</p>
-<table><thead><tr><th>Method &amp; path</th><th>Purpose</th></tr></thead><tbody><tr><td><code>POST /api/v1/jit/grants</code></td><td>Create a grant. Body: <code>resource</code>, <code>capabilities</code>, <code>delivery</code>, <code>duration</code>, <code>reason</code>, <code>require_approval</code>, <code>max_redemptions</code>, <code>recipient</code>. Returns the plaintext <code>code</code> <strong>once</strong>.</td></tr><tr><td><code>GET /api/v1/jit/grants</code></td><td>List all grants (redacted — never the code or its hash).</td></tr><tr><td><code>POST /api/v1/jit/grants/{id}</code></td><td>Decide a grant: <code>{&quot;decision&quot;: &quot;approve&quot; | &quot;deny&quot; | &quot;revoke&quot;}</code>.</td></tr></tbody></table>
+<table><thead><tr><th>Method &amp; path</th><th>Purpose</th></tr></thead><tbody><tr><td><code>POST /api/v1/jit/grants</code></td><td>Create a grant. Body: <code>resource</code>, <code>capabilities</code>, <code>delivery</code>, <code>duration</code>, <code>reason</code>, <code>require_approval</code>, <code>max_redemptions</code>, <code>recipient</code>. Returns the plaintext <code>code</code> <strong>once</strong>.</td></tr><tr><td><code>GET /api/v1/jit/grants</code></td><td>List all grants (redacted — never the code or its hash).</td></tr><tr><td><code>POST /api/v1/jit/grants/{id}</code></td><td>Decide a grant: <code>{&quot;decision&quot;: &quot;approve&quot; | &quot;deny&quot; | &quot;revoke&quot;}</code>.</td></tr><tr><td><code>GET /api/v1/share/sessions</code></td><td>List access-request grants that have, or could have, a guest session, each with <code>session_alive</code>/<code>observers</code>/<code>observable</code>.</td></tr><tr><td><code>POST /api/v1/share/sessions/{grant_id}/kill</code></td><td>Revoke the grant and terminate the guest&#x27;s session. Idempotent.</td></tr><tr><td><code>GET /ws/share/watch?grant={id}</code></td><td>WebSocket: authed, read-only live view of the guest&#x27;s session (<code>tmux attach -r</code>; no input is ever wired in).</td></tr></tbody></table>
 <p>Code-authenticated (no session — the link&#x27;s code <em>is</em> the credential), and
 mounted <strong>outside</strong> the normal auth group:</p>
-<table><thead><tr><th>Method &amp; path</th><th>Purpose</th></tr></thead><tbody><tr><td><code>GET /api/v1/jit/redeem/{code}</code></td><td>Status/lobby view: what the link offers, without consuming a redemption.</td></tr><tr><td><code>POST /api/v1/jit/redeem/{code}/cert</code></td><td>Consume a redemption, mint an SSH certificate for the caller&#x27;s supplied public key.</td></tr><tr><td><code>GET /api/v1/jit/redeem/{code}/terminal</code></td><td>WebSocket: consume a redemption, open a live browser terminal to the granted resource.</td></tr></tbody></table>
+<table><thead><tr><th>Method &amp; path</th><th>Purpose</th></tr></thead><tbody><tr><td><code>GET /api/v1/jit/redeem/{code}</code></td><td>Status/lobby view: what the link offers, without consuming a redemption.</td></tr><tr><td><code>POST /api/v1/jit/redeem/{code}/cert</code></td><td>Consume a redemption, mint an SSH certificate for the caller&#x27;s supplied public key.</td></tr><tr><td><code>GET /api/v1/jit/redeem/{code}/terminal</code></td><td>WebSocket: consume a redemption, open a live browser terminal to the granted resource (the guest&#x27;s own working session).</td></tr></tbody></table>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="policy-gates">Policy gates<a href="#policy-gates" class="hash-link" aria-label="Direct link to Policy gates" title="Direct link to Policy gates" translate="no">​</a></h2>
 <ul>
 <li class=""><strong><code>jit_grant</code></strong> — gates creating a grant (<code>{actor, target, capabilities, delivery, require_approval}</code>), evaluated on <code>POST /jit/grants</code>.</li>
@@ -90,6 +90,8 @@ with <code>source=web</code>, visible via <code>honey audit tail</code> / <code>
 <li class=""><code>jit_decided</code> — an approver approved or denied a Pending grant.</li>
 <li class=""><code>jit_revoked</code> — an active or pending grant was revoked.</li>
 <li class=""><code>jit_redeemed</code> — a redeem endpoint successfully consumed a redemption (<code>extra.delivery</code> is <code>web</code> or <code>cert</code>).</li>
+<li class=""><code>share_session_killed</code> — an operator killed a guest&#x27;s access-request session.</li>
+<li class=""><code>share_watch_started</code> / <code>share_watch_stopped</code> — an operator started/stopped watching a guest&#x27;s session live.</li>
 </ul>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="security-model-and-limits">Security model and limits<a href="#security-model-and-limits" class="hash-link" aria-label="Direct link to Security model and limits" title="Direct link to Security model and limits" translate="no">​</a></h2>
 <p>Be aware of what this feature does and does not protect against:</p>
@@ -117,6 +119,24 @@ out of the live output or the recording.</li>
 mesh-routed records. Proxmox-serial and TrueNAS-console records are not
 supported over a share link (those are console-only targets handled by a
 separate part of the web-terminal dispatch).</li>
+<li class="">A web-delivered shell grant gives the guest <strong>working access</strong>: its own
+read-write session on the target, gated by the same
+<a class="" href="/honey/web-ui#interactive-guardrails">interactive guardrail</a> (<code>web.guard_mode</code>)
+as any other web terminal. There is no read-only mode for the guest — if a
+multiplexer (tmux) is on the honey-web host, the session runs inside it so
+the operator can watch it live and kill it (see below); with no
+multiplexer, the guest still gets its shell, just not observably.</li>
+<li class="">The guest&#x27;s session is <strong>recorded</strong> (and OPA-gated exactly like the rest of
+honey&#x27;s web terminal) — recording is mandatory here: if a recorder cannot be
+started (e.g. no <code>--record-dir</code> configured), the redeem is refused rather
+than running an unrecorded session.</li>
+<li class="">From the <strong>Access Requests</strong> panel, an operator can <strong>watch</strong> a guest&#x27;s
+session live, read-only — no stdin is ever wired into that view, and it
+cannot resize the guest&#x27;s window — and <strong>kill</strong> it, which revokes the link
+and terminates the guest&#x27;s session (any operator watching is disconnected
+as a side effect). Only guest sessions redeemed from an access request are
+observable this way — not other operators&#x27; terminals, not SSH-gateway
+sessions.</li>
 <li class="">There is no <code>honey jit</code> CLI. Manage grants from the web UI&#x27;s Share button or
 directly against the API.</li>
 </ul>
