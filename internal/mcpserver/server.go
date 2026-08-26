@@ -10,7 +10,6 @@ import (
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/policy"
@@ -28,12 +27,11 @@ var (
 // set once in Run() before any tool handlers are invoked.
 var (
 	serverCfg *config.File
-	// policyEnforcer gates exec_on_host. nil means no OPA policy is configured;
-	// built-in critical command-risk denies still apply (secure-by-default).
+	// policyEnforcer gates exec_on_host. nil means no OPA policy is
+	// configured — exec_on_host still requires HONEY_EXEC_ALLOW_UNVERIFIED=1
+	// to run without one (deny-by-default); commandrisk severity is data fed
+	// to the policy, never a gate by itself.
 	policyEnforcer *policy.Enforcer
-	// guardrailRuleset is the deterministic operator-defined guardrail floor
-	// evaluated before OPA on every gated command. nil (or empty) is a no-op.
-	guardrailRuleset *guardrails.Ruleset
 	// auditSink receives one event per exec_on_host gate decision.
 	// Defaults to a no-op sink when audit is disabled in config.
 	auditSink audit.Sink = audit.NewNoopSink()
@@ -48,14 +46,14 @@ var (
 const mcpActor = "mcp"
 
 // NewServer builds the honey MCP server with its tools registered and the given
-// config, (optional) policy enforcer, and (optional) guardrail ruleset wired in.
-// Transport is the caller's choice — Run uses stdio; tests use an in-memory
-// transport. A nil enforcer leaves OPA opt-in; a nil (or empty) ruleset makes
-// the guardrail floor a no-op; built-in critical command-risk denies always apply.
-func NewServer(cfg *config.File, enf *policy.Enforcer, rules *guardrails.Ruleset, searchReg *searchrun.Registry, execReg hostexec.Registry) *mcp.Server {
+// config and (optional) policy enforcer wired in. Transport is the caller's
+// choice — Run uses stdio; tests use an in-memory transport. A nil enforcer
+// leaves OPA opt-in: exec_on_host then requires HONEY_EXEC_ALLOW_UNVERIFIED=1
+// to run at all (deny-by-default), and plan_command / command_exec elsewhere
+// simply allow (OPA is honey's only command-authorization gate).
+func NewServer(cfg *config.File, enf *policy.Enforcer, searchReg *searchrun.Registry, execReg hostexec.Registry) *mcp.Server {
 	serverCfg = cfg
 	policyEnforcer = enf
-	guardrailRuleset = rules
 	globalSearchReg = searchReg
 	globalExecReg = execReg
 
@@ -83,7 +81,7 @@ func NewServer(cfg *config.File, enf *policy.Enforcer, rules *guardrails.Ruleset
 	}, handleListBackends)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "exec_on_host",
-		Description: "Run a shell command on a host via SSH using its IP or hostname directly (use primary_ip from search_hosts). Commands are gated by honey's command-risk engine and OPA policy; critical or policy-denied commands are refused. Records output to session recordings if record_dir is configured.",
+		Description: "Run a shell command on a host via SSH using its IP or hostname directly (use primary_ip from search_hosts). Commands are gated by OPA policy (honey's only command-authorization gate); without a configured policy, exec_on_host requires an explicit opt-in. Records output to session recordings if record_dir is configured.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPtr(true)},
 	}, handleExecOnHost)
 	mcp.AddTool(s, &mcp.Tool{
@@ -99,15 +97,14 @@ func NewServer(cfg *config.File, enf *policy.Enforcer, rules *guardrails.Ruleset
 	return s
 }
 
-// Run starts the MCP server on stdio until the client disconnects.
-// cfg and cfgPath are the honey config already loaded by the CLI root PersistentPreRunE;
-// rules is the guardrail floor built by the CLI (nil = no-op).
-func Run(ctx context.Context, cfg *config.File, cfgPath string, rules *guardrails.Ruleset, searchReg *searchrun.Registry, execReg hostexec.Registry) error {
+// Run starts the MCP server on stdio until the client disconnects. cfg and
+// cfgPath are the honey config already loaded by the CLI root PersistentPreRunE.
+func Run(ctx context.Context, cfg *config.File, cfgPath string, searchReg *searchrun.Registry, execReg hostexec.Registry) error {
 	_ = cfgPath
 
 	// Build the OPA enforcer when a policy dir is configured. With none set,
-	// the enforcer stays nil (opt-in) and only built-in critical command-risk
-	// denies apply to exec_on_host.
+	// the enforcer stays nil (opt-in): exec_on_host then requires
+	// HONEY_EXEC_ALLOW_UNVERIFIED=1 to run at all.
 	var enf *policy.Enforcer
 	if dir := config.ResolvePolicyDir(cfg); dir != "" {
 		e, err := policy.New(ctx, dir, nil)
@@ -117,7 +114,7 @@ func Run(ctx context.Context, cfg *config.File, cfgPath string, rules *guardrail
 		enf = e
 	}
 
-	return NewServer(cfg, enf, rules, searchReg, execReg).Run(ctx, &mcp.StdioTransport{})
+	return NewServer(cfg, enf, searchReg, execReg).Run(ctx, &mcp.StdioTransport{})
 }
 
 func boolPtr(b bool) *bool { return &b }

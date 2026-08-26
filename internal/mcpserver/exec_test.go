@@ -36,20 +36,51 @@ func withEnforcer(t *testing.T, enf *policy.Enforcer) {
 	t.Cleanup(func() { policyEnforcer = prev })
 }
 
-func TestHandleExecOnHost_criticalBlockedWithoutEnforcer(t *testing.T) {
+// TestHandleExecOnHost_nilEnforcerDeniesCritical proves the deny-by-default
+// gate (not commandrisk) is what blocks a critical command when no OPA
+// enforcer is configured — commandrisk severity is data, not a gate itself.
+func TestHandleExecOnHost_nilEnforcerDeniesCritical(t *testing.T) {
 	called := withFakeExec(t)
 	withEnforcer(t, nil)
+	t.Setenv(execAllowUnverifiedEnv, "")
 
 	in := execOnHostInput{Host: "10.0.0.1", Command: "mkfs.ext4 /dev/sda"}
 	_, _, err := handleExecOnHost(context.Background(), nil, in)
 	if err == nil {
-		t.Fatal("expected critical command to be blocked")
+		t.Fatal("expected exec to be denied by default")
 	}
-	if !strings.Contains(err.Error(), "command risk") {
+	if !strings.Contains(err.Error(), "requires a policy enforcer") {
 		t.Fatalf("err=%v", err)
 	}
 	if *called {
 		t.Fatal("SSH must NOT be called for a blocked command")
+	}
+}
+
+// TestHandleExecOnHost_criticalAllowedByEnforcer proves an OPA policy can
+// explicitly allow a critical command — commandrisk severity is data fed to
+// the policy (input.command.max_severity), never a gate by itself.
+func TestHandleExecOnHost_criticalAllowedByEnforcer(t *testing.T) {
+	called := withFakeExec(t)
+	enf, err := policy.NewFromSource(context.Background(), "p.rego", `package honey
+import rego.v1
+default allow := true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withEnforcer(t, enf)
+
+	in := execOnHostInput{Host: "10.0.0.1", Name: "web1", Command: "mkfs.ext4 /dev/sda"}
+	_, out, err := handleExecOnHost(context.Background(), nil, in)
+	if err != nil {
+		t.Fatalf("OPA-allowed critical command should run: %v", err)
+	}
+	if !*called {
+		t.Fatal("SSH should be called once OPA allows, regardless of severity")
+	}
+	if len(out.Results) != 1 || out.Results[0].Output != "ok" {
+		t.Fatalf("out=%+v", out)
 	}
 }
 

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/jit"
@@ -27,7 +29,48 @@ const (
 	// jitNotifyTimeout bounds the best-effort notify send on grant creation so
 	// a slow/unreachable notify backend cannot stall the request.
 	jitNotifyTimeout = 5 * time.Second
+	// jitDefaultPerPage and jitMaxPerPage bound ?per_page= on the paginated
+	// list endpoints (/jit/grants, /share/sessions): default when omitted,
+	// hard cap regardless of what the caller requests.
+	jitDefaultPerPage = 50
+	jitMaxPerPage     = 200
 )
+
+// paginateParams parses the 1-based ?page= and ?per_page= query params
+// shared by every paginated list endpoint, defaulting/clamping per_page to
+// [1, jitMaxPerPage] and page to >= 1. Malformed or missing values fall back
+// to the defaults rather than erroring — pagination is a display convenience,
+// not a validated input a bad value should 400 over.
+func paginateParams(r *http.Request) (page, perPage int) {
+	page = 1
+	if v, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("page"))); err == nil && v > 0 {
+		page = v
+	}
+	perPage = jitDefaultPerPage
+	if v, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("per_page"))); err == nil && v > 0 {
+		perPage = v
+	}
+	if perPage > jitMaxPerPage {
+		perPage = jitMaxPerPage
+	}
+	return page, perPage
+}
+
+// paginateSlice returns the page-th (1-based) perPage-sized window of items
+// (already sorted by the caller) plus the total item count. An out-of-range
+// page returns an empty, non-nil slice rather than erroring.
+func paginateSlice[T any](items []T, page, perPage int) ([]T, int) {
+	total := len(items)
+	start := (page - 1) * perPage
+	if start < 0 || start >= total {
+		return []T{}, total
+	}
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	return items[start:end], total
+}
 
 // jitResourceRequest is the wire shape of a grant's target resource.
 type jitResourceRequest struct {
@@ -193,6 +236,26 @@ func (s *Server) handleCreateJITGrant(w http.ResponseWriter, r *http.Request) {
 		"status":           string(stored.Status),
 		"require_approval": stored.RequireApproval,
 	}
+	// "link" is the absolute, reachable form of link_path — computed
+	// server-side because the browser's own origin (e.g. localhost:8765) is
+	// useless to a remote recipient such as a phone scanning the QR code. On
+	// failure (no usable listen host and no resolvable LAN IP) it is simply
+	// omitted; the web UI then falls back to window.location.origin +
+	// link_path, same as before this existed.
+	switch base, err := shareBaseURL(s.opts.PublicURL, s.opts.ListenAddr, defaultLANResolver); {
+	case err == nil:
+		resp["link"] = base + "/?access=" + code
+	case errors.Is(err, ErrListenerLoopbackOnly):
+		// The common default (--listen localhost:8765): the listener answers on
+		// loopback only, so no absolute link could reach another device.
+		// Substituting a LAN IP here would hand out a URL nothing is listening
+		// on, so instead tell the operator what to change — the UI shows this
+		// next to the (browser-origin) link so a QR code that cannot work is
+		// never presented as if it could.
+		resp["link_warning"] = err.Error()
+	default:
+		zap.L().Debug("jit: could not compute absolute share link, client will fall back to browser origin", zap.Error(err))
+	}
 	if !stored.ExpiresAt.IsZero() {
 		resp["expires_at"] = stored.ExpiresAt.Format(time.RFC3339)
 	}
@@ -234,15 +297,16 @@ func (s *Server) gateJITGrant(r *http.Request, actor string, resource jit.Resour
 	if g, ok := resource.Meta["groups"]; ok {
 		groups = g
 	}
+	target := map[string]any{
+		"name":     resource.Name,
+		"provider": resource.Provider,
+		"env":      resource.Meta["env"],
+		"groups":   groups,
+	}
 	d, err := s.opts.Enforcer.Evaluate(r.Context(), map[string]any{
-		"action": "jit_grant",
-		"actor":  actor,
-		"target": map[string]any{
-			"name":     resource.Name,
-			"provider": resource.Provider,
-			"env":      resource.Meta["env"],
-			"groups":   groups,
-		},
+		"action":           "jit_grant",
+		"actor":            actor,
+		"target":           target,
 		"capabilities":     caps,
 		"delivery":         delivery,
 		"require_approval": requireApproval,
@@ -256,19 +320,82 @@ func (s *Server) gateJITGrant(r *http.Request, actor string, resource jit.Resour
 	return nil
 }
 
-// handleListJITGrants returns every stored grant as a redacted jitGrantView —
-// never the code hash, never the plaintext code.
-func (s *Server) handleListJITGrants(w http.ResponseWriter, _ *http.Request) {
+// handleListJITGrants returns a page of stored grants as redacted
+// jitGrantViews (never the code hash, never the plaintext code), newest-first,
+// paginated via ?page=/?per_page= (see paginateParams).
+func (s *Server) handleListJITGrants(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Jit == nil {
 		httpError(w, fmt.Errorf("jit not enabled"), http.StatusServiceUnavailable)
 		return
 	}
-	grants := s.opts.Jit.List()
-	views := make([]jitGrantView, 0, len(grants))
-	for _, g := range grants {
+	grants := s.opts.Jit.List() // already newest-first, stable
+	page, perPage := paginateParams(r)
+	paged, total := paginateSlice(grants, page, perPage)
+	views := make([]jitGrantView, 0, len(paged))
+	for _, g := range paged {
 		views = append(views, newJitGrantView(g))
 	}
-	writeJSON(w, map[string]any{"grants": views})
+	writeJSON(w, map[string]any{"grants": views, "total": total, "page": page, "per_page": perPage})
+}
+
+// handleDeleteJITGrant permanently deletes one TERMINAL grant (denied,
+// revoked, or expired). An ACTIVE grant is refused with 409: the operator
+// must revoke (or kill, for a live-terminal share) it first, so a delete can
+// never silently drop a live share's audit trail before it actually ends.
+func (s *Server) handleDeleteJITGrant(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Jit == nil {
+		httpError(w, fmt.Errorf("jit not enabled"), http.StatusServiceUnavailable)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	actor := actorFromCtx(r.Context())
+
+	if err := s.opts.Jit.Delete(id); err != nil {
+		switch {
+		case errors.Is(err, jit.ErrGrantNotFound):
+			httpError(w, err, http.StatusNotFound)
+		case errors.Is(err, jit.ErrGrantNotTerminal):
+			httpError(w, err, http.StatusConflict)
+		default:
+			httpError(w, err, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	_ = s.opts.AuditSink.Log(r.Context(), audit.Event{
+		Source:     "web",
+		Actor:      actor,
+		Action:     "jit_grant_deleted",
+		Decision:   "allow",
+		ApprovalID: id,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleJITGrantsPurge deletes every currently TERMINAL grant and returns how
+// many were removed — the bulk "delete all finished grants" action. Active
+// grants are never touched.
+func (s *Server) handleJITGrantsPurge(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Jit == nil {
+		httpError(w, fmt.Errorf("jit not enabled"), http.StatusServiceUnavailable)
+		return
+	}
+	actor := actorFromCtx(r.Context())
+
+	n, err := s.opts.Jit.Purge()
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	_ = s.opts.AuditSink.Log(r.Context(), audit.Event{
+		Source:   "web",
+		Actor:    actor,
+		Action:   "jit_grants_purged",
+		Decision: "allow",
+		Extra:    map[string]string{"deleted": strconv.Itoa(n)},
+	})
+	writeJSON(w, map[string]any{"deleted": n})
 }
 
 // handleDecideJITGrant approves, denies, or revokes a grant. Approving is

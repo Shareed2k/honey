@@ -202,3 +202,62 @@ func validatePostgresStep(p *RecipeStepPostgres) error {
 	}
 	return nil
 }
+
+// validateInterceptStep validates an intercept step's config. The step index
+// (vc) is intentionally unused here — like postgres, these errors carry no
+// step-index prefix; the graph-level session_step checks live in
+// recipe_graph.go, which does have the context (recipe.type) this validator
+// does not.
+//
+// v1 only ever establishes a targetless session (the executor hardcodes
+// Targetless: true — see step_intercept.go), and a targetless session is
+// egress-only: env needs a target container's /proc/1/environ and files
+// needs redirection into a target, neither of which a standalone agent has
+// (see internal/intercept/standalone.go and website/docs/intercept.md's
+// targetless note). So the establishing branch below requires targetless and
+// rejects any mode/env_include/env_exclude that would need a target pod.
+func validateInterceptStep(_ StepValidateCtx, i *RecipeStepIntercept) error {
+	hasCommand := strings.TrimSpace(i.Command) != ""
+	hasScript := strings.TrimSpace(i.Script) != ""
+	if !hasCommand && !hasScript {
+		return fmt.Errorf("intercept step requires one of command or script")
+	}
+	if hasCommand && hasScript {
+		return fmt.Errorf("intercept: command and script are mutually exclusive")
+	}
+	if strings.TrimSpace(i.SessionStep) != "" {
+		switch {
+		case len(i.Mode) > 0:
+			return fmt.Errorf("intercept: session_step reuses a session; mode belongs on the establishing step")
+		case i.Targetless:
+			return fmt.Errorf("intercept: session_step reuses a session; targetless belongs on the establishing step")
+		case strings.TrimSpace(i.Cluster) != "":
+			return fmt.Errorf("intercept: session_step reuses a session; cluster belongs on the establishing step")
+		case strings.TrimSpace(i.Namespace) != "":
+			return fmt.Errorf("intercept: session_step reuses a session; namespace belongs on the establishing step")
+		case i.UDP:
+			return fmt.Errorf("intercept: session_step reuses a session; udp belongs on the establishing step")
+		case len(i.EnvInclude) > 0:
+			return fmt.Errorf("intercept: session_step reuses a session; env_include belongs on the establishing step")
+		case len(i.EnvExclude) > 0:
+			return fmt.Errorf("intercept: session_step reuses a session; env_exclude belongs on the establishing step")
+		}
+		return nil
+	}
+
+	if !i.Targetless {
+		return fmt.Errorf("intercept: only targetless intercept is supported (set targetless: true)")
+	}
+	for _, m := range i.Mode {
+		if m != "egress" {
+			return fmt.Errorf("intercept.mode: targetless intercept supports only egress (env and files need a target pod)")
+		}
+	}
+	if len(i.EnvInclude) > 0 || len(i.EnvExclude) > 0 {
+		return fmt.Errorf("intercept: env_include/env_exclude require env mode, which needs a target pod (unavailable in targetless)")
+	}
+	if strings.TrimSpace(i.Cluster) == "" || strings.TrimSpace(i.Namespace) == "" {
+		return fmt.Errorf("intercept: targetless requires cluster and namespace")
+	}
+	return nil
+}

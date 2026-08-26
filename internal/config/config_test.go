@@ -210,6 +210,21 @@ func TestResolveRecordDir(t *testing.T) {
 			t.Fatalf("got %q want %q", got, want)
 		}
 	})
+
+	// With no config path to anchor to, the default is the OS cache directory —
+	// never "", which used to silently disable recording. The exact root differs
+	// per platform (XDG_CACHE_HOME or ~/.cache on Linux, ~/Library/Caches on
+	// macOS), so assert the honey/records suffix, not the root. No t.Setenv here:
+	// the parent test is parallel, where it is not allowed.
+	t.Run("cache dir default when no config path", func(t *testing.T) {
+		got := ResolveRecordDir(&File{}, "", "", false)
+		if got == "" {
+			t.Fatal("ResolveRecordDir returned empty: recording would be silently disabled")
+		}
+		if want := filepath.Join("honey", "records"); !strings.HasSuffix(got, want) {
+			t.Fatalf("got %q, want a path ending in %q", got, want)
+		}
+	})
 }
 
 func TestResolvePathXDG(t *testing.T) {

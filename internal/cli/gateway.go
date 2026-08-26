@@ -73,18 +73,35 @@ func init() {
 	rootCmd.AddCommand(gatewayCmd)
 }
 
-func runGateway(cmd *cobra.Command, _ []string) error {
+// gatewayBuild is a built-but-not-started SSH gateway plus the bits its startup
+// banner reports. Close releases the audit sink and must run on every path.
+type gatewayBuild struct {
+	Server     *sshgateway.Server
+	Close      func()
+	TrustedCAs int
+	RecordDir  string
+}
+
+// buildGatewayServer assembles the SSH gateway (host key, trusted CAs, policy
+// enforcer, audit sink, records provider, masking) from config and this
+// command's flags, for the given listen address.
+//
+// It is shared by `honey ssh-server`, which then binds `listen` itself, and by
+// `honey web --ssh-mux`, which passes the web listen address and hands the
+// gateway the SSH half of that one port instead — the wiring is
+// security-sensitive (CA trust, policy gate, audit) and must be identical on
+// both paths, so it lives here once rather than being re-derived.
+func buildGatewayServer(cmd *cobra.Command, listen string) (*gatewayBuild, error) {
 	cfg := resolvedCfg
 	cfgPath := resolvedCfgPath
 	gwCfg := gatewaySettings(cfg)
 
-	listen := firstNonEmptyString(gwListen, gwCfg.Listen, "localhost:12222")
 	userAttr := firstNonEmptyString(gwUserAttr, gwCfg.UserAttr, "principal")
 	certAttr := firstNonEmptyString(gwCertAttr, gwCfg.CertAttr, "principal")
 
 	hostKey, err := loadGatewayHostKey(firstNonEmptyString(gwHostKeyDir, gwCfg.HostKey, ""))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	trustedPaths := gwTrustedCA
@@ -95,7 +112,7 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 	if !gwNoAuth {
 		trustedCAs, err = parseTrustedCAFiles(trustedPaths)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(trustedCAs) == 0 {
 			// No explicit --trusted-ca / config CAs: auto-trust the built-in SSH
@@ -104,11 +121,11 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 			// needed after init.
 			stateDir, derr := gatewayStateDir(firstNonEmptyString(gwHostKeyDir, gwCfg.HostKey, ""))
 			if derr != nil {
-				return derr
+				return nil, derr
 			}
 			caPub, ok, cerr := sshca.LoadCAPublicKey(stateDir)
 			if cerr != nil {
-				return cerr
+				return nil, cerr
 			}
 			if ok {
 				trustedCAs = append(trustedCAs, caPub)
@@ -116,22 +133,18 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if len(trustedCAs) == 0 {
-			return fmt.Errorf("no trusted CA configured: run `honey ssh-ca init`, pass --trusted-ca <file> (or set ssh_gateway.trusted_ca), or --no-auth for dev")
+			return nil, fmt.Errorf("no trusted CA configured: run `honey ssh-ca init`, pass --trusted-ca <file> (or set ssh_gateway.trusted_ca), or --no-auth for dev")
 		}
 	}
 
 	enforcer, err := gatewayEnforcer(cmd.Context(), cfg, gwCfg.PolicyDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	guardrailRules, err := buildGuardrailRuleset(cfg)
-	if err != nil {
-		return err
-	}
-
+	// The sink outlives this function (the server writes to it), so it is closed
+	// via the returned Close rather than a defer here.
 	sink := gatewayAuditSink(cfg)
-	defer func() { _ = sink.Close() }()
 
 	recordDir := ""
 	if gwCfg.Record {
@@ -144,7 +157,7 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 
 	maskRules, err := sshgateway.NewMaskRuleset(gwCfg.Mask.Values, gwCfg.Mask.Patterns)
 	if err != nil {
-		return fmt.Errorf("ssh_gateway.mask: %w", err)
+		return nil, fmt.Errorf("ssh_gateway.mask: %w", err)
 	}
 
 	var defaultSSHUser string
@@ -160,7 +173,6 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 		CertAttr:       certAttr,
 		DefaultSSHUser: defaultSSHUser,
 		Enforcer:       enforcer,
-		Guardrails:     guardrailRules,
 		AuditSink:      sink,
 		RecordDir:      recordDir,
 		Records:        provider,
@@ -170,23 +182,41 @@ func runGateway(cmd *cobra.Command, _ []string) error {
 		DisableAuth:    gwNoAuth,
 	})
 	if err != nil {
+		return nil, err
+	}
+
+	return &gatewayBuild{
+		Server:     srv,
+		Close:      func() { _ = sink.Close() },
+		TrustedCAs: len(trustedCAs),
+		RecordDir:  recordDir,
+	}, nil
+}
+
+func runGateway(cmd *cobra.Command, _ []string) error {
+	gwCfg := gatewaySettings(resolvedCfg)
+	listen := firstNonEmptyString(gwListen, gwCfg.Listen, "localhost:12222")
+
+	build, err := buildGatewayServer(cmd, listen)
+	if err != nil {
 		return err
 	}
+	defer build.Close()
 
 	_, _ = fmt.Fprintf(os.Stdout, "\nHoney SSH gateway (Ctrl+C to stop)\n  Listen: %s\n", listen)
 	if gwNoAuth {
 		_, _ = fmt.Fprintf(os.Stdout, "  AUTH:   DISABLED (--no-auth) — only expose on a trusted network\n")
 	} else {
-		_, _ = fmt.Fprintf(os.Stdout, "  AUTH:   SSH certificate (trusted CAs: %d)\n", len(trustedCAs))
+		_, _ = fmt.Fprintf(os.Stdout, "  AUTH:   SSH certificate (trusted CAs: %d)\n", build.TrustedCAs)
 	}
-	if recordDir != "" {
-		_, _ = fmt.Fprintf(os.Stdout, "  Record: %s\n", recordDir)
+	if build.RecordDir != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "  Record: %s\n", build.RecordDir)
 	}
 	_, _ = fmt.Fprintln(os.Stdout)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return srv.Start(ctx)
+	return build.Server.Start(ctx)
 }
 
 // gatewaySettings returns the SSHGateway config block, or a zero value when unset.

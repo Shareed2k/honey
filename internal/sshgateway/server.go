@@ -12,7 +12,6 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/shareed2k/honey/internal/audit"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/policy"
@@ -31,8 +30,8 @@ const handshakeTimeout = 30 * time.Second
 const shutdownGrace = 5 * time.Second
 
 // Options configures a gateway Server. Zero AuditSink/Enforcer/RecordDir are
-// safe: audit is a no-op, policy allows (subject to the command-risk floor),
-// and sessions are not recorded.
+// safe: audit is a no-op, a nil Enforcer allows unconditionally (OPA is the
+// gateway's only command-authorization gate), and sessions are not recorded.
 type Options struct {
 	// ListenAddr is the host:port the gateway listens on.
 	ListenAddr string
@@ -49,12 +48,10 @@ type Options struct {
 	// is the authorization identity, not necessarily the target account, so the
 	// target login is resolved record.Meta["ssh_user"] -> DefaultSSHUser -> actor.
 	DefaultSSHUser string
-	// Enforcer is the OPA policy enforcer; nil is a no-op allow.
+	// Enforcer is the OPA policy enforcer; nil is a no-op allow — OPA is the
+	// gateway's only command-authorization gate (interactive per-line
+	// assessment and ad-hoc exec both go through it).
 	Enforcer *policy.Enforcer
-	// Guardrails is the deterministic operator-defined guardrail floor applied to
-	// every gated command (interactive per-line assessment and ad-hoc exec),
-	// evaluated before OPA. nil (or empty) is a no-op.
-	Guardrails *guardrails.Ruleset
 	// AuditSink receives audit events; nil becomes a no-op sink.
 	AuditSink audit.Sink
 	// RecordDir is where session recordings are written; empty disables recording.
@@ -73,10 +70,10 @@ type Options struct {
 	ExecRegistry hostexec.Registry
 	// GuardMode selects the best-effort per-command interactive guardrail:
 	// "off" (default), "audit", or "enforce". In interactive shells it runs the
-	// same risk+policy assessment exec uses against each command line the user
-	// types; enforce blocks a denied line locally. This is defense-in-depth
-	// layered on top of the authoritative target-side command-risk gate, not a
-	// replacement for it — see guardReader for the caveats. Empty/unknown = off.
+	// same OPA command_exec decision exec uses against each command line the
+	// user types; enforce blocks a denied line locally. This is a speed bump,
+	// not a security boundary — see internal/termguard for the caveats — and
+	// with no OPA policy configured it blocks nothing. Empty/unknown = off.
 	GuardMode string
 	// DisableAuth accepts any client without a certificate (dev only).
 	DisableAuth bool
@@ -92,6 +89,9 @@ type Server struct {
 	mu    sync.Mutex
 	addr  string
 	ready chan struct{}
+	// readyOnce guards close(ready): Start and Serve share one code path, and a
+	// Server whose Serve is called twice must not panic on a double close.
+	readyOnce sync.Once
 }
 
 // New validates opts and builds the server. It requires at least one trusted CA
@@ -139,17 +139,27 @@ func (s *Server) Addr() string {
 	return s.addr
 }
 
-// Start binds the listener and serves connections until ctx is cancelled. All
+// Start binds ListenAddr and serves it until ctx is cancelled. All
 // per-connection and per-session goroutines are drained before it returns.
 func (s *Server) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", s.opts.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("sshgateway: listen %q: %w", s.opts.ListenAddr, err)
 	}
+	return s.Serve(ctx, ln)
+}
+
+// Serve serves an already-bound listener, with the same lifecycle guarantees as
+// Start: connections are drained before it returns, and ln is closed on every
+// return path. It exists so a caller that owns the listener can hand one over —
+// notably `honey web --ssh-mux`, where a single port is demultiplexed by
+// first-bytes and this gateway gets only the SSH connections. Serve is
+// single-use per Server (Ready is closed on the first call).
+func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	s.mu.Lock()
 	s.addr = ln.Addr().String()
 	s.mu.Unlock()
-	close(s.ready)
+	s.readyOnce.Do(func() { close(s.ready) })
 
 	// runCtx is cancelled on every return path (ctx cancel or accept error) so
 	// the listener-closer goroutine and all conns unwind — no goroutine leaks.

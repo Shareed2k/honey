@@ -25,12 +25,16 @@ func TestReportRecipeRisk(t *testing.T) {
 			wantContain: "No command/script steps",
 		},
 		{
-			name: "built-in critical",
+			// commandrisk severity is data, not a gate: a critical command with
+			// no policy configured allows, same as any other command — proving
+			// OPA is the only thing that can deny.
+			name: "critical severity without a policy still allows",
 			risks: []engine.StepRisk{
 				{StepIndex: 0, Kind: "command", Host: "web-1", Command: "rm -rf /", Analysis: commandrisk.Analyze("rm -rf /")},
 			},
-			wantDenied:  true,
-			wantContain: "DENY (built-in critical",
+			hasPolicy:   false,
+			wantDenied:  false,
+			wantContain: "allow (no policy configured",
 		},
 		{
 			name: "benign no policy",
@@ -39,7 +43,7 @@ func TestReportRecipeRisk(t *testing.T) {
 			},
 			hasPolicy:   false,
 			wantDenied:  false,
-			wantContain: "allow (no policy configured)",
+			wantContain: "allow (no policy configured",
 		},
 		{
 			name: "policy deny",

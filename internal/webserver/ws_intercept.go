@@ -23,6 +23,7 @@ import (
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/intercept"
+	"github.com/shareed2k/honey/internal/termguard"
 )
 
 // wsInterceptHello is the first frame a browser sends on /ws/intercept. It names
@@ -173,7 +174,13 @@ func (s *Server) handleWebIntercept(w http.ResponseWriter, r *http.Request) {
 	// Seed the initial size so the pty starts correctly before the first resize.
 	winCh <- clampWinsize(cols, rows)
 
-	runner := &wsPtyRunner{inner: s.interceptInnerRunner, stdin: stdinR, stdout: stdout, resize: winCh}
+	// Same per-command interactive guardrail as /ws/ssh (internal/termguard):
+	// off (the config default) makes NewReader return stdinR unchanged.
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+	decide, onDecision := newTermGuardDecide(guard)
+	stdin := termguard.NewReader(sessionCtx, stdinR, wsOut, guard.Mode, decide, onDecision)
+
+	runner := &wsPtyRunner{inner: s.interceptInnerRunner, stdin: stdin, stdout: stdout, resize: winCh}
 	session, err := s.opts.InterceptSessionFactory(rec, opts, runner)
 	if err != nil {
 		_ = wsOut.writeText(`{"error":"` + escapeJSON(err.Error()) + `"}`)
@@ -329,9 +336,13 @@ func (s *Server) handleWebInterceptResume(conn *websocket.Conn, hello wsIntercep
 		defer recorder.Close()
 	}
 
+	// FIX-2: guard the operator's ptmx writes here too — handleWebIntercept's
+	// resume path is a mux path exactly like the SSH terminal's, so
+	// web.guard_mode must reach it the same way.
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
 	closeTabKill := make(chan struct{}, 1)
-	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill)
-	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, interceptResumeCloseTabKill(muxName))
+	ptyExited := ptyProxyRunBridge(ptmx, conn, recorder, WSHello{Cols: hello.Cols, Rows: hello.Rows}, muxName, closeTabKill, ptyProxyStdinPolicy{OperatorGuard: &guard})
+	ptyProxyTeardown(ptmx, cmd, muxName, useZellij, closeTabKill, ptyExited, interceptResumeCloseTabKill(muxName), false)
 }
 
 // bridgeInterceptWS runs the session and the WebSocket<->PTY bridge to

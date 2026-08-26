@@ -7,7 +7,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/commandrisk"
-	"github.com/shareed2k/honey/internal/guardrails"
 )
 
 type planCommandInput struct {
@@ -21,7 +20,6 @@ type planCommandOutput struct {
 	Risk     commandrisk.Severity     `json:"risk"`
 	Signals  []commandrisk.RiskSignal `json:"signals"`
 	Reason   string                   `json:"reason,omitempty"`
-	Warnings []string                 `json:"warnings,omitempty"`
 }
 
 // handlePlanCommand evaluates command risk without executing it.
@@ -49,7 +47,7 @@ func handlePlanCommand(ctx context.Context, _ *mcp.CallToolRequest, in planComma
 		},
 	}
 
-	res, err := cmdgate.Decide(ctx, policyEnforcer, guardrailRuleset, analysis, input, in.Command, guardrails.Attrs{Name: in.Target})
+	res, err := cmdgate.Decide(ctx, policyEnforcer, input)
 	if err != nil {
 		return nil, planCommandOutput{}, fmt.Errorf("plan_command: policy eval: %w", err)
 	}
@@ -64,7 +62,6 @@ func handlePlanCommand(ctx context.Context, _ *mcp.CallToolRequest, in planComma
 		Risk:     analysis.MaxSeverity,
 		Signals:  analysis.Signals,
 		Reason:   res.Reason,
-		Warnings: res.Warnings,
 	}
 	if out.Signals == nil {
 		out.Signals = []commandrisk.RiskSignal{}

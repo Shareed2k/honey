@@ -1,8 +1,17 @@
 package webserver
 
 import (
+	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/require"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -66,5 +75,57 @@ func TestShouldUseWebPtyProxy_includesTrueNASAPIConsole(t *testing.T) {
 	hello.SessionID = ""
 	if shouldUseWebPtyProxy(hello) {
 		t.Fatal("expected no pty-proxy without session_id")
+	}
+}
+
+// TestWsWriter_WriteDeadlineReturnsInsteadOfHanging is the NEW-12 regression:
+// a peer that simply stops reading its socket (never closes it, just never
+// calls ReadMessage again) must not block wsWriter.Write forever — with no
+// deadline this would hold wsWriter's mutex indefinitely, wedging the
+// ptmx-reading goroutine in the bridge so bridgeCancel never fires and
+// ptyProxyTeardown never runs, leaving a guest's tmux client attached to the
+// operator's session forever. wsWriteTimeout is shrunk here so the test
+// doesn't wait out the real (generous, operator-facing) 10s default.
+func TestWsWriter_WriteDeadlineReturnsInsteadOfHanging(t *testing.T) {
+	orig := wsWriteTimeout
+	wsWriteTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { wsWriteTimeout = orig })
+
+	upgrader := websocket.Upgrader{}
+	writerReady := make(chan *wsWriter, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		writerReady <- &wsWriter{conn: conn, mu: &sync.Mutex{}}
+		<-r.Context().Done() // keep the connection open; the test drives writes directly
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+	// Deliberately never call conn.ReadMessage(): this client stops reading,
+	// simulating NEW-12's stuck guest (or operator client).
+
+	wsOut := <-writerReady
+
+	chunk := bytes.Repeat([]byte{'a'}, 1<<20) // 1 MiB per write
+	done := make(chan error, 1)
+	go func() {
+		var werr error
+		for i := 0; i < 64; i++ { // up to 64 MiB — comfortably overflows any realistic socket buffer
+			if _, werr = wsOut.Write(chunk); werr != nil {
+				break
+			}
+		}
+		done <- werr
+	}()
+
+	select {
+	case werr := <-done:
+		require.Error(t, werr, "a write to a non-reading peer must eventually fail via the write deadline, not hang forever")
+	case <-time.After(5 * time.Second):
+		t.Fatal("wsWriter.Write did not return within 5s against a non-reading peer — the write deadline did not fire")
 	}
 }

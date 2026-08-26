@@ -22,11 +22,7 @@ Only stderr may be used for logging; stdout carries the JSON-RPC stream.`,
 		_ = cmd
 		log.SetOutput(os.Stderr)
 		log.SetPrefix("honey mcp: ")
-		guardrailRules, err := buildGuardrailRuleset(resolvedCfg)
-		if err != nil {
-			return err
-		}
-		err = mcpserver.Run(context.Background(), resolvedCfg, resolvedCfgPath, guardrailRules, GetSearchRegistry(), GetExecRegistry())
+		err := mcpserver.Run(context.Background(), resolvedCfg, resolvedCfgPath, GetSearchRegistry(), GetExecRegistry())
 		if err != nil && strings.Contains(err.Error(), "EOF") {
 			return nil
 		}

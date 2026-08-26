@@ -57,16 +57,18 @@ const (
 // Sentinel errors returned by Store methods. Wrapped errors remain
 // errors.Is-comparable to these.
 var (
-	ErrGrantNotFound  = errors.New("grant not found")
-	ErrGrantNotActive = errors.New("grant not active")
-	ErrInvalidGrant   = errors.New("invalid grant")
+	ErrGrantNotFound    = errors.New("grant not found")
+	ErrGrantNotActive   = errors.New("grant not active")
+	ErrGrantNotTerminal = errors.New("grant is not terminal; revoke it first")
+	ErrInvalidGrant     = errors.New("invalid grant")
 )
 
 // retention is how long a terminal (denied, revoked, or expired-approved)
 // grant is kept around after it stopped being live, before gcLocked drops it.
 const retention = 7 * 24 * time.Hour
 
-// ResourceRef identifies the target a grant applies to.
+// ResourceRef identifies the target a grant applies to. Meta carries
+// provider-specific fields (e.g. ssh_user, env, groups) verbatim.
 type ResourceRef struct {
 	Name      string            `json:"name"`
 	Provider  string            `json:"provider,omitempty"`
@@ -287,7 +289,10 @@ func (s *Store) Get(id string) (Grant, bool) {
 	return copyGrant(g), true
 }
 
-// List returns copies of all grants, newest-first by CreatedAt.
+// List returns copies of all grants, newest-first by CreatedAt. The sort is
+// stable so a caller paginating over repeated calls (e.g. the webserver's
+// grants/sessions listings) gets a deterministic order even when two grants
+// share an identical CreatedAt.
 func (s *Store) List() []Grant {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -296,7 +301,7 @@ func (s *Store) List() []Grant {
 	for _, g := range s.grants {
 		out = append(out, copyGrant(g))
 	}
-	sort.Slice(out, func(i, j int) bool {
+	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
 	return out
@@ -361,6 +366,63 @@ func (s *Store) Revoke(id, actor string) (Grant, error) {
 		return Grant{}, fmt.Errorf("jit: persist revocation of grant %q: %w", id, err)
 	}
 	return copyGrant(g), nil
+}
+
+// Delete permanently removes a TERMINAL grant (denied, revoked, or an
+// approved grant past its expiry — see isTerminal, the same predicate
+// gcLocked uses). It errors with ErrGrantNotFound for an unknown id and
+// ErrGrantNotTerminal for an ACTIVE grant (pending, or approved and still
+// within its window): the caller must revoke it first, so a delete can never
+// silently drop a live share's audit trail before it actually ends.
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gcLocked()
+
+	g, ok := s.grants[id]
+	if !ok {
+		return fmt.Errorf("jit: delete grant %q: %w", id, ErrGrantNotFound)
+	}
+	if !isTerminal(g, s.now()) {
+		return fmt.Errorf("jit: delete grant %q: %w", id, ErrGrantNotTerminal)
+	}
+
+	prev := g
+	delete(s.grants, id)
+	if err := s.persistLocked(); err != nil {
+		s.grants[id] = prev
+		return fmt.Errorf("jit: persist deletion of grant %q: %w", id, err)
+	}
+	return nil
+}
+
+// Purge permanently removes every currently TERMINAL grant, regardless of how
+// long ago it went terminal (unlike gcLocked, which only reaps ones older
+// than retention), and returns how many were deleted. It is the "delete all
+// finished grants" bulk action; active grants are never touched.
+func (s *Store) Purge() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gcLocked()
+
+	now := s.now()
+	removed := make(map[string]*Grant)
+	for id, g := range s.grants {
+		if isTerminal(g, now) {
+			removed[id] = g
+			delete(s.grants, id)
+		}
+	}
+	if len(removed) == 0 {
+		return 0, nil
+	}
+	if err := s.persistLocked(); err != nil {
+		for id, g := range removed {
+			s.grants[id] = g
+		}
+		return 0, fmt.Errorf("jit: persist purge: %w", err)
+	}
+	return len(removed), nil
 }
 
 // Active reports whether the grant is currently redeemable.

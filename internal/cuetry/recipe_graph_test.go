@@ -191,3 +191,65 @@ func TestBuildStepGraph_triggerRule(t *testing.T) {
 		t.Fatalf("expected trigger_rule error, got %v", err)
 	}
 }
+
+// TestBuildStepGraph_interceptSessionStep locks in the session_step auto-edge:
+// a step reusing another intercept step's session must run after the
+// establishing step, without the author writing an explicit depends. Mirrors
+// the rescue-edge derivation above.
+func TestBuildStepGraph_interceptSessionStep(t *testing.T) {
+	t.Parallel()
+	steps := wrapAll(
+		&InterceptStep{StepBase: StepBase{ID: "establish", Host: "*"}, Intercept: &RecipeStepIntercept{
+			Targetless: true, Cluster: "staging", Namespace: "checkout", Command: "npm test",
+		}},
+		&InterceptStep{StepBase: StepBase{ID: "reuse", Host: "*"}, Intercept: &RecipeStepIntercept{
+			SessionStep: "establish", Script: "run-suite.sh",
+		}},
+	)
+	sg, err := BuildStepGraph(steps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	establish, reuse := sg.IDToIndex["establish"], sg.IDToIndex["reuse"]
+	if !containsInt(sg.Depends[reuse], establish) {
+		t.Fatalf("expected reuse to depend on establish, got depends=%v", sg.Depends[reuse])
+	}
+	if !containsInt(sg.Children[establish], reuse) {
+		t.Fatalf("expected establish to have reuse as a child, got children=%v", sg.Children[establish])
+	}
+}
+
+func TestBuildStepGraph_interceptSessionStepUnknown(t *testing.T) {
+	t.Parallel()
+	steps := wrapAll(
+		&InterceptStep{StepBase: StepBase{ID: "reuse", Host: "*"}, Intercept: &RecipeStepIntercept{
+			SessionStep: "missing", Script: "run-suite.sh",
+		}},
+	)
+	_, err := BuildStepGraph(steps)
+	if err == nil || !strings.Contains(err.Error(), "unknown step id") {
+		t.Fatalf("expected unknown session_step id error, got %v", err)
+	}
+}
+
+func TestBuildStepGraph_interceptSessionStepSelf(t *testing.T) {
+	t.Parallel()
+	steps := wrapAll(
+		&InterceptStep{StepBase: StepBase{ID: "establish", Host: "*"}, Intercept: &RecipeStepIntercept{
+			SessionStep: "establish", Script: "run-suite.sh",
+		}},
+	)
+	_, err := BuildStepGraph(steps)
+	if err == nil || !strings.Contains(err.Error(), "must not reference itself") {
+		t.Fatalf("expected self-reference error, got %v", err)
+	}
+}
+
+func containsInt(haystack []int, needle int) bool {
+	for _, v := range haystack {
+		if v == needle {
+			return true
+		}
+	}
+	return false
+}

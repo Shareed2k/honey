@@ -5,7 +5,6 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -31,12 +30,11 @@ type CueRecipeRunParams struct {
 	Reg            hostexec.Registry
 	Obs            metrics.Observer
 	Pools          *postgres.PoolManager
-	Cache          *ClientCache        // optional shared cache; nil = create a fresh per-run cache
-	Enforcer       *policy.Enforcer    // optional OPA host-filter gate; nil = allow all
-	Guardrails     *guardrails.Ruleset // optional deterministic guardrail floor; nil/empty = no-op
-	Inventory      config.Inventory    // config inventory; resolved per-host into OPA host_vars
-	CmdTimeout     time.Duration       // per-host command timeout; 0 = none
-	MaxParallel    int                 // config default host fan-out (1-128); 0 = per-step defaults
+	Cache          *ClientCache     // optional shared cache; nil = create a fresh per-run cache
+	Enforcer       *policy.Enforcer // optional OPA host-filter gate; nil = allow all
+	Inventory      config.Inventory // config inventory; resolved per-host into OPA host_vars
+	CmdTimeout     time.Duration    // per-host command timeout; 0 = none
+	MaxParallel    int              // config default host fan-out (1-128); 0 = per-step defaults
 }
 
 // CueRun ...
@@ -45,6 +43,7 @@ type CueRun struct {
 	Cache             *ClientCache
 	RecipeKV          *RecipeKVCoordinator
 	TunnelCoord       *RecipeTunnelCoordinator
+	InterceptCoord    *RecipeInterceptCoordinator
 	DockerPluginSess  *plugins.DockerHostSession
 	OutputStore       *cuetry.StepOutputStore
 	OutputCapture     *cuetry.RecipeOutputCapture

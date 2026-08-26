@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -323,6 +324,189 @@ func TestJITEndpoints_NilStore(t *testing.T) {
 	})
 }
 
+// createJITGrantDirect creates a grant directly via the store (bypassing the
+// HTTP create handler's OPA/notify/tmux plumbing, which is already covered
+// elsewhere) so pagination/delete/purge tests can set up fixtures without
+// wiring a fake tmux server for every case.
+func createJITGrantDirect(t *testing.T, store *jit.Store, name string) jit.Grant {
+	t.Helper()
+	stored, _, err := store.Create(jit.Grant{
+		Actor:        "alice",
+		Resource:     jit.ResourceRef{Name: name, Provider: "ssh"},
+		Capabilities: []jit.Capability{jit.CapShell},
+		Delivery:     jit.DeliveryWeb,
+		Duration:     time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("create grant %q: %v", name, err)
+	}
+	return stored
+}
+
+// TestHandleListJITGrants_Pagination table-drives ?page=/?per_page= slicing
+// and the total/page/per_page response fields against a fixed 5-grant
+// fixture, newest-first (grant4 created last, so it sorts first).
+func TestHandleListJITGrants_Pagination(t *testing.T) {
+	s, store := newJitTestServer(t, Options{})
+	var names []string
+	for i := 0; i < 5; i++ {
+		g := createJITGrantDirect(t, store, fmt.Sprintf("host-%d", i))
+		names = append([]string{g.Resource.Name}, names...) // prepend: newest-first order
+	}
+
+	tests := []struct {
+		name        string
+		query       string
+		wantNames   []string
+		wantTotal   float64
+		wantPage    float64
+		wantPerPage float64
+	}{
+		{name: "default page/per_page", query: "", wantNames: names, wantTotal: 5, wantPage: 1, wantPerPage: 50},
+		{name: "page 1 size 2", query: "?page=1&per_page=2", wantNames: names[0:2], wantTotal: 5, wantPage: 1, wantPerPage: 2},
+		{name: "page 2 size 2", query: "?page=2&per_page=2", wantNames: names[2:4], wantTotal: 5, wantPage: 2, wantPerPage: 2},
+		{name: "page 3 size 2 (partial last page)", query: "?page=3&per_page=2", wantNames: names[4:5], wantTotal: 5, wantPage: 3, wantPerPage: 2},
+		{name: "page past the end is empty, not an error", query: "?page=99&per_page=2", wantNames: nil, wantTotal: 5, wantPage: 99, wantPerPage: 2},
+		{name: "per_page capped at 200", query: "?per_page=99999", wantNames: names, wantTotal: 5, wantPage: 1, wantPerPage: 200},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doJSON(t, s, http.MethodGet, "/api/v1/jit/grants"+tc.query, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body)
+			}
+			var resp struct {
+				Grants  []map[string]any `json:"grants"`
+				Total   float64          `json:"total"`
+				Page    float64          `json:"page"`
+				PerPage float64          `json:"per_page"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Total != tc.wantTotal || resp.Page != tc.wantPage || resp.PerPage != tc.wantPerPage {
+				t.Fatalf("total/page/per_page = %v/%v/%v, want %v/%v/%v", resp.Total, resp.Page, resp.PerPage, tc.wantTotal, tc.wantPage, tc.wantPerPage)
+			}
+			gotNames := make([]string, 0, len(resp.Grants))
+			for _, g := range resp.Grants {
+				gotNames = append(gotNames, g["resource"].(map[string]any)["name"].(string))
+			}
+			if len(gotNames) != len(tc.wantNames) {
+				t.Fatalf("got %d grants %v, want %d %v", len(gotNames), gotNames, len(tc.wantNames), tc.wantNames)
+			}
+			for i := range gotNames {
+				if gotNames[i] != tc.wantNames[i] {
+					t.Fatalf("grant[%d] = %q, want %q (names must stay newest-first)", i, gotNames[i], tc.wantNames[i])
+				}
+			}
+		})
+	}
+}
+
+func TestHandleDeleteJITGrant_RefusesActiveGrant(t *testing.T) {
+	s, store := newJitTestServer(t, Options{})
+	g := createJITGrantDirect(t, store, "host1")
+
+	w := doJSON(t, s, http.MethodDelete, "/api/v1/jit/grants/"+g.ID, nil)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 body=%s", w.Code, w.Body)
+	}
+	if _, ok := store.Get(g.ID); !ok {
+		t.Fatal("an active grant refused by delete must still exist")
+	}
+}
+
+func TestHandleDeleteJITGrant_DeletesTerminalGrant(t *testing.T) {
+	s, store := newJitTestServer(t, Options{})
+	g := createJITGrantDirect(t, store, "host1")
+	if _, err := store.Revoke(g.ID, "dave"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	w := doJSON(t, s, http.MethodDelete, "/api/v1/jit/grants/"+g.ID, nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 body=%s", w.Code, w.Body)
+	}
+	if _, ok := store.Get(g.ID); ok {
+		t.Fatal("deleted grant must be gone")
+	}
+}
+
+func TestHandleDeleteJITGrant_UnknownID(t *testing.T) {
+	s, _ := newJitTestServer(t, Options{})
+	w := doJSON(t, s, http.MethodDelete, "/api/v1/jit/grants/jit_nope", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 body=%s", w.Code, w.Body)
+	}
+}
+
+func TestHandleJITGrantsPurge_DeletesTerminalGrantsAndReturnsCount(t *testing.T) {
+	s, store := newJitTestServer(t, Options{})
+	active := createJITGrantDirect(t, store, "active-host")
+	revoked := createJITGrantDirect(t, store, "revoked-host")
+	if _, err := store.Revoke(revoked.ID, "dave"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants/purge", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["deleted"] != float64(1) {
+		t.Fatalf("deleted = %v, want 1", resp["deleted"])
+	}
+	if _, ok := store.Get(active.ID); !ok {
+		t.Fatal("purge must not touch an active grant")
+	}
+	if _, ok := store.Get(revoked.ID); ok {
+		t.Fatal("purge must remove the revoked grant")
+	}
+}
+
+func TestHandleJITGrantsPurge_NothingToPurge(t *testing.T) {
+	s, store := newJitTestServer(t, Options{})
+	createJITGrantDirect(t, store, "active-host")
+
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants/purge", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["deleted"] != float64(0) {
+		t.Fatalf("deleted = %v, want 0", resp["deleted"])
+	}
+}
+
+// TestJITGrantsMutationEndpoints_NilStore covers the 503 path for the
+// pagination/delete/purge endpoints added alongside TestJITEndpoints_NilStore.
+func TestJITGrantsMutationEndpoints_NilStore(t *testing.T) {
+	s := &Server{opts: Options{AuditSink: audit.NewNoopSink()}}
+
+	t.Run("delete", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodDelete, "/api/v1/jit/grants/jit_x", nil)
+		s.handleDeleteJITGrant(w, r)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body)
+		}
+	})
+	t.Run("purge", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/jit/grants/purge", nil)
+		s.handleJITGrantsPurge(w, r)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body)
+		}
+	})
+}
+
 func TestHandleCreateJITGrant_OPADeny(t *testing.T) {
 	const src = `package honey
 import rego.v1
@@ -400,5 +584,34 @@ func TestHandleCreateJITGrant_MaxDurationConfigCap(t *testing.T) {
 	}
 	if got := exp.Sub(before); got < 55*time.Minute || got > 65*time.Minute {
 		t.Fatalf("expires_at ~%s after now, want ~1h (config max_duration cap must win over the 8h request and the 24h built-in default)", got)
+	}
+}
+
+// TestHandleCreateJITGrant_LinkUsesConcreteListenAddrNotRealResolver is the
+// LOW-Q2 regression: newTestServer's ListenAddr must be a concrete,
+// non-loopback address so shareBaseURL takes its fast path here — if it were
+// still the old loopback default, this handler would fall through to
+// defaultLANResolver and make real net.Dial/net.InterfaceAddrs syscalls in
+// what is otherwise a hermetic test suite.
+func TestHandleCreateJITGrant_LinkUsesConcreteListenAddrNotRealResolver(t *testing.T) {
+	s, _ := newJitTestServer(t, Options{})
+	body := map[string]any{
+		"resource":     map[string]any{"name": "host1"},
+		"capabilities": []string{"shell"},
+		"delivery":     "web",
+		"duration":     "1h",
+	}
+	w := doJSON(t, s, http.MethodPost, "/api/v1/jit/grants", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	code, _ := resp["code"].(string)
+	link, _ := resp["link"].(string)
+	if want := "http://203.0.113.10:0/?access=" + code; link != want {
+		t.Fatalf("link = %q, want %q (deterministic from the concrete ListenAddr, no real resolver call)", link, want)
 	}
 }

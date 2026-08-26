@@ -23,6 +23,7 @@ import (
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/intercept"
+	"github.com/shareed2k/honey/internal/interceptwire"
 	"github.com/shareed2k/honey/internal/webserver"
 )
 
@@ -110,7 +111,7 @@ func runInterceptPane(ctx context.Context, encoded string) error {
 	opts.EnvExclude = req.EnvExclude
 	opts.Actor = req.Actor
 
-	deps, sink, err := buildInterceptDeps(ctx, cfg, restCfg, clientset, opts.Namespace, opts.Pod, "")
+	deps, sink, err := interceptwire.BuildDeps(ctx, cfg, restCfg, clientset, opts.Namespace, opts.Pod, "")
 	if err != nil {
 		return err
 	}

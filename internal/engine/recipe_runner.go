@@ -12,7 +12,6 @@ import (
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/cuetry"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -41,14 +40,13 @@ type RunnerOptions struct {
 	SearchRegistry *searchrun.Registry // required for host resolution
 	Metrics        metrics.Observer
 	Pools          *postgres.PoolManager
-	Cache          *ClientCache        // optional shared SSH client cache; nil = per-run cache
-	PluginCache    *plugincache.Cache  // optional shared plugin manager; nil = fresh manager per run
-	RecordDir      string              // "" disables session recording
-	Enforcer       *policy.Enforcer    // optional OPA admission gate; nil = allow all
-	Guardrails     *guardrails.Ruleset // optional deterministic guardrail floor; nil/empty = no-op
-	Approvals      *approval.Store     // optional pending-approval store; nil = require_approval hard-denies
-	Biometric      BiometricVerifier   // optional WebAuthn token verifier; nil = require_biometric hard-denies
-	AuditSink      audit.Sink          // optional; nil = no recipe_run admission audit
+	Cache          *ClientCache       // optional shared SSH client cache; nil = per-run cache
+	PluginCache    *plugincache.Cache // optional shared plugin manager; nil = fresh manager per run
+	RecordDir      string             // "" disables session recording
+	Enforcer       *policy.Enforcer   // optional OPA admission gate; nil = allow all
+	Approvals      *approval.Store    // optional pending-approval store; nil = require_approval hard-denies
+	Biometric      BiometricVerifier  // optional WebAuthn token verifier; nil = require_biometric hard-denies
+	AuditSink      audit.Sink         // optional; nil = no recipe_run admission audit
 }
 
 // BiometricVerifier verifies a biometric step-up token for an actor. Implemented
@@ -303,7 +301,6 @@ func (r *RecipeRunner) buildRunParams(req RunRequest, mgr *plugins.Manager) (Cue
 		Pools:          r.opts.Pools,
 		Cache:          r.opts.Cache,
 		Enforcer:       r.opts.Enforcer,
-		Guardrails:     r.opts.Guardrails,
 		Inventory:      invFromConfig(r.opts.Config),
 		CmdTimeout:     req.CmdTimeout,
 		MaxParallel:    r.opts.Config.DefaultMaxParallel(),

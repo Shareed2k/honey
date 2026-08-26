@@ -22,7 +22,6 @@ import (
 	"github.com/shareed2k/honey/internal/audit"
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/engine"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostapi"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
@@ -47,7 +46,18 @@ import (
 
 // Options configures the embedded web server.
 type Options struct {
-	ListenAddr         string // e.g. 127.0.0.1:8765
+	ListenAddr string // e.g. 127.0.0.1:8765
+	// Listener, when set, is served instead of binding ListenAddr — for a caller
+	// that owns the socket. `honey web --ssh-mux` passes the HTTP half of a
+	// first-bytes-demultiplexed port here so the SSH gateway can share it.
+	// ListenAddr is still required (share links and logging derive from it) and
+	// must describe the same address this listener is bound to.
+	Listener net.Listener
+	// PublicURL, when set, is the reachable origin (scheme://host[:port])
+	// used for share links/QR codes instead of one derived from ListenAddr —
+	// how an operator behind a TLS reverse proxy or NAT supplies the address
+	// a remote recipient can actually reach. See shareBaseURL.
+	PublicURL          string
 	Token              string
 	DisableAuth        bool   // when true, skip token auth entirely (trusted networks / authenticating proxy)
 	ConfigPath         string // optional explicit --config
@@ -87,12 +97,18 @@ type Options struct {
 	// the X-Honey-User header. nil disables the trusted-header path.
 	TrustedProxyNets []*net.IPNet
 	// Enforcer, when non-nil, gates every authenticated API request through OPA.
-	// nil disables the API policy gate.
+	// nil disables the API policy gate — OPA is honey's only
+	// command-authorization gate, so a nil Enforcer also means recipe
+	// command/script steps and the interactive guard below allow unconditionally.
 	Enforcer *policy.Enforcer
-	// Guardrails is the deterministic operator-defined guardrail floor threaded
-	// into the recipe engine (runner + scheduler) so recipe command/script steps
-	// are gated by it before OPA. nil (or empty) is a no-op.
-	Guardrails *guardrails.Ruleset
+	// GuardMode selects the best-effort per-command interactive guardrail
+	// (internal/termguard) for a NORMAL OPERATOR web terminal (/ws/ssh,
+	// /ws/intercept, and a plain JIT shell-grant redeem): "off" (default),
+	// "audit", or "enforce". Empty/unknown = off. A share-link collaborate
+	// guest's terminal is always enforce regardless of this setting — see
+	// termguard_wire.go's termGuardInputs and pty_proxy.go's GuestGuard —
+	// and a watch guest has no input at all, so nothing to guard.
+	GuardMode string
 	// Approvals holds pending require_approval runs. When nil, NewServer creates a
 	// default in-memory store so the approval endpoints and recipe gate share one.
 	Approvals *approval.Store
@@ -347,7 +363,6 @@ func NewServer(opts Options) (*Server, error) {
 			Pools:          pgPools,
 			Cache:          s.fileClientCache,
 			Enforcer:       opts.Enforcer,
-			Guardrails:     opts.Guardrails,
 		})
 		if err != nil {
 			zap.L().Warn("scheduler init failed, schedules disabled", zap.Error(err))
@@ -498,7 +513,11 @@ func (s *Server) routes() error {
 		r.Post("/approvals/{id}", s.handleDecideApproval)
 		r.Post("/jit/grants", s.handleCreateJITGrant)
 		r.Get("/jit/grants", s.handleListJITGrants)
+		r.Post("/jit/grants/purge", s.handleJITGrantsPurge)
 		r.Post("/jit/grants/{id}", s.handleDecideJITGrant)
+		r.Delete("/jit/grants/{id}", s.handleDeleteJITGrant)
+		r.Get("/share/sessions", s.handleListShareSessions)
+		r.Post("/share/sessions/{grant_id}/kill", s.handleKillShareSession)
 		r.Post("/webauthn/register/begin", s.handleWebAuthnRegisterBegin)
 		r.Post("/webauthn/register/finish", s.handleWebAuthnRegisterFinish)
 		r.Post("/webauthn/assert/begin", s.handleWebAuthnAssertBegin)
@@ -659,6 +678,11 @@ func (s *Server) routes() error {
 	s.router.Get("/ws/ssh", s.handleWebSSH)
 	s.router.Get("/ws/pve-qemu-vnc", s.handleWebProxmoxQemuVNC)
 
+	// Operator-only, authed, read-only live view of an access-request guest's
+	// session (Part 2 of the share/watch feature): authenticated the same way
+	// as /ws/ssh (session token), never by a share-link code.
+	s.router.Get("/ws/share/watch", s.handleShareWatch)
+
 	// Browser interception terminal: runs a direct intercept.Session on the
 	// honey-web host and bridges the injected shell's PTY to the WebSocket.
 	// Registered only when the session factory is wired (intercept enabled with a
@@ -775,9 +799,13 @@ func (s *Server) Start(ctx context.Context) error {
 		}()
 	}
 
-	ln, err := net.Listen("tcp", s.opts.ListenAddr)
-	if err != nil {
-		return err
+	var err error
+	ln := s.opts.Listener
+	if ln == nil {
+		ln, err = net.Listen("tcp", s.opts.ListenAddr)
+		if err != nil {
+			return err
+		}
 	}
 	if s.opts.OnReady != nil {
 		s.opts.OnReady()

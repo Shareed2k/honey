@@ -22,6 +22,7 @@ Optional flags:
 | Flag | Purpose |
 |------|---------|
 | `--listen` | Host:port (must be loopback; default `127.0.0.1:8765`) |
+| `--public-url` | Reachable base URL for share links/QR codes (e.g. `https://honey.example.com`) when honey sits behind a TLS reverse proxy or NAT; default: auto-derive from `--listen`. Also settable via `web.public_url` in config (the flag wins). |
 | `--config` | Honey YAML path (same resolution as `honey search`) |
 | `--record-dir` | Directory to store **SSH/K8s terminal session recordings** (enables replay in the UI when set) |
 | `--files-root` | Local filesystem root for the file browser (default: `$HONEY_FILES_ROOT` or `$HOME`) |
@@ -97,6 +98,39 @@ scrape_configs:
 - Optional **session recording** when `--record-dir` is set; recordings can be listed and replayed from the UI.
 
 Docker search, Honey SSH backends, and **auto-discover on cloud VMs** are documented in [Docker auto-discover](./docker-auto-discover.md) and the [GitHub README Docker provider](https://github.com/shareed2k/honey#docker-provider) section.
+
+#### Interactive guardrails
+
+Like the [SSH gateway](./ssh-gateway.md#interactive-guardrails), a browser
+terminal can gate each typed command line through the same OPA `command_exec`
+decision an ad-hoc command gets:
+
+```yaml
+web:
+  guard_mode: enforce        # off (default) | audit | enforce
+```
+
+- **off** — no interception (zero overhead; this is the default for a normal
+  operator terminal).
+- **audit** — the command runs; the verdict is recorded (`interactive_command`).
+- **enforce** — a command OPA denies is discarded before it runs (its Enter is
+  replaced with a kill-line) and the browser sees a policy notice.
+
+A guest's redeemed [access-request session](./jit-access.md#security-model-and-limits)
+goes through this same gate, at whatever `web.guard_mode` the operator has
+configured — there is no forced or weaker mode for it. The operator's
+read-only **watch** view of that session has no input at all, so there is
+nothing to guard there.
+
+**This is a best-effort speed bump, not a security boundary** (same caveat as
+the SSH gateway): it reconstructs command lines from raw PTY bytes, and a PTY
+does its own line editing — readline history, arrow/escape sequences,
+bracketed paste — so reconstruction can desync, and nothing stops
+`base64 ... | sh`, a text editor's shell-out, or a REPL from reaching code the
+guard never inspects. And because it calls the same OPA `command_exec`
+decision as everything else, **with no OPA policy configured `enforce` blocks
+nothing at all** — for an untrusted guest, the real controls are the grant's
+own capabilities/expiry/redemption cap and OPA policy, not this guard.
 
 ### Files and transfer
 

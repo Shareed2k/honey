@@ -18,6 +18,7 @@ import (
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/intercept"
+	"github.com/shareed2k/honey/internal/interceptwire"
 	"github.com/shareed2k/honey/internal/k8sproxy"
 	"github.com/shareed2k/honey/internal/meshnet"
 	"github.com/shareed2k/honey/internal/metrics"
@@ -28,6 +29,7 @@ import (
 
 var (
 	webListen             string
+	webPublicURL          string
 	webFilesRoot          string
 	webAgentBin           string
 	webAgentBuildCacheDir string
@@ -35,6 +37,7 @@ var (
 	webAllowLogsCommand   bool
 	webBrowser            bool
 	webNoAuth             bool
+	webSSHMuxFlag         bool
 )
 
 var webCmd = &cobra.Command{
@@ -46,6 +49,7 @@ var webCmd = &cobra.Command{
 
 func init() {
 	webCmd.Flags().StringVar(&webListen, "listen", "localhost:8765", "Listen address (host:port)")
+	webCmd.Flags().StringVar(&webPublicURL, "public-url", "", "Reachable base URL for share links/QR codes (e.g. https://honey.example.com); default: auto-derive from --listen, resolving a LAN IP if it binds to a loopback/wildcard address")
 	webCmd.Flags().StringVar(&webFilesRoot, "files-root", "", "Local filesystem root for the web file browser (default: $HONEY_FILES_ROOT or $HOME)")
 	webCmd.Flags().StringVar(&webAgentBin, "agent-bin", "", "Explicit path to honey-transfer-agent binary (optional)")
 	webCmd.Flags().StringVar(&webAgentBuildCacheDir, "agent-build-cache-dir", "", "Directory used to cache auto-built honey-transfer-agent binary")
@@ -53,6 +57,7 @@ func init() {
 	webCmd.Flags().BoolVar(&webAllowLogsCommand, "allow-logs-command", false, "Allow callers to run arbitrary remote commands via the logs streaming endpoint (disabled by default)")
 	webCmd.Flags().BoolVar(&webBrowser, "browser", true, "Open the web UI in the default browser on start")
 	webCmd.Flags().BoolVar(&webNoAuth, "no-auth", false, "Disable web UI token authentication (only for trusted networks / behind an authenticating proxy; also via HONEY_WEB_NO_AUTH)")
+	webCmd.Flags().BoolVar(&webSSHMuxFlag, "ssh-mux", false, "Also serve the inbound SSH gateway (see `honey ssh-server`) on --listen, routing each connection by its first bytes. Requires TCP passthrough: an HTTP-terminating proxy or CDN in front will not pass SSH through")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -118,11 +123,6 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("web auth config: %w", err)
 	}
 
-	guardrailRules, err := buildGuardrailRuleset(cfg)
-	if err != nil {
-		return err
-	}
-
 	// One audit sink, shared by the web server and the k8s access proxy so both
 	// append to the same log. Closed on return (mirrors the gateway command).
 	auditSink := gatewayAuditSink(cfg)
@@ -178,8 +178,8 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 				return nil, fmt.Errorf("intercept: build kubernetes client: %w", cerr)
 			}
 			deps := intercept.Deps{
-				PortForwarder: &interceptPortForwarder{cfg: restCfg},
-				PodExecer:     &interceptPodExecer{cfg: restCfg, clientset: clientset, namespace: opts.Namespace, pod: opts.Pod},
+				PortForwarder: &interceptwire.PortForwarder{Cfg: restCfg},
+				PodExecer:     &interceptwire.PodExecer{Cfg: restCfg, Clientset: clientset, Namespace: opts.Namespace, Pod: opts.Pod},
 				K8sClient:     clientset,
 				Enforcer:      enforcer,
 				Sink:          auditSink,
@@ -200,8 +200,21 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// --public-url wins over web.public_url (flag-over-config, same precedence
+	// as every other flag/config pair in this command).
+	publicURL := firstNonEmptyString(strings.TrimSpace(webPublicURL), configWebPublicURL(cfg))
+
+	sshMux, err := newWebSSHMux(cmd, webListen)
+	if err != nil {
+		return err
+	}
+	defer sshMux.Close()
+	sshMux.PrintBanner(webListen)
+
 	srv, err := webserver.NewServer(webserver.Options{
 		ListenAddr:              webListen,
+		Listener:                sshMux.HTTPListener(),
+		PublicURL:               publicURL,
 		Token:                   token,
 		DisableAuth:             disableAuth,
 		ConfigPath:              cfgPath,
@@ -222,7 +235,7 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		AllowLogsCommand:        webAllowLogsCommand,
 		OnReady:                 onReady,
 		Enforcer:                authCfg.enforcer,
-		Guardrails:              guardrailRules,
+		GuardMode:               webGuardMode(cfg),
 		JWTPubKey:               authCfg.jwtPubKey,
 		TrustedProxyNets:        authCfg.trustedNets,
 		WebAuthn:                authCfg.webauthn,
@@ -250,6 +263,9 @@ func runWeb(cmd *cobra.Command, _ []string) error {
 		// ignored here since nothing needs to wait on it.
 		interceptBroker.StartJanitor(ctx)
 	}
+
+	defer sshMux.Serve(ctx)()
+
 	return srv.Start(ctx)
 }
 

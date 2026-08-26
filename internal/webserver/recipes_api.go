@@ -119,7 +119,6 @@ func NewRecipesAPI(
 		Cache:          sshCache,
 		RecordDir:      opts.RecordDir,
 		Enforcer:       opts.Enforcer,
-		Guardrails:     opts.Guardrails,
 		Approvals:      opts.Approvals,
 		Biometric:      biometric,
 		SearchRegistry: opts.SearchRegistry,

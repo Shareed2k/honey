@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -11,7 +10,7 @@ import (
 )
 
 func TestManager_StartListStop(t *testing.T) {
-	os.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	config.ResolveStateDir() // Trigger load
 
 	mgr := NewManager(nil)
@@ -31,6 +30,7 @@ func TestManager_StartListStop(t *testing.T) {
 
 	dialer := DirectDialer{}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer mgr.Wait() // runs after cancel() below (LIFO): no state write outlives the test
 	defer cancel()
 
 	sess, err := mgr.Start(ctx, app, dialer, nil)
@@ -64,7 +64,7 @@ func TestManager_StartListStop(t *testing.T) {
 }
 
 func TestManager_Expired(t *testing.T) {
-	os.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	mgr := NewManager(nil)
 	app := apps.AppConfig{
@@ -80,6 +80,7 @@ func TestManager_Expired(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer mgr.Wait() // runs after cancel() below (LIFO): no state write outlives the test
 	defer cancel()
 
 	_, err := mgr.Start(ctx, app, DirectDialer{}, nil)

@@ -139,6 +139,10 @@ func BuildStepGraph(steps []StepWrapper) (*StepGraph, error) {
 		}
 	}
 
+	if err := applyInterceptSessionStepEdges(sg, steps); err != nil {
+		return nil, err
+	}
+
 	if sg.SummarizeIndex >= 0 {
 		for i, w := range steps {
 			for _, dep := range w.Step.Base().Depends {
@@ -156,6 +160,40 @@ func BuildStepGraph(steps []StepWrapper) (*StepGraph, error) {
 	sg.TopoOrder = order
 	sg.Waves = computeWaves(sg.Depends, n)
 	return sg, nil
+}
+
+// applyInterceptSessionStepEdges validates intercept session_step references and
+// derives the implicit dependency: a step reusing another intercept step's
+// session must run after the step that established it, without the author
+// writing an explicit depends. Mirrors the rescue-edge derivation in
+// BuildStepGraph.
+func applyInterceptSessionStepEdges(sg *StepGraph, steps []StepWrapper) error {
+	for i, w := range steps {
+		is, ok := w.Step.(*InterceptStep)
+		if !ok || is.Intercept == nil || is.Intercept.SessionStep == "" {
+			continue
+		}
+		sessionStep := strings.TrimSpace(is.Intercept.SessionStep)
+		j, ok := sg.IDToIndex[sessionStep]
+		if !ok {
+			return fmt.Errorf("cuetry: steps[%d].intercept.session_step references unknown step id %q", i, sessionStep)
+		}
+		if j == i {
+			return fmt.Errorf("cuetry: steps[%d].intercept.session_step must not reference itself", i)
+		}
+		alreadyDepends := false
+		for _, d := range sg.Depends[i] {
+			if d == j {
+				alreadyDepends = true
+				break
+			}
+		}
+		if !alreadyDepends {
+			sg.Depends[i] = append(sg.Depends[i], j)
+			sg.Children[j] = append(sg.Children[j], i)
+		}
+	}
+	return nil
 }
 
 func topoSort(deps [][]int, n int) ([]int, error) {
@@ -329,6 +367,9 @@ func validateControllerRecipe(r Recipe) error {
 		}
 		if len(b.Rescue) > 0 {
 			return fmt.Errorf("cuetry: steps[%d].rescue is not allowed in controller mode", i)
+		}
+		if is, ok := ws.Step.(*InterceptStep); ok && is.Intercept != nil && strings.TrimSpace(is.Intercept.SessionStep) != "" {
+			return fmt.Errorf("cuetry: steps[%d].intercept.session_step is not allowed in controller mode", i)
 		}
 	}
 	return nil

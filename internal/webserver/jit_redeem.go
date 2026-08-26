@@ -190,10 +190,15 @@ func jitRedeemInactiveReason(g jit.Grant, now time.Time) string {
 	}
 }
 
-// jitOffersWeb reports whether g's delivery + capabilities would let a
-// redeemer use the (not-yet-built) browser-terminal redeem path.
+// jitOffersWeb reports whether g's delivery + capabilities let a redeemer
+// open a browser terminal (CapShell) — the guest gets its own working session
+// on the target, run inside a multiplexer when one is available so the
+// operator can watch/kill it later (see handleJITRedeemTerminal).
 func jitOffersWeb(g jit.Grant) bool {
-	return (g.Delivery == jit.DeliveryWeb || g.Delivery == jit.DeliveryBoth) && hasCapability(g.Capabilities, jit.CapShell)
+	if g.Delivery != jit.DeliveryWeb && g.Delivery != jit.DeliveryBoth {
+		return false
+	}
+	return hasCapability(g.Capabilities, jit.CapShell)
 }
 
 // jitOffersCert reports whether g's delivery + capabilities allow minting an

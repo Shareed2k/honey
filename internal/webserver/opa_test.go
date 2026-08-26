@@ -30,7 +30,14 @@ func newTestServer(t *testing.T, opts Options) *Server {
 		opts.DisableAuth = true
 	}
 	if opts.ListenAddr == "" {
-		opts.ListenAddr = "127.0.0.1:0"
+		// A concrete, non-loopback address (RFC 5737 TEST-NET-3 — documentation
+		// only, never routed, never actually bound: these tests exercise the
+		// router directly and never call Server.Start). shareBaseURL treats any
+		// loopback/wildcard ListenAddr as unreachable and falls back to
+		// defaultLANResolver, which does real net.Dial/net.InterfaceAddrs
+		// syscalls — undesirable in what is otherwise a hermetic handler test
+		// suite. A concrete host takes shareBaseURL's fast path instead.
+		opts.ListenAddr = "203.0.113.10:0"
 	}
 	s, err := NewServer(opts)
 	if err != nil {

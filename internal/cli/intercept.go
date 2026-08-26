@@ -4,31 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/portforward"
-	"k8s.io/client-go/transport/spdy"
 
 	"github.com/shareed2k/mogate/pkg/local"
 
 	"github.com/shareed2k/honey/internal/config"
 	"github.com/shareed2k/honey/internal/intercept"
+	"github.com/shareed2k/honey/internal/interceptwire"
 	"github.com/shareed2k/honey/internal/provider/k8sprovider"
 )
 
@@ -190,7 +184,7 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		return err
 	}
 
-	restCfg, err := interceptRestConfig(cfg, f.cluster)
+	restCfg, err := interceptwire.RestConfigForCluster(cfg, f.cluster)
 	if err != nil {
 		return err
 	}
@@ -217,7 +211,7 @@ func runIntercept(cmd *cobra.Command, args []string, cfg *config.File, f interce
 		execContainer = intercept.AgentContainerName
 	}
 
-	deps, sink, err := buildInterceptDeps(cmd.Context(), cfg, restCfg, clientset, namespace, agentPod, execContainer)
+	deps, sink, err := interceptwire.BuildDeps(cmd.Context(), cfg, restCfg, clientset, namespace, agentPod, execContainer)
 	if err != nil {
 		return err
 	}
@@ -377,7 +371,7 @@ func runInterceptBrokered(ctx context.Context, cfg *config.File, f interceptFlag
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "intercept: port-forward credentials: %s\n", credSource)
-	pf := &interceptPortForwarder{cfg: restCfg}
+	pf := &interceptwire.PortForwarder{Cfg: restCfg}
 
 	controlAddr, stopControl, err := pf.Forward(ctx, cluster, namespace, pod, resp.ControlPort)
 	if err != nil {
@@ -533,44 +527,6 @@ func interceptActor(flag string) string {
 	return "unknown"
 }
 
-// interceptRestConfig resolves the target cluster's REST config. When cluster
-// names one of the k8s_proxy clusters, that cluster's kubeconfig/context is
-// reused; otherwise the default kubeconfig loading rules apply (KUBECONFIG /
-// ~/.kube/config, current context). Reusing k8s_proxy.clusters avoids adding a
-// second cluster→kubeconfig mapping to the config.
-// interceptClusterKubeconfig resolves the kubeconfig path and context for the
-// direct path. A named --cluster MUST resolve to a k8s_proxy.clusters entry:
-// silently falling back to the current context would deploy the agent to a
-// different cluster than the one the OPA gate authorized and the audit records
-// — a gate/audit-integrity gap. An empty cluster means the standard current
-// kubeconfig context (empty path/context).
-func interceptClusterKubeconfig(cfg *config.File, cluster string) (kubeconfig, kubeContext string, err error) {
-	cluster = strings.TrimSpace(cluster)
-	if cluster == "" {
-		return "", "", nil
-	}
-	if cfg.K8sProxy != nil {
-		for _, c := range cfg.K8sProxy.Clusters {
-			if c.Name == cluster {
-				return c.Kubeconfig, c.Context, nil
-			}
-		}
-	}
-	return "", "", fmt.Errorf("intercept: cluster %q is not defined in k8s_proxy.clusters", cluster)
-}
-
-func interceptRestConfig(cfg *config.File, cluster string) (*rest.Config, error) {
-	kubeconfig, kubeContext, err := interceptClusterKubeconfig(cfg, cluster)
-	if err != nil {
-		return nil, err
-	}
-	restCfg, err := k8sprovider.RestConfigForKubeconfig(kubeconfig, kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("intercept: resolve cluster %q kubeconfig: %w", strings.TrimSpace(cluster), err)
-	}
-	return restCfg, nil
-}
-
 // interceptNamespace resolves the target namespace like kubectl: an explicit
 // --namespace wins; otherwise it defaults to the namespace of the resolved
 // kubeconfig context (which itself falls back to "default"), so the operator
@@ -579,7 +535,7 @@ func interceptNamespace(cfg *config.File, cluster, flagNS string) (string, error
 	if ns := strings.TrimSpace(flagNS); ns != "" {
 		return ns, nil
 	}
-	kubeconfig, kubeContext, err := interceptClusterKubeconfig(cfg, cluster)
+	kubeconfig, kubeContext, err := interceptwire.ClusterKubeconfig(cfg, cluster)
 	if err != nil {
 		return "", err
 	}
@@ -652,104 +608,4 @@ func hasKubeContext(path, name string) bool {
 	}
 	_, ok := cfg.Contexts[name]
 	return ok
-}
-
-// interceptPortForwarder opens client-go SPDY port-forwards to a target pod,
-// binding each to an ephemeral 127.0.0.1 port. It satisfies
-// intercept.PortForwarder.
-type interceptPortForwarder struct {
-	cfg *rest.Config
-}
-
-// Forward establishes a port-forward to remotePort on the pod and returns the
-// bound local address, a stop function safe to call once, and any setup error.
-// The cluster argument is unused: the REST config already targets one cluster.
-func (pf *interceptPortForwarder) Forward(ctx context.Context, _, namespace, pod string, remotePort int) (string, func(), error) {
-	reqURL, err := url.Parse(fmt.Sprintf("%s/api/v1/namespaces/%s/pods/%s/portforward", pf.cfg.Host, namespace, pod))
-	if err != nil {
-		return "", nil, fmt.Errorf("intercept: build port-forward url: %w", err)
-	}
-	transport, upgrader, err := spdy.RoundTripperFor(pf.cfg)
-	if err != nil {
-		return "", nil, fmt.Errorf("intercept: spdy round tripper: %w", err)
-	}
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, reqURL)
-
-	stopCh := make(chan struct{})
-	readyCh := make(chan struct{})
-	var once sync.Once
-	stop := func() { once.Do(func() { close(stopCh) }) }
-
-	fw, err := portforward.New(dialer, []string{fmt.Sprintf("0:%d", remotePort)}, stopCh, readyCh, io.Discard, io.Discard)
-	if err != nil {
-		stop()
-		return "", nil, fmt.Errorf("intercept: create port forwarder: %w", err)
-	}
-	errCh := make(chan error, 1)
-	go func() { errCh <- fw.ForwardPorts() }()
-
-	select {
-	case <-readyCh:
-	case err := <-errCh:
-		stop()
-		return "", nil, fmt.Errorf("intercept: port-forward to %s/%s: %w", namespace, pod, err)
-	case <-ctx.Done():
-		stop()
-		return "", nil, fmt.Errorf("intercept: port-forward to %s/%s: %w", namespace, pod, ctx.Err())
-	}
-
-	ports, err := fw.GetPorts()
-	if err != nil || len(ports) == 0 {
-		stop()
-		return "", nil, fmt.Errorf("intercept: resolve local port: %w", err)
-	}
-	return fmt.Sprintf("127.0.0.1:%d", ports[0].Local), stop, nil
-}
-
-// interceptPodExecer delivers the session token into the interception agent by
-// executing a command in the pod's agent container. It satisfies
-// intercept.PodExecer.
-type interceptPodExecer struct {
-	cfg       *rest.Config
-	clientset kubernetes.Interface
-	namespace string
-	pod       string
-	// container names the agent container directly, skipping the
-	// ephemeral-container lookup. Set by the targetless path, where the
-	// standalone pod's single container has a known, fixed name
-	// (intercept.AgentContainerName). Left empty for the targeted path, which
-	// falls back to resolving the most recently added ephemeral container.
-	container string
-}
-
-// ExecInPod runs cmd in the pod's agent container, wiring the provided
-// streams. When container is set (the targetless path), it is used directly.
-// Otherwise the agent container is resolved at exec time because the
-// session generates its ephemeral container's name at run time and delivers
-// the token without threading that name through; the most recently added
-// ephemeral container is the session's own agent.
-func (e *interceptPodExecer) ExecInPod(ctx context.Context, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	container := e.container
-	if container == "" {
-		var err error
-		container, err = e.agentContainer(ctx)
-		if err != nil {
-			return err
-		}
-	}
-	return execInPodContainer(ctx, e.cfg, e.namespace, e.pod, container, cmd, stdin, stdout, stderr)
-}
-
-// agentContainer returns the name of the pod's agent container: the most
-// recently added ephemeral container, which is this session's agent.
-func (e *interceptPodExecer) agentContainer(ctx context.Context) (string, error) {
-	p, err := e.clientset.CoreV1().Pods(e.namespace).Get(ctx, e.pod, metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("intercept: get pod %q: %w", e.pod, err)
-	}
-	ecs := p.Spec.EphemeralContainers
-	if len(ecs) == 0 {
-		return "", fmt.Errorf("intercept: no agent container on pod %q", e.pod)
-	}
-	return ecs[len(ecs)-1].Name, nil
 }

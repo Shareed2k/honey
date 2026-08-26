@@ -1,6 +1,7 @@
 package webserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -95,8 +96,26 @@ var _ hostexec.Registry = fakeExecRegistry{}
 // fake ExecRegistry returning the given interactive streamer, and a capturing
 // audit sink, then fronts it with an httptest server. The returned wsBase is
 // the ws:// prefix (no path) for dialing redeem terminals.
+//
+// shareMuxAvailable is forced off: these tests assert against the in-process
+// fakeExecRegistry/fakeInteractiveExecutor, which only the plain-shell
+// fallback path (serveWebInteractive) actually drives — the mux path spawns a
+// real subprocess (os.Executable() re-exec'd as "pty-proxy"), which in a `go
+// test` binary is the TEST BINARY itself, not a real shell. Forcing the
+// fallback here exercises exactly what these tests need (and mirrors a real
+// host with no tmux); the mux path itself is covered separately by
+// TestShareWatch_* and TestPtyMuxBuildShareCommand_ArgvShape, neither of
+// which needs a real subprocess spawn.
+//
+// opts.RecordDir is left as given: recording is now mandatory for a
+// redeemed guest session (fail-closed), so a caller whose test needs the
+// redeem to actually succeed must set opts.RecordDir (e.g. t.TempDir())
+// itself — see TestHandleJITRedeemTerminal_NoRecordDirFailsClosed for the
+// case that deliberately leaves it empty.
 func newJitWSTestServer(t *testing.T, banner string, opts Options) (*jit.Store, *captureSink, string) {
 	t.Helper()
+	withShareMuxAvailable(t, false)
+
 	store, err := jit.NewStore(filepath.Join(t.TempDir(), "jit_grants.jsonl"), nil)
 	require.NoError(t, err)
 
@@ -179,7 +198,7 @@ func TestHandleJITRedeemTerminal_PendingGrant404(t *testing.T) {
 
 func TestHandleJITRedeemTerminal_HappyPath(t *testing.T) {
 	const banner = "welcome-to-the-fake-shell\r\n"
-	store, sink, wsBase := newJitWSTestServer(t, banner, Options{})
+	store, sink, wsBase := newJitWSTestServer(t, banner, Options{RecordDir: t.TempDir()})
 	created, code := createWebGrant(t, store, jit.Grant{Resource: jit.ResourceRef{Name: "web-host", Provider: "ssh"}})
 
 	// goleak baseline snapshot taken now (after NewServer + httptest started);
@@ -234,6 +253,36 @@ func TestHandleJITRedeemTerminal_HappyPath(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
+// TestHandleJITRedeemTerminal_ShellGrantOversizedFrameRejected is the NEW-11
+// regression: the read limit must be set once, right after the upgrade,
+// before the very first read — an unauthenticated share-code holder must
+// never be able to make honey-web buffer one arbitrarily large frame in its
+// heap.
+func TestHandleJITRedeemTerminal_ShellGrantOversizedFrameRejected(t *testing.T) {
+	store, _, wsBase := newJitWSTestServer(t, "banner", Options{RecordDir: t.TempDir()})
+	_, code := createWebGrant(t, store, jit.Grant{Resource: jit.ResourceRef{Name: "web-host", Provider: "ssh"}})
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/jit/redeem/"+code+"/terminal", nil)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+
+	require.NoError(t, conn.WriteJSON(map[string]int{"cols": 80, "rows": 24}))
+
+	// Drain the banner so the shell branch is confirmed up before probing the
+	// limit.
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, _, err = conn.ReadMessage()
+	require.NoError(t, err)
+
+	oversized := bytes.Repeat([]byte{'A'}, guestReadLimitBytes+4096)
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, oversized))
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, _, rerr := conn.ReadMessage()
+	require.Error(t, rerr, "a frame over guestReadLimitBytes must close the connection on the plain shell-grant branch too")
+}
+
 func TestHandleJITRedeemTerminal_OPADeniedOverWS(t *testing.T) {
 	const src = `package honey
 import rego.v1
@@ -277,4 +326,32 @@ func TestHandleJITRedeemTerminal_NoExecRegistry503(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// TestHandleJITRedeemTerminal_NoRecordDirFailsClosed is the fail-closed
+// regression: newWebSessionRecorder silently returns nil when RecordDir is
+// empty, which used to hand out an unrecorded, unreplayable guest session.
+// The redeem must now be refused instead — and, since the recorder check
+// runs BEFORE Jit.Redeem, the one-time code must NOT be consumed, so a
+// misconfigured server doesn't burn a guest's single-use link on every
+// attempt.
+func TestHandleJITRedeemTerminal_NoRecordDirFailsClosed(t *testing.T) {
+	store, _, wsBase := newJitWSTestServer(t, "banner", Options{RecordDir: ""})
+	created, code := createWebGrant(t, store, jit.Grant{})
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/jit/redeem/"+code+"/terminal", nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	require.NoError(t, conn.WriteJSON(map[string]int{"cols": 80, "rows": 24}))
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	mt, payload, err := conn.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, mt)
+	require.Contains(t, string(payload), "recording is required")
+
+	got, ok := store.Get(created.ID)
+	require.True(t, ok)
+	require.Zero(t, got.Redemptions, "a redemption must not be consumed when recording cannot be started")
 }

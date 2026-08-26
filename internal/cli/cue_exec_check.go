@@ -13,15 +13,12 @@ import (
 
 // runCueExecCheck analyzes every command/script step in a recipe and prints the
 // per-step risk decision without executing. With HONEY_POLICY_DIR set it also
-// evaluates the command_exec policy. Returns a non-nil error (non-zero exit)
-// when any step is a built-in critical pattern or denied by policy.
+// evaluates the command_exec policy — honey's only command-authorization gate.
+// Returns a non-nil error (non-zero exit) when any step is denied by policy;
+// risk severity alone never denies.
 func runCueExecCheck(ctx context.Context, w io.Writer, recipe cuetry.Recipe, recipeDir string, records []hosts.Record) error {
 	enf := checkEnforcer(ctx)
-	guardrailRules, err := buildGuardrailRuleset(resolvedCfg)
-	if err != nil {
-		return err
-	}
-	runner := engine.NewRecipeRunner(engine.RunnerOptions{Enforcer: enf, Guardrails: guardrailRules})
+	runner := engine.NewRecipeRunner(engine.RunnerOptions{Enforcer: enf})
 	risks := runner.AssessCommandRisk(ctx, engine.RunRequest{
 		Recipe:    recipe,
 		RecipeDir: recipeDir,
@@ -35,8 +32,10 @@ func runCueExecCheck(ctx context.Context, w io.Writer, recipe cuetry.Recipe, rec
 }
 
 // reportRecipeRisk prints one block per command/script step and returns whether
-// any step was denied — by a built-in critical pattern or by policy. It is pure
-// (no enforcer, no env) so the decision logic is unit-testable.
+// any step was denied by policy. Risk severity is shown for visibility only —
+// it never denies by itself, so a step with no configured policy always
+// allows regardless of its severity. It is pure (no enforcer, no env) so the
+// decision logic is unit-testable.
 func reportRecipeRisk(w io.Writer, risks []engine.StepRisk, hasPolicy bool) bool {
 	if len(risks) == 0 {
 		fmt.Fprintln(w, "No command/script steps to check.")
@@ -58,25 +57,13 @@ func reportRecipeRisk(w io.Writer, risks []engine.StepRisk, hasPolicy bool) bool
 		for _, s := range r.Analysis.Signals {
 			fmt.Fprintf(w, "    - [%s] %s: %s\n", s.Severity, s.ID, s.Reason)
 		}
-		for _, gw := range r.Warnings {
-			fmt.Fprintf(w, "  Guardrail warning: %s\n", gw)
-		}
-
-		if r.Analysis.Critical {
-			reason := "critical pattern"
-			if fc := r.Analysis.FirstCritical(); fc != nil {
-				reason = fc.Reason
-			}
-			fmt.Fprintf(w, "  Decision: DENY (built-in critical: %s)\n", reason)
-			denied = true
-		}
 
 		if r.Decision != nil {
 			denied = reportStepDecision(w, r) || denied
 			continue
 		}
-		if !r.Analysis.Critical && !hasPolicy {
-			fmt.Fprintln(w, "  Decision: allow (no policy configured)")
+		if !hasPolicy {
+			fmt.Fprintln(w, "  Decision: allow (no policy configured; risk severity is informational only)")
 		}
 	}
 	return denied

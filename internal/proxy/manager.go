@@ -21,7 +21,18 @@ type Manager struct {
 	// localSessions keeps track of sessions started by THIS process.
 	// This allows us to cleanly call Stop() without sending SIGTERM to ourselves.
 	localSessions map[string]*Session
+
+	// watchers counts the per-session context watchers started by Start, so a
+	// caller can await them. Without it the watcher's Stop — which writes the
+	// state file — can land after the caller believes it is done, which showed
+	// up as a test whose temp state dir was repopulated while being removed.
+	watchers sync.WaitGroup
 }
+
+// Wait blocks until every per-session context watcher has finished. Call it
+// after cancelling the contexts passed to Start when the state directory must
+// not be written to any more.
+func (m *Manager) Wait() { m.watchers.Wait() }
 
 // NewManager returns a new initialized proxy manager.
 func NewManager(audit *Logger) *Manager {
@@ -82,7 +93,9 @@ func (m *Manager) Start(ctx context.Context, app apps.AppConfig, dialer Dialer, 
 	}
 
 	// Auto-remove from state when the context is cancelled locally
+	m.watchers.Add(1)
 	go func() {
+		defer m.watchers.Done()
 		<-ctx.Done()
 		_ = m.Stop(sessionID)
 	}()

@@ -10,7 +10,10 @@ export type JitTerminalProps = {
 // browser terminal for a redeemed JIT share link. It is modeled directly on
 // the WebSocket wiring in TerminalModal.tsx (same hello/resize/control-frame
 // wire protocol as /ws/ssh) but dials the code-scoped redeem endpoint, which
-// needs no token: the code itself is the credential.
+// needs no token: the code itself is the credential. The guest is the
+// ordinary read-write client of its own session — there is no read-only mode
+// here; watching read-only is the OPERATOR's job, from the Access Requests
+// panel.
 export function JitTerminal({ code }: JitTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -118,5 +121,5 @@ export function JitTerminal({ code }: JitTerminalProps) {
 
   // Fill the parent so callers control the size (a small card box or the full
   // viewport); the ResizeObserver above keeps xterm fitted to whatever that is.
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
+  return <div style={{ width: '100%', height: '100%' }} ref={containerRef} />;
 }

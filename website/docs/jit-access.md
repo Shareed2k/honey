@@ -85,6 +85,9 @@ Authenticated (session token / normal web auth), used by the operator side:
 | `POST /api/v1/jit/grants` | Create a grant. Body: `resource`, `capabilities`, `delivery`, `duration`, `reason`, `require_approval`, `max_redemptions`, `recipient`. Returns the plaintext `code` **once**. |
 | `GET /api/v1/jit/grants` | List all grants (redacted — never the code or its hash). |
 | `POST /api/v1/jit/grants/{id}` | Decide a grant: `{"decision": "approve" \| "deny" \| "revoke"}`. |
+| `GET /api/v1/share/sessions` | List access-request grants that have, or could have, a guest session, each with `session_alive`/`observers`/`observable`. |
+| `POST /api/v1/share/sessions/{grant_id}/kill` | Revoke the grant and terminate the guest's session. Idempotent. |
+| `GET /ws/share/watch?grant={id}` | WebSocket: authed, read-only live view of the guest's session (`tmux attach -r`; no input is ever wired in). |
 
 Code-authenticated (no session — the link's code *is* the credential), and
 mounted **outside** the normal auth group:
@@ -93,7 +96,7 @@ mounted **outside** the normal auth group:
 | --- | --- |
 | `GET /api/v1/jit/redeem/{code}` | Status/lobby view: what the link offers, without consuming a redemption. |
 | `POST /api/v1/jit/redeem/{code}/cert` | Consume a redemption, mint an SSH certificate for the caller's supplied public key. |
-| `GET /api/v1/jit/redeem/{code}/terminal` | WebSocket: consume a redemption, open a live browser terminal to the granted resource. |
+| `GET /api/v1/jit/redeem/{code}/terminal` | WebSocket: consume a redemption, open a live browser terminal to the granted resource (the guest's own working session). |
 
 ## Policy gates
 
@@ -115,6 +118,8 @@ with `source=web`, visible via `honey audit tail` / `honey audit export`:
 - `jit_decided` — an approver approved or denied a Pending grant.
 - `jit_revoked` — an active or pending grant was revoked.
 - `jit_redeemed` — a redeem endpoint successfully consumed a redemption (`extra.delivery` is `web` or `cert`).
+- `share_session_killed` — an operator killed a guest's access-request session.
+- `share_watch_started` / `share_watch_stopped` — an operator started/stopped watching a guest's session live.
 
 ## Security model and limits
 
@@ -143,6 +148,24 @@ Be aware of what this feature does and does not protect against:
   mesh-routed records. Proxmox-serial and TrueNAS-console records are not
   supported over a share link (those are console-only targets handled by a
   separate part of the web-terminal dispatch).
+- A web-delivered shell grant gives the guest **working access**: its own
+  read-write session on the target, gated by the same
+  [interactive guardrail](./web-ui.md#interactive-guardrails) (`web.guard_mode`)
+  as any other web terminal. There is no read-only mode for the guest — if a
+  multiplexer (tmux) is on the honey-web host, the session runs inside it so
+  the operator can watch it live and kill it (see below); with no
+  multiplexer, the guest still gets its shell, just not observably.
+- The guest's session is **recorded** (and OPA-gated exactly like the rest of
+  honey's web terminal) — recording is mandatory here: if a recorder cannot be
+  started (e.g. no `--record-dir` configured), the redeem is refused rather
+  than running an unrecorded session.
+- From the **Access Requests** panel, an operator can **watch** a guest's
+  session live, read-only — no stdin is ever wired into that view, and it
+  cannot resize the guest's window — and **kill** it, which revokes the link
+  and terminates the guest's session (any operator watching is disconnected
+  as a side effect). Only guest sessions redeemed from an access request are
+  observable this way — not other operators' terminals, not SSH-gateway
+  sessions.
 - There is no `honey jit` CLI. Manage grants from the web UI's Share button or
   directly against the API.
 

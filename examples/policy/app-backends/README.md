@@ -51,7 +51,7 @@ export HONEY_JWT_PUBLIC_KEY=/path/to/jwt_pub.pem
 
 - Keep this in its own directory. The loader reads every top-level `*.rego` in
   `HONEY_POLICY_DIR` into `package honey`; the sibling
-  [`../mcp_exec.rego`](../mcp_exec.rego) sets `default allow := false`, which
+  [`../mcp/mcp_exec.rego`](../mcp/mcp_exec.rego) sets `default allow := false`, which
   conflicts with this file's `default allow := true` if both are loaded together.
 - This governs the **REST API** only. Backends listing over the MCP server and
   the `pkg/mobile` binding is not policy-gated.

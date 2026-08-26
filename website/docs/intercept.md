@@ -274,7 +274,7 @@ environment unchanged rather than failing the session.
 
 **Agent image requirement.** `env` mode needs an agent that answers the
 environment request, which is `mogate` **`v0.1.9`+**
-(`ghcr.io/shareed2k/mogate:0.1.9`). Older agents predate it and cannot serve
+(`ghcr.io/shareed2k/mogate:0.1.10`). Older agents predate it and cannot serve
 `env` mode.
 
 ## Targetless (no target pod)
@@ -681,7 +681,7 @@ rule the CLI has). A configurable cap bounds how many run concurrently:
 ```yaml
 intercept:
   enabled: true
-  agent_image: ghcr.io/shareed2k/mogate:0.1.9
+  agent_image: ghcr.io/shareed2k/mogate:0.1.10
   max_sessions: 8          # concurrent browser interceptions (default 8)
 ```
 
@@ -832,3 +832,11 @@ WebSocket, so the session can outlive any one browser tab:
   extracted injector removed) when `<command>` exits or the session is
   interrupted — there is no persistent or background interception left
   running after `honey intercept` returns.
+
+## From a CUE recipe
+
+The same interception is also available as an `intercept` step in a
+[CUE recipe](./cue-recipes.md), targetless, so a playbook can give a local
+`command`/`script` egress and environment access into a cluster without the
+CLI or a terminal session — see [CUE Recipes — Intercept
+steps](./cue-recipes.md#intercept-steps).

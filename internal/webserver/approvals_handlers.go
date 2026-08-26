@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/shareed2k/honey/internal/audit"
+	"github.com/shareed2k/honey/internal/cmdgate"
 	"github.com/shareed2k/honey/internal/hosts"
 )
 
@@ -28,16 +29,12 @@ func (s *Server) evalInteractiveSession(ctx context.Context, actor string, rec h
 	if s.opts.Enforcer == nil {
 		return nil
 	}
-	d, err := s.opts.Enforcer.Evaluate(ctx, map[string]any{
+	input := map[string]any{
 		"action": "interactive_session",
 		"actor":  actor,
-		"target": map[string]any{
-			"name":     rec.Name,
-			"provider": rec.Provider,
-			"env":      rec.Meta["env"],
-			"groups":   rec.Groups,
-		},
-	})
+		"target": cmdgate.TargetPolicyInput(rec),
+	}
+	d, err := s.opts.Enforcer.Evaluate(ctx, input)
 	if err != nil {
 		return fmt.Errorf("policy: %w", err)
 	}

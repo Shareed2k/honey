@@ -9,11 +9,13 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/shareed2k/honey/internal/engine"
 	"github.com/shareed2k/honey/internal/hostexec"
 	"github.com/shareed2k/honey/internal/hosts"
+	"github.com/shareed2k/honey/internal/termguard"
 	"github.com/shareed2k/honey/internal/truenasshell"
 	"github.com/shareed2k/honey/internal/ui"
 	"go.uber.org/zap"
@@ -120,9 +122,20 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 		defer recorder.Close()
 	}
 
+	// rec/actor/guard are needed by BOTH the mux path below (FIX-2: the
+	// common case, since the web UI always sends a session_id) and the
+	// direct InteractiveStreamer path further down — computed once, here,
+	// ahead of both. actor is the per-command guard's policy/audit identity
+	// (the authenticated session), distinct from user (the target host's
+	// login account) — see gateInteractiveSession's own use of the same
+	// helper.
+	rec := hello.Record
+	actor := userFromRequest(r, s.opts.TrustedProxyNets, s.opts.JWTPubKey)
+	guard := termGuardInputs{Enforcer: s.opts.Enforcer, Actor: actor, Record: rec, AuditSink: s.opts.AuditSink, Mode: s.webGuardMode()}
+
 	if shouldUseWebPtyProxy(hello) {
 		zap.L().Debug("web ssh: session ID provided, attempting pty proxy", zap.String("session_id", hello.SessionID))
-		err := handleWebPtyProxy(conn, helloRaw, hello, recorder, s.opts.ConfigPath)
+		err := handleWebPtyProxy(conn, helloRaw, hello, recorder, s.opts.ConfigPath, guard)
 		if err == nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"closed":true}`))
 			return
@@ -144,11 +157,10 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	// dispatches to the right native shell/console. hostexec.ProxyExecutor is how
 	// the seam declares "I forward this elsewhere", so the webserver never names a
 	// provider or strips routing metadata to make resolution work.
-	rec := hello.Record
 	ex := s.opts.ExecRegistry.ForRecord(rec)
 	if hostexec.IsProxy(ex) {
 		defer s.trackWSConnection("honey_upstream")()
-		serveWebInteractive(conn, ex, user, rec, cols, rows, recorder)
+		serveWebInteractive(conn, ex, user, rec, cols, rows, recorder, guard)
 		return
 	}
 
@@ -169,7 +181,7 @@ func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
 	// seam; a non-cancelled context is used so a post-hijack request-context
 	// cancel cannot abort a SPDY/exec stream immediately.
 	defer s.trackWSConnection(interactiveWSKind(rec))()
-	serveWebInteractive(conn, ex, user, rec, cols, rows, recorder)
+	serveWebInteractive(conn, ex, user, rec, cols, rows, recorder, guard)
 }
 
 // shouldUseWebPtyProxy reports whether to wrap the session in local tmux/zellij so a
@@ -189,7 +201,9 @@ func benignDockerWSExit(err error) bool {
 // serveWebInteractive runs the browser terminal for rec through ex when it
 // supports interactive streaming (docker/k8s/ssh locally, or the honey proxy for
 // a mesh-routed record), or reports a clear error when no such path exists.
-func serveWebInteractive(conn *websocket.Conn, ex hostexec.Executor, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
+// guard carries the per-command guard's risk+policy inputs — see
+// handleWebInteractiveStreams.
+func serveWebInteractive(conn *websocket.Conn, ex hostexec.Executor, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder, guard termGuardInputs) {
 	is, ok := ex.(hostexec.InteractiveStreamer)
 	if !ok {
 		// The resolved executor can't stream a terminal — e.g. a registry that
@@ -199,7 +213,7 @@ func serveWebInteractive(conn *websocket.Conn, ex hostexec.Executor, user string
 		// the exec registry).
 		is = sshFallbackStreamer{}
 	}
-	handleWebInteractiveStreams(context.Background(), conn, is, user, rec, cols, rows, recorder)
+	handleWebInteractiveStreams(context.Background(), conn, is, user, rec, cols, rows, recorder, guard)
 }
 
 // sshFallbackStreamer is the universal SSH terminal: it dials the record's leaf
@@ -232,15 +246,24 @@ func interactiveWSKind(rec hosts.Record) string {
 // out, forward resizes as [cols,rows], report closure. This one lifecycle covers
 // docker, k8s, ssh, and the honey upstream proxy (which forwards to the server
 // that owns the record and dispatches to the right native shell there).
-func handleWebInteractiveStreams(ctx context.Context, conn *websocket.Conn, is hostexec.InteractiveStreamer, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder) {
+//
+// guard wraps stdinPipeR with the shared per-command interactive guardrail
+// (internal/termguard) before it ever reaches the target: guard.Mode ==
+// termguard.ModeOff (the config default) makes NewReader return stdinPipeR
+// unchanged, so this is a zero-overhead, byte-identical pass-through for the
+// common case.
+func handleWebInteractiveStreams(ctx context.Context, conn *websocket.Conn, is hostexec.InteractiveStreamer, user string, rec hosts.Record, cols, rows int, recorder *engine.SessionRecorder, guard termGuardInputs) {
 	stdinPipeR, stdinPipeW := io.Pipe()
 	resizeCh := make(chan [2]int, 32)
 	wsOut := &wsWriter{conn: conn, mu: &sync.Mutex{}}
 	stdout := engine.WrapRecordingWriter(wsOut, recorder, "stdout")
 
+	decide, onDecision := newTermGuardDecide(guard)
+	stdin := termguard.NewReader(ctx, stdinPipeR, wsOut, guard.Mode, decide, onDecision)
+
 	waitDone := make(chan error, 1)
 	go func() {
-		waitDone <- is.RunInteractiveStreams(ctx, user, rec, stdinPipeR, stdout, cols, rows, resizeCh)
+		waitDone <- is.RunInteractiveStreams(ctx, user, rec, stdin, stdout, cols, rows, resizeCh)
 	}()
 
 	go pumpWebSocketToStreams(conn, stdinPipeW, resizeCh, recorder)
@@ -290,6 +313,25 @@ func pumpWebSocketToStreams(conn *websocket.Conn, stdinPipeW *io.PipeWriter, res
 	}
 }
 
+// wsWriteTimeout bounds every write through wsWriter (NEW-12, round 3): with
+// no deadline, a peer that stops reading its socket (never closes it, just
+// never calls ReadMessage again) blocks WriteMessage forever while holding
+// wsWriter's mutex — for a share-link guest that wedges the ptmx-reading
+// goroutine, which never reaches bridgeCancel, so ptyProxyTeardown never
+// runs and the guest's tmux client stays attached to the operator's session
+// indefinitely. Round 2's NEW-6 drop notice gave the READER goroutine a
+// second way to block on the same mutex (writeText from within the guest's
+// own input-handling goroutine). TCP keepalive does not catch this: a peer
+// that ACKs but never reads still looks healthy at the transport level.
+//
+// wsWriter is SHARED with the operator's own terminals (ws_ssh.go,
+// ws_intercept.go, pty_proxy.go's operator path all construct one), so this
+// must be generous enough that a slow-but-alive operator client is never
+// killed — 10s comfortably covers real network jitter while still bounding
+// the wedge. A var, not a const, so a test can shrink it without a
+// multi-second wait.
+var wsWriteTimeout = 10 * time.Second
+
 type wsWriter struct {
 	conn *websocket.Conn
 	mu   *sync.Mutex
@@ -298,6 +340,7 @@ type wsWriter struct {
 func (w *wsWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	_ = w.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 	if err := w.conn.WriteMessage(websocket.BinaryMessage, p); err != nil {
 		return 0, err
 	}
@@ -307,6 +350,7 @@ func (w *wsWriter) Write(p []byte) (int, error) {
 func (w *wsWriter) writeText(payload string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	_ = w.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 	return w.conn.WriteMessage(websocket.TextMessage, []byte(payload))
 }
 

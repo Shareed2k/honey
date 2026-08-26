@@ -43,27 +43,26 @@ type File struct {
 	// SSH) certificates, e.g. "12h". Empty ⇒ the built-in 12h default (see
 	// DeviceCertTTLValue). Short by design: no certificate revocation exists, so a
 	// short lifetime is the mitigation.
-	DeviceCertTTL string          `yaml:"device_cert_ttl,omitempty" json:"device_cert_ttl,omitempty" honey:"label=Device/SSO certificate TTL (e.g. 12h; default 12h)" mod:"trim"`
-	Jit           *JitConfig      `yaml:"jit,omitempty" json:"jit,omitempty"`
-	Guardrails    []GuardrailRule `yaml:"guardrails,omitempty" json:"guardrails,omitempty" validate:"dive" mod:"dive"`
+	DeviceCertTTL string     `yaml:"device_cert_ttl,omitempty" json:"device_cert_ttl,omitempty" honey:"label=Device/SSO certificate TTL (e.g. 12h; default 12h)" mod:"trim"`
+	Jit           *JitConfig `yaml:"jit,omitempty" json:"jit,omitempty"`
+	Web           *WebConfig `yaml:"web,omitempty" json:"web,omitempty"`
 }
 
-// GuardrailRule is one operator-defined guardrail as authored in config. It
-// mirrors the fields of the guardrails engine's Rule; the CLI maps a slice of
-// these into a compiled *guardrails.Ruleset at startup (fail-closed on error).
-// A guardrail is a deterministic floor: it inspects a command (or SQL) text and
-// either denies it (hard block) or warns (allow, with a surfaced message),
-// evaluated before any OPA policy and never able to downgrade a deny.
-type GuardrailRule struct {
-	Name        string   `yaml:"name" json:"name" honey:"label=Rule name" validate:"required" mod:"trim"`
-	Description string   `yaml:"description,omitempty" json:"description,omitempty" honey:"label=Description" mod:"trim"`
-	Action      string   `yaml:"action,omitempty" json:"action,omitempty" honey:"label=Action;enum=deny|warn;enum_as_warning" validate:"omitempty,oneof=deny warn" mod:"trim"`
-	AppliesTo   string   `yaml:"applies_to,omitempty" json:"applies_to,omitempty" honey:"label=Applies to;enum=command|sql|any;enum_as_warning" validate:"omitempty,oneof=command sql any" mod:"trim"`
-	Words       []string `yaml:"words,omitempty" json:"words,omitempty" honey:"label=Literal substrings (any match; case-insensitive)"`
-	Patterns    []string `yaml:"patterns,omitempty" json:"patterns,omitempty" honey:"label=RE2 patterns (any match)"`
-	Absent      []string `yaml:"absent,omitempty" json:"absent,omitempty" honey:"label=RE2 patterns that must NOT match"`
-	Message     string   `yaml:"message,omitempty" json:"message,omitempty" honey:"label=Message shown/audited on match" mod:"trim"`
-	Targets     []string `yaml:"targets,omitempty" json:"targets,omitempty" honey:"label=Target globs (provider/group/name; empty = all)"`
+// WebConfig configures the embedded web server (honey web) and its share
+// terminals.
+type WebConfig struct {
+	// GuardMode selects the best-effort per-command interactive guardrail for
+	// a normal operator web terminal — the same mechanism (internal/termguard)
+	// and semantics as SSHGatewayGuardrail: "off" (default), "audit", or
+	// "enforce". A share-link **collaborate** guest's terminal is ALWAYS
+	// enforce regardless of this setting (an untrusted party never gets a
+	// weaker mode via config); a **watch** guest has no input at all, so
+	// nothing to guard.
+	GuardMode string `yaml:"guard_mode,omitempty" json:"guard_mode,omitempty" honey:"label=Interactive guardrail mode (off/audit/enforce)" mod:"trim"`
+	// PublicURL is the reachable origin (scheme://host[:port]) used for share
+	// links/QR codes, e.g. when honey sits behind a TLS reverse proxy or NAT.
+	// The `--public-url` flag wins when both are set.
+	PublicURL string `yaml:"public_url,omitempty" json:"public_url,omitempty" honey:"label=Public URL for share links (e.g. https://honey.example.com)" mod:"trim"`
 }
 
 // JitConfig configures the web-driven JIT access + share-link feature
@@ -106,8 +105,9 @@ type SSHGatewaySearch struct {
 
 // SSHGatewayGuardrail configures the best-effort per-command guardrail for
 // interactive shells: each command line the user types is run through the same
-// risk+policy gate exec uses; enforce blocks a denied line locally. This is
-// defense-in-depth on top of the authoritative target-side command-risk gate.
+// OPA command_exec decision exec uses; enforce blocks a denied line locally.
+// This is a speed bump, not a security boundary — see the ssh-gateway docs —
+// and with no OPA policy configured it blocks nothing.
 type SSHGatewayGuardrail struct {
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" honey:"label=Interactive guardrail mode (off/audit/enforce)" mod:"trim"`
 }
@@ -189,10 +189,14 @@ type InterceptConfig struct {
 	// SessionStoreDSN is the sqlite file path or postgres DSN for SessionStore
 	// "sqlite"/"postgres". Never logged: it may contain credentials.
 	SessionStoreDSN string `yaml:"session_store_dsn,omitempty" json:"session_store_dsn,omitempty" honey:"label=Intercept session store DSN (sqlite path or postgres DSN)" mod:"trim"`
-	// MaxSessions caps the number of concurrent browser interception sessions
-	// (GET /ws/intercept). A start beyond the cap is rejected before any agent is
-	// deployed. Non-positive selects the built-in default (8).
-	MaxSessions int `yaml:"max_sessions,omitempty" json:"max_sessions,omitempty" honey:"label=Max concurrent browser interception sessions (default 8)"`
+	// MaxSessions caps the number of concurrent interception sessions,
+	// enforced separately for each of the two session pools it gates: browser
+	// interception sessions (GET /ws/intercept) and the sessions a recipe's
+	// `intercept` steps establish in one cue-exec run (see
+	// RecipeInterceptCoordinator.Register). A start beyond the cap is
+	// rejected before any agent is deployed. Non-positive selects the
+	// built-in default (8).
+	MaxSessions int `yaml:"max_sessions,omitempty" json:"max_sessions,omitempty" honey:"label=Max concurrent interception sessions (default 8)"`
 }
 
 // DefaultDeviceCertTTL is the fallback validity for SSO/enroll-issued device
@@ -237,12 +241,13 @@ func (c *InterceptConfig) SessionTTLValue() time.Duration {
 	return d
 }
 
-// DefaultMaxInterceptSessions bounds concurrent browser interception sessions
-// when max_sessions is unset or non-positive.
+// DefaultMaxInterceptSessions bounds concurrent interception sessions (per
+// pool — see MaxSessions) when max_sessions is unset or non-positive.
 const DefaultMaxInterceptSessions = 8
 
-// MaxSessionsValue returns the configured concurrent browser-interception cap,
-// or DefaultMaxInterceptSessions (8) when unset or non-positive. Nil-safe.
+// MaxSessionsValue returns the configured concurrent-interception-session
+// cap, or DefaultMaxInterceptSessions (8) when unset or non-positive.
+// Nil-safe.
 func (c *InterceptConfig) MaxSessionsValue() int {
 	if c == nil || c.MaxSessions <= 0 {
 		return DefaultMaxInterceptSessions
@@ -773,16 +778,26 @@ func DefaultRecordDir(configPath string) string {
 			return filepath.Join(filepath.Dir(abs), "records")
 		}
 	}
-	if base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); base != "" {
-		if p, err := safepath.JoinUnder(base, "honey", "records"); err == nil {
+	// With no config path to anchor to, recordings go to the OS cache directory
+	// (os.UserCacheDir honors XDG_CACHE_HOME on Linux and ~/Library/Caches on
+	// macOS). They used to land under XDG_CONFIG_HOME / ~/.config, which is the
+	// wrong class of directory — a recording is data an operator replays, not
+	// configuration — and, more importantly, this chain used to be able to end in
+	// "", which silently disabled recording altogether. It never returns "" now
+	// unless the OS can report neither a cache nor a home directory.
+	//
+	// Note for operators: a cache directory is conventionally disposable, so an
+	// OS or user cleanup may delete recordings. Set --record-dir (or
+	// defaults.record_dir) to a persistent path when recordings must be kept as
+	// durable audit material.
+	if base, err := os.UserCacheDir(); err == nil {
+		if p, perr := safepath.JoinUnder(base, "honey", "records"); perr == nil {
 			return p
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		if strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")) == "" {
-			if p, err := safepath.JoinUnder(home, ".config", "honey", "records"); err == nil {
-				return p
-			}
+		if p, perr := safepath.JoinUnder(home, ".cache", "honey", "records"); perr == nil {
+			return p
 		}
 	}
 	return ""

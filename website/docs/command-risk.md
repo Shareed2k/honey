@@ -4,28 +4,31 @@ title: Command Risk Engine
 slug: /command-risk
 ---
 
-Honey does **not** trust an LLM to judge whether a shell command is dangerous.
-Instead it runs a deterministic **Command Risk Engine** in front of every
-command and script step: it parses the command to an AST, derives risk signals
-with fixed rules, and lets an [OPA policy](/authorization) make the contextual
-decision. A local LLM may *explain* the risk, but never decides.
+Honey does **not** trust an LLM to judge whether a shell command is dangerous,
+and it does not trust a regex either. It runs a deterministic **Command Risk
+Engine** in front of every command and script step: it parses the command to an
+AST and derives risk signals with fixed rules — but those signals are **data**,
+not a gate. **OPA is honey's only command-authorization gate.** A local LLM may
+*explain* the risk, but never decides, and neither does the risk engine itself.
 
 The decision order is fixed and load-bearing:
 
-> **built-in critical deny → OPA policy → (LLM advisory, explanation only)**
+> **risk analysis (data only) → OPA policy (the only gate) → (LLM advisory, explanation only)**
 
-An LLM suggestion can never turn a deny into an allow.
+An LLM suggestion can never turn a deny into an allow, and severity alone never
+denies. **With no OPA policy configured, nothing here is denied** — every
+command allows, regardless of severity; the signals below exist for
+visibility and for a rego policy to act on.
 
 ## How it works
 
 1. **Parse** — the command is parsed with `mvdan.cc/sh` (no execution).
 2. **Detect** — deterministic rules emit `RiskSignal`s with a severity
-   (`low`/`medium`/`high`/`critical`).
-3. **Built-in critical deny** — critical patterns are denied immediately, even
-   with no OPA configured (safety default).
-4. **OPA** — when a policy is configured, non-critical commands are decided by
-   the `command_exec` action with full context (actor, target env, host vars,
-   dry-run state).
+   (`low`/`medium`/`high`/`critical`) and a `max_severity`.
+3. **OPA** — when a policy is configured, the `command_exec` action decides
+   with full context: actor, target env, host vars, dry-run state, and the
+   risk signals/`max_severity` from step 2. With no policy configured, this
+   step is a no-op and the command allows.
 
 Denied hosts are **skipped** (shown as skipped in the run output); the rest
 proceed.
@@ -34,7 +37,7 @@ proceed.
 
 A representative set of detectors (severity in parentheses):
 
-- **Critical** (built-in hard deny): `rm -rf /` and other root paths
+- **Critical** (highest severity; denies only if your OPA policy says so): `rm -rf /` and other root paths
   (`DELETE_ROOT_PATH`), `rm -rf "$VAR"` with an unguarded variable
   (`UNRESOLVED_VARIABLE_IN_PATH`), `curl … | sh` (`CURL_PIPE_SHELL`),
   `eval "$(curl …)"` (`REMOTE_DOWNLOAD_EXECUTE`), `dd of=/dev/sdX`
@@ -251,10 +254,12 @@ honey exec "web-*" --check "rm -rf /var/cache/*"
 Output lists the detected signals and max severity, and — when
 `HONEY_POLICY_DIR` is set — the per-target OPA decision. Add `--shellcheck` to
 also surface [ShellCheck](https://www.shellcheck.net/) warnings (optional; the
-binary is used when present, skipped otherwise). A critical or denied command
-exits non-zero. Nothing is executed.
+binary is used when present, skipped otherwise). A command **denied by
+policy** exits non-zero; risk severity by itself never does. Nothing is
+executed.
 
-A built-in critical pattern is denied even with no policy configured:
+With no policy configured, every command allows — severity is shown for
+visibility only, even at critical:
 
 ```text
 $ honey exec "web-*" --check "rm -rf /"
@@ -263,19 +268,7 @@ Risk: critical
   - [high] RM_RECURSIVE_FORCE: recursive delete
   - [critical] DELETE_ROOT_PATH: recursive delete of a system/root path
 Detected: commands=[rm] flags=[-rf] paths=[/]
-Decision: DENY (built-in critical: recursive delete of a system/root path)
-```
-
-A non-critical command with no policy configured is allowed (signals are still
-reported for visibility):
-
-```text
-$ honey exec "web-*" --check "apt-get remove nginx"
-Command: apt-get remove nginx
-Risk: medium
-  - [medium] PACKAGE_REMOVE: package removal
-Detected: commands=[apt-get] flags=[] paths=[remove nginx]
-Decision: allow (no policy configured; only built-in critical patterns deny)
+Decision: allow (no policy configured; risk severity is informational only)
 ```
 
 With `HONEY_POLICY_DIR` set, each target is evaluated by the `command_exec`
@@ -301,9 +294,9 @@ honey cue-exec deploy.cue "prod-*" --check
 
 It analyzes every `command` and `script` step (the same per-step analysis and
 `command_exec` decision the web dry-run produces), prints one block per step,
-executes nothing, and exits non-zero if any step is a built-in critical pattern
-or denied by policy. With `HONEY_POLICY_DIR` set, each step also shows its policy
-verdict.
+executes nothing, and exits non-zero if any step is denied by policy (risk
+severity alone never denies). With `HONEY_POLICY_DIR` set, each step also
+shows its policy verdict.
 
 ```text
 $ HONEY_POLICY_DIR=/etc/honey/policies honey cue-exec deploy.cue "prod-1" --check
@@ -390,17 +383,17 @@ recipe: {
 ```
 
 When a policy denies `command_exec` for a given host, that host is **skipped**
-(reported as skipped in the run output) while the remaining hosts proceed. A
-built-in critical pattern (e.g. `rm -rf /`) is denied on every host regardless
-of policy.
+(reported as skipped in the run output) while the remaining hosts proceed.
+With no OPA policy configured, nothing is denied — not even a pattern as
+severe as `rm -rf /` — since OPA is honey's only command-authorization gate.
 
 ## Escape hatch
 
-Set `HONEY_RISK_DISABLE=1` to bypass the gate entirely (including built-in
-critical denies) for a trusted run.
+Set `HONEY_RISK_DISABLE=1` to bypass the gate entirely, including the OPA
+`command_exec` decision, for a trusted run.
 
 ## Scope
 
 The gate covers `command` and `script` steps (shell). With no OPA configured,
-only the built-in critical patterns deny; everything else runs, with signals
-attached to results for visibility.
+nothing denies; every command runs, with signals attached to results for
+visibility.

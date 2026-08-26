@@ -309,16 +309,16 @@ deny_reason := "host blocked by inventory" if {
 	}
 }
 
-// --- command risk gate: built-in critical hard-deny ----------------------
+// --- command risk gate: critical severity, denied by policy ---------------
 
-func TestOPAE2E_CueExec_CommandRiskCritical(t *testing.T) {
-	target := newSSHTarget(t)
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	// curl|sh is a built-in critical pattern. The invalid host keeps it harmless
-	// even in the impossible case the gate let it run; we assert it is blocked.
-	dir := t.TempDir()
-	recipePath := filepath.Join(dir, "risk.cue")
+// writeCriticalRecipe writes a one-step recipe whose command classifies as
+// critical (`curl | sh`) while being harmless to actually run: the host does
+// not resolve. That matters because the gate itself is what is under test —
+// when a test asserts "this must be blocked", its failure mode should not be a
+// destructive command running for real.
+func writeCriticalRecipe(t *testing.T, dir string) (recipePath, configPath string) {
+	t.Helper()
+	recipePath = filepath.Join(dir, "risk.cue")
 	cue := `
 recipe: {
 	name: "opa-risk-critical"
@@ -328,12 +328,34 @@ recipe: {
 }
 `
 	require.NoError(t, os.WriteFile(recipePath, []byte(cue), 0o600))
-	configPath := filepath.Join(dir, "honey.yaml")
+	configPath = filepath.Join(dir, "honey.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o600))
+	return recipePath, configPath
+}
 
-	// No enforcer: built-in critical deny must fire on its own.
+// TestOPAE2E_CueExec_CommandRiskCritical proves the risk gate feeds the
+// commandrisk severity to OPA and honors the policy's deny.
+func TestOPAE2E_CueExec_CommandRiskCritical(t *testing.T) {
+	target := newSSHTarget(t)
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	enf := newEnforcer(t, `package honey
+import rego.v1
+default allow := true
+default deny_reason := ""
+allow := false if {
+	input.action == "command_exec"
+	input.command.max_severity == "critical"
+}
+deny_reason := "critical command risk denied by policy" if {
+	input.action == "command_exec"
+	input.command.max_severity == "critical"
+}`)
+
+	recipePath, configPath := writeCriticalRecipe(t, t.TempDir())
 	base := newTestServer(t, webserver.Options{
 		Token:          "test-token",
+		Enforcer:       enf,
 		ConfigPath:     configPath,
 		SearchRegistry: target.searchReg,
 		ExecRegistry:   target.execReg,
@@ -353,11 +375,50 @@ recipe: {
 	for _, r := range results {
 		skipped, _ := r["Skipped"].(bool)
 		out, _ := r["Output"].(string)
-		if skipped && strings.Contains(out, "command risk") {
+		if skipped && strings.Contains(out, "critical command risk denied by policy") {
 			blocked = true
 		}
 	}
-	assert.True(t, blocked, "critical command must be blocked by the risk gate: %v", results)
+	assert.True(t, blocked, "critical command must be denied by the OPA policy: %v", results)
+}
+
+// TestOPAE2E_CueExec_CriticalRunsWithoutPolicy pins the deliberate consequence
+// of deleting the built-in guardrails: OPA is the ONLY command gate, so with no
+// policy configured nothing is denied — not even a critical command. This is
+// the documented contract, not an oversight, and it is asserted here so a
+// future change cannot quietly reintroduce a hidden built-in floor (or remove
+// the last gate) without a failing test.
+func TestOPAE2E_CueExec_CriticalRunsWithoutPolicy(t *testing.T) {
+	target := newSSHTarget(t)
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	recipePath, configPath := writeCriticalRecipe(t, t.TempDir())
+	base := newTestServer(t, webserver.Options{
+		Token:          "test-token", // no Enforcer
+		ConfigPath:     configPath,
+		SearchRegistry: target.searchReg,
+		ExecRegistry:   target.execReg,
+		Config: &config.File{
+			Apps:     map[string]apps.AppConfig{"opa_app": {Type: apps.AppTypeRecipe, TargetRecipe: recipePath, Target: "ssh-test"}},
+			Defaults: config.Defaults{SSHUser: "testuser"},
+		},
+	})
+
+	resp := postCueExec(t, client, base, recipePath, []hosts.Record{target.rec}, nil,
+		map[string]string{"Authorization": authHeader()})
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	results := decodeResults(t, resp)
+	// Not vacuous: an empty result set would satisfy "nothing was gated" while
+	// proving nothing at all, so require the step to have actually been run.
+	require.NotEmpty(t, results, "the step must have produced a result")
+	for _, r := range results {
+		skipped, _ := r["Skipped"].(bool)
+		out, _ := r["Output"].(string)
+		assert.False(t, skipped && strings.Contains(out, "risk"),
+			"with no OPA policy configured nothing gates the command: %v", r)
+	}
 }
 
 // --- Task 5: opa step (allow & deny) -------------------------------------
