@@ -36,6 +36,11 @@ const defaultAgentConcurrency = 4
 
 var agentSem = semaphore.NewWeighted(agentConcurrency())
 
+// newAgentConn opens an ssh-agent connection and returns the agent bound to it.
+// A package var so a test can substitute a connection that fails if anything
+// reads it directly — the regression guard for the double-client bug above.
+var newAgentConn = sshagent.New
+
 func agentConcurrency() int64 {
 	if v := strings.TrimSpace(os.Getenv("HONEY_SSH_AGENT_CONCURRENCY")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -58,16 +63,28 @@ func withAgentConn(fn func(agent.ExtendedAgent) error) error {
 	_ = agentSem.Acquire(context.Background(), 1) // context.Background never errors
 	defer agentSem.Release(1)
 
-	_, conn, err := sshagent.New()
+	// Use the agent sshagent.New already built over this connection. Wrapping
+	// its net.Conn in a SECOND agent.NewClient puts two clients on one socket,
+	// and the replies then go to the wrong reader: on macOS's launchd agent that
+	// deadlocks every List/Sign until agentOpTimeout fires — a fixed 20s added to
+	// the first dial of every process, while `ssh-add -l` on the same socket
+	// answers in milliseconds.
+	a, conn, err := newAgentConn()
 	if err != nil {
 		return fmt.Errorf("ssh-agent: %w", err)
+	}
+	ea, ok := a.(agent.ExtendedAgent)
+	if !ok {
+		// Every current sshagent.New path returns *agent.client, which is an
+		// ExtendedAgent; this keeps a future one working, without signature flags.
+		ea = agent.NewClient(conn)
 	}
 	var once sync.Once
 	closeConn := func() { once.Do(func() { _ = conn.Close() }) }
 	defer closeConn()
 
 	done := make(chan error, 1)
-	go func() { done <- fn(agent.NewClient(conn)) }()
+	go func() { done <- fn(ea) }()
 
 	timer := time.NewTimer(agentOpTimeout)
 	defer timer.Stop()
