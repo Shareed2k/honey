@@ -35,7 +35,7 @@
     "@xyflow/react": "^12.10.2",
     "antd": "^6.5.2",
     "dockview": "^7.0.4",
-    "dockview-react": "^7.0.4",
+    "dockview-react": "^8.1.0",
     "js-yaml": "^5.2.2",
     "jsonpath-plus": "^10.4.0",
     "qrcode.react": "^4.2.0",
